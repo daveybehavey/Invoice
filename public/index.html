@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Invoice Flow Skeleton</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 24px;
+        line-height: 1.4;
+      }
+
+      h1,
+      h2 {
+        margin: 0 0 12px;
+      }
+
+      section {
+        border: 1px solid #ccc;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      textarea,
+      input[type="text"],
+      input[type="number"] {
+        width: 100%;
+        max-width: 900px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        vertical-align: top;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      .muted {
+        color: #666;
+      }
+
+      .status {
+        font-weight: 600;
+      }
+
+      .status-info {
+        color: #1f4b7f;
+      }
+
+      .status-success {
+        color: #1e6b36;
+      }
+
+      .status-warning {
+        color: #8b5a00;
+      }
+
+      .error {
+        color: #b00020;
+      }
+
+      .follow-up-box {
+        border: 1px dashed #aaa;
+        padding: 12px;
+        margin-top: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Invoice Flow Skeleton</h1>
+    <p class="muted">Flow validation only: minimal UI mapped 1:1 to current backend endpoints.</p>
+
+    <section id="entrySection">
+      <h2>1) Start With Input</h2>
+      <div class="row">
+        <label>
+          <input type="radio" name="sourceMode" value="text_input" checked />
+          Paste text
+        </label>
+        <label>
+          <input type="radio" name="sourceMode" value="upload" />
+          Upload invoice
+        </label>
+      </div>
+
+      <div id="textInputWrap" class="stack">
+        <label for="messyInput">Messy job notes</label>
+        <textarea
+          id="messyInput"
+          rows="8"
+          placeholder="Example: Jan 10 fixed kitchen sink leak 1.5h @ $95, replaced hose $18..."
+        ></textarea>
+      </div>
+
+      <div id="uploadWrap" class="stack hidden">
+        <label for="invoiceFile">Invoice file (PDF or text)</label>
+        <input id="invoiceFile" type="file" accept=".pdf,.txt,.json,text/plain,application/pdf" />
+      </div>
+
+      <div class="row">
+        <button id="generateBtn" type="button">Generate Invoice</button>
+        <span id="entryStatus" class="muted"></span>
+      </div>
+
+      <div id="laborFollowUpSection" class="follow-up-box hidden">
+        <p id="laborFollowUpMessage"></p>
+        <div class="row">
+          <label>
+            <input type="radio" name="laborBillingType" value="hourly" checked />
+            Hourly (rate + hours per labor line)
+          </label>
+          <label>
+            <input type="radio" name="laborBillingType" value="flat" />
+            Flat labor amount
+          </label>
+        </div>
+
+        <div id="hourlyBillingFields" class="row">
+          <label>
+            Hourly rate
+            <input id="hourlyRateInput" type="number" step="0.01" min="0.01" />
+          </label>
+        </div>
+        <p class="muted">For hourly billing, enter hours for each labor line below so nothing is assumed.</p>
+        <div id="hourlyLineHoursFields" class="stack"></div>
+
+        <div id="flatBillingFields" class="row hidden">
+          <label>
+            Flat labor amount
+            <input id="flatAmountInput" type="number" step="0.01" min="0.01" />
+          </label>
+        </div>
+
+        <div class="row">
+          <button id="applyLaborPricingBtn" type="button">Apply Labor Pricing</button>
+          <span id="laborFollowUpStatus" class="muted"></span>
+        </div>
+      </div>
+      <div id="entryError" class="error"></div>
+    </section>
+
+    <section id="workspaceSection" class="hidden">
+      <h2>2) Invoice Workspace</h2>
+      <div id="workspaceMeta" class="muted"></div>
+      <div id="dirtyIndicator" class="status"></div>
+
+      <h3>Line Items</h3>
+      <p class="muted">"Rewrite text" changes wording only. Prices and totals stay based on values.</p>
+      <div id="lineItemsMount"></div>
+
+      <div class="row">
+        <button id="rewriteInvoiceBtn" type="button">Rewrite Invoice</button>
+        <button id="downloadBtn" type="button">Download (Mock)</button>
+        <button id="saveBtn" type="button">Save Invoice</button>
+        <span id="workspaceStatus" class="muted"></span>
+      </div>
+      <div id="workspaceError" class="error"></div>
+    </section>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
