@@ -6,6 +6,7 @@ import multer from "multer";
 import { z } from "zod";
 import {
   ChangeLineWordingRequestSchema,
+  DiscountFollowUpRequestSchema,
   FinishedInvoiceSchema,
   FullInvoiceRewordRequestSchema,
   LaborPricingFollowUpRequestSchema,
@@ -13,6 +14,7 @@ import {
   UpdateInvoiceStatusRequestSchema
 } from "./models/invoice.js";
 import {
+  applyDiscountAfterFollowUp,
   changeLineWording,
   continueInvoiceAfterLaborPricing,
   createInvoiceFromInput,
@@ -63,6 +65,16 @@ app.post(
         return;
       }
 
+      if (result.kind === "discount_follow_up") {
+        res.json({
+          needsFollowUp: true,
+          followUp: result.followUp,
+          structuredInvoice: result.structuredInvoice,
+          invoice: result.invoice
+        });
+        return;
+      }
+
       res.json({
         needsFollowUp: false,
         structuredInvoice: result.structuredInvoice,
@@ -79,7 +91,8 @@ app.post("/api/invoices/from-input/labor-pricing", async (req: Request, res: Res
     const parsedRequest = LaborPricingFollowUpRequestSchema.parse(req.body);
     const result = await continueInvoiceAfterLaborPricing(
       parsedRequest.structuredInvoice,
-      parsedRequest.laborPricing
+      parsedRequest.laborPricing,
+      parsedRequest.sourceText
     );
 
     res.json({
@@ -87,6 +100,21 @@ app.post("/api/invoices/from-input/labor-pricing", async (req: Request, res: Res
       structuredInvoice: result.structuredInvoice,
       invoice: result.invoice
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/invoices/from-input/discount", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = DiscountFollowUpRequestSchema.parse(req.body);
+    const invoice = applyDiscountAfterFollowUp(
+      parsedRequest.invoice,
+      parsedRequest.discountAmount,
+      parsedRequest.discountReason
+    );
+
+    res.json({ needsFollowUp: false, invoice });
   } catch (error) {
     next(error);
   }

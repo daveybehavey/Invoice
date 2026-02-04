@@ -88,6 +88,61 @@
         padding: 12px;
         margin-top: 12px;
       }
+
+      .invoice-doc-preview {
+        margin-top: 12px;
+        border: 1px solid #d5d5d5;
+        background: #fff;
+        padding: 20px;
+      }
+
+      .invoice-doc {
+        max-width: 900px;
+      }
+
+      .invoice-doc-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .invoice-doc-title {
+        font-size: 28px;
+        font-weight: 700;
+        margin: 0;
+      }
+
+      .invoice-doc-meta p {
+        margin: 0 0 4px;
+      }
+
+      .invoice-doc table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .invoice-doc th,
+      .invoice-doc td {
+        border: 1px solid #ddd;
+        padding: 8px;
+      }
+
+      .invoice-doc-summary {
+        margin-top: 14px;
+        max-width: 340px;
+        margin-left: auto;
+      }
+
+      .invoice-doc-summary div {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 6px;
+      }
+
+      .invoice-doc-total {
+        font-weight: 700;
+      }
     </style>
   </head>
   <body>
@@ -116,6 +171,8 @@
         ></textarea>
       </div>
 
+      <p class="muted">Optional: include wording guidance in your notes (example: "Please make this clear and professional").</p>
+
       <div id="uploadWrap" class="stack hidden">
         <label for="invoiceFile">Invoice file (PDF or text)</label>
         <input id="invoiceFile" type="file" accept=".pdf,.txt,.json,text/plain,application/pdf" />
@@ -125,6 +182,7 @@
         <button id="generateBtn" type="button">Generate Invoice</button>
         <span id="entryStatus" class="muted"></span>
       </div>
+      <p class="muted">If essential details are missing, we will ask one quick question before finalizing.</p>
 
       <div id="laborFollowUpSection" class="follow-up-box hidden">
         <p id="laborFollowUpMessage"></p>
@@ -160,6 +218,38 @@
           <span id="laborFollowUpStatus" class="muted"></span>
         </div>
       </div>
+
+      <div id="toneFollowUpSection" class="follow-up-box hidden">
+        <p id="toneFollowUpMessage">Before finalizing wording, what tone should I use?</p>
+        <div class="row">
+          <label>
+            Tone
+            <input id="toneFollowUpInput" type="text" placeholder="e.g. neutral professional" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="applyToneBtn" type="button">Apply Tone & Finalize</button>
+          <span id="toneFollowUpStatus" class="muted"></span>
+        </div>
+      </div>
+
+      <div id="discountFollowUpSection" class="follow-up-box hidden">
+        <p id="discountFollowUpMessage"></p>
+        <div class="row">
+          <label>
+            Discount amount
+            <input id="discountFollowUpAmountInput" type="number" step="0.01" min="0.01" />
+          </label>
+          <label>
+            Reason (optional)
+            <input id="discountFollowUpReasonInput" type="text" placeholder="e.g. Courtesy adjustment" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="applyDiscountFollowUpBtn" type="button">Apply Discount</button>
+          <span id="discountFollowUpStatus" class="muted"></span>
+        </div>
+      </div>
       <div id="entryError" class="error"></div>
     </section>
 
@@ -174,10 +264,15 @@
 
       <div class="row">
         <button id="rewriteInvoiceBtn" type="button">Rewrite Invoice</button>
-        <button id="downloadBtn" type="button">Download (Mock)</button>
+        <button id="printBtn" type="button">Print Invoice</button>
+        <button id="downloadBtn" type="button">Print / Save as PDF</button>
+        <button id="removeDiscountBtn" type="button" class="hidden">Remove Discount</button>
         <button id="saveBtn" type="button">Save Invoice</button>
         <span id="workspaceStatus" class="muted"></span>
       </div>
+
+      <h3>Invoice Document Preview</h3>
+      <div id="invoiceDocumentMount" class="invoice-doc-preview"></div>
       <div id="workspaceError" class="error"></div>
     </section>
 

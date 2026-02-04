@@ -21,10 +21,11 @@ type CreateInvoiceReadyResult = {
   invoice: FinishedInvoice;
 };
 
-type CreateInvoiceFollowUpResult = {
+type CreateInvoiceLaborFollowUpResult = {
   kind: "labor_pricing_follow_up";
   structuredInvoice: StructuredInvoice;
   followUp: {
+    type: "labor_pricing";
     message: string;
     options: Array<{
       billingType: "hourly" | "flat";
@@ -33,11 +34,26 @@ type CreateInvoiceFollowUpResult = {
     laborItems: Array<{
       description: string;
       date?: string;
+      hours?: number;
     }>;
   };
 };
 
-export type CreateInvoiceResult = CreateInvoiceReadyResult | CreateInvoiceFollowUpResult;
+type CreateInvoiceDiscountFollowUpResult = {
+  kind: "discount_follow_up";
+  structuredInvoice: StructuredInvoice;
+  invoice: FinishedInvoice;
+  followUp: {
+    type: "discount";
+    message: string;
+    suggestedReason?: string;
+  };
+};
+
+export type CreateInvoiceResult =
+  | CreateInvoiceReadyResult
+  | CreateInvoiceLaborFollowUpResult
+  | CreateInvoiceDiscountFollowUpResult;
 
 type RewordSingleLineResponse = {
   description: string;
@@ -54,28 +70,39 @@ type RewordFullInvoiceResponse = {
 export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise<CreateInvoiceResult> {
   const sourceText = buildSourceText(input);
   const structuredInvoice = await parseMessyInputToStructuredInvoice(sourceText);
-  const laborTasks = extractLaborTasks(structuredInvoice);
+  const unpricedLaborTasks = extractUnpricedLaborTasks(structuredInvoice);
 
-  if (needsLaborPricingFollowUp(laborTasks)) {
+  if (needsLaborPricingFollowUp(unpricedLaborTasks)) {
     return {
       kind: "labor_pricing_follow_up",
       structuredInvoice,
       followUp: {
+        type: "labor_pricing",
         message:
-          "I see labor work, but I don't have hours or a rate yet. Please choose how labor should be billed.",
+          "I see labor work, but some labor pricing is missing. Please choose how labor should be billed.",
         options: [
           { billingType: "hourly", label: "Hourly (rate + hours per labor line)" },
           { billingType: "flat", label: "Flat labor amount" }
         ],
-        laborItems: laborTasks.map((item) => ({
+        laborItems: unpricedLaborTasks.map((item) => ({
           description: item.task.description,
-          date: item.date
+          date: item.date,
+          hours: item.task.hours
         }))
       }
     };
   }
 
   const invoice = await generateFinishedInvoice(structuredInvoice);
+  const discountIntent = detectDiscountIntent(sourceText);
+
+  if (discountIntent.kind === "apply") {
+    return {
+      kind: "invoice_ready",
+      structuredInvoice,
+      invoice: applyDiscountToInvoice(invoice, discountIntent.amount, discountIntent.reason)
+    };
+  }
 
   return {
     kind: "invoice_ready",
@@ -86,17 +113,35 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
 
 export async function continueInvoiceAfterLaborPricing(
   structuredInvoice: StructuredInvoice,
-  laborPricing: LaborPricingChoice
+  laborPricing: LaborPricingChoice,
+  sourceText?: string
 ): Promise<CreateInvoiceReadyResult> {
   const parsedStructuredInvoice = StructuredInvoiceSchema.parse(structuredInvoice);
   const withLaborPricing = applyLaborPricing(parsedStructuredInvoice, laborPricing);
   const invoice = await generateFinishedInvoice(withLaborPricing);
+  const discountIntent = detectDiscountIntent(sourceText ?? withLaborPricing.notes ?? "");
+
+  if (discountIntent.kind === "apply") {
+    return {
+      kind: "invoice_ready",
+      structuredInvoice: withLaborPricing,
+      invoice: applyDiscountToInvoice(invoice, discountIntent.amount, discountIntent.reason)
+    };
+  }
 
   return {
     kind: "invoice_ready",
     structuredInvoice: withLaborPricing,
     invoice
   };
+}
+
+export function applyDiscountAfterFollowUp(
+  invoice: FinishedInvoice,
+  discountAmount: number,
+  discountReason?: string
+): FinishedInvoice {
+  return applyDiscountToInvoice(FinishedInvoiceSchema.parse(invoice), discountAmount, discountReason);
 }
 
 export async function changeLineWording(
@@ -203,7 +248,7 @@ async function generateFinishedInvoice(structuredInvoice: StructuredInvoice): Pr
   const materialLineItems = structuredInvoice.materials.map((material) => buildMaterialLineItem(material));
 
   const invoice: FinishedInvoice = {
-    invoiceNumber: structuredInvoice.invoiceNumber,
+    invoiceNumber: structuredInvoice.invoiceNumber ?? generateInvoiceNumber(),
     issueDate: structuredInvoice.issueDate,
     servicePeriodStart: structuredInvoice.servicePeriodStart,
     servicePeriodEnd: structuredInvoice.servicePeriodEnd,
@@ -214,6 +259,15 @@ async function generateFinishedInvoice(structuredInvoice: StructuredInvoice): Pr
   };
 
   return normalizeInvoice(FinishedInvoiceSchema.parse(invoice));
+}
+
+function generateInvoiceNumber(): string {
+  const now = new Date();
+  const ymd = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}${String(
+    now.getUTCDate()
+  ).padStart(2, "0")}`;
+  const suffix = Math.floor(1000 + Math.random() * 9000);
+  return `INV-${ymd}-${suffix}`;
 }
 
 function buildSourceText(input: CreateInvoiceInput): string {
@@ -237,18 +291,7 @@ function buildSourceText(input: CreateInvoiceInput): string {
 }
 
 function needsLaborPricingFollowUp(laborTasks: LaborTaskRef[]): boolean {
-  if (!laborTasks.length) {
-    return false;
-  }
-
-  const hasHoursOrRate = laborTasks.some(
-    (item) => typeof item.task.hours === "number" || typeof item.task.rate === "number"
-  );
-  const hasLaborAmount = laborTasks.some(
-    (item) => typeof item.task.amount === "number" && item.task.amount > 0
-  );
-
-  return !hasHoursOrRate && !hasLaborAmount;
+  return laborTasks.length > 0;
 }
 
 function applyLaborPricing(structuredInvoice: StructuredInvoice, laborPricing: LaborPricingChoice): StructuredInvoice {
@@ -261,10 +304,10 @@ function applyLaborPricing(structuredInvoice: StructuredInvoice, laborPricing: L
     materials: structuredInvoice.materials.map((material) => ({ ...material }))
   };
 
-  const laborTaskRefs = extractLaborTasks(nextStructuredInvoice);
+  const laborTaskRefs = extractUnpricedLaborTasks(nextStructuredInvoice);
 
   if (!laborTaskRefs.length) {
-    throw new Error("Labor pricing follow-up was provided, but no labor tasks were found.");
+    throw new Error("Labor pricing follow-up was provided, but no unpriced labor tasks were found.");
   }
 
   if (laborPricing.billingType === "hourly") {
@@ -313,13 +356,67 @@ type LaborTaskRef = {
   date?: string;
 };
 
-function extractLaborTasks(structuredInvoice: StructuredInvoice): LaborTaskRef[] {
+function extractUnpricedLaborTasks(structuredInvoice: StructuredInvoice): LaborTaskRef[] {
   return structuredInvoice.workSessions.flatMap((session) =>
-    session.tasks.map((task) => ({
-      task,
-      date: session.date
-    }))
+    session.tasks
+      .filter((task) => !isLaborTaskPriced(task))
+      .map((task) => ({
+        task,
+        date: session.date
+      }))
   );
+}
+
+function isLaborTaskPriced(task: Task): boolean {
+  if (typeof task.amount === "number") {
+    return true;
+  }
+
+  return typeof task.hours === "number" && task.hours > 0 && typeof task.rate === "number" && task.rate > 0;
+}
+
+type DiscountIntent =
+  | { kind: "none" }
+  | { kind: "apply"; amount: number; reason?: string };
+
+function detectDiscountIntent(sourceText: string): DiscountIntent {
+  const text = sourceText.trim();
+  if (!text) {
+    return { kind: "none" };
+  }
+
+  const explicitAmountMatch =
+    text.match(/\$\s*(\d+(?:\.\d{1,2})?)\s*(?:courtesy\s+)?(?:discount|credit|off)\b/i) ??
+    text.match(/\b(?:discount|credit)\b[^$0-9]{0,25}\$?\s*(\d+(?:\.\d{1,2})?)/i) ??
+    text.match(/\b(\d+(?:\.\d{1,2})?)\s*(?:dollars?\s*)?(?:off)\b/i);
+
+  const reasonMatch =
+    text.match(/\b(?:discount|credit|off)\b[^.:\n-]{0,80}\b(?:because|for)\b([^.\n]+)/i) ??
+    text.match(/\b(?:because|for)\b([^.\n]+)\b(?:discount|credit|off)/i);
+  const reason = reasonMatch?.[1]?.trim();
+
+  if (explicitAmountMatch) {
+    const amount = Number(explicitAmountMatch[1]);
+    if (Number.isFinite(amount) && amount > 0) {
+      return {
+        kind: "apply",
+        amount: roundToCents(amount),
+        reason: reason && reason.length > 2 ? `Discount for ${reason}` : undefined
+      };
+    }
+  }
+
+  return { kind: "none" };
+}
+
+function applyDiscountToInvoice(invoice: FinishedInvoice, discountAmount: number, discountReason?: string): FinishedInvoice {
+  const withDiscount: FinishedInvoice = {
+    ...invoice,
+    discountAmount: roundToCents(discountAmount),
+    discountReason: discountReason?.trim() ? discountReason.trim() : invoice.discountReason
+  };
+
+  return normalizeInvoice(FinishedInvoiceSchema.parse(withDiscount));
 }
 
 function buildLaborLineItem(task: Task, sessionDate?: string) {

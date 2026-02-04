@@ -5,6 +5,8 @@ Backend flow for:
 - messy input or uploaded invoice text
 - structured invoice model
 - finished invoice output
+- sendable invoice document preview
+- browser print and PDF (via print dialog)
 
 ## Setup
 
@@ -23,6 +25,26 @@ npm run dev
 
 Open `http://localhost:3000` for the minimal UI skeleton.
 
+## Tests
+
+```bash
+npm test
+```
+
+Current regression tests cover:
+- labor-pricing follow-up instead of $0 labor finalization
+- no silent labor-hour assumptions
+- explicit labor pricing produces expected line amounts
+- auto-generated invoice numbers when missing
+- discount detection (explicit amount + follow-up path)
+- line rewording preserves numeric values
+- explicit-only save behavior (no auto-save)
+
+Related planning/testing docs:
+- `docs/user-testing-plan.md`
+- `docs/local-exploratory-testing-report.md`
+- `docs/discount-v1-spec.md`
+
 ## Prompt Source of Truth
 
 `system.md` is loaded at runtime as the system prompt for:
@@ -39,11 +61,17 @@ No duplicated system prompt text exists in code.
 - `POST /api/invoices/from-input`
   - JSON body: `{ "messyInput": "...", "uploadedInvoiceText": "..." }`
   - or multipart form-data with `invoiceFile` and optional `messyInput`
-  - If labor tasks exist without hours/rate (and no labor amount), response returns `needsFollowUp: true` with a single labor-pricing question.
+  - Can return `needsFollowUp: true` with one follow-up at a time:
+    - `followUp.type = "labor_pricing"` when labor pricing is missing
+  - Discount behavior: explicit discount amounts in notes are auto-applied; if no amount is provided, no discount question is asked.
+  - UI behavior: if no tone guidance is detected in notes, UI asks one tone question before final wording is finalized.
 - `POST /api/invoices/from-input/labor-pricing`
   - JSON body:
-    - Hourly: `{ "structuredInvoice": { ... }, "laborPricing": { "billingType": "hourly", "rate": 95, "lineHours": [2.5, 2.5] } }`
-    - Flat: `{ "structuredInvoice": { ... }, "laborPricing": { "billingType": "flat", "flatAmount": 285 } }`
+    - Hourly: `{ "structuredInvoice": { ... }, "laborPricing": { "billingType": "hourly", "rate": 95, "lineHours": [2.5, 2.5] }, "sourceText": "original notes (optional)" }`
+    - Flat: `{ "structuredInvoice": { ... }, "laborPricing": { "billingType": "flat", "flatAmount": 285 }, "sourceText": "original notes (optional)" }`
+  - Returns invoice-ready output.
+- `POST /api/invoices/from-input/discount`
+  - JSON body: `{ "invoice": { ... }, "discountAmount": 20, "discountReason": "optional" }`
 - `POST /api/invoices/reword-line`
   - JSON body: `{ "invoice": { ... }, "lineItemId": "line_1", "tone": "more concise" }`
 - `POST /api/invoices/reword-full`

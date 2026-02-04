@@ -97,6 +97,8 @@ export const FinishedInvoiceSchema = z.object({
   currency: CurrencyString,
   lineItems: z.array(InvoiceLineItemSchema).min(1),
   notes: OptionalString,
+  discountAmount: OptionalNumber,
+  discountReason: OptionalString,
   subtotal: OptionalNumber,
   total: OptionalNumber,
   balanceDue: OptionalNumber
@@ -127,7 +129,14 @@ export const LaborPricingChoiceSchema = z.discriminatedUnion("billingType", [
 
 export const LaborPricingFollowUpRequestSchema = z.object({
   structuredInvoice: StructuredInvoiceSchema,
-  laborPricing: LaborPricingChoiceSchema
+  laborPricing: LaborPricingChoiceSchema,
+  sourceText: OptionalString
+});
+
+export const DiscountFollowUpRequestSchema = z.object({
+  invoice: FinishedInvoiceSchema,
+  discountAmount: PositiveNumber,
+  discountReason: OptionalString
 });
 
 export const SavedInvoiceStatusSchema = z.enum(["draft", "sent", "paid"]);

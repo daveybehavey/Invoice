@@ -3,12 +3,14 @@ import { FinishedInvoice, InvoiceLineItem } from "../models/invoice.js";
 export function normalizeInvoice(invoice: FinishedInvoice): FinishedInvoice {
   const lineItems = invoice.lineItems.map((lineItem, index) => normalizeLineItem(lineItem, index));
   const subtotal = roundToCents(lineItems.reduce((sum, lineItem) => sum + (lineItem.amount ?? 0), 0));
-  const total = roundToCents(invoice.total ?? subtotal);
+  const discountAmount = roundToCents(Math.max(0, invoice.discountAmount ?? 0));
+  const total = roundToCents(Math.max(0, subtotal - discountAmount));
   const balanceDue = roundToCents(invoice.balanceDue ?? total);
 
   return {
     ...invoice,
     lineItems,
+    discountAmount,
     subtotal,
     total,
     balanceDue
