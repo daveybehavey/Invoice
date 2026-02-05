@@ -38,6 +38,11 @@ app.use(cors());
 app.use(express.json({ limit: "4mb" }));
 app.use(express.static(publicDir));
 
+const spaRoutes = ["/", "/ai-intake", "/manual", "/import"];
+app.get(spaRoutes, (_req: Request, res: Response) => {
+  res.sendFile(path.join(publicDir, "index.html"));
+});
+
 app.get("/invoices", (_req: Request, res: Response) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
