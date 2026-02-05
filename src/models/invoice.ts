@@ -172,7 +172,9 @@ export const InvoiceListItemSchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   status: SavedInvoiceStatusSchema,
-  sourceType: SavedInvoiceSourceTypeSchema
+  sourceType: SavedInvoiceSourceTypeSchema,
+  invoiceNumber: OptionalString,
+  total: OptionalNumber
 });
 
 export type StructuredInvoice = z.infer<typeof StructuredInvoiceSchema>;

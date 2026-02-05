@@ -76,7 +76,10 @@ export async function listSavedInvoiceMetadata(): Promise<InvoiceListItem[]> {
         createdAt: invoice.createdAt,
         updatedAt: invoice.updatedAt,
         status: invoice.status,
-        sourceType: invoice.sourceType
+        sourceType: invoice.sourceType,
+        invoiceNumber:
+          invoice.invoiceData.finishedInvoice.invoiceNumber ?? invoice.invoiceData.structuredInvoice.invoiceNumber,
+        total: invoice.invoiceData.finishedInvoice.total
       })
     )
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));

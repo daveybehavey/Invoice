@@ -38,6 +38,10 @@ app.use(cors());
 app.use(express.json({ limit: "4mb" }));
 app.use(express.static(publicDir));
 
+app.get("/invoices", (_req: Request, res: Response) => {
+  res.sendFile(path.join(publicDir, "index.html"));
+});
+
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
 });

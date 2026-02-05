@@ -19,12 +19,22 @@ const toneFollowUpSectionEl = document.getElementById("toneFollowUpSection");
 const toneFollowUpInputEl = document.getElementById("toneFollowUpInput");
 const toneFollowUpStatusEl = document.getElementById("toneFollowUpStatus");
 const applyToneBtn = document.getElementById("applyToneBtn");
+const tonePresetsEl = document.querySelector(".tone-presets");
+const tonePresetButtons = tonePresetsEl ? Array.from(tonePresetsEl.querySelectorAll("button")) : [];
 const discountFollowUpSectionEl = document.getElementById("discountFollowUpSection");
 const discountFollowUpMessageEl = document.getElementById("discountFollowUpMessage");
 const discountFollowUpAmountInputEl = document.getElementById("discountFollowUpAmountInput");
 const discountFollowUpReasonInputEl = document.getElementById("discountFollowUpReasonInput");
 const discountFollowUpStatusEl = document.getElementById("discountFollowUpStatus");
 const applyDiscountFollowUpBtn = document.getElementById("applyDiscountFollowUpBtn");
+const mainHubSection = document.getElementById("mainHub");
+const createNewInvoiceBtn = document.getElementById("createNewInvoiceBtn");
+const openSavedInvoicesBtn = document.getElementById("openSavedInvoicesBtn");
+const savedInvoiceHintEl = document.getElementById("savedInvoiceHint");
+const savedListSectionEl = document.getElementById("savedListSection");
+const savedListStatusEl = document.getElementById("savedListStatus");
+const savedListTableBodyEl = document.getElementById("savedListTableBody");
+const backToLauncherBtn = document.getElementById("backToLauncherBtn");
 
 const workspaceSection = document.getElementById("workspaceSection");
 const workspaceMetaEl = document.getElementById("workspaceMeta");
@@ -39,6 +49,8 @@ const saveBtn = document.getElementById("saveBtn");
 const workspaceStatusEl = document.getElementById("workspaceStatus");
 const workspaceErrorEl = document.getElementById("workspaceError");
 
+const initialView = window.location.pathname === "/invoices" ? "saved" : "hub";
+
 const state = {
   sourceType: "text_input",
   structuredInvoice: null,
@@ -49,7 +61,10 @@ const state = {
   pendingDiscountFollowUp: null,
   pendingToneInvoice: null,
   requestedTone: null,
-  sourceTextForFollowUp: null
+  sourceTextForFollowUp: null,
+  currentView: initialView,
+  savedInvoices: [],
+  savedInvoiceCount: 0
 };
 
 bootstrap();
@@ -68,6 +83,13 @@ function bootstrap() {
   applyToneBtn.addEventListener("click", onApplyTone);
   applyDiscountFollowUpBtn.addEventListener("click", onApplyDiscountFollowUp);
   removeDiscountBtn.addEventListener("click", onRemoveDiscount);
+  createNewInvoiceBtn.addEventListener("click", () => applyView("workspace", { updateHistory: true }));
+  openSavedInvoicesBtn.addEventListener("click", () => applyView("saved", { updateHistory: true }));
+  backToLauncherBtn?.addEventListener("click", () => applyView("hub", { updateHistory: true }));
+  tonePresetButtons.forEach((button) => button.addEventListener("click", onTonePresetClick));
+  viewWorkspaceBtn.addEventListener("click", () => switchToView("workspace"));
+  viewSavedListBtn.addEventListener("click", () => switchToView("saved"));
+  tonePresetButtons.forEach((button) => button.addEventListener("click", onTonePresetClick));
 
   for (const radio of document.querySelectorAll('input[name="laborBillingType"]')) {
     radio.addEventListener("change", onLaborBillingTypeChange);
@@ -75,6 +97,12 @@ function bootstrap() {
 
   onSourceModeChange();
   onLaborBillingTypeChange();
+  window.addEventListener("popstate", () => {
+    const view = window.location.pathname === "/invoices" ? "saved" : "hub";
+    applyView(view, { updateHistory: false });
+  });
+  applyView(initialView, { replaceHistory: true, silent: true });
+  refreshSavedInvoiceCount();
 }
 
 function onSourceModeChange() {
@@ -385,6 +413,7 @@ async function onSaveInvoice() {
     setWorkspaceBusy(false, "");
     setWorkspaceMessage("success", `Saved successfully (${state.savedInvoiceId}).`);
     renderWorkspaceMeta();
+    await refreshSavedInvoiceCount();
   } catch (error) {
     setWorkspaceBusy(false, "");
     workspaceErrorEl.textContent = `Save failed: ${asErrorMessage(error)}`;
@@ -464,19 +493,13 @@ function renderDirtyIndicator() {
     return;
   }
 
-  if (!state.savedInvoiceId) {
-    dirtyIndicatorEl.textContent = "Not saved yet.";
+  if (!state.savedInvoiceId || state.isDirty) {
+    dirtyIndicatorEl.textContent = "Draft (not saved)";
     dirtyIndicatorEl.className = "status status-warning";
     return;
   }
 
-  if (state.isDirty) {
-    dirtyIndicatorEl.textContent = "Unsaved changes.";
-    dirtyIndicatorEl.className = "status status-warning";
-    return;
-  }
-
-  dirtyIndicatorEl.textContent = "All changes saved.";
+  dirtyIndicatorEl.textContent = "Saved";
   dirtyIndicatorEl.className = "status status-success";
 }
 
@@ -878,6 +901,7 @@ function showToneFollowUp(invoice) {
   toneFollowUpInputEl.value = "";
   toneFollowUpSectionEl.classList.remove("hidden");
   toneFollowUpStatusEl.textContent = "";
+  tonePresetsEl?.classList.remove("hidden");
 }
 
 function hideToneFollowUp() {
@@ -885,6 +909,266 @@ function hideToneFollowUp() {
   toneFollowUpInputEl.value = "";
   toneFollowUpStatusEl.textContent = "";
   state.pendingToneInvoice = null;
+  tonePresetsEl?.classList.add("hidden");
+}
+
+function applyView(view, options = {}) {
+  const { updateHistory = false, replaceHistory = false, silent = false } = options;
+  state.currentView = view;
+  mainHubSection.classList.toggle("hidden", view !== "hub");
+  workspaceSection.classList.toggle("hidden", view !== "workspace");
+  entrySection.classList.toggle("hidden", view !== "workspace");
+  savedListSectionEl.classList.toggle("hidden", view !== "saved");
+
+  if (view === "saved") {
+    loadSavedInvoices();
+  }
+
+  const targetPath = view === "saved" ? "/invoices" : "/";
+  if (!silent) {
+    if (replaceHistory) {
+      window.history.replaceState({}, "", targetPath);
+    } else if (updateHistory) {
+      window.history.pushState({}, "", targetPath);
+    }
+  } else if (replaceHistory) {
+    window.history.replaceState({}, "", targetPath);
+  }
+}
+
+function onTonePresetClick(event) {
+  const button = event.currentTarget;
+  const instruction = button.getAttribute("data-tone-instruction") ?? "";
+  toneFollowUpInputEl.value = instruction;
+  setEntryMessage("info", `Tone preset applied: ${button.textContent.trim()}.`);
+}
+
+async function loadSavedInvoices() {
+  if (state.currentView !== "saved") {
+    return;
+  }
+
+  savedListStatusEl.textContent = "Loading saved documents...";
+  savedListTableBodyEl.innerHTML = "";
+
+  try {
+    const response = await fetch("/api/invoices");
+    if (!response.ok) {
+      throw new Error(await readResponseError(response));
+    }
+
+    const payload = await response.json();
+    state.savedInvoices = Array.isArray(payload.invoices) ? payload.invoices : [];
+    state.savedInvoiceCount = state.savedInvoices.length;
+    updateHubSavedButton();
+    renderSavedList();
+
+    if (!state.savedInvoices.length) {
+      savedListStatusEl.textContent = "No saved documents yet.";
+    } else {
+      savedListStatusEl.textContent = "";
+    }
+  } catch (error) {
+    savedListStatusEl.textContent = `Unable to load saved documents: ${asErrorMessage(error)}`;
+  }
+}
+
+function renderSavedList() {
+  savedListTableBodyEl.innerHTML = "";
+
+  for (const invoice of state.savedInvoices) {
+    const invoiceNumber = escapeHtml(invoice.invoiceNumber ?? invoice.invoiceId ?? "");
+    const updatedAt = formatSavedDate(invoice.updatedAt);
+    const total = formatMoney(typeof invoice.total === "number" ? invoice.total : 0);
+
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td><button class="link-button" type="button" data-action="open" data-id="${invoice.invoiceId}">${invoiceNumber}</button></td>
+      <td>${escapeHtml(updatedAt)}</td>
+      <td>${total}</td>
+      <td>
+        <select data-action="status" data-id="${invoice.invoiceId}">
+          ${["draft", "sent", "paid"]
+            .map(
+              (status) =>
+                `<option value="${status}" ${invoice.status === status ? "selected" : ""}>${status.charAt(0).toUpperCase() + status.slice(1)}</option>`
+            )
+            .join("")}
+        </select>
+      </td>
+      <td>
+        <button type="button" data-action="duplicate" data-id="${invoice.invoiceId}">Duplicate</button>
+        <button type="button" data-action="print" data-id="${invoice.invoiceId}">Re-print / PDF</button>
+      </td>
+    `;
+
+    const openButton = row.querySelector('[data-action="open"]');
+    const duplicateButton = row.querySelector('[data-action="duplicate"]');
+    const printButton = row.querySelector('[data-action="print"]');
+    const statusSelect = row.querySelector('select[data-action="status"]');
+    if (statusSelect) {
+      statusSelect.setAttribute("data-current-status", invoice.status);
+    }
+
+    openButton?.addEventListener("click", () => openSavedInvoice(invoice.invoiceId));
+    duplicateButton?.addEventListener("click", () => duplicateSavedInvoiceRow(invoice.invoiceId));
+    const deleteButton = row.querySelector('[data-action="delete"]');
+    printButton?.addEventListener("click", () => printSavedInvoice(invoice.invoiceId));
+    deleteButton?.addEventListener("click", () => deleteSavedInvoiceRow(invoice.invoiceId));
+    statusSelect?.addEventListener("change", () =>
+      updateSavedInvoiceStatus(invoice.invoiceId, statusSelect.value, statusSelect)
+    );
+
+    savedListTableBodyEl.append(row);
+  }
+}
+
+async function refreshSavedInvoiceCount() {
+  try {
+    const response = await fetch("/api/invoices");
+    if (!response.ok) {
+      throw new Error(await readResponseError(response));
+    }
+
+    const payload = await response.json();
+    state.savedInvoiceCount = Array.isArray(payload.invoices) ? payload.invoices.length : 0;
+    updateHubSavedButton();
+  } catch {
+    state.savedInvoiceCount = 0;
+    updateHubSavedButton();
+  }
+}
+
+function updateHubSavedButton() {
+  const hasSaved = state.savedInvoiceCount > 0;
+  openSavedInvoicesBtn.classList.toggle("hidden", !hasSaved);
+  savedInvoiceHintEl.textContent = hasSaved ? "" : "You have no saved invoices yet.";
+}
+
+function formatSavedDate(value) {
+  if (!value) {
+    return "-";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString();
+}
+
+async function openSavedInvoice(invoiceId) {
+  savedListStatusEl.textContent = "Opening saved document...";
+
+  try {
+    const savedInvoice = await fetchSavedInvoiceDocument(invoiceId);
+    state.structuredInvoice = savedInvoice.invoiceData.structuredInvoice;
+    state.invoice = ensureEditableInvoice(savedInvoice.invoiceData.finishedInvoice);
+    state.savedInvoiceId = savedInvoice.invoiceId;
+    state.sourceType = savedInvoice.sourceType;
+    state.isDirty = false;
+    hideLaborFollowUp();
+    hideDiscountFollowUp();
+    hideToneFollowUp();
+    applyView("workspace", { updateHistory: true });
+    setEntryMessage("success", "Saved document opened.");
+    savedListStatusEl.textContent = "";
+    renderWorkspace();
+  } catch (error) {
+    savedListStatusEl.textContent = `Could not open saved document: ${asErrorMessage(error)}`;
+  }
+}
+
+async function duplicateSavedInvoiceRow(invoiceId) {
+  savedListStatusEl.textContent = "Duplicating document...";
+
+  try {
+    const response = await fetch(`/api/invoices/${invoiceId}/duplicate`, { method: "POST" });
+    if (!response.ok) {
+      throw new Error(await readResponseError(response));
+    }
+
+    await response.json();
+    savedListStatusEl.textContent = "Document duplicated.";
+    await loadSavedInvoices();
+  } catch (error) {
+    savedListStatusEl.textContent = `Could not duplicate document: ${asErrorMessage(error)}`;
+  }
+}
+
+async function deleteSavedInvoiceRow(invoiceId) {
+  const confirmed = window.confirm("Delete this saved document? This cannot be undone.");
+  if (!confirmed) {
+    return;
+  }
+
+  savedListStatusEl.textContent = "Deleting document...";
+
+  try {
+    const response = await fetch(`/api/invoices/${invoiceId}`, { method: "DELETE" });
+    if (!response.ok) {
+      throw new Error(await readResponseError(response));
+    }
+
+    savedListStatusEl.textContent = "Document deleted.";
+    await loadSavedInvoices();
+  } catch (error) {
+    savedListStatusEl.textContent = `Could not delete document: ${asErrorMessage(error)}`;
+  }
+}
+
+async function updateSavedInvoiceStatus(invoiceId, status, statusSelect) {
+  savedListStatusEl.textContent = "Updating status...";
+
+  try {
+    const response = await fetch(`/api/invoices/${invoiceId}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status })
+    });
+
+    if (!response.ok) {
+      throw new Error(await readResponseError(response));
+    }
+
+    await response.json();
+    savedListStatusEl.textContent = "Status updated.";
+    await loadSavedInvoices();
+    if (statusSelect) {
+      statusSelect.setAttribute("data-current-status", status);
+    }
+  } catch (error) {
+    savedListStatusEl.textContent = `Could not update status: ${asErrorMessage(error)}`;
+    if (statusSelect) {
+      const previous = statusSelect.getAttribute("data-current-status");
+      if (previous) {
+        statusSelect.value = previous;
+      }
+    }
+  }
+}
+
+async function printSavedInvoice(invoiceId) {
+  savedListStatusEl.textContent = "Preparing document for print...";
+
+  try {
+    const savedInvoice = await fetchSavedInvoiceDocument(invoiceId);
+    openDocumentPrintWindow(savedInvoice.invoiceData.finishedInvoice);
+    savedListStatusEl.textContent = "";
+  } catch (error) {
+    savedListStatusEl.textContent = `Could not print document: ${asErrorMessage(error)}`;
+  }
+}
+
+async function fetchSavedInvoiceDocument(invoiceId) {
+  const response = await fetch(`/api/invoices/${invoiceId}`);
+  if (!response.ok) {
+    throw new Error(await readResponseError(response));
+  }
+
+  const payload = await response.json();
+  return payload.invoice;
 }
 
 async function completeToneStep(invoice) {

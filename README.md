@@ -104,6 +104,15 @@ No duplicated system prompt text exists in code.
   - Returns the full saved invoice document for reopening/editing
 - `POST /api/invoices/:id/duplicate`
   - Duplicates a saved invoice into a new `draft`
-- `POST /api/invoices/:id/status`
+-- `POST /api/invoices/:id/status`
   - Body: `{ "status": "draft" | "sent" | "paid" }`
   - Manual-only status change; no automatic transitions
+
+## Layer 2 surfaces
+
+- **Launcher hub**  
+  The landing area offers “Create new invoice” and, only when saved documents exist, “Open saved invoices.” A single supporting line of copy keeps the promise: no client setup, no accounting—just invoices you can generate and reopen.
+- **Document history**  
+  `/invoices` stays minimal: invoice #, date, total, status (draft | sent | paid) and the allowed actions (open in the workspace, duplicate, change status, or print/PDF). No client names, searches, filters, dashboards, or bulk operations.
+- **Tone follow-up presets**  
+  When the messy notes lack tone guidance, the follow-up shows three preset buttons (Neutral professional, Friendly professional, Firm / straightforward) plus the custom tone field. Clicking a preset injects a concise instruction while rewrite tools can still override the wording.
