@@ -5,6 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Invoice Launcher</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      @media print {
+        body {
+          background: #fff !important;
+        }
+        .no-print {
+          display: none !important;
+        }
+        .printable-invoice {
+          box-shadow: none !important;
+          border: none !important;
+          opacity: 1 !important;
+          pointer-events: auto !important;
+          margin: 0 !important;
+        }
+      }
+    </style>
   </head>
   <body class="bg-slate-50 text-slate-900">
     <div id="root"></div>

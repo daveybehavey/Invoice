@@ -340,6 +340,7 @@ function AIIntake() {
 }
 
 function ManualInvoiceCanvas() {
+  const navigate = useNavigate();
   const [invoiceNumber, setInvoiceNumber] = useState("INV-0001");
   const [invoiceDate, setInvoiceDate] = useState("");
   const [fromDetails, setFromDetails] = useState("");
@@ -350,8 +351,16 @@ function ManualInvoiceCanvas() {
     { id: "line-1", description: "", qty: "", rate: "" }
   ]);
   const [logoUrl, setLogoUrl] = useState(null);
+  const [stylePreset, setStylePreset] = useState("default");
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [activeInspectorTab, setActiveInspectorTab] = useState("style");
+
+  const stylePresets = {
+    default: { label: "Default", textClass: "text-sm", sectionGap: "space-y-6" },
+    compact: { label: "Compact", textClass: "text-sm", sectionGap: "space-y-4" },
+    spacious: { label: "Spacious", textClass: "text-base", sectionGap: "space-y-8" }
+  };
+  const activePreset = stylePresets[stylePreset] ?? stylePresets.default;
 
   const parseNumber = (value) => {
     const parsed = Number.parseFloat(value);
@@ -402,6 +411,20 @@ function ManualInvoiceCanvas() {
     });
   };
 
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleDownloadPdf = () => {
+    const previousTitle = document.title;
+    const safeNumber = invoiceNumber?.trim() ? invoiceNumber.trim() : "Invoice";
+    document.title = `Invoice-${safeNumber}`;
+    window.print();
+    window.setTimeout(() => {
+      document.title = previousTitle;
+    }, 1000);
+  };
+
   const isMobileInspectorOpen = inspectorOpen;
   const invoiceInteractionClass = isMobileInspectorOpen
     ? "pointer-events-none select-none opacity-60 md:pointer-events-auto md:opacity-100"
@@ -410,13 +433,22 @@ function ManualInvoiceCanvas() {
   return (
     <div className="min-h-screen bg-slate-50">
       <main className="mx-auto flex w-full max-w-6xl flex-col px-4 py-8 md:grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-6">
-        <div className={`w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm ${invoiceInteractionClass}`}>
-          <div className="space-y-6">
+        <div className="mb-4 md:col-span-2 no-print">
+          <button
+            type="button"
+            className="text-sm font-semibold text-slate-700"
+            onClick={() => navigate("/")}
+          >
+            &larr; Back
+          </button>
+        </div>
+        <div className={`printable-invoice w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm ${invoiceInteractionClass}`}>
+          <div className={activePreset.sectionGap}>
             <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-400">
               <span>Invoice Document</span>
               <span>Draft</span>
             </div>
-            <div className="flex justify-end">
+            <div className="flex justify-end no-print">
               <button
                 type="button"
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
@@ -427,22 +459,31 @@ function ManualInvoiceCanvas() {
             </div>
 
             <header className="space-y-4">
+              {logoUrl ? (
+                <div className="flex items-center">
+                  <img
+                    src={logoUrl}
+                    alt="Company logo"
+                    className="h-12 w-auto max-w-[200px] object-contain"
+                  />
+                </div>
+              ) : null}
               <h1 className="text-2xl font-semibold text-slate-900">INVOICE</h1>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <label className="text-sm font-semibold text-slate-700">
+                <label className={`${activePreset.textClass} font-semibold text-slate-700`}>
                   Invoice #
                   <input
                     type="text"
-                    className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    className={`mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
                     value={invoiceNumber}
                     onChange={(event) => setInvoiceNumber(event.target.value)}
                   />
                 </label>
-                <label className="text-sm font-semibold text-slate-700">
+                <label className={`${activePreset.textClass} font-semibold text-slate-700`}>
                   Date
                   <input
                     type="date"
-                    className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    className={`mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
                     value={invoiceDate}
                     onChange={(event) => setInvoiceDate(event.target.value)}
                   />
@@ -450,32 +491,22 @@ function ManualInvoiceCanvas() {
               </div>
             </header>
 
-            {logoUrl ? (
-              <div className="flex items-center">
-                <img
-                  src={logoUrl}
-                  alt="Company logo"
-                  className="h-12 w-auto max-w-[200px] object-contain"
-                />
-              </div>
-            ) : null}
-
             <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-slate-700">From</p>
+                <p className={`${activePreset.textClass} font-semibold text-slate-700`}>From</p>
                 <textarea
                   rows={3}
-                  className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  className={`w-full resize-none rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
                   placeholder="Your Name / Company"
                   value={fromDetails}
                   onChange={(event) => setFromDetails(event.target.value)}
                 />
               </div>
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-slate-700">Bill To</p>
+                <p className={`${activePreset.textClass} font-semibold text-slate-700`}>Bill To</p>
                 <textarea
                   rows={3}
-                  className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  className={`w-full resize-none rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
                   placeholder="Client Name"
                   value={billToDetails}
                   onChange={(event) => setBillToDetails(event.target.value)}
@@ -485,7 +516,7 @@ function ManualInvoiceCanvas() {
 
             <section className="space-y-3">
               <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
+                <table className={`min-w-full text-left ${activePreset.textClass}`}>
                   <thead className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                     <tr>
                       <th className="border-b border-slate-200 pb-2 pr-3">Description</th>
@@ -500,7 +531,7 @@ function ManualInvoiceCanvas() {
                         <td className="py-3 pr-3 align-top">
                           <input
                             type="text"
-                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                            className={`w-full rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
                             placeholder="Description"
                             value={item.description}
                             onChange={(event) =>
@@ -511,7 +542,7 @@ function ManualInvoiceCanvas() {
                         <td className="py-3 pr-3 align-top">
                           <input
                             type="number"
-                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                            className={`w-full rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
                             placeholder="0"
                             value={item.qty}
                             onChange={(event) =>
@@ -522,7 +553,7 @@ function ManualInvoiceCanvas() {
                         <td className="py-3 pr-3 align-top">
                           <input
                             type="number"
-                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                            className={`w-full rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
                             placeholder="$0"
                             value={item.rate}
                             onChange={(event) =>
@@ -540,7 +571,7 @@ function ManualInvoiceCanvas() {
               </div>
               <button
                 type="button"
-                className="text-sm font-semibold text-emerald-700"
+                className={`${activePreset.textClass} font-semibold text-emerald-700`}
                 onClick={handleAddLineItem}
               >
                 + Add line item
@@ -548,7 +579,7 @@ function ManualInvoiceCanvas() {
             </section>
 
             <section className="flex justify-end">
-              <div className="w-full max-w-xs space-y-2 text-sm">
+              <div className={`w-full max-w-xs space-y-2 ${activePreset.textClass}`}>
                 <div className="flex justify-between text-slate-600">
                   <span>Subtotal</span>
                   <span>{formatMoney(subtotal)}</span>
@@ -574,10 +605,10 @@ function ManualInvoiceCanvas() {
             </section>
 
             <section className="space-y-2">
-              <p className="text-sm font-semibold text-slate-700">Notes / Terms</p>
+              <p className={`${activePreset.textClass} font-semibold text-slate-700`}>Notes / Terms</p>
               <textarea
                 rows={4}
-                className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                className={`w-full resize-none rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
                 placeholder="Thank you for your business"
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
@@ -586,19 +617,23 @@ function ManualInvoiceCanvas() {
           </div>
         </div>
 
-        <div className="hidden md:block">
+        <div className="hidden md:block no-print">
           <InspectorPanel
             activeTab={activeInspectorTab}
             onTabChange={setActiveInspectorTab}
             logoUrl={logoUrl}
             onLogoChange={handleLogoChange}
             onLogoRemove={handleLogoRemove}
+            stylePreset={stylePreset}
+            onStylePresetChange={setStylePreset}
+            onPrint={handlePrint}
+            onDownloadPdf={handleDownloadPdf}
           />
         </div>
       </main>
 
       {isMobileInspectorOpen ? (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white/95 md:hidden">
+        <div className="fixed inset-0 z-50 flex flex-col bg-white/95 md:hidden no-print">
           <InspectorPanel
             activeTab={activeInspectorTab}
             onTabChange={setActiveInspectorTab}
@@ -607,6 +642,10 @@ function ManualInvoiceCanvas() {
             logoUrl={logoUrl}
             onLogoChange={handleLogoChange}
             onLogoRemove={handleLogoRemove}
+            stylePreset={stylePreset}
+            onStylePresetChange={setStylePreset}
+            onPrint={handlePrint}
+            onDownloadPdf={handleDownloadPdf}
           />
         </div>
       ) : null}
@@ -621,15 +660,35 @@ function InspectorPanel({
   showCloseButton,
   logoUrl,
   onLogoChange,
-  onLogoRemove
+  onLogoRemove,
+  stylePreset,
+  onStylePresetChange,
+  onPrint,
+  onDownloadPdf
 }) {
+  const [toneAction, setToneAction] = useState(null);
+  const [selectedTone, setSelectedTone] = useState(null);
+  const [toneStatus, setToneStatus] = useState("");
   const tabs = [
     { id: "style", label: "Style", content: "Style controls coming soon" },
     { id: "tone", label: "Tone", content: "Tone controls coming soon" },
     { id: "export", label: "Export", content: "Export options coming soon" }
   ];
+  const styleOptions = [
+    { id: "default", label: "Default" },
+    { id: "compact", label: "Compact" },
+    { id: "spacious", label: "Spacious" }
+  ];
+  const toneOptions = ["Formal", "Neutral", "Friendly"];
 
   const activeContent = tabs.find((tab) => tab.id === activeTab)?.content ?? "";
+  const beforePreview =
+    toneAction === "descriptions"
+      ? "Line item descriptions preview (placeholder)."
+      : "Invoice text preview (placeholder).";
+  const afterPreview = selectedTone
+    ? `${selectedTone} rewrite preview (placeholder).`
+    : "Select a tone to see a preview.";
 
   return (
     <div className="flex h-full flex-col border border-slate-200 bg-white shadow-sm md:rounded-2xl">
@@ -662,6 +721,25 @@ function InspectorPanel({
         {activeTab === "style" ? (
           <div className="space-y-4">
             <div>
+              <p className="text-sm font-semibold text-slate-900">Presets</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {styleOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                      stylePreset === option.id
+                        ? "bg-emerald-600 text-white"
+                        : "border border-slate-200 text-slate-600"
+                    }`}
+                    onClick={() => onStylePresetChange(option.id)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
               <p className="text-sm font-semibold text-slate-900">Logo</p>
               <p className="mt-1 text-xs text-slate-500">PNG, JPG, or SVG</p>
             </div>
@@ -685,6 +763,107 @@ function InspectorPanel({
                 </button>
               </div>
             ) : null}
+          </div>
+        ) : activeTab === "tone" ? (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              Rewrite wording only. Amounts are never changed.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                onClick={() => {
+                  setToneAction("descriptions");
+                  setSelectedTone(null);
+                  setToneStatus("");
+                }}
+              >
+                Rewrite descriptions
+              </button>
+              <button
+                type="button"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                onClick={() => {
+                  setToneAction("full");
+                  setSelectedTone(null);
+                  setToneStatus("");
+                }}
+              >
+                Rewrite entire invoice text
+              </button>
+            </div>
+
+            {toneAction ? (
+              <div className="space-y-3 rounded-lg border border-slate-200 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Select tone
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {toneOptions.map((tone) => (
+                    <button
+                      key={tone}
+                      type="button"
+                      className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                        selectedTone === tone
+                          ? "bg-emerald-600 text-white"
+                          : "border border-slate-200 text-slate-600"
+                      }`}
+                      onClick={() => setSelectedTone(tone)}
+                    >
+                      {tone}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {toneAction ? (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Before</p>
+                  <p className="mt-2 text-sm text-slate-700">{beforePreview}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">After</p>
+                  <p className="mt-2 text-sm text-slate-700">{afterPreview}</p>
+                </div>
+                <button
+                  type="button"
+                  className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-emerald-300"
+                  disabled={!selectedTone}
+                  onClick={() => setToneStatus("Changes applied (placeholder).")}
+                >
+                  Apply changes
+                </button>
+                {toneStatus ? <p className="text-xs text-slate-500">{toneStatus}</p> : null}
+              </div>
+            ) : null}
+          </div>
+        ) : activeTab === "export" ? (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-slate-900">Download PDF</p>
+              <p className="text-xs text-slate-500">Save a PDF copy of the current invoice.</p>
+              <button
+                type="button"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                onClick={onDownloadPdf}
+              >
+                Download PDF
+              </button>
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-slate-900">Print</p>
+              <p className="text-xs text-slate-500">Open the print dialog for this invoice.</p>
+              <button
+                type="button"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                onClick={onPrint}
+              >
+                Print
+              </button>
+            </div>
           </div>
         ) : (
           activeContent
