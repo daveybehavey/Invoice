@@ -7,6 +7,9 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
       @media print {
+        @page {
+          margin: 16mm;
+        }
         body {
           background: #fff !important;
         }
@@ -18,7 +21,9 @@
           border: none !important;
           opacity: 1 !important;
           pointer-events: auto !important;
-          margin: 0 !important;
+          margin: 0 auto !important;
+          max-width: 900px !important;
+          width: 100% !important;
         }
       }
     </style>
