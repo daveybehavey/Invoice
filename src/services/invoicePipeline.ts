@@ -3,6 +3,8 @@ import { normalizeInvoice } from "../lib/invoiceMath.js";
 import {
   FinishedInvoice,
   FinishedInvoiceSchema,
+  InvoiceAuditSchema,
+  InvoiceEditResponseSchema,
   LaborPricingChoice,
   Material,
   StructuredInvoice,
@@ -13,17 +15,24 @@ import {
 type CreateInvoiceInput = {
   messyInput?: string;
   uploadedInvoiceText?: string;
+  lastUserMessage?: string;
 };
 
 type CreateInvoiceReadyResult = {
   kind: "invoice_ready";
   structuredInvoice: StructuredInvoice;
   invoice: FinishedInvoice;
+  openDecisions: OpenDecision[];
+  assumptions: string[];
+  unparsedLines: string[];
 };
 
 type CreateInvoiceLaborFollowUpResult = {
   kind: "labor_pricing_follow_up";
   structuredInvoice: StructuredInvoice;
+  openDecisions: OpenDecision[];
+  assumptions: string[];
+  unparsedLines: string[];
   followUp: {
     type: "labor_pricing";
     message: string;
@@ -43,6 +52,9 @@ type CreateInvoiceDiscountFollowUpResult = {
   kind: "discount_follow_up";
   structuredInvoice: StructuredInvoice;
   invoice: FinishedInvoice;
+  openDecisions: OpenDecision[];
+  assumptions: string[];
+  unparsedLines: string[];
   followUp: {
     type: "discount";
     message: string;
@@ -54,6 +66,24 @@ export type CreateInvoiceResult =
   | CreateInvoiceReadyResult
   | CreateInvoiceLaborFollowUpResult
   | CreateInvoiceDiscountFollowUpResult;
+
+type OpenDecision = {
+  id: string;
+  kind: "tax" | "billing";
+  prompt: string;
+  sourceSnippet?: string;
+  keywords?: string[];
+};
+
+type InvoiceAudit = {
+  assumptions: string[];
+  decisions: Array<{
+    kind: "tax" | "billing";
+    prompt: string;
+    sourceSnippet?: string;
+  }>;
+  unparsedLines: string[];
+};
 
 type RewordSingleLineResponse = {
   description: string;
@@ -69,13 +99,18 @@ type RewordFullInvoiceResponse = {
 
 export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise<CreateInvoiceResult> {
   const sourceText = buildSourceText(input);
-  const structuredInvoice = await parseMessyInputToStructuredInvoice(sourceText);
+  const parsedInvoice = await parseMessyInputToStructuredInvoice(sourceText);
+  const structuredInvoice = applyInlineLaborPricingFromText(parsedInvoice, sourceText);
   const unpricedLaborTasks = extractUnpricedLaborTasks(structuredInvoice);
 
   if (needsLaborPricingFollowUp(unpricedLaborTasks)) {
+    const unparsedLines = extractUnparsedLines(sourceText, structuredInvoice);
     return {
       kind: "labor_pricing_follow_up",
       structuredInvoice,
+      openDecisions: [],
+      assumptions: [],
+      unparsedLines,
       followUp: {
         type: "labor_pricing",
         message:
@@ -95,44 +130,80 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
 
   const invoice = await generateFinishedInvoice(structuredInvoice);
   const discountIntent = detectDiscountIntent(sourceText);
+  const audit = await auditInvoiceInterpretation(sourceText, structuredInvoice);
+  const openDecisions = audit
+    ? filterResolvedDecisions(
+        decisionsFromAudit(audit.decisions),
+        sourceText,
+        input.lastUserMessage
+      )
+    : detectOpenDecisionsFromText(sourceText, input.lastUserMessage);
+  const assumptions = audit?.assumptions ?? [];
+  const heuristicUnparsed = extractUnparsedLines(sourceText, structuredInvoice, openDecisions);
+  const auditUnparsed = audit?.unparsedLines ?? [];
+  const unparsedLines =
+    auditUnparsed.length > 0 ? mergeUnparsedLines(auditUnparsed, heuristicUnparsed) : heuristicUnparsed;
 
   if (discountIntent.kind === "apply") {
     return {
       kind: "invoice_ready",
       structuredInvoice,
-      invoice: applyDiscountToInvoice(invoice, discountIntent.amount, discountIntent.reason)
+      invoice: applyDiscountToInvoice(invoice, discountIntent.amount, discountIntent.reason),
+      openDecisions,
+      assumptions,
+      unparsedLines
     };
   }
 
   return {
     kind: "invoice_ready",
     structuredInvoice,
-    invoice
+    invoice,
+    openDecisions,
+    assumptions,
+    unparsedLines
   };
 }
 
 export async function continueInvoiceAfterLaborPricing(
   structuredInvoice: StructuredInvoice,
   laborPricing: LaborPricingChoice,
-  sourceText?: string
+  sourceText?: string,
+  lastUserMessage?: string
 ): Promise<CreateInvoiceReadyResult> {
   const parsedStructuredInvoice = StructuredInvoiceSchema.parse(structuredInvoice);
   const withLaborPricing = applyLaborPricing(parsedStructuredInvoice, laborPricing);
   const invoice = await generateFinishedInvoice(withLaborPricing);
-  const discountIntent = detectDiscountIntent(sourceText ?? withLaborPricing.notes ?? "");
+  const source = sourceText ?? withLaborPricing.notes ?? "";
+  const discountIntent = detectDiscountIntent(source);
+  const audit = await auditInvoiceInterpretation(source, withLaborPricing);
+  const openDecisions = audit
+    ? filterResolvedDecisions(decisionsFromAudit(audit.decisions), source, lastUserMessage)
+    : detectOpenDecisionsFromText(source, lastUserMessage);
+  const assumptions = audit?.assumptions ?? [];
+  const heuristicUnparsed = extractUnparsedLines(source, withLaborPricing, openDecisions);
+  const auditUnparsed = audit?.unparsedLines ?? [];
+  const unparsedLines =
+    auditUnparsed.length > 0 ? mergeUnparsedLines(auditUnparsed, heuristicUnparsed) : heuristicUnparsed;
 
   if (discountIntent.kind === "apply") {
     return {
       kind: "invoice_ready",
       structuredInvoice: withLaborPricing,
-      invoice: applyDiscountToInvoice(invoice, discountIntent.amount, discountIntent.reason)
+      invoice: applyDiscountToInvoice(invoice, discountIntent.amount, discountIntent.reason),
+      openDecisions,
+      assumptions,
+      unparsedLines
     };
   }
 
   return {
     kind: "invoice_ready",
     structuredInvoice: withLaborPricing,
-    invoice
+    invoice,
+    openDecisions,
+    assumptions,
+    unparsedLines
   };
 }
 
@@ -205,6 +276,34 @@ export async function rewordFullInvoice(invoice: FinishedInvoice, tone?: string)
   return normalizeInvoice(FinishedInvoiceSchema.parse(updatedInvoice));
 }
 
+export async function applyInvoiceEditInstruction(
+  invoice: FinishedInvoice,
+  instruction: string
+): Promise<{ invoice: FinishedInvoice; followUp?: string }> {
+  const taskPrompt = [
+    "You update an existing invoice based on a user instruction.",
+    "Return JSON with shape: {\"invoice\":{...},\"followUp\":\"optional string\"}.",
+    "Rules:",
+    "- Only change fields explicitly requested.",
+    "- Do not change invoiceNumber unless asked.",
+    "- Do not invent labor hours, rates, or amounts.",
+    "- If the instruction is ambiguous, leave the invoice unchanged and ask a follow-up question.",
+    "- Preserve currency, existing IDs, and totals will be recalculated.",
+    `User instruction: ${instruction}`,
+    `Current invoice JSON: ${JSON.stringify(invoice)}`
+  ].join("\n");
+
+  const modelResponse = await runJsonTask<{ invoice: FinishedInvoice; followUp?: string }>(taskPrompt);
+  const parsed = InvoiceEditResponseSchema.parse(modelResponse);
+  const normalizedInvoice = normalizeInvoice(FinishedInvoiceSchema.parse(parsed.invoice));
+  const followUp = parsed.followUp?.trim();
+
+  return {
+    invoice: normalizedInvoice,
+    followUp: followUp && followUp.length > 0 ? followUp : undefined
+  };
+}
+
 async function parseMessyInputToStructuredInvoice(sourceText: string): Promise<StructuredInvoice> {
   const taskPrompt = [
     "Parse messy invoice/job notes into a structured invoice model.",
@@ -233,12 +332,100 @@ async function parseMessyInputToStructuredInvoice(sourceText: string): Promise<S
     "- Group work sessions by date when a date exists.",
     "- Omit unknown numeric fields instead of guessing.",
     "- Never infer or invent labor hours, labor rate, or labor amount when they are missing.",
+    "- If the notes explicitly say a visit/task was free or not charged, set amount to 0 for that task.",
+    "- If the notes explicitly say a part/material was free or not charged, set amount to 0 for that material.",
     "- Use numbers (not strings) for numeric values.",
     `Source text:\n${sourceText}`
   ].join("\n");
 
   const modelResponse = await runJsonTask<StructuredInvoice>(taskPrompt);
   return StructuredInvoiceSchema.parse(modelResponse);
+}
+
+async function auditInvoiceInterpretation(
+  sourceText: string,
+  structuredInvoice: StructuredInvoice
+): Promise<InvoiceAudit | null> {
+  if (!sourceText.trim()) {
+    return null;
+  }
+  const taskPrompt = [
+    "You are auditing a parsed invoice against messy source notes.",
+    "Return JSON with this shape:",
+    "{",
+    "  \"assumptions\": [\"string\"],",
+    "  \"decisions\": [",
+    "    {\"kind\":\"tax|billing\", \"prompt\":\"string\", \"sourceSnippet\":\"optional\"}",
+    "  ],",
+    "  \"unparsedLines\": [\"string\"]",
+    "}",
+    "Rules:",
+    "- If the notes explicitly say no charge/free/didn't charge, do NOT create a decision; add an assumption instead.",
+    "- If something is ambiguous (e.g. maybe/up to you/sometimes/do what makes sense), add a decision.",
+    "- Only add a tax decision if the user explicitly asks to apply tax or gives a tax rate.",
+    "- If tax is mentioned ambiguously, add assumption: \"Tax assumed 0%\".",
+    "- If any source lines are not reflected in the structured invoice, list them in unparsedLines.",
+    "- Keep unparsedLines short (verbatim snippets) and only include relevant notes.",
+    "- Keep decisions short and specific to the item.",
+    "- Do not invent amounts or add new items.",
+    `Source text:\n${sourceText}`,
+    `Structured invoice JSON:\n${JSON.stringify(structuredInvoice)}`
+  ].join("\n");
+
+  try {
+    const modelResponse = await runJsonTask<InvoiceAudit>(taskPrompt);
+    return InvoiceAuditSchema.parse(modelResponse);
+  } catch (error) {
+    console.warn("Invoice audit failed", error);
+    return null;
+  }
+}
+
+function applyInlineLaborPricingFromText(
+  structuredInvoice: StructuredInvoice,
+  sourceText: string
+): StructuredInvoice {
+  if (!sourceText.trim()) {
+    return structuredInvoice;
+  }
+
+  const hoursThenRate = sourceText.match(
+    /(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\s*(?:@|at)\s*\$?\s*(\d+(?:\.\d{1,2})?)\s*(?:\/hr|per hour|hr)\b/i
+  );
+  const rateThenHours = sourceText.match(
+    /\$\s*(\d+(?:\.\d{1,2})?)\s*(?:\/hr|per hour|hr)\s*.*?(\d+(?:\.\d+)?)\s*hours?\b/i
+  );
+
+  if (!hoursThenRate && !rateThenHours) {
+    return structuredInvoice;
+  }
+
+  const hours = Number(hoursThenRate?.[1] ?? rateThenHours?.[2]);
+  const rate = Number(hoursThenRate?.[2] ?? rateThenHours?.[1]);
+  if (!Number.isFinite(hours) || !Number.isFinite(rate)) {
+    return structuredInvoice;
+  }
+
+  const nextStructuredInvoice: StructuredInvoice = {
+    ...structuredInvoice,
+    workSessions: structuredInvoice.workSessions.map((session) => ({
+      ...session,
+      tasks: session.tasks.map((task) => ({ ...task }))
+    })),
+    materials: structuredInvoice.materials.map((material) => ({ ...material }))
+  };
+
+  const laborTaskRefs = extractUnpricedLaborTasks(nextStructuredInvoice);
+  if (laborTaskRefs.length !== 1) {
+    return structuredInvoice;
+  }
+
+  const ref = laborTaskRefs[0];
+  ref.task.hours = roundToCents(hours);
+  ref.task.rate = roundToCents(rate);
+  ref.task.amount = roundToCents(hours * rate);
+
+  return nextStructuredInvoice;
 }
 
 async function generateFinishedInvoice(structuredInvoice: StructuredInvoice): Promise<FinishedInvoice> {
@@ -373,6 +560,444 @@ function isLaborTaskPriced(task: Task): boolean {
   }
 
   return typeof task.hours === "number" && task.hours > 0 && typeof task.rate === "number" && task.rate > 0;
+}
+
+const UNCERTAINTY_PHRASES = [
+  "up to you",
+  "if it makes sense",
+  "if that makes sense",
+  "i guess",
+  "i suppose",
+  "sometimes",
+  "maybe",
+  "if needed",
+  "as needed",
+  "if you think"
+];
+
+function detectOpenDecisionsFromText(sourceText: string, lastUserMessage?: string): OpenDecision[] {
+  if (!sourceText) {
+    return [];
+  }
+  const sentences = sourceText
+    .split(/[\n.!?]+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const decisions = new Map<string, { decision: OpenDecision; index: number }>();
+
+  sentences.forEach((sentence, index) => {
+    const lower = sentence.toLowerCase();
+    const hasUncertainty = UNCERTAINTY_PHRASES.some((phrase) => lower.includes(phrase));
+    if (!hasUncertainty) {
+      return;
+    }
+    const decision = buildDecisionFromSentence(sentence);
+    if (!decision) {
+      return;
+    }
+    const prompt = decision.prompt;
+    const id = `decision-${hashString(prompt)}`;
+    const entry = {
+      ...decision,
+      id,
+      sourceSnippet: sentence
+    };
+    const existing = decisions.get(id);
+    if (!existing || index >= existing.index) {
+      decisions.set(id, { decision: entry, index });
+    }
+  });
+
+  const resolutionCandidates = sentences.map((sentence, index) => ({
+    text: sentence,
+    index
+  }));
+  const trimmedLastMessage = lastUserMessage?.trim();
+  if (trimmedLastMessage) {
+    resolutionCandidates.push({ text: trimmedLastMessage, index: sentences.length + 1 });
+  }
+
+  if (!resolutionCandidates.length) {
+    return Array.from(decisions.values()).map((entry) => entry.decision);
+  }
+
+  const unresolved: OpenDecision[] = [];
+  decisions.forEach(({ decision, index }) => {
+    let resolved = false;
+    let lastReason: string | undefined;
+    let lastCandidateText: string | undefined;
+    for (const candidate of resolutionCandidates) {
+      if (candidate.index <= index) {
+        continue;
+      }
+      const result = evaluateDecisionResolution(decision, candidate.text);
+      lastReason = result.reason;
+      lastCandidateText = candidate.text;
+      if (result.resolved) {
+        resolved = true;
+        break;
+      }
+    }
+    if (!resolved) {
+      logDecisionUnresolved(
+        decision,
+        lastReason ?? "resolution_candidate_missing",
+        lastCandidateText ? normalizeDecisionText(lastCandidateText) : undefined
+      );
+      unresolved.push(decision);
+    }
+  });
+
+  return unresolved;
+}
+
+function decisionsFromAudit(
+  decisions: Array<{ kind: "tax" | "billing"; prompt: string; sourceSnippet?: string }>
+): OpenDecision[] {
+  return decisions.map((decision) => ({
+    id: `decision-${hashString(decision.prompt)}`,
+    kind: decision.kind,
+    prompt: decision.prompt,
+    sourceSnippet: decision.sourceSnippet,
+    keywords: extractKeywords(decision.sourceSnippet ?? decision.prompt)
+  }));
+}
+
+function filterResolvedDecisions(
+  decisions: OpenDecision[],
+  sourceText: string,
+  lastUserMessage?: string
+): OpenDecision[] {
+  const sentences = sourceText
+    .split(/[\n.!?]+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const candidates = [...sentences];
+  const trimmedLast = lastUserMessage?.trim();
+  if (trimmedLast) {
+    candidates.push(trimmedLast);
+  }
+
+  if (!candidates.length) {
+    return decisions;
+  }
+
+  return decisions.filter((decision) => {
+    for (const candidate of candidates) {
+      if (evaluateDecisionResolution(decision, candidate).resolved) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+function buildKeywordSet(
+  structuredInvoice: StructuredInvoice,
+  openDecisions: OpenDecision[] = []
+): Set<string> {
+  const keywords = new Set<string>();
+  const addKeywords = (text?: string) => {
+    if (!text) {
+      return;
+    }
+    extractKeywords(text).forEach((keyword) => keywords.add(keyword));
+  };
+
+  addKeywords(structuredInvoice.customerName ?? "");
+  addKeywords(structuredInvoice.notes ?? "");
+  structuredInvoice.workSessions.forEach((session) => {
+    session.tasks.forEach((task) => addKeywords(task.description));
+  });
+  structuredInvoice.materials.forEach((material) => addKeywords(material.description));
+  openDecisions.forEach((decision) => {
+    addKeywords(decision.prompt);
+    addKeywords(decision.sourceSnippet ?? "");
+  });
+
+  return keywords;
+}
+
+function extractUnparsedLines(
+  sourceText: string,
+  structuredInvoice: StructuredInvoice,
+  openDecisions: OpenDecision[] = []
+): string[] {
+  const text = sourceText.trim();
+  if (!text) {
+    return [];
+  }
+  const lines = text
+    .split(/\r?\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) {
+    return [];
+  }
+
+  const keywords = buildKeywordSet(structuredInvoice, openDecisions);
+  const ignoredLine = /^(parts?|materials?|labor|notes?|misc|line items?)\s*:?\s*$/i;
+  const seen = new Set<string>();
+  const unparsed: string[] = [];
+
+  for (const line of lines) {
+    if (ignoredLine.test(line)) {
+      continue;
+    }
+    const tokens = extractKeywords(line);
+    if (!tokens.length) {
+      continue;
+    }
+    const hasMatch = tokens.some((token) => keywords.has(token));
+    if (hasMatch) {
+      continue;
+    }
+    const normalized = normalizeDecisionText(line);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    unparsed.push(line);
+    if (unparsed.length >= 5) {
+      break;
+    }
+  }
+
+  return unparsed;
+}
+
+function mergeUnparsedLines(primary: string[], secondary: string[], maxItems = 5): string[] {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  const add = (line: string) => {
+    const normalized = normalizeDecisionText(line);
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    merged.push(line.trim());
+  };
+  primary.forEach(add);
+  secondary.forEach(add);
+  return merged.slice(0, maxItems);
+}
+
+function buildDecisionFromSentence(sentence: string): Omit<OpenDecision, "id" | "sourceSnippet"> | null {
+  const lower = sentence.toLowerCase();
+  if (lower.includes("tax")) {
+    const explicitTaxRequest =
+      /\b(apply|add|include|charge)\s+(?:sales\s+)?tax\b/i.test(lower) ||
+      /\btax\s*\?\b/i.test(lower) ||
+      /\bshould\s+i\s+.*tax\b/i.test(lower) ||
+      /\bwant\s+.*tax\b/i.test(lower) ||
+      /\b\d+(?:\.\d+)?%\s*tax\b/i.test(lower);
+    if (!explicitTaxRequest) {
+      return null;
+    }
+    return {
+      kind: "tax",
+      prompt: "Apply tax?",
+      keywords: ["tax"]
+    };
+  }
+  if (lower.includes("discount")) {
+    return {
+      kind: "billing",
+      prompt: "Apply a discount?",
+      keywords: ["discount"]
+    };
+  }
+  if (lower.includes("bill") || lower.includes("charge") || lower.includes("invoice")) {
+    const snippet = sentence.length > 120 ? `${sentence.slice(0, 117)}...` : sentence;
+    return {
+      kind: "billing",
+      prompt: `Bill this item? "${snippet}"`,
+      keywords: extractKeywords(sentence)
+    };
+  }
+  const trimmed = sentence.length > 120 ? `${sentence.slice(0, 117)}...` : sentence;
+  return {
+    kind: "billing",
+    prompt: `Confirm: ${trimmed}`,
+    keywords: extractKeywords(sentence)
+  };
+}
+
+function hashString(value: string): string {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function normalizeDecisionText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[’‘‛]/g, "'")
+    .replace(/[^a-z0-9\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function expandKeywordVariants(words: string[]): string[] {
+  const expanded = new Set<string>();
+  words.forEach((word) => {
+    if (!word) {
+      return;
+    }
+    expanded.add(word);
+    if (word.endsWith("s") && word.length > 4) {
+      expanded.add(word.slice(0, -1));
+    }
+  });
+  return Array.from(expanded);
+}
+
+function logDecisionUnresolved(decision: OpenDecision, reason: string, resolutionText?: string) {
+  console.log("[decision:unresolved]", {
+    id: decision.id,
+    kind: decision.kind,
+    prompt: decision.prompt,
+    reason,
+    resolutionText: resolutionText ?? ""
+  });
+}
+
+type DecisionResolutionResult = {
+  resolved: boolean;
+  reason?: string;
+};
+
+function evaluateDecisionResolution(decision: OpenDecision, resolutionText: string): DecisionResolutionResult {
+  const normalized = normalizeDecisionText(resolutionText);
+  if (!normalized) {
+    return { resolved: false, reason: "resolution_text_missing" };
+  }
+  const resolutionKeywords = new Set(expandKeywordVariants(extractKeywords(normalized)));
+
+  if (decision.kind === "tax") {
+    const taxYes =
+      /\b(apply|add|include|charge)\s+(?:sales\s+)?tax(?:es)?\b/i.test(normalized) ||
+      /\btax\s+at\b/i.test(normalized) ||
+      /\bwith\s+tax(?:es)?\b/i.test(normalized);
+    const taxNo =
+      /\b(no|without|exclude|skip)\s+(?:sales\s+)?tax(?:es)?\b/i.test(normalized) ||
+      /\bdo\s+not\s+apply\s+tax\b/i.test(normalized) ||
+      /\bdon(?:'|)t\s+apply\s+tax\b/i.test(normalized) ||
+      /\btax\s+exempt\b/i.test(normalized) ||
+      /\btax[-\s]*free\b/i.test(normalized);
+    if (taxYes || taxNo) {
+      return { resolved: true };
+    }
+    return { resolved: false, reason: "tax_intent_missing" };
+  }
+
+  const isDiscountDecision =
+    decision.prompt.toLowerCase().includes("discount") ||
+    (decision.keywords ?? []).some((keyword) => keyword === "discount");
+  if (isDiscountDecision) {
+    const discountYes =
+      /\b(apply|add|include)\s+discount\b/i.test(normalized) ||
+      /\bdiscount\s+it\b/i.test(normalized);
+    const discountNo =
+      /\b(no|without|exclude|skip)\s+discount\b/i.test(normalized) ||
+      /\bdo\s+not\s+discount\b/i.test(normalized) ||
+      /\bdon(?:'|)t\s+discount\b/i.test(normalized);
+    if (discountYes || discountNo) {
+      return { resolved: true };
+    }
+    return { resolved: false, reason: "discount_intent_missing" };
+  }
+
+  const billingNo =
+    /\bno\s+charge\b/i.test(normalized) ||
+    /\bdon(?:'|)t\s+bill\b/i.test(normalized) ||
+    /\bdo\s+not\s+bill\b/i.test(normalized) ||
+    /\bnot\s+billed\b/i.test(normalized) ||
+    /\bwaive\b/i.test(normalized) ||
+    /\bfree\b/i.test(normalized) ||
+    /\bincluded\s+in\s+flat\b/i.test(normalized) ||
+    /\bno\s+bill\b/i.test(normalized);
+  const billingYes =
+    !billingNo &&
+    (/\b(bill|charge|invoice|include)\b/i.test(normalized) ||
+      /\badd\b/i.test(normalized));
+
+  if (!billingYes && !billingNo) {
+    return { resolved: false, reason: "billing_intent_missing" };
+  }
+
+  const keywords = decision.keywords ?? [];
+  const promptKeywords = extractKeywords(decision.prompt ?? "");
+  const contextKeywords = expandKeywordVariants(Array.from(new Set([...keywords, ...promptKeywords])));
+
+  const hasContextOverlap =
+    contextKeywords.length > 0 &&
+    contextKeywords.some((keyword) => resolutionKeywords.has(keyword) || normalized.includes(keyword));
+
+  if (hasContextOverlap) {
+    return { resolved: true };
+  }
+
+  const refersToItem = /\b(this|that|it|them|those|these)\b/i.test(normalized);
+  const hasSnippet = /\".+\"/.test(decision.prompt);
+  if (refersToItem && hasSnippet) {
+    return { resolved: true };
+  }
+
+  if (contextKeywords.length === 0) {
+    return { resolved: true };
+  }
+
+  return { resolved: false, reason: "billing_intent_missing_context" };
+}
+
+function isDecisionResolved(
+  decision: OpenDecision,
+  resolutionText: string,
+  options: { log?: boolean } = {}
+): boolean {
+  const result = evaluateDecisionResolution(decision, resolutionText);
+  if (!result.resolved && options.log) {
+    logDecisionUnresolved(decision, result.reason ?? "resolution_mismatch", normalizeDecisionText(resolutionText));
+  }
+  return result.resolved;
+}
+
+function extractKeywords(sentence: string): string[] {
+  const stopWords = new Set([
+    "this",
+    "that",
+    "with",
+    "from",
+    "into",
+    "your",
+    "their",
+    "them",
+    "they",
+    "about",
+    "maybe",
+    "guess",
+    "sometimes",
+    "should",
+    "could",
+    "would",
+    "might",
+    "make",
+    "makes",
+    "sense",
+    "just",
+    "also",
+    "like",
+    "kind",
+    "sort"
+  ]);
+  return sentence
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length >= 4 && !stopWords.has(word));
 }
 
 type DiscountIntent =

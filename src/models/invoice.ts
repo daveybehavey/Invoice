@@ -88,6 +88,18 @@ export const InvoiceLineItemSchema = z.object({
   sourceSessionDate: OptionalString
 });
 
+export const InvoiceDecisionSchema = z.object({
+  kind: z.enum(["tax", "billing"]),
+  prompt: z.string().min(1),
+  sourceSnippet: OptionalString
+});
+
+export const InvoiceAuditSchema = z.object({
+  assumptions: z.array(z.string()).default([]),
+  decisions: z.array(InvoiceDecisionSchema).default([]),
+  unparsedLines: z.array(z.string()).default([])
+});
+
 export const FinishedInvoiceSchema = z.object({
   invoiceNumber: OptionalString,
   issueDate: OptionalString,
@@ -115,6 +127,16 @@ export const FullInvoiceRewordRequestSchema = z.object({
   tone: OptionalString
 });
 
+export const InvoiceEditRequestSchema = z.object({
+  invoice: FinishedInvoiceSchema,
+  instruction: z.string().min(1)
+});
+
+export const InvoiceEditResponseSchema = z.object({
+  invoice: FinishedInvoiceSchema,
+  followUp: OptionalString
+});
+
 export const LaborPricingChoiceSchema = z.discriminatedUnion("billingType", [
   z.object({
     billingType: z.literal("hourly"),
@@ -130,7 +152,8 @@ export const LaborPricingChoiceSchema = z.discriminatedUnion("billingType", [
 export const LaborPricingFollowUpRequestSchema = z.object({
   structuredInvoice: StructuredInvoiceSchema,
   laborPricing: LaborPricingChoiceSchema,
-  sourceText: OptionalString
+  sourceText: OptionalString,
+  lastUserMessage: OptionalString
 });
 
 export const DiscountFollowUpRequestSchema = z.object({

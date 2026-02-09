@@ -77,6 +77,32 @@ test("asks labor follow-up when hours exist but labor rate is missing", async ()
   assert.equal(response.body.followUp.laborItems[0].hours, 8);
 });
 
+test("uses explicit hours and rate in text to avoid labor follow-up", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Jan 10",
+          tasks: [{ description: "Fixed faucet leak" }]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Fixed faucet leak (2 hours @ $80/hr)."
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  const laborLines = response.body.invoice.lineItems.filter((lineItem: { type: string }) => lineItem.type === "labor");
+  assert.equal(laborLines.length, 1);
+  assert.equal(laborLines[0].quantity, 2);
+  assert.equal(laborLines[0].unitPrice, 80);
+  assert.equal(laborLines[0].amount, 160);
+});
+
 test("does not ask labor follow-up for explicit no-charge labor", async () => {
   useMockResponses([
     {
@@ -97,6 +123,21 @@ test("does not ask labor follow-up for explicit no-charge labor", async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.needsFollowUp, false);
   assert.equal(response.body.invoice.total, 4);
+});
+
+test("returns unparsed lines when messy notes include unrelated items", async () => {
+  useMockResponses([structuredWithLaborPricing()]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput:
+      "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7.\nCustomer asked about painting the fence next month."
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  assert.ok(Array.isArray(response.body.unparsedLines));
+  const unparsedCombined = response.body.unparsedLines.join(" ").toLowerCase();
+  assert.ok(unparsedCombined.includes("painting") || unparsedCombined.includes("fence"));
 });
 
 test("does not silently assume labor hour splits when hourly input is incomplete", async () => {
@@ -226,6 +267,61 @@ test("discount endpoint can apply a manual discount to an existing invoice", asy
   assert.equal(second.body.needsFollowUp, false);
   assert.equal(second.body.invoice.discountAmount, 25);
   assert.equal(second.body.invoice.total, 172);
+});
+
+test("edit endpoint applies invoice updates from instruction", async () => {
+  useMockResponses([
+    {
+      invoice: {
+        invoiceNumber: "INV-200",
+        issueDate: "2026-02-05",
+        customerName: "Jamie Client",
+        currency: "USD",
+        lineItems: [
+          {
+            id: "line-1",
+            type: "labor",
+            description: "Repair work",
+            quantity: 2,
+            unitPrice: 80,
+            amount: 160
+          }
+        ],
+        notes: "Updated notes",
+        subtotal: 160,
+        total: 160,
+        balanceDue: 160
+      }
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/edit").send({
+    instruction: "Change the labor rate to $80/hr.",
+    invoice: {
+      invoiceNumber: "INV-200",
+      issueDate: "2026-02-05",
+      customerName: "Jamie Client",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line-1",
+          type: "labor",
+          description: "Repair work",
+          quantity: 2,
+          unitPrice: 90,
+          amount: 180
+        }
+      ],
+      notes: "Original notes",
+      subtotal: 180,
+      total: 180,
+      balanceDue: 180
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.invoice.lineItems[0].unitPrice, 80);
+  assert.equal(response.body.invoice.total, 160);
 });
 
 test("does not ask discount follow-up after labor pricing when discount amount is missing", async () => {

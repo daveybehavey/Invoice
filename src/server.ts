@@ -9,12 +9,14 @@ import {
   DiscountFollowUpRequestSchema,
   FinishedInvoiceSchema,
   FullInvoiceRewordRequestSchema,
+  InvoiceEditRequestSchema,
   LaborPricingFollowUpRequestSchema,
   SaveInvoiceRequestSchema,
   UpdateInvoiceStatusRequestSchema
 } from "./models/invoice.js";
 import {
   applyDiscountAfterFollowUp,
+  applyInvoiceEditInstruction,
   changeLineWording,
   continueInvoiceAfterLaborPricing,
   createInvoiceFromInput,
@@ -58,18 +60,23 @@ app.post(
     try {
       const messyInput = asOptionalString(req.body.messyInput);
       const uploadedInvoiceTextFromBody = asOptionalString(req.body.uploadedInvoiceText);
+      const lastUserMessage = asOptionalString(req.body.lastUserMessage);
       const uploadedInvoiceTextFromFile = req.file ? await extractUploadedInvoiceText(req.file) : undefined;
 
       const result = await createInvoiceFromInput({
         messyInput,
-        uploadedInvoiceText: uploadedInvoiceTextFromBody ?? uploadedInvoiceTextFromFile
+        uploadedInvoiceText: uploadedInvoiceTextFromBody ?? uploadedInvoiceTextFromFile,
+        lastUserMessage
       });
 
       if (result.kind === "labor_pricing_follow_up") {
         res.json({
           needsFollowUp: true,
           followUp: result.followUp,
-          structuredInvoice: result.structuredInvoice
+          structuredInvoice: result.structuredInvoice,
+          openDecisions: result.openDecisions,
+          assumptions: result.assumptions,
+          unparsedLines: result.unparsedLines
         });
         return;
       }
@@ -79,7 +86,10 @@ app.post(
           needsFollowUp: true,
           followUp: result.followUp,
           structuredInvoice: result.structuredInvoice,
-          invoice: result.invoice
+          invoice: result.invoice,
+          openDecisions: result.openDecisions,
+          assumptions: result.assumptions,
+          unparsedLines: result.unparsedLines
         });
         return;
       }
@@ -87,7 +97,10 @@ app.post(
       res.json({
         needsFollowUp: false,
         structuredInvoice: result.structuredInvoice,
-        invoice: result.invoice
+        invoice: result.invoice,
+        openDecisions: result.openDecisions,
+        assumptions: result.assumptions,
+        unparsedLines: result.unparsedLines
       });
     } catch (error) {
       next(error);
@@ -101,13 +114,17 @@ app.post("/api/invoices/from-input/labor-pricing", async (req: Request, res: Res
     const result = await continueInvoiceAfterLaborPricing(
       parsedRequest.structuredInvoice,
       parsedRequest.laborPricing,
-      parsedRequest.sourceText
+      parsedRequest.sourceText,
+      parsedRequest.lastUserMessage
     );
 
     res.json({
       needsFollowUp: false,
       structuredInvoice: result.structuredInvoice,
-      invoice: result.invoice
+      invoice: result.invoice,
+      openDecisions: result.openDecisions,
+      assumptions: result.assumptions,
+      unparsedLines: result.unparsedLines
     });
   } catch (error) {
     next(error);
@@ -136,6 +153,16 @@ app.post("/api/invoices/reword-line", async (req: Request, res: Response, next: 
 
     const updatedInvoice = await changeLineWording(invoice, parsedRequest.lineItemId, parsedRequest.tone);
     res.json({ invoice: updatedInvoice });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/invoices/edit", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = InvoiceEditRequestSchema.parse(req.body);
+    const result = await applyInvoiceEditInstruction(parsedRequest.invoice, parsedRequest.instruction);
+    res.json(result);
   } catch (error) {
     next(error);
   }
