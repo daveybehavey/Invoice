@@ -117,7 +117,9 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
       kind: "labor_pricing_follow_up",
       structuredInvoice: sanitizedInvoice,
       openDecisions: [],
-      assumptions: sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [],
+      assumptions: normalizeAssumptions(
+        sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : []
+      ),
       unparsedLines,
       followUp: {
         type: "labor_pricing",
@@ -148,16 +150,17 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
         input.lastUserMessage
       )
     : detectOpenDecisionsFromText(sourceText, input.lastUserMessage);
-  const assumptions = [
+  const assumptions = normalizeAssumptions([
     ...(audit?.assumptions ?? []),
     ...(sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [])
-  ];
+  ]);
   const heuristicUnparsed = extractUnparsedLines(sourceText, sanitizedInvoice, openDecisions);
   const auditUnparsed = audit?.unparsedLines ?? [];
   const unparsedLines =
     auditUnparsed.length > 0
       ? mergeUnparsedLines(sanitizedNotes.removedLines, mergeUnparsedLines(auditUnparsed, heuristicUnparsed))
       : mergeUnparsedLines(sanitizedNotes.removedLines, heuristicUnparsed);
+  const cleanedUnparsed = filterUnparsedLines(unparsedLines);
   const invoiceWithHolds = applyDecisionPricingHolds(invoice, openDecisions);
 
   if (discountIntent.kind === "apply") {
@@ -167,7 +170,7 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
       invoice: applyDiscountToInvoice(invoiceWithHolds, discountIntent.amount, discountIntent.reason),
       openDecisions,
       assumptions,
-      unparsedLines
+      unparsedLines: cleanedUnparsed
     };
   }
 
@@ -177,7 +180,7 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     invoice: invoiceWithHolds,
     openDecisions,
     assumptions,
-    unparsedLines
+    unparsedLines: cleanedUnparsed
   };
 }
 
@@ -203,16 +206,17 @@ export async function continueInvoiceAfterLaborPricing(
   const openDecisions = audit
     ? filterResolvedDecisions(mergeDecisions(auditDecisions, heuristicDecisions), source, lastUserMessage)
     : detectOpenDecisionsFromText(source, lastUserMessage);
-  const assumptions = [
+  const assumptions = normalizeAssumptions([
     ...(audit?.assumptions ?? []),
     ...(sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [])
-  ];
+  ]);
   const heuristicUnparsed = extractUnparsedLines(source, sanitizedInvoice, openDecisions);
   const auditUnparsed = audit?.unparsedLines ?? [];
   const unparsedLines =
     auditUnparsed.length > 0
       ? mergeUnparsedLines(sanitizedNotes.removedLines, mergeUnparsedLines(auditUnparsed, heuristicUnparsed))
       : mergeUnparsedLines(sanitizedNotes.removedLines, heuristicUnparsed);
+  const cleanedUnparsed = filterUnparsedLines(unparsedLines);
   const invoiceWithHolds = applyDecisionPricingHolds(invoice, openDecisions);
 
   if (discountIntent.kind === "apply") {
@@ -222,7 +226,7 @@ export async function continueInvoiceAfterLaborPricing(
       invoice: applyDiscountToInvoice(invoiceWithHolds, discountIntent.amount, discountIntent.reason),
       openDecisions,
       assumptions,
-      unparsedLines
+      unparsedLines: cleanedUnparsed
     };
   }
 
@@ -232,7 +236,7 @@ export async function continueInvoiceAfterLaborPricing(
     invoice: invoiceWithHolds,
     openDecisions,
     assumptions,
-    unparsedLines
+    unparsedLines: cleanedUnparsed
   };
 }
 
@@ -1053,6 +1057,17 @@ function mergeUnparsedLines(primary: string[], secondary: string[], maxItems = 5
   return merged.slice(0, maxItems);
 }
 
+function filterUnparsedLines(lines: string[]): string[] {
+  if (!lines.length) {
+    return [];
+  }
+  const skipPatterns = [
+    /\btax\b/i,
+    /\b(up to you|do what makes sense|not sure|unsure|maybe|if applicable|sometimes)\b/i
+  ];
+  return lines.filter((line) => !skipPatterns.some((pattern) => pattern.test(line)));
+}
+
 function buildDecisionFromSentence(sentence: string): Omit<OpenDecision, "id" | "sourceSnippet"> | null {
   const normalizedSentence = normalizeDecisionText(sentence);
   const lower = sentence.toLowerCase();
@@ -1100,6 +1115,42 @@ function buildDecisionFromSentence(sentence: string): Omit<OpenDecision, "id" | 
     prompt: `Confirm: ${trimmed}`,
     keywords: extractKeywords(sentence)
   };
+}
+
+function normalizeAssumptions(assumptions: string[]): string[] {
+  if (!assumptions.length) {
+    return [];
+  }
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  let hasTaxAssumption = false;
+
+  assumptions.forEach((assumption) => {
+    if (!assumption) {
+      return;
+    }
+    const normalizedText = normalizeDecisionText(assumption);
+    if (!normalizedText || seen.has(normalizedText)) {
+      return;
+    }
+    const isTaxAssumption =
+      normalizedText.includes("tax") &&
+      (normalizedText.includes("assum") || normalizedText.includes("0"));
+    if (isTaxAssumption) {
+      if (hasTaxAssumption) {
+        return;
+      }
+      hasTaxAssumption = true;
+      normalized.push("Tax assumed 0%.");
+      seen.add(normalizedText);
+      return;
+    }
+    seen.add(normalizedText);
+    normalized.push(assumption);
+  });
+
+  return normalized;
 }
 
 function hashString(value: string): string {
@@ -1327,8 +1378,11 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
   const hours = task.hours;
   const rate = task.rate;
   const amount = task.amount;
+  const hasAmount = typeof amount === "number";
+  const hasHours = typeof hours === "number";
+  const hasRate = typeof rate === "number";
 
-  if (typeof hours === "number" && typeof rate === "number") {
+  if (hasHours && hasRate && (rate > 0 || !hasAmount)) {
     return {
       type: "labor" as const,
       description: task.description,
@@ -1339,7 +1393,7 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
     };
   }
 
-  if (typeof amount === "number" && typeof hours === "number" && hours > 0) {
+  if (hasAmount && hasHours && hours > 0) {
     return {
       type: "labor" as const,
       description: task.description,
@@ -1350,7 +1404,7 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
     };
   }
 
-  if (typeof amount === "number" && typeof rate === "number" && rate > 0) {
+  if (hasAmount && hasRate && rate > 0) {
     return {
       type: "labor" as const,
       description: task.description,
@@ -1361,7 +1415,7 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
     };
   }
 
-  if (typeof amount === "number") {
+  if (hasAmount) {
     return {
       type: "labor" as const,
       description: task.description,
@@ -1372,7 +1426,7 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
     };
   }
 
-  if (typeof hours === "number" && typeof rate !== "number") {
+  if (hasHours && !hasRate) {
     return {
       type: "labor" as const,
       description: task.description,
@@ -1383,7 +1437,7 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
     };
   }
 
-  if (typeof rate === "number") {
+  if (hasRate) {
     return {
       type: "labor" as const,
       description: task.description,
