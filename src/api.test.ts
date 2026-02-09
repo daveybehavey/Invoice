@@ -140,6 +140,87 @@ test("returns unparsed lines when messy notes include unrelated items", async ()
   assert.ok(unparsedCombined.includes("painting") || unparsedCombined.includes("fence"));
 });
 
+test("creates decisions for ambiguous billable items even when audit is empty", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Feb 3",
+          tasks: [{ description: "Fixed leak", hours: 2, rate: 90, amount: 180 }]
+        }
+      ],
+      materials: []
+    },
+    { assumptions: [], decisions: [], unparsedLines: [] }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput:
+      "Feb 3 fixed leak 2h @ $90/hr. Tightened a cabinet hinge maybe — not sure if I should bill it."
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  assert.ok(Array.isArray(response.body.openDecisions));
+  const hasCabinetDecision = response.body.openDecisions.some((decision: { prompt: string }) =>
+    /cabinet/i.test(decision.prompt)
+  );
+  assert.ok(hasCabinetDecision);
+});
+
+test("moves internal reminder notes to unparsed lines", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Feb 3",
+          tasks: [{ description: "Fixed leak", hours: 2, rate: 90, amount: 180 }]
+        }
+      ],
+      materials: [],
+      notes: "Need to order a new drill next week."
+    },
+    { assumptions: [], decisions: [], unparsedLines: [] }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Feb 3 fixed leak 2h @ $90/hr. Need to order a new drill next week."
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  const notes = response.body.invoice?.notes ?? "";
+  assert.ok(!notes.toLowerCase().includes("drill"));
+  const unparsed = response.body.unparsedLines.join(" ").toLowerCase();
+  assert.ok(unparsed.includes("drill"));
+});
+
+test("treats ambiguous tax notes as assumptions not invoice notes", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Feb 3",
+          tasks: [{ description: "Fixed leak", hours: 2, rate: 90, amount: 180 }]
+        }
+      ],
+      materials: [],
+      notes: "Tax may apply at 5% if applicable."
+    },
+    { assumptions: [], decisions: [], unparsedLines: [] }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Feb 3 fixed leak 2h @ $90/hr. Sometimes I add 5% tax."
+  });
+
+  assert.equal(response.status, 200);
+  const notes = response.body.invoice?.notes ?? "";
+  assert.ok(!notes.toLowerCase().includes("tax may apply"));
+  const assumptions = (response.body.assumptions ?? []).join(" ").toLowerCase();
+  assert.ok(assumptions.includes("tax assumed"));
+});
+
 test("does not silently assume labor hour splits when hourly input is incomplete", async () => {
   useMockResponses([structuredWithoutLaborPricing()]);
 

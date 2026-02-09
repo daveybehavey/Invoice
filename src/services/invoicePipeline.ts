@@ -101,15 +101,23 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   const sourceText = buildSourceText(input);
   const parsedInvoice = await parseMessyInputToStructuredInvoice(sourceText);
   const structuredInvoice = applyInlineLaborPricingFromText(parsedInvoice, sourceText);
+  const sanitizedNotes = sanitizeStructuredNotes(structuredInvoice.notes);
+  const sanitizedInvoice: StructuredInvoice = {
+    ...structuredInvoice,
+    notes: sanitizedNotes.cleanedNotes
+  };
   const unpricedLaborTasks = extractUnpricedLaborTasks(structuredInvoice);
 
   if (needsLaborPricingFollowUp(unpricedLaborTasks)) {
-    const unparsedLines = extractUnparsedLines(sourceText, structuredInvoice);
+    const unparsedLines = mergeUnparsedLines(
+      sanitizedNotes.removedLines,
+      extractUnparsedLines(sourceText, sanitizedInvoice)
+    );
     return {
       kind: "labor_pricing_follow_up",
-      structuredInvoice,
+      structuredInvoice: sanitizedInvoice,
       openDecisions: [],
-      assumptions: [],
+      assumptions: sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [],
       unparsedLines,
       followUp: {
         type: "labor_pricing",
@@ -128,27 +136,35 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     };
   }
 
-  const invoice = await generateFinishedInvoice(structuredInvoice);
+  const invoice = await generateFinishedInvoice(sanitizedInvoice);
   const discountIntent = detectDiscountIntent(sourceText);
-  const audit = await auditInvoiceInterpretation(sourceText, structuredInvoice);
+  const audit = await auditInvoiceInterpretation(sourceText, sanitizedInvoice);
+  const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
+  const heuristicDecisions = audit ? extractAmbiguousBillingDecisions(sourceText) : [];
   const openDecisions = audit
     ? filterResolvedDecisions(
-        decisionsFromAudit(audit.decisions),
+        mergeDecisions(auditDecisions, heuristicDecisions),
         sourceText,
         input.lastUserMessage
       )
     : detectOpenDecisionsFromText(sourceText, input.lastUserMessage);
-  const assumptions = audit?.assumptions ?? [];
-  const heuristicUnparsed = extractUnparsedLines(sourceText, structuredInvoice, openDecisions);
+  const assumptions = [
+    ...(audit?.assumptions ?? []),
+    ...(sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [])
+  ];
+  const heuristicUnparsed = extractUnparsedLines(sourceText, sanitizedInvoice, openDecisions);
   const auditUnparsed = audit?.unparsedLines ?? [];
   const unparsedLines =
-    auditUnparsed.length > 0 ? mergeUnparsedLines(auditUnparsed, heuristicUnparsed) : heuristicUnparsed;
+    auditUnparsed.length > 0
+      ? mergeUnparsedLines(sanitizedNotes.removedLines, mergeUnparsedLines(auditUnparsed, heuristicUnparsed))
+      : mergeUnparsedLines(sanitizedNotes.removedLines, heuristicUnparsed);
+  const invoiceWithHolds = applyDecisionPricingHolds(invoice, openDecisions);
 
   if (discountIntent.kind === "apply") {
     return {
       kind: "invoice_ready",
-      structuredInvoice,
-      invoice: applyDiscountToInvoice(invoice, discountIntent.amount, discountIntent.reason),
+      structuredInvoice: sanitizedInvoice,
+      invoice: applyDiscountToInvoice(invoiceWithHolds, discountIntent.amount, discountIntent.reason),
       openDecisions,
       assumptions,
       unparsedLines
@@ -157,8 +173,8 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
 
   return {
     kind: "invoice_ready",
-    structuredInvoice,
-    invoice,
+    structuredInvoice: sanitizedInvoice,
+    invoice: invoiceWithHolds,
     openDecisions,
     assumptions,
     unparsedLines
@@ -173,24 +189,37 @@ export async function continueInvoiceAfterLaborPricing(
 ): Promise<CreateInvoiceReadyResult> {
   const parsedStructuredInvoice = StructuredInvoiceSchema.parse(structuredInvoice);
   const withLaborPricing = applyLaborPricing(parsedStructuredInvoice, laborPricing);
-  const invoice = await generateFinishedInvoice(withLaborPricing);
+  const sanitizedNotes = sanitizeStructuredNotes(withLaborPricing.notes);
+  const sanitizedInvoice: StructuredInvoice = {
+    ...withLaborPricing,
+    notes: sanitizedNotes.cleanedNotes
+  };
+  const invoice = await generateFinishedInvoice(sanitizedInvoice);
   const source = sourceText ?? withLaborPricing.notes ?? "";
   const discountIntent = detectDiscountIntent(source);
-  const audit = await auditInvoiceInterpretation(source, withLaborPricing);
+  const audit = await auditInvoiceInterpretation(source, sanitizedInvoice);
+  const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
+  const heuristicDecisions = audit ? extractAmbiguousBillingDecisions(source) : [];
   const openDecisions = audit
-    ? filterResolvedDecisions(decisionsFromAudit(audit.decisions), source, lastUserMessage)
+    ? filterResolvedDecisions(mergeDecisions(auditDecisions, heuristicDecisions), source, lastUserMessage)
     : detectOpenDecisionsFromText(source, lastUserMessage);
-  const assumptions = audit?.assumptions ?? [];
-  const heuristicUnparsed = extractUnparsedLines(source, withLaborPricing, openDecisions);
+  const assumptions = [
+    ...(audit?.assumptions ?? []),
+    ...(sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [])
+  ];
+  const heuristicUnparsed = extractUnparsedLines(source, sanitizedInvoice, openDecisions);
   const auditUnparsed = audit?.unparsedLines ?? [];
   const unparsedLines =
-    auditUnparsed.length > 0 ? mergeUnparsedLines(auditUnparsed, heuristicUnparsed) : heuristicUnparsed;
+    auditUnparsed.length > 0
+      ? mergeUnparsedLines(sanitizedNotes.removedLines, mergeUnparsedLines(auditUnparsed, heuristicUnparsed))
+      : mergeUnparsedLines(sanitizedNotes.removedLines, heuristicUnparsed);
+  const invoiceWithHolds = applyDecisionPricingHolds(invoice, openDecisions);
 
   if (discountIntent.kind === "apply") {
     return {
       kind: "invoice_ready",
-      structuredInvoice: withLaborPricing,
-      invoice: applyDiscountToInvoice(invoice, discountIntent.amount, discountIntent.reason),
+      structuredInvoice: sanitizedInvoice,
+      invoice: applyDiscountToInvoice(invoiceWithHolds, discountIntent.amount, discountIntent.reason),
       openDecisions,
       assumptions,
       unparsedLines
@@ -199,8 +228,8 @@ export async function continueInvoiceAfterLaborPricing(
 
   return {
     kind: "invoice_ready",
-    structuredInvoice: withLaborPricing,
-    invoice,
+    structuredInvoice: sanitizedInvoice,
+    invoice: invoiceWithHolds,
     openDecisions,
     assumptions,
     unparsedLines
@@ -668,28 +697,208 @@ function filterResolvedDecisions(
   sourceText: string,
   lastUserMessage?: string
 ): OpenDecision[] {
-  const sentences = sourceText
-    .split(/[\n.!?]+/)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean);
-  const candidates = [...sentences];
   const trimmedLast = lastUserMessage?.trim();
-  if (trimmedLast) {
-    candidates.push(trimmedLast);
-  }
-
-  if (!candidates.length) {
+  if (!trimmedLast) {
     return decisions;
   }
 
   return decisions.filter((decision) => {
-    for (const candidate of candidates) {
-      if (evaluateDecisionResolution(decision, candidate).resolved) {
-        return false;
-      }
-    }
-    return true;
+    return !evaluateDecisionResolution(decision, trimmedLast).resolved;
   });
+}
+
+function mergeDecisions(primary: OpenDecision[], secondary: OpenDecision[]): OpenDecision[] {
+  const merged = new Map<string, OpenDecision>();
+  primary.forEach((decision) => merged.set(decision.id, decision));
+
+  const getKeywords = (decision: OpenDecision) =>
+    new Set(decision.keywords ?? extractKeywords(decision.sourceSnippet ?? decision.prompt));
+
+  secondary.forEach((decision) => {
+    if (merged.has(decision.id)) {
+      return;
+    }
+    const secondaryKeywords = getKeywords(decision);
+    const hasOverlap = Array.from(merged.values()).some((existing) => {
+      const existingKeywords = getKeywords(existing);
+      let overlapCount = 0;
+      secondaryKeywords.forEach((keyword) => {
+        if (existingKeywords.has(keyword)) {
+          overlapCount += 1;
+        }
+      });
+      return overlapCount >= 2;
+    });
+    if (!hasOverlap) {
+      merged.set(decision.id, decision);
+    }
+  });
+
+  return Array.from(merged.values());
+}
+
+function extractAmbiguousBillingDecisions(sourceText: string): OpenDecision[] {
+  const sentences = sourceText
+    .split(/[\n.!?]+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  if (!sentences.length) {
+    return [];
+  }
+
+  const noChargeMarkers =
+    /\b(no charge|no-charge|didn't charge|did not charge|not charged|no cost|complimentary|free)\b/i;
+  const ambiguousMarkers =
+    /\b(maybe|might|not sure|unsure|up to you|do what makes sense|if you want|if needed|optional)\b/i;
+  const billingMarkers = /\b(bill|charge|invoice|include)\b/i;
+  const actionVerbs =
+    /\b(fixed|repair(?:ed)?|installed|replaced|tightened|adjusted|inspected|cleaned|patched|paint(?:ed)?|tuned|tweak(?:ed)?|designed|updated)\b/i;
+
+  const decisions: OpenDecision[] = [];
+  sentences.forEach((sentence) => {
+    const normalizedSentence = normalizeDecisionText(sentence);
+    if (noChargeMarkers.test(normalizedSentence)) {
+      return;
+    }
+    if (!ambiguousMarkers.test(sentence)) {
+      return;
+    }
+    if (sentence.toLowerCase().includes("tax")) {
+      return;
+    }
+    if (!billingMarkers.test(sentence) && !actionVerbs.test(sentence)) {
+      return;
+    }
+    const snippet = sentence.length > 120 ? `${sentence.slice(0, 117)}...` : sentence;
+    const prompt = `Bill this item? \"${snippet}\"`;
+    decisions.push({
+      id: `decision-${hashString(prompt)}`,
+      kind: "billing",
+      prompt,
+      sourceSnippet: snippet,
+      keywords: extractKeywords(sentence)
+    });
+  });
+
+  return decisions;
+}
+
+function sanitizeStructuredNotes(notes?: string): {
+  cleanedNotes?: string;
+  removedLines: string[];
+  taxAmbiguityFound: boolean;
+} {
+  if (!notes || !notes.trim()) {
+    return { cleanedNotes: notes, removedLines: [], taxAmbiguityFound: false };
+  }
+
+  const lines = notes
+    .split(/\r?\n+/)
+    .flatMap((line) => line.split(/(?<=[.!?])\s+/))
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const internalMarkers = [
+    /\bneed to\b/i,
+    /\border\b/i,
+    /\bnext week\b/i,
+    /\breminder\b/i,
+    /\bfollow up\b/i,
+    /\bcall\b/i,
+    /\bquote\b/i,
+    /\bestimate\b/i,
+    /\bdrill\b/i,
+    /\btool\b/i,
+    /\bpurchase\b/i,
+    /\bbuy\b/i,
+    /\bto do\b/i
+  ];
+  const decisionMarkers =
+    /\b(up to you|do what makes sense|if you want|optional|not sure|unsure|maybe|if needed|as needed)\b/i;
+  const taxAmbiguousMarkers =
+    /\b(sometimes|maybe|if applicable|not sure|do what makes sense|might|may apply|unless specified)\b/i;
+  const hasExplicitTax = (line: string) => {
+    if (taxAmbiguousMarkers.test(line)) {
+      return false;
+    }
+    return (
+      /\b(apply|add|include|charge)\s+(?:sales\s+)?tax\b/i.test(line) ||
+      /\btax\s+at\b/i.test(line) ||
+      /\bno\s+tax\b/i.test(line) ||
+      /\bwithout\s+tax\b/i.test(line) ||
+      /\btax[-\s]*exempt\b/i.test(line) ||
+      /\btax[-\s]*free\b/i.test(line) ||
+      /\b\d+(?:\.\d+)?%\s*tax\b/i.test(line)
+    );
+  };
+
+  const kept: string[] = [];
+  const removed: string[] = [];
+  let taxAmbiguityFound = false;
+
+  lines.forEach((line) => {
+    const isInternal = internalMarkers.some((marker) => marker.test(line));
+    const hasTax = /\btax\b/i.test(line);
+    const isAmbiguousTax = hasTax && taxAmbiguousMarkers.test(line) && !hasExplicitTax(line);
+    if (isAmbiguousTax) {
+      taxAmbiguityFound = true;
+    }
+    if (hasTax) {
+      return;
+    }
+    if (decisionMarkers.test(line)) {
+      return;
+    }
+    if (isInternal) {
+      removed.push(line);
+      return;
+    }
+    kept.push(line);
+  });
+
+  const cleanedNotes = kept.length ? kept.join("\n") : undefined;
+  return { cleanedNotes, removedLines: removed, taxAmbiguityFound };
+}
+
+function applyDecisionPricingHolds(
+  invoice: FinishedInvoice,
+  openDecisions: OpenDecision[]
+): FinishedInvoice {
+  const billingDecisions = openDecisions.filter((decision) => decision.kind === "billing");
+  if (billingDecisions.length === 0) {
+    return invoice;
+  }
+
+  const decisionKeywords = billingDecisions.map((decision) => ({
+    decision,
+    keywords: new Set(decision.keywords ?? extractKeywords(decision.sourceSnippet ?? decision.prompt))
+  }));
+
+  const nextInvoice: FinishedInvoice = {
+    ...invoice,
+    lineItems: invoice.lineItems.map((item) => {
+      const itemKeywords = new Set(extractKeywords(item.description));
+      const matchesDecision = decisionKeywords.some(({ keywords }) => {
+        let overlapCount = 0;
+        keywords.forEach((keyword) => {
+          if (itemKeywords.has(keyword)) {
+            overlapCount += 1;
+          }
+        });
+        return overlapCount >= 2;
+      });
+      if (!matchesDecision) {
+        return item;
+      }
+      return {
+        ...item,
+        unitPrice: 0,
+        amount: 0
+      };
+    })
+  };
+
+  return normalizeInvoice(FinishedInvoiceSchema.parse(nextInvoice));
 }
 
 function buildKeywordSet(
@@ -736,12 +945,74 @@ function extractUnparsedLines(
   }
 
   const keywords = buildKeywordSet(structuredInvoice, openDecisions);
-  const ignoredLine = /^(parts?|materials?|labor|notes?|misc|line items?)\s*:?\s*$/i;
+  const ignoredLine =
+    /^(parts?|materials?|labor|notes?|misc|line items?|messy job notes|uploaded invoice text)\s*:?\s*$/i;
+  const skipLine =
+    /\b(up to you|do what makes sense|not sure|unsure|maybe|if applicable|sometimes)\b/i;
+  const sessionDates = structuredInvoice.workSessions
+    .map((session) => session.date?.trim().toLowerCase())
+    .filter(Boolean);
+  const knownAmounts = new Set<string>();
+  const knownHours = new Set<string>();
+
+  const addAmount = (value?: number) => {
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    knownAmounts.add(Number(value).toFixed(2));
+  };
+
+  const addHours = (value?: number) => {
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    knownHours.add(Number(value).toFixed(2));
+  };
+
+  structuredInvoice.workSessions.forEach((session) => {
+    session.tasks.forEach((task) => {
+      addAmount(task.amount);
+      addAmount(task.rate);
+      addHours(task.hours);
+    });
+  });
+  structuredInvoice.materials.forEach((material) => {
+    addAmount(material.amount);
+    addAmount(material.unitCost);
+  });
   const seen = new Set<string>();
   const unparsed: string[] = [];
 
   for (const line of lines) {
+    const lowerLine = line.toLowerCase();
     if (ignoredLine.test(line)) {
+      continue;
+    }
+    if (skipLine.test(line) || /\btax\b/i.test(line)) {
+      continue;
+    }
+    if (sessionDates.some((date) => date && lowerLine.includes(date))) {
+      continue;
+    }
+    const dollarMatches = Array.from(line.matchAll(/\$\s*(\d+(?:\.\d+)?)/g)).map((match) =>
+      Number.parseFloat(match[1])
+    );
+    if (
+      dollarMatches.some((value) => Number.isFinite(value) && knownAmounts.has(value.toFixed(2)))
+    ) {
+      continue;
+    }
+    const hoursMatch = line.match(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b/i);
+    if (hoursMatch) {
+      const hoursValue = Number.parseFloat(hoursMatch[1]);
+      if (Number.isFinite(hoursValue) && knownHours.has(hoursValue.toFixed(2))) {
+        continue;
+      }
+    }
+    const rateMatches = Array.from(line.matchAll(/(\d+(?:\.\d+)?)\s*(?:\/hr|per hour|hr)\b/gi)).map(
+      (match) => Number.parseFloat(match[1])
+    );
+    if (rateMatches.some((value) => Number.isFinite(value) && knownAmounts.has(value.toFixed(2)))) {
       continue;
     }
     const tokens = extractKeywords(line);
@@ -783,7 +1054,15 @@ function mergeUnparsedLines(primary: string[], secondary: string[], maxItems = 5
 }
 
 function buildDecisionFromSentence(sentence: string): Omit<OpenDecision, "id" | "sourceSnippet"> | null {
+  const normalizedSentence = normalizeDecisionText(sentence);
   const lower = sentence.toLowerCase();
+  if (
+    /\b(no charge|no-charge|didn't charge|did not charge|not charged|no cost|complimentary|free)\b/i.test(
+      normalizedSentence
+    )
+  ) {
+    return null;
+  }
   if (lower.includes("tax")) {
     const explicitTaxRequest =
       /\b(apply|add|include|charge)\s+(?:sales\s+)?tax\b/i.test(lower) ||
