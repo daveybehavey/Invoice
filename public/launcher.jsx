@@ -2689,9 +2689,48 @@ function ManualInvoiceCanvas() {
   const draftStatusLabel = "Draft restored";
 
   const stylePresets = {
-    default: { label: "Default", textClass: "text-sm", sectionGap: "space-y-6" },
-    compact: { label: "Compact", textClass: "text-sm", sectionGap: "space-y-4" },
-    spacious: { label: "Spacious", textClass: "text-base", sectionGap: "space-y-8" }
+    default: {
+      label: "Classic",
+      textClass: "text-sm text-slate-800 font-['Manrope']",
+      sectionGap: "space-y-6",
+      shellClass: "border-slate-200 bg-white shadow-sm",
+      metaClass: "text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400",
+      titleClass: "text-3xl font-['Fraunces'] tracking-[0.12em] text-slate-900",
+      labelClass: "text-slate-700 font-semibold",
+      inputClass:
+        "rounded-lg border border-slate-200 px-3 py-2 text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200",
+      tableHeadClass: "text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500",
+      totalsMutedClass: "text-slate-600",
+      totalsStrongClass: "text-slate-900"
+    },
+    compact: {
+      label: "Minimal",
+      textClass: "text-[13px] text-slate-700 font-['Sora']",
+      sectionGap: "space-y-5",
+      shellClass: "border-slate-100 bg-white shadow-sm",
+      metaClass: "text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-400",
+      titleClass: "text-2xl font-semibold tracking-tight text-slate-900",
+      labelClass: "text-slate-600 font-medium",
+      inputClass:
+        "rounded-md border border-slate-200 px-3 py-2 text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-200",
+      tableHeadClass: "text-[10px] font-semibold uppercase tracking-[0.25em] text-slate-400",
+      totalsMutedClass: "text-slate-600",
+      totalsStrongClass: "text-slate-900"
+    },
+    spacious: {
+      label: "Bold",
+      textClass: "text-sm text-slate-800 font-['Manrope']",
+      sectionGap: "space-y-7",
+      shellClass: "border-slate-200 bg-white shadow-md",
+      metaClass: "text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-500",
+      titleClass: "text-3xl font-['Archivo_Black'] tracking-[0.22em] text-slate-900",
+      labelClass: "text-slate-800 font-semibold",
+      inputClass:
+        "rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-200",
+      tableHeadClass: "text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500",
+      totalsMutedClass: "text-slate-600",
+      totalsStrongClass: "text-slate-900"
+    }
   };
   const activePreset = stylePresets[stylePreset] ?? stylePresets.default;
 
@@ -2931,9 +2970,11 @@ function ManualInvoiceCanvas() {
             &larr; Back
           </button>
         </div>
-        <div className={`printable-invoice w-full rounded-2xl border border-slate-200 bg-white p-6 shadow-sm ${invoiceInteractionClass}`}>
+        <div
+          className={`printable-invoice w-full rounded-2xl border p-6 ${activePreset.shellClass} ${invoiceInteractionClass}`}
+        >
           <div className={activePreset.sectionGap}>
-            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate-400">
+            <div className={`flex items-center justify-between ${activePreset.metaClass}`}>
               <span>Invoice Document</span>
               <span className="flex items-center gap-2">
                 {draftStatus ? <span className="text-xs text-slate-400">{draftStatus}</span> : null}
@@ -2970,22 +3011,22 @@ function ManualInvoiceCanvas() {
                   />
                 </div>
               ) : null}
-              <h1 className="text-2xl font-semibold text-slate-900">INVOICE</h1>
+              <h1 className={activePreset.titleClass}>INVOICE</h1>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <label className={`${activePreset.textClass} font-semibold text-slate-700`}>
+                <label className={`${activePreset.textClass} ${activePreset.labelClass}`}>
                   Invoice #
                   <input
                     type="text"
-                    className={`mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
+                    className={`mt-2 w-full ${activePreset.inputClass} ${activePreset.textClass}`}
                     value={invoiceNumber}
                     onChange={(event) => setInvoiceNumber(event.target.value)}
                   />
                 </label>
-                <label className={`${activePreset.textClass} font-semibold text-slate-700`}>
+                <label className={`${activePreset.textClass} ${activePreset.labelClass}`}>
                   Date
                   <input
                     type="date"
-                    className={`mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
+                    className={`mt-2 w-full ${activePreset.inputClass} ${activePreset.textClass}`}
                     value={invoiceDate}
                     onChange={(event) => setInvoiceDate(event.target.value)}
                   />
@@ -2995,20 +3036,20 @@ function ManualInvoiceCanvas() {
 
             <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <p className={`${activePreset.textClass} font-semibold text-slate-700`}>From</p>
+                <p className={`${activePreset.textClass} ${activePreset.labelClass}`}>From</p>
                 <textarea
                   rows={3}
-                  className={`w-full resize-none rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
+                  className={`w-full resize-none ${activePreset.inputClass} ${activePreset.textClass}`}
                   placeholder="Your Name / Company"
                   value={fromDetails}
                   onChange={(event) => setFromDetails(event.target.value)}
                 />
               </div>
               <div className="space-y-2">
-                <p className={`${activePreset.textClass} font-semibold text-slate-700`}>Bill To</p>
+                <p className={`${activePreset.textClass} ${activePreset.labelClass}`}>Bill To</p>
                 <textarea
                   rows={3}
-                  className={`w-full resize-none rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
+                  className={`w-full resize-none ${activePreset.inputClass} ${activePreset.textClass}`}
                   placeholder="Client Name"
                   value={billToDetails}
                   onChange={(event) => setBillToDetails(event.target.value)}
@@ -3019,7 +3060,7 @@ function ManualInvoiceCanvas() {
             <section className="space-y-3">
               <div className="overflow-x-auto">
                 <table className={`min-w-full text-left ${activePreset.textClass}`}>
-                  <thead className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <thead className={activePreset.tableHeadClass}>
                     <tr>
                       <th className="border-b border-slate-200 pb-2 pr-3">Description</th>
                       <th className="border-b border-slate-200 pb-2 pr-3">Qty</th>
@@ -3033,7 +3074,7 @@ function ManualInvoiceCanvas() {
                         <td className="py-3 pr-3 align-top">
                           <input
                             type="text"
-                            className={`w-full rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
+                            className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
                             placeholder="Description"
                             value={item.description}
                             onChange={(event) =>
@@ -3044,7 +3085,7 @@ function ManualInvoiceCanvas() {
                         <td className="py-3 pr-3 align-top">
                           <input
                             type="number"
-                            className={`w-full rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
+                            className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
                             placeholder="0"
                             value={item.qty}
                             onChange={(event) =>
@@ -3055,7 +3096,7 @@ function ManualInvoiceCanvas() {
                         <td className="py-3 pr-3 align-top">
                           <input
                             type="number"
-                            className={`w-full rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
+                            className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
                             placeholder="$0"
                             value={item.rate}
                             onChange={(event) =>
@@ -3086,11 +3127,11 @@ function ManualInvoiceCanvas() {
 
             <section className="flex justify-end">
               <div className={`w-full max-w-xs space-y-2 ${activePreset.textClass}`}>
-                <div className="flex justify-between text-slate-600">
+                <div className={`flex justify-between ${activePreset.totalsMutedClass}`}>
                   <span>Subtotal</span>
                   <span>{formatMoney(subtotal)}</span>
                 </div>
-                <div className="flex justify-between text-slate-600">
+                <div className={`flex justify-between ${activePreset.totalsMutedClass}`}>
                   <span className="flex items-center gap-2">
                     Tax
                     <input
@@ -3103,7 +3144,7 @@ function ManualInvoiceCanvas() {
                   </span>
                   <span>{formatMoney(taxAmount)}</span>
                 </div>
-                <div className="flex justify-between font-semibold text-slate-900">
+                <div className={`flex justify-between font-semibold ${activePreset.totalsStrongClass}`}>
                   <span>Total</span>
                   <span>{formatMoney(total)}</span>
                 </div>
@@ -3111,10 +3152,10 @@ function ManualInvoiceCanvas() {
             </section>
 
             <section className="space-y-2">
-              <p className={`${activePreset.textClass} font-semibold text-slate-700`}>Notes / Terms</p>
+              <p className={`${activePreset.textClass} ${activePreset.labelClass}`}>Notes / Terms</p>
               <textarea
                 rows={4}
-                className={`w-full resize-none rounded-lg border border-slate-200 px-3 py-2 ${activePreset.textClass} text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200`}
+                className={`w-full resize-none ${activePreset.inputClass} ${activePreset.textClass}`}
                 placeholder="Thank you for your business"
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
@@ -3208,9 +3249,9 @@ function InspectorPanel({
     { id: "export", label: "Export", content: "Export options coming soon" }
   ];
   const styleOptions = [
-    { id: "default", label: "Default" },
-    { id: "compact", label: "Compact" },
-    { id: "spacious", label: "Spacious" }
+    { id: "default", label: "Classic" },
+    { id: "compact", label: "Minimal" },
+    { id: "spacious", label: "Bold" }
   ];
   const toneOptions = ["Formal", "Neutral", "Friendly"];
 
