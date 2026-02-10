@@ -992,6 +992,18 @@ function AIIntake() {
     }
   };
 
+  const handleManualDeepAudit = () => {
+    const transcript = lastTranscriptRef.current ?? "";
+    if (!structuredInvoice || !transcript.trim()) {
+      return;
+    }
+    runDeepAudit({
+      structuredInvoice,
+      sourceText: transcript,
+      decisionSignature: openDecisionSignatureRef.current ?? ""
+    });
+  };
+
   const maybeRunDeepAudit = ({ auditStatus: nextAuditStatus, transcript, structuredInvoice, decisionSignature }) => {
     if (!shouldRunDeepAudit(nextAuditStatus, transcript)) {
       return;
@@ -2233,6 +2245,21 @@ function AIIntake() {
                 ) : null}
                 {auditStatus === "failed" ? (
                   <p className="mt-1 text-xs text-amber-600">Deep check failed — continuing with current snapshot.</p>
+                ) : null}
+                {(auditStatus === "timed_out" || auditStatus === "failed") ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                      onClick={handleManualDeepAudit}
+                      disabled={auditStatus === "running" || !structuredInvoice}
+                    >
+                      Run deep check
+                    </button>
+                    <span className="text-xs text-slate-400">
+                      Re-check for missed decisions or notes.
+                    </span>
+                  </div>
                 ) : null}
                 {hasReviewCard && assumptionsCollapsed ? (
                   <p className="mt-2 text-xs text-slate-500">
