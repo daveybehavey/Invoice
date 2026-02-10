@@ -244,6 +244,14 @@ function AIIntake() {
   const confirmationKeywords = ["yes", "yep", "correct", "looks good", "sounds good", "confirm"];
   const rejectionKeywords = ["no", "not correct", "wrong", "incorrect", "needs change"];
   const hasReviewCard = messages.some((message) => message.kind === "review");
+  const reviewMessageId = hasReviewCard
+    ? [...messages].reverse().find((message) => message.kind === "review")?.id ?? null
+    : null;
+  const visibleMessages = hasReviewCard
+    ? messages.filter(
+        (message) => message.kind === "timeout" || message.id === reviewMessageId
+      )
+    : messages;
 
   const formatMoney = (value) =>
     Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
@@ -1927,7 +1935,7 @@ function AIIntake() {
         <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-28">
           <div className="flex-1 overflow-y-auto pb-4 pt-6">
             <div className="space-y-4">
-              {messages.map((message) => {
+              {visibleMessages.map((message) => {
                 if (message.kind === "timeout" && message.payload) {
                   const isLaborTimeout = message.payload.context === "labor";
                   const canRetryShort =
@@ -2118,8 +2126,8 @@ function AIIntake() {
                               Decisions pending
                             </p>
                             <p className="mt-1 text-sm text-amber-900">
-                              Resolve {payload.decisions.length} item{payload.decisions.length > 1 ? "s" : ""} in
-                              the Assumptions panel below.
+                              Resolve {payload.decisions.length} item{payload.decisions.length > 1 ? "s" : ""} below
+                              to generate the invoice.
                             </p>
                             <button
                               type="button"
@@ -2227,7 +2235,7 @@ function AIIntake() {
               <section className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-semibold text-slate-900">Assumptions</h2>
+                    <h2 className="text-sm font-semibold text-slate-900">Review</h2>
                     {openDecisionCount > 0 ? (
                       <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
                         {openDecisionCount} decision{openDecisionCount > 1 ? "s" : ""} open
@@ -2284,7 +2292,7 @@ function AIIntake() {
                 ) : null}
                 {hasReviewCard && assumptionsCollapsed ? (
                   <p className="mt-2 text-xs text-slate-500">
-                    Details hidden — review card above has the latest snapshot.
+                    Details hidden — the review card above has the latest snapshot.
                   </p>
                 ) : null}
                 {intakePhase === "ready_to_summarize" ? (
