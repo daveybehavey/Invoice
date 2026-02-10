@@ -824,7 +824,7 @@ function applyExplicitServicePeriod(
 const CHUNK_THRESHOLD = 4000;
 const CHUNK_MAX_CHARS = 2000;
 const CHUNK_LIMIT = 4;
-const AUDIT_TIMEOUT_MS = 5000;
+const AUDIT_TIMEOUT_MS = 2500;
 
 function shouldChunkInput(messyInput?: string, uploadedInvoiceText?: string): boolean {
   if (!messyInput || uploadedInvoiceText) {
