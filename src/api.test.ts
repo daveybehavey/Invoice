@@ -214,9 +214,67 @@ test(
     const hasCabinetDecision = decisions.some((decision: { prompt: string }) =>
       /cabinet/i.test(decision.prompt)
     );
-    assert.ok(hasCabinetDecision);
+  assert.ok(hasCabinetDecision);
   }
 );
+
+test(
+  "audit timeout reports auditStatus timed_out",
+  { timeout: 8000 },
+  async () => {
+    setJsonTaskRunnerForTests(async <T>(prompt: string): Promise<T> => {
+      if (prompt.includes("Parse messy invoice/job notes")) {
+        return structuredWithLaborPricing() as T;
+      }
+      if (prompt.includes("You are auditing a parsed invoice")) {
+        return await new Promise<T>(() => {});
+      }
+      throw new Error("Unexpected prompt");
+    });
+
+    const response = await request(app).post("/api/invoices/from-input").send({
+      messyInput: "Feb 3 fixed leak 2h @ $90/hr. Tightened a cabinet hinge maybe."
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.auditStatus, "timed_out");
+  }
+);
+
+test("audit endpoint returns decisions and assumptions", async () => {
+  setJsonTaskRunnerForTests(async <T>(prompt: string): Promise<T> => {
+    if (prompt.includes("You are auditing a parsed invoice")) {
+      return {
+        assumptions: ["Tax assumed 0%."],
+        decisions: [
+          {
+            kind: "billing",
+            prompt: "Bill this item? \"Tightened cabinet hinge\"",
+            sourceSnippet: "Tightened cabinet hinge maybe"
+          }
+        ],
+        unparsedLines: ["Customer asked about fence painting"]
+      } as T;
+    }
+    throw new Error("Unexpected prompt");
+  });
+
+  const response = await request(app).post("/api/invoices/audit").send({
+    sourceText: "Feb 3 fixed leak 2h @ $90/hr. Tightened cabinet hinge maybe.",
+    structuredInvoice: structuredWithLaborPricing()
+  });
+
+  assert.equal(response.status, 200);
+  assert.ok(Array.isArray(response.body.openDecisions));
+  assert.ok(response.body.openDecisions.length >= 1);
+  assert.ok(
+    response.body.openDecisions.some((decision: { prompt: string }) => /cabinet/i.test(decision.prompt))
+  );
+  const assumptions = response.body.assumptions ?? [];
+  assert.ok(assumptions.some((item: string) => item.toLowerCase().includes("tax assumed")));
+  const unparsed = response.body.unparsedLines ?? [];
+  assert.ok(unparsed.some((item: string) => item.toLowerCase().includes("fence")));
+});
 
 test("chunks long messy input and merges structured invoices", async () => {
   useMockResponses([

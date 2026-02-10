@@ -207,6 +207,7 @@ function AIIntake() {
   const [openDecisions, setOpenDecisions] = useState([]);
   const [assumptions, setAssumptions] = useState([]);
   const [unparsedLines, setUnparsedLines] = useState([]);
+  const [auditStatus, setAuditStatus] = useState(null);
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
   const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(false);
   const requestIdRef = useRef(0);
@@ -226,6 +227,10 @@ function AIIntake() {
   const lastUserMessageRef = useRef("");
   const lastIntakeModeRef = useRef("full");
   const hasAutoCollapsedRef = useRef(false);
+  const auditRequestIdRef = useRef(0);
+  const openDecisionsRef = useRef([]);
+  const assumptionsRef = useRef([]);
+  const unparsedLinesRef = useRef([]);
   const intakeComplete = intakePhase === "ready_to_generate";
   const confirmationKeywords = ["yes", "yep", "correct", "looks good", "sounds good", "confirm"];
   const rejectionKeywords = ["no", "not correct", "wrong", "incorrect", "needs change"];
@@ -246,6 +251,35 @@ function AIIntake() {
     normalizeSnippet(text)
       .split(" ")
       .filter((word) => word.length >= 4);
+
+  const mergeUniqueList = (current, incoming) => {
+    const seen = new Set(current.map((item) => normalizeSnippet(item)));
+    const merged = [...current];
+    incoming.forEach((item) => {
+      const normalized = normalizeSnippet(item);
+      if (!normalized || seen.has(normalized)) {
+        return;
+      }
+      seen.add(normalized);
+      merged.push(item);
+    });
+    return merged;
+  };
+
+  const mergeDecisionLists = (current, incoming) => {
+    const merged = new Map();
+    current.forEach((decision) => {
+      const key = decision.id ?? decision.prompt ?? JSON.stringify(decision);
+      merged.set(key, decision);
+    });
+    incoming.forEach((decision) => {
+      const key = decision.id ?? decision.prompt ?? JSON.stringify(decision);
+      if (!merged.has(key)) {
+        merged.set(key, decision);
+      }
+    });
+    return Array.from(merged.values());
+  };
 
   const buildTranscript = (nextMessages) =>
     nextMessages
@@ -632,6 +666,80 @@ function AIIntake() {
     appendAiMessage("Okay — canceled. You can trim the notes or try again.");
   };
 
+  const runDeepAudit = async ({ structuredInvoice, sourceText, decisionSignature }) => {
+    if (!structuredInvoice || !sourceText) {
+      return;
+    }
+    auditRequestIdRef.current += 1;
+    const auditRequestId = auditRequestIdRef.current;
+
+    try {
+      const response = await fetch("/api/invoices/audit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          structuredInvoice,
+          sourceText,
+          lastUserMessage: lastDecisionResolutionRef.current || undefined
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || "Audit failed.");
+      }
+      if (auditRequestId !== auditRequestIdRef.current) {
+        return;
+      }
+      if (summaryLockRef.current || intakePhaseRef.current !== "ready_to_summarize") {
+        return;
+      }
+      if (decisionSignature && decisionSignature !== openDecisionSignatureRef.current) {
+        return;
+      }
+
+      const currentDecisions = openDecisionsRef.current ?? [];
+      const currentAssumptions = assumptionsRef.current ?? [];
+      const currentUnparsed = unparsedLinesRef.current ?? [];
+      const incomingDecisions = Array.isArray(payload?.openDecisions) ? payload.openDecisions : [];
+      const incomingAssumptions = Array.isArray(payload?.assumptions) ? payload.assumptions : [];
+      const incomingUnparsed = Array.isArray(payload?.unparsedLines) ? payload.unparsedLines : [];
+
+      const mergedDecisions = mergeDecisionLists(currentDecisions, incomingDecisions);
+      const mergedAssumptions = mergeUniqueList(currentAssumptions, incomingAssumptions);
+      const mergedUnparsed = mergeUniqueList(currentUnparsed, incomingUnparsed);
+
+      const addedDecisions = mergedDecisions.length - currentDecisions.length;
+      const addedAssumptions = mergedAssumptions.length - currentAssumptions.length;
+      const addedUnparsed = mergedUnparsed.length - currentUnparsed.length;
+
+      if (addedDecisions || addedAssumptions || addedUnparsed) {
+        setOpenDecisions(mergedDecisions);
+        setAssumptions(mergedAssumptions);
+        setUnparsedLines(mergedUnparsed);
+        openDecisionSignatureRef.current = mergedDecisions
+          .map((decision) => decision.prompt)
+          .sort()
+          .join("|");
+        const updates = [];
+        if (addedDecisions) {
+          updates.push(`${addedDecisions} new decision${addedDecisions > 1 ? "s" : ""}`);
+        }
+        if (addedUnparsed) {
+          updates.push(`${addedUnparsed} new note${addedUnparsed > 1 ? "s" : ""} not captured`);
+        }
+        if (addedAssumptions) {
+          updates.push(`${addedAssumptions} new assumption${addedAssumptions > 1 ? "s" : ""}`);
+        }
+        appendAiMessage(`Deep check complete — ${updates.join(", ")}.`);
+      }
+
+      setAuditStatus("completed");
+    } catch (error) {
+      console.log("[audit:error]", error);
+      setAuditStatus("failed");
+    }
+  };
+
   const quickReplies = (() => {
     if (intakePhase === "awaiting_follow_up" && followUp?.type === "labor_pricing") {
       const laborItems = followUp?.laborItems ?? [];
@@ -713,9 +821,11 @@ function AIIntake() {
     setOpenDecisions([]);
     setAssumptions([]);
     setUnparsedLines([]);
+    setAuditStatus(null);
     setSummaryUpdatedAt(null);
     openDecisionSignatureRef.current = "";
     lastDecisionResolutionRef.current = "";
+    auditRequestIdRef.current += 1;
   };
 
   useEffect(() => {
@@ -734,6 +844,18 @@ function AIIntake() {
     }
   }, [hasReviewCard]);
 
+  useEffect(() => {
+    openDecisionsRef.current = openDecisions;
+  }, [openDecisions]);
+
+  useEffect(() => {
+    assumptionsRef.current = assumptions;
+  }, [assumptions]);
+
+  useEffect(() => {
+    unparsedLinesRef.current = unparsedLines;
+  }, [unparsedLines]);
+
   const runIntakeRequest = async (nextMessages, lastUserMessage, options = {}) => {
     const transcript = buildTranscript(nextMessages);
     if (!transcript) {
@@ -749,6 +871,8 @@ function AIIntake() {
       dismissTimeoutMessage(timeoutMessageIdRef.current);
     }
     abortOngoingRequest();
+    auditRequestIdRef.current += 1;
+    setAuditStatus(null);
     requestIdRef.current += 1;
     const requestId = requestIdRef.current;
     const requestStartedAt = Date.now();
@@ -786,6 +910,8 @@ function AIIntake() {
       const nextOpenDecisions = Array.isArray(payload?.openDecisions) ? payload.openDecisions : [];
       const nextAssumptions = Array.isArray(payload?.assumptions) ? payload.assumptions : [];
       const nextUnparsedLines = Array.isArray(payload?.unparsedLines) ? payload.unparsedLines : [];
+      const nextAuditStatus = payload?.auditStatus ?? null;
+      setAuditStatus(nextAuditStatus);
       setOpenDecisions(nextOpenDecisions);
       setAssumptions(nextAssumptions);
       setUnparsedLines(nextUnparsedLines);
@@ -833,6 +959,13 @@ function AIIntake() {
               followUpMessage,
               buildReviewPayload(payload.invoice, nextOpenDecisions, nextUnparsedLines)
             );
+        if (nextAuditStatus === "timed_out" || nextAuditStatus === "skipped") {
+          runDeepAudit({
+            structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
+            sourceText: transcript,
+            decisionSignature
+          });
+        }
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
         console.log("[intake:response]", {
@@ -855,6 +988,13 @@ function AIIntake() {
           buildSummaryText(payload.invoice, [], nextUnparsedLines.length),
           buildReviewPayload(payload.invoice, [], nextUnparsedLines)
         );
+        if (nextAuditStatus === "timed_out" || nextAuditStatus === "skipped") {
+          runDeepAudit({
+            structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
+            sourceText: transcript,
+            decisionSignature: ""
+          });
+        }
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
         console.log("[intake:response]", {
@@ -901,10 +1041,13 @@ function AIIntake() {
       setIntakePhase("collecting");
       return;
     }
+    lastTranscriptRef.current = transcript ?? lastTranscriptRef.current;
     if (timeoutMessageIdRef.current) {
       dismissTimeoutMessage(timeoutMessageIdRef.current);
     }
     abortOngoingRequest();
+    auditRequestIdRef.current += 1;
+    setAuditStatus(null);
     requestIdRef.current += 1;
     const requestId = requestIdRef.current;
     const requestStartedAt = Date.now();
@@ -947,6 +1090,8 @@ function AIIntake() {
       const nextOpenDecisions = Array.isArray(payload?.openDecisions) ? payload.openDecisions : [];
       const nextAssumptions = Array.isArray(payload?.assumptions) ? payload.assumptions : [];
       const nextUnparsedLines = Array.isArray(payload?.unparsedLines) ? payload.unparsedLines : [];
+      const nextAuditStatus = payload?.auditStatus ?? null;
+      setAuditStatus(nextAuditStatus);
       setOpenDecisions(nextOpenDecisions);
       setAssumptions(nextAssumptions);
       setUnparsedLines(nextUnparsedLines);
@@ -969,6 +1114,13 @@ function AIIntake() {
               followUpMessage,
               buildReviewPayload(payload.invoice, nextOpenDecisions, nextUnparsedLines)
             );
+        if (nextAuditStatus === "timed_out" || nextAuditStatus === "skipped") {
+          runDeepAudit({
+            structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
+            sourceText: transcript ?? lastTranscriptRef.current,
+            decisionSignature
+          });
+        }
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
         console.log("[labor:response]", {
@@ -990,6 +1142,13 @@ function AIIntake() {
           buildSummaryText(payload.invoice, [], nextUnparsedLines.length),
           buildReviewPayload(payload.invoice, [], nextUnparsedLines)
         );
+        if (nextAuditStatus === "timed_out" || nextAuditStatus === "skipped") {
+          runDeepAudit({
+            structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
+            sourceText: transcript ?? lastTranscriptRef.current,
+            decisionSignature: ""
+          });
+        }
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
         console.log("[labor:response]", {

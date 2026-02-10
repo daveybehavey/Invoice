@@ -20,6 +20,12 @@ type CreateInvoiceInput = {
 };
 
 type ParseMode = "full" | "fast";
+type AuditStatus = "completed" | "timed_out" | "failed" | "skipped";
+
+type AuditOutcome = {
+  audit: InvoiceAudit | null;
+  status: AuditStatus;
+};
 
 type CreateInvoiceReadyResult = {
   kind: "invoice_ready";
@@ -28,6 +34,7 @@ type CreateInvoiceReadyResult = {
   openDecisions: OpenDecision[];
   assumptions: string[];
   unparsedLines: string[];
+  auditStatus?: AuditStatus;
 };
 
 type CreateInvoiceLaborFollowUpResult = {
@@ -36,6 +43,7 @@ type CreateInvoiceLaborFollowUpResult = {
   openDecisions: OpenDecision[];
   assumptions: string[];
   unparsedLines: string[];
+  auditStatus?: AuditStatus;
   followUp: {
     type: "labor_pricing";
     message: string;
@@ -58,6 +66,7 @@ type CreateInvoiceDiscountFollowUpResult = {
   openDecisions: OpenDecision[];
   assumptions: string[];
   unparsedLines: string[];
+  auditStatus?: AuditStatus;
   followUp: {
     type: "discount";
     message: string;
@@ -157,10 +166,11 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     ? invoice
     : { ...invoice, issueDate: undefined };
   const discountIntent = detectDiscountIntent(sourceText);
-  const audit =
+  const auditOutcome =
     parseMode === "fast"
-      ? null
+      ? { audit: null, status: "skipped" as const }
       : await auditInvoiceInterpretationWithTimeout(sourceText, sanitizedInvoice);
+  const audit = auditOutcome.audit;
   const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
   const heuristicDecisions = audit ? extractAmbiguousBillingDecisions(sourceText) : [];
   const openDecisions = audit
@@ -205,7 +215,8 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
       ),
       openDecisions: cleanedDecisions,
       assumptions: cleanedAssumptions,
-      unparsedLines: cleanedUnparsed
+      unparsedLines: cleanedUnparsed,
+      auditStatus: auditOutcome.status
     };
   }
 
@@ -215,7 +226,8 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     invoice: cleanedInvoice,
     openDecisions: cleanedDecisions,
     assumptions: cleanedAssumptions,
-    unparsedLines: cleanedUnparsed
+    unparsedLines: cleanedUnparsed,
+    auditStatus: auditOutcome.status
   };
 }
 
@@ -241,8 +253,11 @@ export async function continueInvoiceAfterLaborPricing(
     : { ...invoice, issueDate: undefined };
   const discountIntent = detectDiscountIntent(source);
   const parseMode: ParseMode = mode ?? "full";
-  const audit =
-    parseMode === "fast" ? null : await auditInvoiceInterpretationWithTimeout(source, sanitizedInvoice);
+  const auditOutcome =
+    parseMode === "fast"
+      ? { audit: null, status: "skipped" as const }
+      : await auditInvoiceInterpretationWithTimeout(source, sanitizedInvoice);
+  const audit = auditOutcome.audit;
   const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
   const heuristicDecisions = audit ? extractAmbiguousBillingDecisions(source) : [];
   const openDecisions = audit
@@ -287,7 +302,8 @@ export async function continueInvoiceAfterLaborPricing(
       ),
       openDecisions: cleanedDecisions,
       assumptions: cleanedAssumptions,
-      unparsedLines: cleanedUnparsed
+      unparsedLines: cleanedUnparsed,
+      auditStatus: auditOutcome.status
     };
   }
 
@@ -297,7 +313,8 @@ export async function continueInvoiceAfterLaborPricing(
     invoice: cleanedInvoice,
     openDecisions: cleanedDecisions,
     assumptions: cleanedAssumptions,
-    unparsedLines: cleanedUnparsed
+    unparsedLines: cleanedUnparsed,
+    auditStatus: auditOutcome.status
   };
 }
 
@@ -480,28 +497,77 @@ async function auditInvoiceInterpretationWithTimeout(
   sourceText: string,
   structuredInvoice: StructuredInvoice,
   timeoutMs: number = AUDIT_TIMEOUT_MS
-): Promise<InvoiceAudit | null> {
+): Promise<AuditOutcome> {
   if (!sourceText.trim()) {
-    return null;
+    return { audit: null, status: "skipped" };
   }
 
   return await new Promise((resolve) => {
     const timeoutId = setTimeout(() => {
       console.warn("[audit:timeout]", { timeoutMs });
-      resolve(null);
+      resolve({ audit: null, status: "timed_out" });
     }, timeoutMs);
 
     auditInvoiceInterpretation(sourceText, structuredInvoice)
       .then((result) => {
         clearTimeout(timeoutId);
-        resolve(result);
+        resolve({ audit: result, status: "completed" });
       })
       .catch((error) => {
         clearTimeout(timeoutId);
         console.warn("Invoice audit failed", error);
-        resolve(null);
+        resolve({ audit: null, status: "failed" });
       });
   });
+}
+
+export async function runInvoiceAuditOverlay(input: {
+  sourceText: string;
+  structuredInvoice: StructuredInvoice;
+  lastUserMessage?: string;
+}): Promise<{
+  openDecisions: OpenDecision[];
+  assumptions: string[];
+  unparsedLines: string[];
+}> {
+  const sourceText = input.sourceText ?? "";
+  const parsedInvoice = StructuredInvoiceSchema.parse(input.structuredInvoice);
+  const sanitizedNotes = sanitizeStructuredNotes(parsedInvoice.notes);
+  const taxDirective = detectExplicitTaxDirective(sourceText);
+  const audit = await auditInvoiceInterpretation(sourceText, parsedInvoice);
+  if (!audit) {
+    return {
+      openDecisions: [],
+      assumptions: normalizeAssumptions(
+        sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [],
+        taxDirective
+      ),
+      unparsedLines: filterUnparsedLines(sanitizedNotes.removedLines)
+    };
+  }
+
+  const auditDecisions = decisionsFromAudit(audit.decisions);
+  const heuristicDecisions = extractAmbiguousBillingDecisions(sourceText);
+  const openDecisions = filterResolvedDecisions(
+    mergeDecisions(auditDecisions, heuristicDecisions),
+    sourceText,
+    input.lastUserMessage
+  );
+  const assumptions = normalizeAssumptions(
+    [
+      ...audit.assumptions,
+      ...(sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [])
+    ],
+    taxDirective
+  );
+  const mergedUnparsed = mergeUnparsedLines(sanitizedNotes.removedLines, audit.unparsedLines ?? []);
+  const unparsedLines = filterUnparsedLines(mergedUnparsed);
+
+  return {
+    openDecisions,
+    assumptions,
+    unparsedLines
+  };
 }
 
 function applyInlineLaborPricingFromText(

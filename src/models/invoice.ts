@@ -163,6 +163,12 @@ export const DiscountFollowUpRequestSchema = z.object({
   discountReason: OptionalString
 });
 
+export const InvoiceAuditRequestSchema = z.object({
+  sourceText: z.string().min(1),
+  structuredInvoice: StructuredInvoiceSchema,
+  lastUserMessage: OptionalString
+});
+
 export const SavedInvoiceStatusSchema = z.enum(["draft", "sent", "paid"]);
 export const SavedInvoiceSourceTypeSchema = z.enum(["text_input", "upload"]);
 

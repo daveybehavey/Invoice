@@ -9,6 +9,7 @@ import {
   DiscountFollowUpRequestSchema,
   FinishedInvoiceSchema,
   FullInvoiceRewordRequestSchema,
+  InvoiceAuditRequestSchema,
   InvoiceEditRequestSchema,
   LaborPricingFollowUpRequestSchema,
   SaveInvoiceRequestSchema,
@@ -20,7 +21,8 @@ import {
   changeLineWording,
   continueInvoiceAfterLaborPricing,
   createInvoiceFromInput,
-  rewordFullInvoice
+  rewordFullInvoice,
+  runInvoiceAuditOverlay
 } from "./services/invoicePipeline.js";
 import {
   duplicateSavedInvoice,
@@ -78,7 +80,8 @@ app.post(
           structuredInvoice: result.structuredInvoice,
           openDecisions: result.openDecisions,
           assumptions: result.assumptions,
-          unparsedLines: result.unparsedLines
+          unparsedLines: result.unparsedLines,
+          auditStatus: result.auditStatus
         });
         return;
       }
@@ -91,7 +94,8 @@ app.post(
           invoice: result.invoice,
           openDecisions: result.openDecisions,
           assumptions: result.assumptions,
-          unparsedLines: result.unparsedLines
+          unparsedLines: result.unparsedLines,
+          auditStatus: result.auditStatus
         });
         return;
       }
@@ -102,7 +106,8 @@ app.post(
         invoice: result.invoice,
         openDecisions: result.openDecisions,
         assumptions: result.assumptions,
-        unparsedLines: result.unparsedLines
+        unparsedLines: result.unparsedLines,
+        auditStatus: result.auditStatus
       });
     } catch (error) {
       next(error);
@@ -127,8 +132,24 @@ app.post("/api/invoices/from-input/labor-pricing", async (req: Request, res: Res
       invoice: result.invoice,
       openDecisions: result.openDecisions,
       assumptions: result.assumptions,
-      unparsedLines: result.unparsedLines
+      unparsedLines: result.unparsedLines,
+      auditStatus: result.auditStatus
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/invoices/audit", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = InvoiceAuditRequestSchema.parse(req.body);
+    const result = await runInvoiceAuditOverlay({
+      sourceText: parsedRequest.sourceText,
+      structuredInvoice: parsedRequest.structuredInvoice,
+      lastUserMessage: parsedRequest.lastUserMessage
+    });
+
+    res.json(result);
   } catch (error) {
     next(error);
   }
