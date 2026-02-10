@@ -212,6 +212,7 @@ function AIIntake() {
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
   const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(false);
   const [decisionToast, setDecisionToast] = useState(null);
+  const [showAllDecisions, setShowAllDecisions] = useState(false);
   const requestIdRef = useRef(0);
   const openDecisionSignatureRef = useRef("");
   const lastDecisionResolutionRef = useRef("");
@@ -662,6 +663,11 @@ function AIIntake() {
   const needsSummaryConfirmation = intakePhase === "ready_to_summarize";
   const showQuickDecisions =
     intakePhase === "ready_to_summarize" && (hasDecisions || taxAssumptionPresent || pendingTaxRate);
+  const maxQuickDecisionCount = 3;
+  const visibleDecisionItems = showAllDecisions
+    ? decisionItems
+    : decisionItems.slice(0, maxQuickDecisionCount);
+  const hasMoreDecisions = decisionItems.length > maxQuickDecisionCount;
   const quickReplyLabel = needsLaborHoursOnly
     ? "Suggested hours"
     : needsLaborPricing
@@ -1076,6 +1082,10 @@ function AIIntake() {
   useEffect(() => {
     openDecisionsRef.current = openDecisions;
   }, [openDecisions]);
+
+  useEffect(() => {
+    setShowAllDecisions(false);
+  }, [openDecisions.length]);
 
   useEffect(() => {
     assumptionsRef.current = assumptions;
@@ -2229,7 +2239,7 @@ function AIIntake() {
                       Quick decisions
                     </p>
                     <div className="mt-2 space-y-2">
-                      {decisionItems.map((item) => {
+                      {visibleDecisionItems.map((item) => {
                         const {
                           display,
                           includeLabel,
@@ -2263,6 +2273,20 @@ function AIIntake() {
                           </div>
                         );
                       })}
+                      {hasMoreDecisions ? (
+                        <div className="pt-1">
+                          <button
+                            type="button"
+                            className="text-xs font-semibold text-amber-800 hover:text-amber-900"
+                            onClick={() => setShowAllDecisions((prev) => !prev)}
+                            disabled={isTyping}
+                          >
+                            {showAllDecisions
+                              ? "Show fewer decisions"
+                              : `Show all decisions (${decisionItems.length})`}
+                          </button>
+                        </div>
+                      ) : null}
                       {decisionItems.length > 1 ? (
                         <div className="space-y-2">
                           <p className="text-sm text-amber-900">Resolve all pending items</p>
