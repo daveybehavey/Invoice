@@ -3001,7 +3001,7 @@ function ManualInvoiceCanvas() {
               </button>
             </div>
 
-            <header className="space-y-4">
+            <header className="space-y-5">
               {logoUrl ? (
                 <div className="flex items-center">
                   <img
@@ -3011,26 +3011,33 @@ function ManualInvoiceCanvas() {
                   />
                 </div>
               ) : null}
-              <h1 className={activePreset.titleClass}>INVOICE</h1>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <label className={`${activePreset.textClass} ${activePreset.labelClass}`}>
-                  Invoice #
-                  <input
-                    type="text"
-                    className={`mt-2 w-full ${activePreset.inputClass} ${activePreset.textClass}`}
-                    value={invoiceNumber}
-                    onChange={(event) => setInvoiceNumber(event.target.value)}
-                  />
-                </label>
-                <label className={`${activePreset.textClass} ${activePreset.labelClass}`}>
-                  Date
-                  <input
-                    type="date"
-                    className={`mt-2 w-full ${activePreset.inputClass} ${activePreset.textClass}`}
-                    value={invoiceDate}
-                    onChange={(event) => setInvoiceDate(event.target.value)}
-                  />
-                </label>
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h1 className={activePreset.titleClass}>INVOICE</h1>
+                  <p className="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                    Draft document
+                  </p>
+                </div>
+                <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                  <label className={`${activePreset.textClass} ${activePreset.labelClass} flex items-center gap-3`}>
+                    <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Invoice #</span>
+                    <input
+                      type="text"
+                      className={`min-w-[150px] ${activePreset.inputClass} ${activePreset.textClass}`}
+                      value={invoiceNumber}
+                      onChange={(event) => setInvoiceNumber(event.target.value)}
+                    />
+                  </label>
+                  <label className={`${activePreset.textClass} ${activePreset.labelClass} flex items-center gap-3`}>
+                    <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Date</span>
+                    <input
+                      type="date"
+                      className={`min-w-[150px] ${activePreset.inputClass} ${activePreset.textClass}`}
+                      value={invoiceDate}
+                      onChange={(event) => setInvoiceDate(event.target.value)}
+                    />
+                  </label>
+                </div>
               </div>
             </header>
 
@@ -3070,7 +3077,7 @@ function ManualInvoiceCanvas() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {lineItems.map((item) => (
-                      <tr key={item.id}>
+                      <tr key={item.id} className="odd:bg-slate-50/70">
                         <td className="py-3 pr-3 align-top">
                           <input
                             type="text"
@@ -3126,7 +3133,9 @@ function ManualInvoiceCanvas() {
             </section>
 
             <section className="flex justify-end">
-              <div className={`w-full max-w-xs space-y-2 ${activePreset.textClass}`}>
+              <div
+                className={`w-full max-w-xs space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-4 ${activePreset.textClass}`}
+              >
                 <div className={`flex justify-between ${activePreset.totalsMutedClass}`}>
                   <span>Subtotal</span>
                   <span>{formatMoney(subtotal)}</span>
@@ -3155,7 +3164,7 @@ function ManualInvoiceCanvas() {
               <p className={`${activePreset.textClass} ${activePreset.labelClass}`}>Notes / Terms</p>
               <textarea
                 rows={4}
-                className={`w-full resize-none ${activePreset.inputClass} ${activePreset.textClass}`}
+                className={`w-full resize-none bg-slate-50/70 ${activePreset.inputClass} ${activePreset.textClass}`}
                 placeholder="Thank you for your business"
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
