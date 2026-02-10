@@ -674,6 +674,8 @@ function AIIntake() {
     ? decisionItems
     : decisionItems.slice(0, maxQuickDecisionCount);
   const hasMoreDecisions = decisionItems.length > maxQuickDecisionCount;
+  const quickDecisionHeading =
+    openDecisionCount > 0 ? `Needs your call (${openDecisionCount})` : "Tax choice";
   const quickReplyLabel = needsLaborHoursOnly
     ? "Suggested hours"
     : needsLaborPricing
@@ -2213,7 +2215,7 @@ function AIIntake() {
                       >
                         Fix something
                       </button>
-                      {hasDecisions ? (
+                      {hasDecisions && !showQuickDecisions ? (
                         <button
                           type="button"
                           className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
@@ -2242,7 +2244,7 @@ function AIIntake() {
                     ref={decisionsRef}
                   >
                     <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-                      Quick decisions
+                      {quickDecisionHeading}
                     </p>
                     <div className="mt-2 space-y-2">
                       {visibleDecisionItems.map((item) => {
