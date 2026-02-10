@@ -2743,7 +2743,7 @@ function ManualInvoiceCanvas() {
   const buildEditableInvoicePayload = () => {
     const itemsWithDescriptions = lineItems.filter((item) => item.description.trim().length > 0);
     if (itemsWithDescriptions.length === 0) {
-      return { error: "Add at least one line item description before using AI edits." };
+      return { error: "Add at least one line item description before using Fix by chat." };
     }
     const invoice = {
       invoiceNumber: invoiceNumber?.trim() || undefined,
@@ -2922,7 +2922,7 @@ function ManualInvoiceCanvas() {
                   setInspectorOpen(true);
                 }}
               >
-                AI Edit
+                Fix by chat
               </button>
               <button
                 type="button"
@@ -3177,7 +3177,7 @@ function InspectorPanel({
   const tabs = [
     { id: "style", label: "Style", content: "Style controls coming soon" },
     { id: "tone", label: "Tone", content: "Tone controls coming soon" },
-    { id: "assistant", label: "AI Edit", content: "AI edits" },
+    { id: "assistant", label: "Fix by chat", content: "AI edits" },
     { id: "export", label: "Export", content: "Export options coming soon" }
   ];
   const styleOptions = [
@@ -3298,7 +3298,7 @@ function InspectorPanel({
         if (requestId !== assistantRequestIdRef.current) {
           return;
         }
-        setAssistantError("AI edit failed. Try again.");
+        setAssistantError("Fix by chat failed. Try again.");
         setAssistantLoading(false);
       });
   };
