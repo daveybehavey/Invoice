@@ -3250,6 +3250,7 @@ function InspectorPanel({
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantMessages, setAssistantMessages] = useState([]);
   const [pendingAssistantEdit, setPendingAssistantEdit] = useState(null);
+  const [previewTemplateId, setPreviewTemplateId] = useState(null);
   const assistantRequestIdRef = useRef(0);
   const tabs = [
     { id: "style", label: "Style", content: "Style controls coming soon" },
@@ -3467,6 +3468,30 @@ function InspectorPanel({
       : selectedTone
         ? "Select a tone to see a preview."
         : "Select a tone to see a preview.";
+  const templateCatalog = {
+    default: {
+      name: "Classic",
+      titleClass: "font-['Fraunces'] tracking-[0.14em]",
+      bodyClass: "font-['Manrope']",
+      accentClass: "text-slate-900",
+      metaClass: "text-[10px] uppercase tracking-[0.3em] text-slate-400"
+    },
+    compact: {
+      name: "Minimal",
+      titleClass: "font-['Sora'] tracking-[0.08em]",
+      bodyClass: "font-['Sora'] text-slate-600",
+      accentClass: "text-slate-800",
+      metaClass: "text-[10px] uppercase tracking-[0.3em] text-slate-400"
+    },
+    spacious: {
+      name: "Bold",
+      titleClass: "font-['Archivo_Black'] tracking-[0.18em]",
+      bodyClass: "font-['Manrope'] text-slate-700",
+      accentClass: "text-slate-900",
+      metaClass: "text-[10px] uppercase tracking-[0.35em] text-slate-500"
+    }
+  };
+  const previewTemplate = previewTemplateId ? templateCatalog[previewTemplateId] : null;
   const templatePreviews = {
     default: {
       title: "bg-slate-900",
@@ -3490,108 +3515,139 @@ function InspectorPanel({
       totalStrong: "bg-slate-900"
     }
   };
+  const previewInvoice = {
+    number: "INV-104",
+    issueDate: "Feb 10, 2026",
+    billToName: "Mike Johnson",
+    billToAddress: "1423 Pine St",
+    servicePeriod: "Jan 28 - Feb 2",
+    items: [
+      { description: "Faucet repair labor", qty: "2h", rate: "$80", amount: "$160" },
+      { description: "Parts and materials", qty: "1", rate: "$29.25", amount: "$29.25" },
+      { description: "Logo design", qty: "1", rate: "$250", amount: "$250" }
+    ],
+    subtotal: "$439.25",
+    tax: "$0.00",
+    total: "$439.25"
+  };
+  const previewIsSelected = previewTemplateId && stylePreset === previewTemplateId;
 
   return (
-    <div className="flex h-full min-h-0 flex-col border border-slate-200 bg-white shadow-sm md:rounded-2xl">
-      <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
-        <div className="flex gap-2">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
-                activeTab === tab.id ? "bg-emerald-600 text-white" : "text-slate-600"
-              }`}
-              onClick={() => onTabChange(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-        {showCloseButton ? (
-          <button
-            type="button"
-            className="text-sm font-semibold text-slate-600"
-            onClick={onClose}
-          >
-            Close
-          </button>
-        ) : null}
-      </div>
-      <div className="flex-1 overflow-y-auto px-4 py-5 text-sm text-slate-600">
-        {activeTab === "style" ? (
-          <div className="space-y-4">
-            <div>
-              <p className="text-sm font-semibold text-slate-900">Templates</p>
-              <div className="mt-3 grid gap-3">
-                {styleOptions.map((option) => {
-                  const preview = templatePreviews[option.id] ?? templatePreviews.default;
-                  const isSelected = stylePreset === option.id;
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={`w-full rounded-xl border p-3 text-left transition ${
-                        isSelected
-                          ? "border-emerald-500 bg-emerald-50/60 shadow-sm"
-                          : "border-slate-200 bg-white hover:border-slate-300"
-                      }`}
-                      onClick={() => onStylePresetChange(option.id)}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-semibold text-slate-900">
-                          {option.label}
-                        </span>
-                        {isSelected ? (
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                            Selected
-                          </span>
-                        ) : null}
-                      </div>
-                      <div className="mt-3 space-y-2">
-                        <div className={`h-2 w-20 rounded-sm ${preview.title}`} />
-                        <div className={`h-px ${preview.rule}`} />
-                        <div className="space-y-1">
-                          <div className={`h-2 w-full rounded-sm ${preview.row}`} />
-                          <div className={`h-2 w-5/6 rounded-sm ${preview.row}`} />
-                          <div className={`h-2 w-4/6 rounded-sm ${preview.row}`} />
-                        </div>
-                        <div className="mt-2 flex items-center justify-between">
-                          <div className={`h-2 w-14 rounded-sm ${preview.totals}`} />
-                          <div className={`h-2 w-12 rounded-sm ${preview.totalStrong}`} />
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-900">Logo</p>
-              <p className="mt-1 text-xs text-slate-500">PNG, JPG, or SVG</p>
-            </div>
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/svg+xml"
-              className="block w-full text-sm text-slate-600"
-              onChange={onLogoChange}
-            />
-            {logoUrl ? (
-              <div className="space-y-3">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <img src={logoUrl} alt="Logo preview" className="h-16 w-auto object-contain" />
-                </div>
-                <button
-                  type="button"
-                  className="text-sm font-semibold text-slate-600"
-                  onClick={onLogoRemove}
-                >
-                  Remove logo
-                </button>
-              </div>
-            ) : null}
+    <>
+      <div className="flex h-full min-h-0 flex-col border border-slate-200 bg-white shadow-sm md:rounded-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+          <div className="flex gap-2">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                  activeTab === tab.id ? "bg-emerald-600 text-white" : "text-slate-600"
+                }`}
+                onClick={() => onTabChange(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-        ) : activeTab === "tone" ? (
+          {showCloseButton ? (
+            <button
+              type="button"
+              className="text-sm font-semibold text-slate-600"
+              onClick={onClose}
+            >
+              Close
+            </button>
+          ) : null}
+        </div>
+        <div className="flex-1 overflow-y-auto px-4 py-5 text-sm text-slate-600">
+          {activeTab === "style" ? (
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Templates</p>
+                <div className="mt-3 grid gap-3">
+                  {styleOptions.map((option) => {
+                    const preview = templatePreviews[option.id] ?? templatePreviews.default;
+                    const isSelected = stylePreset === option.id;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={`w-full rounded-xl border p-3 text-left transition ${
+                          isSelected
+                            ? "border-emerald-500 bg-emerald-50/60 shadow-sm"
+                            : "border-slate-200 bg-white hover:border-slate-300"
+                        }`}
+                        onClick={() => onStylePresetChange(option.id)}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-semibold text-slate-900">
+                            {option.label}
+                          </span>
+                          {isSelected ? (
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                              Selected
+                            </span>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          className="mt-2 text-xs font-semibold text-emerald-700 hover:text-emerald-800"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setPreviewTemplateId(option.id);
+                          }}
+                        >
+                          Preview
+                        </button>
+                        <div className="mt-3 space-y-2">
+                          <div className={`h-2 w-20 rounded-sm ${preview.title}`} />
+                          <div className={`h-px ${preview.rule}`} />
+                          <div className="space-y-1">
+                            <div className={`h-2 w-full rounded-sm ${preview.row}`} />
+                            <div className={`h-2 w-5/6 rounded-sm ${preview.row}`} />
+                            <div className={`h-2 w-4/6 rounded-sm ${preview.row}`} />
+                          </div>
+                          <div className="mt-2 flex items-center justify-between">
+                            <div className={`h-2 w-14 rounded-sm ${preview.totals}`} />
+                            <div className={`h-2 w-12 rounded-sm ${preview.totalStrong}`} />
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Logo</p>
+                <p className="mt-1 text-xs text-slate-500">PNG, JPG, or SVG</p>
+              </div>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/svg+xml"
+                className="block w-full text-sm text-slate-600"
+                onChange={onLogoChange}
+              />
+              {logoUrl ? (
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <img
+                      src={logoUrl}
+                      alt="Logo preview"
+                      className="h-16 w-auto object-contain"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="text-sm font-semibold text-slate-600"
+                    onClick={onLogoRemove}
+                  >
+                    Remove logo
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : activeTab === "tone" ? (
           <div className="space-y-4">
             <p className="text-sm text-slate-600">
               Rewrite wording only. Amounts are never changed.
@@ -3797,6 +3853,145 @@ function InspectorPanel({
         )}
       </div>
     </div>
+    {previewTemplate ? (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Template preview"
+        onClick={() => setPreviewTemplateId(null)}
+      >
+        <div
+          className="w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-400">
+                Template preview
+              </p>
+              <p className="text-lg font-semibold text-slate-900">{previewTemplate.name}</p>
+            </div>
+            <button
+              type="button"
+              className="text-sm font-semibold text-slate-500"
+              onClick={() => setPreviewTemplateId(null)}
+            >
+              Close
+            </button>
+          </div>
+          <div className="px-6 py-5">
+            <div
+              className={`rounded-2xl border border-slate-200 bg-white p-6 shadow-sm ${previewTemplate.bodyClass}`}
+            >
+              <div className="flex items-start justify-between gap-6">
+                <div>
+                  <p className={previewTemplate.metaClass}>Invoice</p>
+                  <p className={`mt-2 text-2xl text-slate-900 ${previewTemplate.titleClass}`}>
+                    INVOICE
+                  </p>
+                </div>
+                <div className="text-right text-xs text-slate-500">
+                  <p className={previewTemplate.metaClass}>Invoice No.</p>
+                  <p className={`mt-1 text-sm font-semibold ${previewTemplate.accentClass}`}>
+                    {previewInvoice.number}
+                  </p>
+                  <p className={`mt-3 ${previewTemplate.metaClass}`}>Issue date</p>
+                  <p className={`mt-1 text-sm font-semibold ${previewTemplate.accentClass}`}>
+                    {previewInvoice.issueDate}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-6 grid gap-4 border-t border-slate-200 pt-4 text-sm md:grid-cols-2">
+                <div>
+                  <p className={previewTemplate.metaClass}>Bill to</p>
+                  <p className={`mt-2 font-semibold ${previewTemplate.accentClass}`}>
+                    {previewInvoice.billToName}
+                  </p>
+                  <p className="text-xs text-slate-500">{previewInvoice.billToAddress}</p>
+                </div>
+                <div className="md:text-right">
+                  <p className={previewTemplate.metaClass}>Service period</p>
+                  <p className={`mt-2 font-semibold ${previewTemplate.accentClass}`}>
+                    {previewInvoice.servicePeriod}
+                  </p>
+                  <p className="text-xs text-slate-500">Work completed onsite.</p>
+                </div>
+              </div>
+              <div className="mt-6 space-y-3">
+                <div className="grid grid-cols-[1fr_auto_auto] gap-4 text-[10px] font-semibold uppercase tracking-[0.25em] text-slate-400">
+                  <span>Description</span>
+                  <span>Qty</span>
+                  <span>Amount</span>
+                </div>
+                <div className="space-y-2 text-sm text-slate-600">
+                  {previewInvoice.items.map((item) => (
+                    <div
+                      key={item.description}
+                      className="grid grid-cols-[1fr_auto_auto] gap-4"
+                    >
+                      <div>
+                        <p className={`font-semibold ${previewTemplate.accentClass}`}>
+                          {item.description}
+                        </p>
+                        <p className="text-xs text-slate-400">{item.rate}</p>
+                      </div>
+                      <p className="text-right text-xs text-slate-500">{item.qty}</p>
+                      <p className={`text-right font-semibold ${previewTemplate.accentClass}`}>
+                        {item.amount}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-6 flex justify-end">
+                <div className="w-full max-w-[220px] space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span>Subtotal</span>
+                    <span>{previewInvoice.subtotal}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span>Tax</span>
+                    <span>{previewInvoice.tax}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-base font-semibold text-slate-900">
+                    <span>Total</span>
+                    <span>{previewInvoice.total}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
+            <p className="text-xs text-slate-500">
+              {previewIsSelected ? "Currently selected template." : "Preview only."}
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600"
+                onClick={() => setPreviewTemplateId(null)}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white"
+                onClick={() => {
+                  if (previewTemplateId) {
+                    onStylePresetChange(previewTemplateId);
+                  }
+                  setPreviewTemplateId(null);
+                }}
+              >
+                Use this template
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    ) : null}
+    </>
   );
 }
 
