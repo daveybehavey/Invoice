@@ -224,6 +224,19 @@ function AIIntake() {
   const formatMoney = (value) =>
     Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
 
+  const normalizeSnippet = (text) =>
+    text
+      .toLowerCase()
+      .replace(/[’‘‛]/g, "'")
+      .replace(/[^a-z0-9\s']/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const extractKeywords = (text) =>
+    normalizeSnippet(text)
+      .split(" ")
+      .filter((word) => word.length >= 4);
+
   const buildTranscript = (nextMessages) =>
     nextMessages
       .filter((message) => message.role === "user")
@@ -231,32 +244,60 @@ function AIIntake() {
       .filter(Boolean)
       .join("\n");
 
-  const buildSummaryText = (invoice, decisions = []) => {
+  const buildSummaryText = (invoice, decisions = [], unparsedCount = 0) => {
     if (!invoice) {
       return "I need a bit more detail before drafting an invoice.";
     }
     const summaryLines = [];
-    if (invoice.customerName) {
-      summaryLines.push(`Client: ${invoice.customerName}`);
-    }
-    summaryLines.push("Line items:");
-    invoice.lineItems.forEach((lineItem, index) => {
-      const amountText = Number.isFinite(lineItem.amount)
-        ? ` — ${formatMoney(lineItem.amount)}`
-        : "";
-      summaryLines.push(`${index + 1}. ${lineItem.description}${amountText}`);
-    });
-    if (invoice.notes) {
-      summaryLines.push(`Notes: ${invoice.notes}`);
-    }
+    const itemCount = invoice.lineItems.length;
+    summaryLines.push(
+      `Here's what I found: ${itemCount} line item${itemCount > 1 ? "s" : ""} captured.`
+    );
     if (decisions.length > 0) {
-      summaryLines.push("Pending decisions (can be resolved later):");
-      decisions.forEach((decision) => {
-        summaryLines.push(`- ${decision.prompt}`);
-      });
-      return `Summary:\n${summaryLines.join("\n")}\n\nCheckpoint: Draft ready. Pending decisions can be resolved anytime. Reply \"confirm\" to generate or send edits.`;
+      summaryLines.push(
+        `${decisions.length} decision${decisions.length > 1 ? "s" : ""} still need your call.`
+      );
     }
-    return `Summary:\n${summaryLines.join("\n")}\n\nCheckpoint: Draft ready. Reply \"confirm\" to generate or send edits.`;
+    if (unparsedCount > 0) {
+      summaryLines.push(
+        `${unparsedCount} note${unparsedCount > 1 ? "s" : ""} not captured yet.`
+      );
+    }
+    summaryLines.push("Review the snapshot below.");
+    if (decisions.length > 0) {
+      return `${summaryLines.join(
+        " "
+      )}\n\nCheckpoint: Draft ready. Pending decisions can be resolved anytime. Reply \"confirm\" to generate or send edits.`;
+    }
+    return `${summaryLines.join(
+      " "
+    )}\n\nCheckpoint: Draft ready. Reply \"confirm\" to generate or send edits.`;
+  };
+
+  const buildReviewPayload = (invoice, decisions = [], unparsed = []) => {
+    if (!invoice) {
+      return null;
+    }
+    return {
+      id: `review-${Date.now()}`,
+      customerName: invoice.customerName ?? "",
+      notes: invoice.notes ?? "",
+      lineItems: invoice.lineItems.map((item, index) => ({
+        id: item.id ?? `review-line-${index}`,
+        type: item.type ?? "other",
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        amount: item.amount
+      })),
+      decisions: decisions.map((decision) => ({
+        id: decision.id,
+        kind: decision.kind,
+        prompt: decision.prompt,
+        sourceSnippet: decision.sourceSnippet
+      })),
+      unparsed: Array.isArray(unparsed) ? unparsed : []
+    };
   };
 
   const buildDecisionFollowUp = (decisions) => {
@@ -316,7 +357,7 @@ function AIIntake() {
     ]);
   };
 
-  const appendSummaryMessage = (text) => {
+  const appendSummaryMessage = (text, reviewPayload) => {
     setSummaryUpdatedAt(new Date());
     lastSummaryMetaRef.current = {
       at: Date.now(),
@@ -324,7 +365,23 @@ function AIIntake() {
     };
     console.log("[summary:append]", lastSummaryMetaRef.current);
     setIsTyping(false);
-    appendAiMessage(text);
+    setMessages((prev) => {
+      const next = [...prev];
+      if (reviewPayload) {
+        next.push({
+          id: reviewPayload.id ?? `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          role: "ai",
+          kind: "review",
+          payload: reviewPayload
+        });
+      }
+      next.push({
+        id: `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        role: "ai",
+        text
+      });
+      return next;
+    });
   };
 
   const decisionItems = openDecisions.map((decision, index) => ({
@@ -447,6 +504,51 @@ function AIIntake() {
       return snippet;
     }
     return `${snippet.slice(0, maxLength - 3)}...`;
+  };
+
+  const buildDecisionKeywordSets = (decisions) =>
+    decisions.map((decision) =>
+      new Set(extractKeywords(decision.sourceSnippet ?? decision.prompt ?? ""))
+    );
+
+  const matchesDecision = (lineItem, decisionKeywordSets) => {
+    const itemKeywords = new Set(extractKeywords(lineItem.description ?? ""));
+    if (itemKeywords.size === 0) {
+      return false;
+    }
+    return decisionKeywordSets.some((decisionKeywords) => {
+      let overlapCount = 0;
+      itemKeywords.forEach((keyword) => {
+        if (decisionKeywords.has(keyword)) {
+          overlapCount += 1;
+        }
+      });
+      return overlapCount >= 2;
+    });
+  };
+
+  const getLineItemStatus = (lineItem, decisionKeywordSets) => {
+    const decisionMatch = matchesDecision(lineItem, decisionKeywordSets);
+    if (decisionMatch) {
+      return { label: "Decision needed", badgeClass: "bg-amber-100 text-amber-700" };
+    }
+    if (!Number.isFinite(lineItem.amount)) {
+      return { label: "Needs detail", badgeClass: "bg-slate-100 text-slate-600" };
+    }
+    if (Number(lineItem.amount) === 0) {
+      return { label: "No charge", badgeClass: "bg-slate-100 text-slate-600" };
+    }
+    return { label: "Captured", badgeClass: "bg-emerald-100 text-emerald-700" };
+  };
+
+  const focusInputWithValue = (value) => {
+    setInputValue(value);
+    setTimeout(() => {
+      const input = document.getElementById("ai-intake-input");
+      if (input) {
+        input.focus();
+      }
+    }, 0);
   };
 
   const quickReplies = (() => {
@@ -616,9 +718,14 @@ function AIIntake() {
           decisionSignature && decisionSignature === openDecisionSignatureRef.current;
         const followUpMessage = isRepeatDecision
           ? buildDecisionFollowUp(nextOpenDecisions)
-          : buildSummaryText(payload.invoice, nextOpenDecisions);
+          : buildSummaryText(payload.invoice, nextOpenDecisions, nextUnparsedLines.length);
         openDecisionSignatureRef.current = decisionSignature;
-        isRepeatDecision ? appendAiMessage(followUpMessage) : appendSummaryMessage(followUpMessage);
+        isRepeatDecision
+          ? appendAiMessage(followUpMessage)
+          : appendSummaryMessage(
+              followUpMessage,
+              buildReviewPayload(payload.invoice, nextOpenDecisions, nextUnparsedLines)
+            );
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
         console.log("[intake:response]", {
@@ -637,7 +744,10 @@ function AIIntake() {
       } else {
         setIntakePhase("ready_to_summarize");
         openDecisionSignatureRef.current = "";
-        appendSummaryMessage(buildSummaryText(payload.invoice));
+        appendSummaryMessage(
+          buildSummaryText(payload.invoice, [], nextUnparsedLines.length),
+          buildReviewPayload(payload.invoice, [], nextUnparsedLines)
+        );
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
         console.log("[intake:response]", {
@@ -726,9 +836,14 @@ function AIIntake() {
           decisionSignature && decisionSignature === openDecisionSignatureRef.current;
         const followUpMessage = isRepeatDecision
           ? buildDecisionFollowUp(nextOpenDecisions)
-          : buildSummaryText(payload.invoice, nextOpenDecisions);
+          : buildSummaryText(payload.invoice, nextOpenDecisions, nextUnparsedLines.length);
         openDecisionSignatureRef.current = decisionSignature;
-        isRepeatDecision ? appendAiMessage(followUpMessage) : appendSummaryMessage(followUpMessage);
+        isRepeatDecision
+          ? appendAiMessage(followUpMessage)
+          : appendSummaryMessage(
+              followUpMessage,
+              buildReviewPayload(payload.invoice, nextOpenDecisions, nextUnparsedLines)
+            );
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
         console.log("[labor:response]", {
@@ -746,7 +861,10 @@ function AIIntake() {
       } else {
         setIntakePhase("ready_to_summarize");
         openDecisionSignatureRef.current = "";
-        appendSummaryMessage(buildSummaryText(payload.invoice));
+        appendSummaryMessage(
+          buildSummaryText(payload.invoice, [], nextUnparsedLines.length),
+          buildReviewPayload(payload.invoice, [], nextUnparsedLines)
+        );
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
         console.log("[labor:response]", {
@@ -810,7 +928,10 @@ function AIIntake() {
       }
       const nextInvoice = payload?.invoice ?? finishedInvoice;
       setFinishedInvoice(nextInvoice);
-      appendSummaryMessage(buildSummaryText(nextInvoice, openDecisions));
+      appendSummaryMessage(
+        buildSummaryText(nextInvoice, openDecisions, unparsedLines.length),
+        buildReviewPayload(nextInvoice, openDecisions, unparsedLines)
+      );
       if (payload?.followUp) {
         appendAiMessage(payload.followUp);
       }
@@ -1157,22 +1278,255 @@ function AIIntake() {
         <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-28">
           <div className="flex-1 overflow-y-auto pb-4 pt-6">
             <div className="space-y-4">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
-                >
+              {messages.map((message) => {
+                if (message.kind === "review" && message.payload) {
+                  const payload = message.payload;
+                  const decisionKeywordSets = buildDecisionKeywordSets(payload.decisions ?? []);
+                  const categorized = payload.lineItems.reduce(
+                    (acc, item) => {
+                      const type = item.type ?? "other";
+                      if (type === "labor") {
+                        acc.labor.push(item);
+                      } else if (type === "material") {
+                        acc.material.push(item);
+                      } else {
+                        acc.other.push(item);
+                      }
+                      return acc;
+                    },
+                    { labor: [], material: [], other: [] }
+                  );
+                  const sections = [
+                    { id: "labor", label: "Work", items: categorized.labor },
+                    { id: "material", label: "Materials", items: categorized.material },
+                    { id: "other", label: "Other", items: categorized.other }
+                  ].filter((section) => section.items.length > 0);
+                  const quickFixes = [];
+                  const primaryLaborRate =
+                    categorized.labor.find((item) => Number.isFinite(item.unitPrice))?.unitPrice ??
+                    categorized.labor.find((item) => Number.isFinite(item.amount))?.amount ??
+                    null;
+                  if (primaryLaborRate) {
+                    quickFixes.push({
+                      id: "fix-rate",
+                      label: "Change rate",
+                      value: `Change the labor rate to $${primaryLaborRate}/hr.`
+                    });
+                  }
+                  if (categorized.labor.length > 0) {
+                    quickFixes.push({
+                      id: "fix-hours",
+                      label: "Update hours",
+                      value: "Update the labor hours to: "
+                    });
+                  }
+                  if (payload.lineItems.length > 0) {
+                    quickFixes.push({
+                      id: "fix-exclude",
+                      label: "Exclude item",
+                      value: `Exclude ${payload.lineItems[0].description}.`
+                    });
+                  }
+                  if (payload.notes) {
+                    quickFixes.push({
+                      id: "fix-notes",
+                      label: "Edit notes",
+                      value: "Update the invoice notes to: "
+                    });
+                  }
+                  if (payload.customerName) {
+                    quickFixes.push({
+                      id: "fix-client",
+                      label: "Update client",
+                      value: `Update the client name to `
+                    });
+                  }
+
+                  return (
+                    <div key={message.id} className="flex justify-start">
+                      <div className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-sm shadow-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                              Review
+                            </p>
+                            <p className="text-sm font-semibold text-slate-900">Draft snapshot</p>
+                          </div>
+                          {payload.customerName ? (
+                            <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
+                              Client: {payload.customerName}
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <div className="mt-3 space-y-3">
+                          {sections.map((section) => (
+                            <div key={section.id} className="space-y-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                {section.label}
+                              </p>
+                              <div className="space-y-2">
+                                {section.items.map((item) => {
+                                  const status = getLineItemStatus(item, decisionKeywordSets);
+                                  return (
+                                    <div
+                                      key={item.id}
+                                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2"
+                                    >
+                                      <div className="space-y-1">
+                                        <p className="text-sm font-semibold text-slate-800">
+                                          {item.description}
+                                        </p>
+                                        {Number.isFinite(item.amount) ? (
+                                          <p className="text-xs text-slate-500">
+                                            {formatMoney(item.amount)}
+                                          </p>
+                                        ) : null}
+                                      </div>
+                                      <span
+                                        className={`rounded-full px-2 py-1 text-xs font-semibold ${status.badgeClass}`}
+                                      >
+                                        {status.label}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {payload.notes ? (
+                          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Notes
+                            </p>
+                            <p className="mt-1 text-sm text-slate-700">{payload.notes}</p>
+                          </div>
+                        ) : null}
+
+                        {payload.decisions.length > 0 ? (
+                          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                              Decisions needed
+                            </p>
+                            <div className="mt-2 space-y-2">
+                              {payload.decisions.map((decision) => {
+                                const rawSnippet = extractDecisionSnippet(decision.prompt ?? "");
+                                const snippet = shortenSnippet(rawSnippet);
+                                const includeLabel =
+                                  decision.kind === "tax" ? "Apply tax" : `Include: ${snippet}`;
+                                const excludeLabel =
+                                  decision.kind === "tax" ? "No tax" : `Don't include: ${snippet}`;
+                                const includeValue =
+                                  decision.kind === "tax"
+                                    ? "Apply tax."
+                                    : `Include ${rawSnippet}.`;
+                                const excludeValue =
+                                  decision.kind === "tax" ? "No tax." : `Don't include ${rawSnippet}.`;
+                                return (
+                                  <div key={decision.id} className="space-y-2">
+                                    <p className="text-sm text-amber-900">{decision.prompt}</p>
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        type="button"
+                                        className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                                        onClick={() => submitUserMessage(includeValue)}
+                                        disabled={isTyping}
+                                      >
+                                        {includeLabel}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                                        onClick={() => submitUserMessage(excludeValue)}
+                                        disabled={isTyping}
+                                      >
+                                        {excludeLabel}
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {payload.unparsed.length > 0 ? (
+                          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Not yet captured
+                            </p>
+                            <div className="mt-2 space-y-2">
+                              {payload.unparsed.map((item, index) => (
+                                <div key={`${item}-${index}`} className="space-y-2">
+                                  <p className="text-sm text-slate-700">{item}</p>
+                                  <div className="flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                                      onClick={() => submitUserMessage(`Add to notes: ${item}`)}
+                                      disabled={isTyping}
+                                    >
+                                      Add to notes
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                                      onClick={() => submitUserMessage(`Add line item: ${item}`)}
+                                      disabled={isTyping}
+                                    >
+                                      Create line item
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {quickFixes.length > 0 ? (
+                          <div className="mt-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Quick fixes
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {quickFixes.map((fix) => (
+                                <button
+                                  key={fix.id}
+                                  type="button"
+                                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-400"
+                                  onClick={() => focusInputWithValue(fix.value)}
+                                  disabled={isTyping}
+                                >
+                                  {fix.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
                   <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
-                      message.role === "user"
-                        ? "bg-emerald-600 text-white"
-                        : "bg-white text-slate-800"
-                    }`}
+                    key={message.id}
+                    className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                   >
-                    {message.text}
+                    <div
+                      className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
+                        message.role === "user"
+                          ? "bg-emerald-600 text-white"
+                          : "bg-white text-slate-800"
+                      }`}
+                    >
+                      {message.text}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {isTyping ? (
                 <div className="flex justify-start">
                   <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">
@@ -1213,6 +1567,14 @@ function AIIntake() {
                         disabled={isTyping}
                       >
                         Confirm draft
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                        onClick={() => focusInputWithValue("Update: ")}
+                        disabled={isTyping}
+                      >
+                        Fix something
                       </button>
                       {hasDecisions ? (
                         <button

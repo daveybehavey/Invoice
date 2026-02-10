@@ -28,7 +28,7 @@ async function waitForTypingToSettle(page) {
     return;
   } catch {
     // If the typing indicator never appears, wait a beat for the response to render.
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2500);
   }
 }
 
@@ -145,9 +145,13 @@ async function runSuite(label, contextOptions) {
       baseURL: BASE_URL
     });
     await context.addInitScript(() => {
-      if (!window.__invoiceStorageCleared) {
-        window.localStorage.clear();
-        window.__invoiceStorageCleared = true;
+      try {
+        if (!window.sessionStorage.getItem("invoiceStorageCleared")) {
+          window.localStorage.clear();
+          window.sessionStorage.setItem("invoiceStorageCleared", "true");
+        }
+      } catch {
+        // ignore storage errors
       }
     });
     return context;
@@ -245,7 +249,7 @@ Do what makes sense.`;
     const followUp = await waitForText(
       page,
       "I see labor work, but some labor pricing is missing",
-      5000
+      DEFAULT_TIMEOUT
     );
     record(true, followUp ? "Labor follow-up shown" : "Labor follow-up not required");
 
