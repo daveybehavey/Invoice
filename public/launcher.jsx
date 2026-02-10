@@ -204,6 +204,7 @@ function AIIntake() {
   const [finishedInvoice, setFinishedInvoice] = useState(null);
   const [laborPricingNote, setLaborPricingNote] = useState("");
   const [pendingLaborRate, setPendingLaborRate] = useState(null);
+  const [pendingTaxRate, setPendingTaxRate] = useState(null);
   const [openDecisions, setOpenDecisions] = useState([]);
   const [assumptions, setAssumptions] = useState([]);
   const [unparsedLines, setUnparsedLines] = useState([]);
@@ -213,6 +214,7 @@ function AIIntake() {
   const requestIdRef = useRef(0);
   const openDecisionSignatureRef = useRef("");
   const lastDecisionResolutionRef = useRef("");
+  const decisionActionRef = useRef(null);
   const lastSummaryMetaRef = useRef({ at: null, requestId: null });
   const intakePhaseRef = useRef(intakePhase);
   const summaryLockRef = useRef(false);
@@ -239,6 +241,17 @@ function AIIntake() {
   const formatMoney = (value) =>
     Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
 
+  const formatDisplayDescription = (text) => {
+    if (!text) {
+      return "";
+    }
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return "";
+    }
+    return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+  };
+
   const normalizeSnippet = (text) =>
     text
       .toLowerCase()
@@ -251,6 +264,26 @@ function AIIntake() {
     normalizeSnippet(text)
       .split(" ")
       .filter((word) => word.length >= 4);
+
+  const extractTaxRateFromText = (text) => {
+    if (!text) {
+      return null;
+    }
+    const taxMatch =
+      text.match(/(\d+(?:\.\d+)?)\s*%\s*(?:sales\s+)?tax/i) ||
+      text.match(/tax[^\\d]{0,10}(\d+(?:\.\d+)?)\s*%/i);
+    if (!taxMatch) {
+      return null;
+    }
+    const rate = Number.parseFloat(taxMatch[1]);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+      return null;
+    }
+    return rate;
+  };
+
+  const isExplicitNoTax = (text) =>
+    /\b(no\s+tax|without\s+tax|exclude\s+tax|skip\s+tax|tax\s+exempt|tax[-\s]*free)\b/i.test(text);
 
   const mergeUniqueList = (current, incoming) => {
     const seen = new Set(current.map((item) => normalizeSnippet(item)));
@@ -329,7 +362,7 @@ function AIIntake() {
       lineItems: invoice.lineItems.map((item, index) => ({
         id: item.id ?? `review-line-${index}`,
         type: item.type ?? "other",
-        description: item.description,
+        description: formatDisplayDescription(item.description),
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         amount: item.amount
@@ -349,7 +382,7 @@ function AIIntake() {
     return `Pending decisions (optional to resolve now):\n${lines.join("\n")}`;
   };
 
-  const buildDraftFromInvoice = (invoice) => {
+  const buildDraftFromInvoice = (invoice, taxOverride) => {
     const today = new Date().toISOString().slice(0, 10);
     const issueDate =
       typeof invoice?.issueDate === "string" && /^\d{4}-\d{2}-\d{2}/.test(invoice.issueDate)
@@ -381,7 +414,7 @@ function AIIntake() {
       fromDetails: "",
       billToDetails: invoice?.customerName ?? "",
       notes: invoice?.notes ?? "",
-      taxRate: "0",
+      taxRate: taxOverride ?? "0",
       lineItems: lineItems.length
         ? lineItems
         : [{ id: `line-${Date.now()}`, description: "", qty: "", rate: "" }],
@@ -399,6 +432,39 @@ function AIIntake() {
         text
       }
     ]);
+  };
+
+  const buildDecisionAckMessage = (action, resolvedCount) => {
+    if (!resolvedCount || resolvedCount <= 0) {
+      return null;
+    }
+    if (!action) {
+      return `Decision updated — ${resolvedCount} item${resolvedCount > 1 ? "s" : ""} resolved.`;
+    }
+    if (action.kind === "tax") {
+      if (action.type === "tax_apply") {
+        return "Got it — I’ll note tax should be applied.";
+      }
+      if (action.type === "tax_skip") {
+        return "Got it — keeping tax at 0%.";
+      }
+    }
+    const snippet = action.snippet ? shortenSnippet(action.snippet, 36) : "that item";
+    if (action.type === "include") {
+      return `Got it — I’ll include ${snippet}.`;
+    }
+    if (action.type === "exclude") {
+      return `Got it — I won’t include ${snippet}.`;
+    }
+    return `Decision updated — ${resolvedCount} item${resolvedCount > 1 ? "s" : ""} resolved.`;
+  };
+
+  const handleDecisionAction = (action, message) => {
+    decisionActionRef.current = action;
+    const accepted = submitUserMessage(message);
+    if (!accepted) {
+      decisionActionRef.current = null;
+    }
   };
 
   const appendSummaryMessage = (text, reviewPayload) => {
@@ -439,10 +505,16 @@ function AIIntake() {
     if (finishedInvoice) {
       const items = finishedInvoice.lineItems.map((lineItem, index) => ({
         id: `assumption-line-${lineItem.id ?? index}`,
-        text: `${lineItem.description}${
+        text: `${formatDisplayDescription(lineItem.description)}${
           Number.isFinite(lineItem.amount) ? ` — ${formatMoney(lineItem.amount)}` : ""
         }`
       }));
+      if (pendingTaxRate) {
+        items.unshift({
+          id: "assumption-tax-rate",
+          text: `Tax rate set to ${pendingTaxRate}% (draft).`
+        });
+      }
       if (finishedInvoice.notes) {
         items.push({ id: "assumption-notes", text: `Notes: ${finishedInvoice.notes}` });
       }
@@ -468,10 +540,18 @@ function AIIntake() {
     return [];
   })();
 
-  const auditAssumptionItems = assumptions.map((item, index) => ({
-    id: `assumption-audit-${index}`,
-    text: item
-  }));
+  const filteredAssumptions = pendingTaxRate
+    ? assumptions.filter((item) => !item.toLowerCase().includes("tax assumed"))
+    : assumptions;
+  const auditAssumptionItems = [
+    ...(pendingTaxRate && !finishedInvoice
+      ? [{ id: "assumption-tax-rate", text: `Tax rate set to ${pendingTaxRate}% (draft).` }]
+      : []),
+    ...filteredAssumptions.map((item, index) => ({
+      id: `assumption-audit-${index}`,
+      text: item
+    }))
+  ];
 
   const unparsedItems = unparsedLines.map((item, index) => ({
     id: `unparsed-${index}`,
@@ -482,6 +562,10 @@ function AIIntake() {
     assumptionItems.length > 0 || auditAssumptionItems.length > 0 || unparsedItems.length > 0;
   const hasDecisions = decisionItems.length > 0;
   const openDecisionCount = openDecisions.length;
+  const taxAssumptionPresent = assumptions.some((item) =>
+    item.toLowerCase().includes("tax assumed")
+  );
+  const suggestedTaxRate = extractTaxRateFromText(lastTranscriptRef.current);
   const showAssumptionsCard = hasAssumptions || hasDecisions;
   const showAssumptionDetails = !hasReviewCard || !assumptionsCollapsed;
 
@@ -554,6 +638,7 @@ function AIIntake() {
   const buildDecisionActions = (decision) => {
     const rawSnippet = extractDecisionSnippet(decision.prompt ?? "");
     const snippet = shortenSnippet(rawSnippet);
+    const baseAction = { kind: decision.kind, snippet: rawSnippet };
     const display =
       decision.kind === "tax"
         ? "Apply tax?"
@@ -575,7 +660,15 @@ function AIIntake() {
       includeLabel,
       excludeLabel,
       includeValue,
-      excludeValue
+      excludeValue,
+      includeAction:
+        decision.kind === "tax"
+          ? { ...baseAction, type: "tax_apply" }
+          : { ...baseAction, type: "include" },
+      excludeAction:
+        decision.kind === "tax"
+          ? { ...baseAction, type: "tax_skip" }
+          : { ...baseAction, type: "exclude" }
     };
   };
 
@@ -860,7 +953,7 @@ function AIIntake() {
       return;
     }
     try {
-      const draft = buildDraftFromInvoice(finishedInvoice);
+      const draft = buildDraftFromInvoice(finishedInvoice, pendingTaxRate ?? "0");
       window.localStorage.setItem("invoiceDraft", JSON.stringify(draft));
       navigate("/manual");
     } catch (error) {
@@ -880,6 +973,7 @@ function AIIntake() {
     setFinishedInvoice(null);
     setLaborPricingNote("");
     setPendingLaborRate(null);
+    setPendingTaxRate(null);
     setOpenDecisions([]);
     setAssumptions([]);
     setUnparsedLines([]);
@@ -887,6 +981,7 @@ function AIIntake() {
     setSummaryUpdatedAt(null);
     openDecisionSignatureRef.current = "";
     lastDecisionResolutionRef.current = "";
+    decisionActionRef.current = null;
     auditRequestIdRef.current += 1;
   };
 
@@ -984,6 +1079,11 @@ function AIIntake() {
       setAssumptions(nextAssumptions);
       setUnparsedLines(nextUnparsedLines);
       setPendingLaborRate(null);
+      const previousDecisions = openDecisionsRef.current ?? [];
+      const resolvedCount = Math.max(0, previousDecisions.length - nextOpenDecisions.length);
+      const decisionAction = decisionActionRef.current;
+      decisionActionRef.current = null;
+      const decisionAck = buildDecisionAckMessage(decisionAction, resolvedCount);
 
       if (payload?.needsFollowUp) {
         setLaborPricingNote("");
@@ -995,6 +1095,9 @@ function AIIntake() {
         const followUpText = payload?.followUp?.message
           ? `${payload.followUp.message} Reply with either a flat amount (e.g. "flat $300") or an hourly rate and hours per line. You can also tap a suggested rate below.`
           : "I need a bit more pricing detail. Share either a flat amount or an hourly rate + hours.";
+        if (decisionAck) {
+          appendAiMessage(decisionAck);
+        }
         appendAiMessage(followUpText);
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
@@ -1021,6 +1124,9 @@ function AIIntake() {
           ? buildDecisionFollowUp(nextOpenDecisions)
           : buildSummaryText(payload.invoice, nextOpenDecisions, nextUnparsedLines.length);
         openDecisionSignatureRef.current = decisionSignature;
+        if (decisionAck) {
+          appendAiMessage(decisionAck);
+        }
         isRepeatDecision
           ? appendAiMessage(followUpMessage)
           : appendSummaryMessage(
@@ -1051,6 +1157,9 @@ function AIIntake() {
       } else {
         setIntakePhase("ready_to_summarize");
         openDecisionSignatureRef.current = "";
+        if (decisionAck) {
+          appendAiMessage(decisionAck);
+        }
         appendSummaryMessage(
           buildSummaryText(payload.invoice, [], nextUnparsedLines.length),
           buildReviewPayload(payload.invoice, [], nextUnparsedLines)
@@ -1079,6 +1188,7 @@ function AIIntake() {
         console.log("[intake:error:stale]", { requestId, current: requestIdRef.current });
         return;
       }
+      decisionActionRef.current = null;
       if (timeoutMessageIdRef.current) {
         dismissTimeoutMessage(timeoutMessageIdRef.current);
       }
@@ -1171,6 +1281,11 @@ function AIIntake() {
       setAssumptions(nextAssumptions);
       setUnparsedLines(nextUnparsedLines);
       setPendingLaborRate(null);
+      const previousDecisions = openDecisionsRef.current ?? [];
+      const resolvedCount = Math.max(0, previousDecisions.length - nextOpenDecisions.length);
+      const decisionAction = decisionActionRef.current;
+      decisionActionRef.current = null;
+      const decisionAck = buildDecisionAckMessage(decisionAction, resolvedCount);
       setFollowUp(null);
       setStructuredInvoice(payload.structuredInvoice ?? structuredInvoice);
       setFinishedInvoice(payload.invoice ?? null);
@@ -1183,6 +1298,9 @@ function AIIntake() {
           ? buildDecisionFollowUp(nextOpenDecisions)
           : buildSummaryText(payload.invoice, nextOpenDecisions, nextUnparsedLines.length);
         openDecisionSignatureRef.current = decisionSignature;
+        if (decisionAck) {
+          appendAiMessage(decisionAck);
+        }
         isRepeatDecision
           ? appendAiMessage(followUpMessage)
           : appendSummaryMessage(
@@ -1212,6 +1330,9 @@ function AIIntake() {
       } else {
         setIntakePhase("ready_to_summarize");
         openDecisionSignatureRef.current = "";
+        if (decisionAck) {
+          appendAiMessage(decisionAck);
+        }
         appendSummaryMessage(
           buildSummaryText(payload.invoice, [], nextUnparsedLines.length),
           buildReviewPayload(payload.invoice, [], nextUnparsedLines)
@@ -1239,6 +1360,7 @@ function AIIntake() {
         console.log("[labor:error:stale]", { requestId, current: requestIdRef.current });
         return;
       }
+      decisionActionRef.current = null;
       if (timeoutMessageIdRef.current) {
         dismissTimeoutMessage(timeoutMessageIdRef.current);
       }
@@ -1471,9 +1593,18 @@ function AIIntake() {
   const submitUserMessage = (text) => {
     const trimmed = text.trim();
     if (!trimmed) {
-      return;
+      return false;
     }
     const normalized = trimmed.toLowerCase();
+    if (isExplicitNoTax(normalized)) {
+      setPendingTaxRate(null);
+    }
+    const hasTaxRateInstruction =
+      /\b(tax\s*rate|apply\s+tax|add\s+tax|include\s+tax|charge\s+tax|set\s+tax)\b/i.test(trimmed);
+    const detectedTaxRate = hasTaxRateInstruction ? extractTaxRateFromText(trimmed) : null;
+    if (detectedTaxRate !== null) {
+      setPendingTaxRate(String(detectedTaxRate));
+    }
     const canConfirmWhileTyping =
       intakePhase === "ready_to_summarize" &&
       confirmationKeywords.some((keyword) => normalized.includes(keyword));
@@ -1502,7 +1633,7 @@ function AIIntake() {
           canConfirmWhileTyping
         });
       }
-      return;
+      return false;
     }
     const userMessage = {
       id: `msg-${Date.now()}`,
@@ -1515,7 +1646,7 @@ function AIIntake() {
 
     if (intakePhase === "ready_to_generate") {
       runInvoiceEditRequest(trimmed);
-      return;
+      return true;
     }
 
     if (intakePhase === "ready_to_summarize") {
@@ -1533,13 +1664,13 @@ function AIIntake() {
         });
         setIntakePhase("ready_to_generate");
         appendAiMessage("Checkpoint confirmed — ready to generate the draft invoice.");
-        return;
+        return true;
       }
 
       if (isNegative && !hasNumbers && wordCount <= 4) {
         setIntakePhase("collecting");
         appendAiMessage("Got it. What should I fix?");
-        return;
+        return true;
       }
     }
 
@@ -1566,7 +1697,7 @@ function AIIntake() {
           lastDecisionResolutionRef.current = trimmed;
         }
         runIntakeRequest(nextMessages, resolutionText);
-        return;
+        return true;
       }
       if (parseResult?.laborPricing) {
         setPendingLaborRate(null);
@@ -1577,7 +1708,7 @@ function AIIntake() {
             : "Hourly rate noted."
         );
         runLaborPricingRequest(parseResult.laborPricing, buildTranscript(nextMessages));
-        return;
+        return true;
       }
       if (parseResult?.rateOnly) {
         const rate = parseResult.rateOnly;
@@ -1590,11 +1721,11 @@ function AIIntake() {
         appendAiMessage(
           `Got it — $${rate}/hr. How many hours for each labor line? Reply like: \"2 hours, 1 hour\".`
         );
-        return;
+        return true;
       }
       if (parseResult?.error) {
         appendAiMessage(parseResult.error);
-        return;
+        return true;
       }
     }
 
@@ -1604,6 +1735,7 @@ function AIIntake() {
       lastDecisionResolutionRef.current = trimmed;
     }
     runIntakeRequest(nextMessages, resolutionText);
+    return true;
   };
 
   const handleSend = (event) => {
@@ -1829,7 +1961,9 @@ function AIIntake() {
                                   includeLabel,
                                   excludeLabel,
                                   includeValue,
-                                  excludeValue
+                                  excludeValue,
+                                  includeAction,
+                                  excludeAction
                                 } = buildDecisionActions(decision);
                                 return (
                                   <div key={decision.id} className="space-y-2">
@@ -1838,7 +1972,7 @@ function AIIntake() {
                                       <button
                                         type="button"
                                         className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
-                                        onClick={() => submitUserMessage(includeValue)}
+                                        onClick={() => handleDecisionAction(includeAction, includeValue)}
                                         disabled={isTyping}
                                       >
                                         {includeLabel}
@@ -1846,7 +1980,7 @@ function AIIntake() {
                                       <button
                                         type="button"
                                         className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
-                                        onClick={() => submitUserMessage(excludeValue)}
+                                        onClick={() => handleDecisionAction(excludeAction, excludeValue)}
                                         disabled={isTyping}
                                       >
                                         {excludeLabel}
@@ -2033,7 +2167,8 @@ function AIIntake() {
                     </div>
                   </div>
                 ) : null}
-                {intakePhase === "ready_to_summarize" && hasDecisions ? (
+                {intakePhase === "ready_to_summarize" &&
+                (hasDecisions || taxAssumptionPresent || pendingTaxRate) ? (
                   <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
                       Quick decisions
@@ -2045,7 +2180,9 @@ function AIIntake() {
                           includeLabel,
                           excludeLabel,
                           includeValue,
-                          excludeValue
+                          excludeValue,
+                          includeAction,
+                          excludeAction
                         } = buildDecisionActions(item);
                         return (
                           <div key={`quick-${item.id}`} className="space-y-2">
@@ -2054,7 +2191,7 @@ function AIIntake() {
                               <button
                                 type="button"
                                 className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
-                                onClick={() => submitUserMessage(includeValue)}
+                                onClick={() => handleDecisionAction(includeAction, includeValue)}
                                 disabled={isTyping}
                               >
                                 {includeLabel}
@@ -2062,7 +2199,7 @@ function AIIntake() {
                               <button
                                 type="button"
                                 className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
-                                onClick={() => submitUserMessage(excludeValue)}
+                                onClick={() => handleDecisionAction(excludeAction, excludeValue)}
                                 disabled={isTyping}
                               >
                                 {excludeLabel}
@@ -2071,6 +2208,65 @@ function AIIntake() {
                           </div>
                         );
                       })}
+                      {taxAssumptionPresent || pendingTaxRate ? (
+                        <div className="space-y-2">
+                          <p className="text-sm text-amber-900">
+                            {pendingTaxRate
+                              ? `Tax set to ${pendingTaxRate}% (draft).`
+                              : "Tax: 0% assumed."}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {pendingTaxRate ? (
+                              <button
+                                type="button"
+                                className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                                onClick={() => {
+                                  setPendingTaxRate(null);
+                                  appendAiMessage("Okay — keeping tax at 0%.");
+                                }}
+                                disabled={isTyping}
+                              >
+                                Clear tax
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                                onClick={() => appendAiMessage("Okay — keeping tax at 0%.")}
+                                disabled={isTyping}
+                              >
+                                Keep 0%
+                              </button>
+                            )}
+                            {typeof suggestedTaxRate === "number" ? (
+                              <button
+                                type="button"
+                                className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                                onClick={() => {
+                                  setPendingTaxRate(String(suggestedTaxRate));
+                                  appendAiMessage(
+                                    `Got it — I’ll set tax to ${suggestedTaxRate}% in the draft.`
+                                  );
+                                }}
+                                disabled={isTyping}
+                              >
+                                Use {suggestedTaxRate}%
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                              onClick={() => {
+                                setPendingTaxRate(null);
+                                focusInputWithValue("Tax rate is ");
+                              }}
+                              disabled={isTyping}
+                            >
+                              Set tax rate
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 ) : null}
@@ -2089,7 +2285,9 @@ function AIIntake() {
                           includeLabel,
                           excludeLabel,
                           includeValue,
-                          excludeValue
+                          excludeValue,
+                          includeAction,
+                          excludeAction
                         } = buildDecisionActions(item);
                         return (
                           <li key={item.id}>
@@ -2099,7 +2297,7 @@ function AIIntake() {
                                 <button
                                   type="button"
                                   className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
-                                  onClick={() => submitUserMessage(includeValue)}
+                                  onClick={() => handleDecisionAction(includeAction, includeValue)}
                                   disabled={isTyping}
                                 >
                                   {includeLabel}
@@ -2107,7 +2305,7 @@ function AIIntake() {
                                 <button
                                   type="button"
                                   className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
-                                  onClick={() => submitUserMessage(excludeValue)}
+                                  onClick={() => handleDecisionAction(excludeAction, excludeValue)}
                                   disabled={isTyping}
                                 >
                                   {excludeLabel}
