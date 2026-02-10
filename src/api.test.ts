@@ -187,6 +187,37 @@ test("fast mode skips audit and still detects decisions", async () => {
   assert.ok(hasCabinetDecision);
 });
 
+test(
+  "audit timeout falls back to heuristic decisions",
+  { timeout: 8000 },
+  async () => {
+    setJsonTaskRunnerForTests(async <T>(prompt: string): Promise<T> => {
+      if (prompt.includes("Parse messy invoice/job notes")) {
+        return structuredWithLaborPricing() as T;
+      }
+      if (prompt.includes("You are auditing a parsed invoice")) {
+        return await new Promise<T>(() => {});
+      }
+      throw new Error("Unexpected prompt");
+    });
+
+    const start = Date.now();
+    const response = await request(app).post("/api/invoices/from-input").send({
+      messyInput:
+        "Feb 3 fixed leak 2h @ $90/hr. Tightened a cabinet hinge maybe — not sure if I should bill it."
+    });
+    const duration = Date.now() - start;
+
+    assert.equal(response.status, 200);
+    assert.ok(duration < 4500);
+    const decisions = response.body.openDecisions ?? [];
+    const hasCabinetDecision = decisions.some((decision: { prompt: string }) =>
+      /cabinet/i.test(decision.prompt)
+    );
+    assert.ok(hasCabinetDecision);
+  }
+);
+
 test("chunks long messy input and merges structured invoices", async () => {
   useMockResponses([
     {

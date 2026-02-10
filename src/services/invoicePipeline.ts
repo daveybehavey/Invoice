@@ -157,7 +157,10 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     ? invoice
     : { ...invoice, issueDate: undefined };
   const discountIntent = detectDiscountIntent(sourceText);
-  const audit = parseMode === "fast" ? null : await auditInvoiceInterpretation(sourceText, sanitizedInvoice);
+  const audit =
+    parseMode === "fast"
+      ? null
+      : await auditInvoiceInterpretationWithTimeout(sourceText, sanitizedInvoice);
   const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
   const heuristicDecisions = audit ? extractAmbiguousBillingDecisions(sourceText) : [];
   const openDecisions = audit
@@ -238,7 +241,8 @@ export async function continueInvoiceAfterLaborPricing(
     : { ...invoice, issueDate: undefined };
   const discountIntent = detectDiscountIntent(source);
   const parseMode: ParseMode = mode ?? "full";
-  const audit = parseMode === "fast" ? null : await auditInvoiceInterpretation(source, sanitizedInvoice);
+  const audit =
+    parseMode === "fast" ? null : await auditInvoiceInterpretationWithTimeout(source, sanitizedInvoice);
   const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
   const heuristicDecisions = audit ? extractAmbiguousBillingDecisions(source) : [];
   const openDecisions = audit
@@ -472,6 +476,34 @@ async function auditInvoiceInterpretation(
   }
 }
 
+async function auditInvoiceInterpretationWithTimeout(
+  sourceText: string,
+  structuredInvoice: StructuredInvoice,
+  timeoutMs: number = AUDIT_TIMEOUT_MS
+): Promise<InvoiceAudit | null> {
+  if (!sourceText.trim()) {
+    return null;
+  }
+
+  return await new Promise((resolve) => {
+    const timeoutId = setTimeout(() => {
+      console.warn("[audit:timeout]", { timeoutMs });
+      resolve(null);
+    }, timeoutMs);
+
+    auditInvoiceInterpretation(sourceText, structuredInvoice)
+      .then((result) => {
+        clearTimeout(timeoutId);
+        resolve(result);
+      })
+      .catch((error) => {
+        clearTimeout(timeoutId);
+        console.warn("Invoice audit failed", error);
+        resolve(null);
+      });
+  });
+}
+
 function applyInlineLaborPricingFromText(
   structuredInvoice: StructuredInvoice,
   sourceText: string
@@ -571,6 +603,7 @@ function buildSourceText(input: CreateInvoiceInput): string {
 const CHUNK_THRESHOLD = 4000;
 const CHUNK_MAX_CHARS = 2000;
 const CHUNK_LIMIT = 4;
+const AUDIT_TIMEOUT_MS = 2500;
 
 function shouldChunkInput(messyInput?: string, uploadedInvoiceText?: string): boolean {
   if (!messyInput || uploadedInvoiceText) {
