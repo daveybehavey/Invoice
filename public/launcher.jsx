@@ -722,10 +722,10 @@ function AIIntake() {
       decision.kind === "tax"
         ? "Apply tax?"
         : rawSnippet
-          ? `Bill this item — ${snippet}`
+          ? `Bill ${snippet}?`
           : decision.prompt ?? "Decision needed";
-    const includeLabel = decision.kind === "tax" ? "Apply tax" : "Include item";
-    const excludeLabel = decision.kind === "tax" ? "No tax" : "Don't include";
+    const includeLabel = decision.kind === "tax" ? "Apply tax" : "Include";
+    const excludeLabel = decision.kind === "tax" ? "No tax" : "Exclude";
     const includeValue =
       decision.kind === "tax"
         ? "Apply tax."
