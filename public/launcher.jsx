@@ -213,6 +213,7 @@ function AIIntake() {
   const [auditSummaryAt, setAuditSummaryAt] = useState(null);
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
   const [reviewCardCollapsed, setReviewCardCollapsed] = useState(true);
+  const [showChatInput, setShowChatInput] = useState(false);
   const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(false);
   const [decisionToast, setDecisionToast] = useState(null);
   const [showAllDecisions, setShowAllDecisions] = useState(false);
@@ -557,6 +558,7 @@ function AIIntake() {
     console.log("[summary:append]", lastSummaryMetaRef.current);
     setIsTyping(false);
     setReviewCardCollapsed(true);
+    setShowChatInput(false);
     setMessages((prev) => {
       const next = [...prev];
       if (reviewPayload) {
@@ -1119,6 +1121,7 @@ function AIIntake() {
     setAuditSummaryAt(null);
     setSummaryUpdatedAt(null);
     setReviewCardCollapsed(true);
+    setShowChatInput(false);
     setDecisionToast(null);
     openDecisionSignatureRef.current = "";
     lastDecisionResolutionRef.current = "";
@@ -2732,33 +2735,54 @@ function AIIntake() {
         </div>
       ) : null}
 
-      <form
-        onSubmit={handleSend}
-        className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white"
-      >
-        <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
-          <div className="flex-1">
-            <label className="sr-only" htmlFor="ai-intake-input">
-              Message
-            </label>
-            <textarea
-              id="ai-intake-input"
-              rows={1}
-              className="max-h-32 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-              placeholder={intakeComplete ? "Refine the draft..." : "Type your reply..."}
-              value={inputValue}
-              onChange={(event) => setInputValue(event.target.value)}
-            />
+      {hasReviewCard && !showChatInput ? (
+        <div className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
+          <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Need to change something?</p>
+              <p className="text-xs text-slate-500">Ask the AI to edit after you review.</p>
+            </div>
+            <button
+              type="button"
+              className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98]"
+              onClick={() => {
+                setShowChatInput(true);
+                focusInputWithValue("Update: ");
+              }}
+            >
+              Edit by chat
+            </button>
           </div>
-          <button
-            type="submit"
-            className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
-            disabled={!inputValue.trim() || (isTyping && !canSendWhileTyping)}
-          >
-            Send
-          </button>
         </div>
-      </form>
+      ) : (
+        <form
+          onSubmit={handleSend}
+          className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white"
+        >
+          <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
+            <div className="flex-1">
+              <label className="sr-only" htmlFor="ai-intake-input">
+                Message
+              </label>
+              <textarea
+                id="ai-intake-input"
+                rows={1}
+                className="max-h-32 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                placeholder={intakeComplete ? "Ask for changes..." : "Paste your notes here..."}
+                value={inputValue}
+                onChange={(event) => setInputValue(event.target.value)}
+              />
+            </div>
+            <button
+              type="submit"
+              className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+              disabled={!inputValue.trim() || (isTyping && !canSendWhileTyping)}
+            >
+              Send
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }
