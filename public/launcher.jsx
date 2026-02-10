@@ -2011,6 +2011,13 @@ function AIIntake() {
                     categorized.labor.find((item) => Number.isFinite(item.unitPrice))?.unitPrice ??
                     categorized.labor.find((item) => Number.isFinite(item.amount))?.amount ??
                     null;
+                  const pendingDecisionCount = payload.decisions.length;
+                  const nextStepText =
+                    pendingDecisionCount > 0
+                      ? `Next: resolve ${pendingDecisionCount} decision${
+                          pendingDecisionCount > 1 ? "s" : ""
+                        } below to generate the invoice.`
+                      : "Next: confirm below to generate the invoice.";
                   if (primaryLaborRate) {
                     quickFixes.push({
                       id: "fix-rate",
@@ -2075,6 +2082,20 @@ function AIIntake() {
                         </div>
 
                         <div className="mt-3 space-y-3">
+                          <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                            <span className="font-semibold text-slate-900">Next step:</span>{" "}
+                            {nextStepText}
+                            {pendingDecisionCount > 0 ? (
+                              <button
+                                type="button"
+                                className="ml-2 inline-flex items-center text-xs font-semibold text-emerald-700 hover:text-emerald-900"
+                                onClick={() => scrollToSection(decisionsRef)}
+                                disabled={isTyping}
+                              >
+                                Go to decisions
+                              </button>
+                            ) : null}
+                          </div>
                           {sections.map((section) => (
                             <div key={section.id} className="space-y-2">
                               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
