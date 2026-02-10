@@ -660,6 +660,8 @@ function AIIntake() {
   const needsLaborPricing = intakePhase === "awaiting_follow_up" && followUp?.type === "labor_pricing";
   const needsLaborHoursOnly = needsLaborPricing && Number.isFinite(pendingLaborRate);
   const needsSummaryConfirmation = intakePhase === "ready_to_summarize";
+  const showQuickDecisions =
+    intakePhase === "ready_to_summarize" && (hasDecisions || taxAssumptionPresent || pendingTaxRate);
   const quickReplyLabel = needsLaborHoursOnly
     ? "Suggested hours"
     : needsLaborPricing
@@ -2027,44 +2029,20 @@ function AIIntake() {
                         {payload.decisions.length > 0 ? (
                           <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
                             <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-                              Decisions needed
+                              Decisions pending
                             </p>
-                            <div className="mt-2 space-y-2">
-                              {payload.decisions.map((decision) => {
-                                const {
-                                  display,
-                                  includeLabel,
-                                  excludeLabel,
-                                  includeValue,
-                                  excludeValue,
-                                  includeAction,
-                                  excludeAction
-                                } = buildDecisionActions(decision);
-                                return (
-                                  <div key={decision.id} className="space-y-2">
-                                    <p className="text-sm text-amber-900">{display}</p>
-                                    <div className="flex flex-wrap gap-2">
-                                      <button
-                                        type="button"
-                                        className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
-                                        onClick={() => handleDecisionAction(includeAction, includeValue)}
-                                        disabled={isTyping}
-                                      >
-                                        {includeLabel}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
-                                        onClick={() => handleDecisionAction(excludeAction, excludeValue)}
-                                        disabled={isTyping}
-                                      >
-                                        {excludeLabel}
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
+                            <p className="mt-1 text-sm text-amber-900">
+                              Resolve {payload.decisions.length} item{payload.decisions.length > 1 ? "s" : ""} in
+                              the Assumptions panel below.
+                            </p>
+                            <button
+                              type="button"
+                              className="mt-2 inline-flex items-center gap-2 text-xs font-semibold text-amber-800 hover:text-amber-900"
+                              onClick={() => scrollToSection(decisionsRef)}
+                              disabled={isTyping}
+                            >
+                              Jump to decisions
+                            </button>
                           </div>
                         ) : null}
 
@@ -2200,7 +2178,7 @@ function AIIntake() {
                 {intakePhase === "ready_to_summarize" ? (
                   <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Next steps
+                      Review & confirm (required)
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button
@@ -2209,7 +2187,7 @@ function AIIntake() {
                         onClick={() => submitUserMessage("Confirm.")}
                         disabled={isTyping}
                       >
-                        Confirm draft
+                        Confirm
                       </button>
                       <button
                         type="button"
@@ -2242,9 +2220,11 @@ function AIIntake() {
                     </div>
                   </div>
                 ) : null}
-                {intakePhase === "ready_to_summarize" &&
-                (hasDecisions || taxAssumptionPresent || pendingTaxRate) ? (
-                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                {showQuickDecisions ? (
+                  <div
+                    className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"
+                    ref={decisionsRef}
+                  >
                     <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
                       Quick decisions
                     </p>
@@ -2378,7 +2358,7 @@ function AIIntake() {
                     </div>
                   </div>
                 ) : null}
-                {showAssumptionDetails && hasDecisions ? (
+                {showAssumptionDetails && hasDecisions && !showQuickDecisions ? (
                   <div
                     className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"
                     ref={decisionsRef}
