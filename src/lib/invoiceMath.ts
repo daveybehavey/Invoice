@@ -20,21 +20,26 @@ export function normalizeInvoice(invoice: FinishedInvoice): FinishedInvoice {
 function normalizeLineItem(lineItem: InvoiceLineItem, index: number): InvoiceLineItem {
   const quantity = lineItem.quantity;
   const unitPrice = lineItem.unitPrice;
-  const amount = lineItem.amount ?? deriveAmount(quantity, unitPrice);
-
-  return {
+  const derivedAmount = deriveAmount(quantity, unitPrice);
+  const amount = lineItem.amount ?? derivedAmount;
+  const next: InvoiceLineItem = {
     ...lineItem,
-    id: lineItem.id ?? `line_${index + 1}`,
-    amount: roundToCents(amount)
+    id: lineItem.id ?? `line_${index + 1}`
   };
+
+  if (typeof amount === "number") {
+    next.amount = roundToCents(amount);
+  }
+
+  return next;
 }
 
-function deriveAmount(quantity?: number, unitPrice?: number): number {
+function deriveAmount(quantity?: number, unitPrice?: number): number | undefined {
   if (typeof quantity === "number" && typeof unitPrice === "number") {
     return quantity * unitPrice;
   }
 
-  return 0;
+  return undefined;
 }
 
 function roundToCents(value: number): number {

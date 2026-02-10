@@ -1061,6 +1061,10 @@ function detectOpenDecisionsFromText(sourceText: string, lastUserMessage?: strin
     return [];
   }
   const sentences = splitIntoSentences(sourceText);
+  const sentenceHasUncertainty = sentences.map((sentence) => {
+    const lower = sentence.toLowerCase();
+    return UNCERTAINTY_PHRASES.some((phrase) => lower.includes(phrase));
+  });
   const taxSentenceIndices = new Set<number>();
   sentences.forEach((sentence, index) => {
     if (/\btax\b/i.test(sentence)) {
@@ -1076,6 +1080,13 @@ function detectOpenDecisionsFromText(sourceText: string, lastUserMessage?: strin
     const hasActionVerb = actionVerbs.test(sentence);
     const hasTimeOnly = /\b\d+(?:\.\d+)?\s*(?:mins?|minutes?|hours?|hrs?)\b/i.test(sentence);
     return !hasActionVerb && hasTimeOnly && keywords.length <= 3;
+  };
+  const isGenericBillingFollowUp = (sentence: string) => {
+    const normalized = normalizeDecisionText(sentence);
+    const hasBillingLanguage = /\b(bill|charge|invoice|billing)\b/i.test(normalized);
+    const hasPronoun = /\b(this|that|it|them|those|these)\b/i.test(normalized);
+    const hasActionVerb = actionVerbs.test(sentence);
+    return !hasActionVerb && (hasBillingLanguage || hasPronoun || normalized.includes("up to you"));
   };
 
   const isLikelyTaxSentence = (sentence: string, index: number) => {
@@ -1097,17 +1108,26 @@ function detectOpenDecisionsFromText(sourceText: string, lastUserMessage?: strin
 
   sentences.forEach((sentence, index) => {
     const lower = sentence.toLowerCase();
-    const hasUncertainty = UNCERTAINTY_PHRASES.some((phrase) => lower.includes(phrase));
+    const hasUncertainty = sentenceHasUncertainty[index];
     if (!hasUncertainty) {
       return;
     }
     if (isLikelyTaxSentence(sentence, index)) {
       return;
     }
-    const decisionSentence =
-      index > 0 && isLowContextBillingSentence(sentence)
-        ? `${sentences[index - 1]} ${sentence}`
-        : sentence;
+    let decisionSentence = sentence;
+    if (index > 0 && isLowContextBillingSentence(sentence)) {
+      decisionSentence = `${sentences[index - 1]} ${sentence}`;
+    } else if (index > 0 && isGenericBillingFollowUp(sentence)) {
+      const previousSentence = sentences[index - 1];
+      const previousHasActionVerb = actionVerbs.test(previousSentence);
+      if (previousHasActionVerb) {
+        if (sentenceHasUncertainty[index - 1]) {
+          return;
+        }
+        decisionSentence = `${previousSentence} ${sentence}`;
+      }
+    }
     const decision = buildDecisionFromSentence(decisionSentence);
     if (!decision) {
       return;
@@ -1412,8 +1432,8 @@ function applyDecisionPricingHolds(
       }
       return {
         ...item,
-        unitPrice: 0,
-        amount: 0
+        unitPrice: undefined,
+        amount: undefined
       };
     })
   };

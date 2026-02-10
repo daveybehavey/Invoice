@@ -232,7 +232,7 @@ test("flags unsure billing as a decision and holds pricing in fast mode", async 
     /leak stop/i.test(lineItem.description)
   );
   assert.ok(leakLine);
-  assert.equal(leakLine.amount, 0);
+  assert.equal(leakLine.amount, undefined);
 });
 
 test("keeps billing decisions even when the prompt includes an hourly rate", async () => {
@@ -273,7 +273,7 @@ test("keeps billing decisions even when the prompt includes an hourly rate", asy
     /leak stop/i.test(lineItem.description)
   );
   assert.ok(leakLine);
-  assert.equal(leakLine.amount, 0);
+  assert.equal(leakLine.amount, undefined);
 });
 
 test("does not resolve billing decisions from a bill-to directive", async () => {
@@ -348,7 +348,7 @@ test("uses prior sentence context for time-only billing uncertainty", async () =
     /emergency leak stop/i.test(lineItem.description)
   );
   assert.ok(leakLine);
-  assert.equal(leakLine.amount, 0);
+  assert.equal(leakLine.amount, undefined);
 });
 
 test("does not create a decision for ambiguous tax mention in fast mode", async () => {
