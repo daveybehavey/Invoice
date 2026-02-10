@@ -2226,6 +2226,11 @@ function AIIntake() {
                 {auditStatus === "running" ? (
                   <p className="mt-1 text-xs text-slate-500">Deep check running…</p>
                 ) : null}
+                {auditStatus === "timed_out" ? (
+                  <p className="mt-1 text-xs text-amber-600">
+                    Deep check timed out — continuing with current snapshot.
+                  </p>
+                ) : null}
                 {auditStatus === "failed" ? (
                   <p className="mt-1 text-xs text-amber-600">Deep check failed — continuing with current snapshot.</p>
                 ) : null}
