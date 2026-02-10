@@ -109,6 +109,46 @@ type RewordFullInvoiceResponse = {
   notes?: string;
 };
 
+const MONTHS = [
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "may",
+  "jun",
+  "jul",
+  "aug",
+  "sep",
+  "sept",
+  "oct",
+  "nov",
+  "dec"
+];
+
+const isExplicitDate = (value?: string): boolean => {
+  if (!value) {
+    return false;
+  }
+  const normalized = value.toLowerCase().trim();
+  return MONTHS.some((month) => new RegExp(`\\b${month}\\s+\\d{1,2}\\b`).test(normalized));
+};
+
+const extractExplicitDateLabel = (value?: string): string | null => {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.toLowerCase();
+  for (const month of MONTHS) {
+    const match = normalized.match(new RegExp(`\\b(${month})\\s+(\\d{1,2})\\b`));
+    if (match) {
+      const monthLabel = match[1];
+      const day = match[2];
+      return `${monthLabel.charAt(0).toUpperCase()}${monthLabel.slice(1)} ${day}`;
+    }
+  }
+  return null;
+};
+
 export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise<CreateInvoiceResult> {
   const sourceText = buildSourceText(input);
   const taxDirective = detectExplicitTaxDirective(sourceText);
@@ -117,8 +157,11 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   const parsedInvoice = shouldChunkInput(input.messyInput, input.uploadedInvoiceText)
     ? await parseStructuredInvoiceFromChunks(input.messyInput ?? "")
     : await parseMessyInputToStructuredInvoice(sourceText);
-  const structuredInvoice = applyInlineLaborMinutesFromText(
-    applyInlineLaborPricingFromText(parsedInvoice, sourceText),
+  const structuredInvoice = applyExplicitServicePeriod(
+    applyInlineLaborMinutesFromText(
+      applyInlineLaborPricingFromText(parsedInvoice, sourceText),
+      sourceText
+    ),
     sourceText
   );
   const namedInvoice = applyCustomerNameFallback(structuredInvoice, sourceText);
@@ -737,6 +780,45 @@ function buildSourceText(input: CreateInvoiceInput): string {
   }
 
   return parts.join("\n\n---\n\n");
+}
+
+function applyExplicitServicePeriod(
+  invoice: StructuredInvoice,
+  sourceText: string
+): StructuredInvoice {
+  if (isExplicitDate(invoice.servicePeriodStart)) {
+    return invoice;
+  }
+  const explicitDates: string[] = [];
+  invoice.workSessions.forEach((session) => {
+    const label = extractExplicitDateLabel(session.date);
+    if (label) {
+      explicitDates.push(label);
+    }
+  });
+  if (explicitDates.length === 0) {
+    return invoice;
+  }
+  const indexByLabel = (label: string) => {
+    const lower = label.toLowerCase();
+    for (let idx = 0; idx < MONTHS.length; idx += 1) {
+      const month = MONTHS[idx];
+      const match = lower.match(new RegExp(`\\b${month}\\s+(\\d{1,2})\\b`));
+      if (match) {
+        return idx * 32 + Number(match[1]);
+      }
+    }
+    return Number.MAX_SAFE_INTEGER;
+  };
+  const sorted = explicitDates
+    .slice()
+    .sort((a, b) => indexByLabel(a) - indexByLabel(b));
+  const earliest = sorted[0];
+  return {
+    ...invoice,
+    servicePeriodStart: earliest,
+    servicePeriodEnd: invoice.servicePeriodEnd ?? earliest
+  };
 }
 
 const CHUNK_THRESHOLD = 4000;
@@ -1914,19 +1996,34 @@ function buildDecisionFromSentence(sentence: string): Omit<OpenDecision, "id" | 
     };
   }
   if (lower.includes("bill") || lower.includes("charge") || lower.includes("invoice")) {
-    const snippet = sentence.length > 120 ? `${sentence.slice(0, 117)}...` : sentence;
+    const snippet = buildDecisionSnippet(sentence);
     return {
       kind: "billing",
       prompt: `Bill this item? "${snippet}"`,
       keywords: extractKeywords(sentence)
     };
   }
-  const trimmed = sentence.length > 120 ? `${sentence.slice(0, 117)}...` : sentence;
+  const trimmed = buildDecisionSnippet(sentence);
   return {
     kind: "billing",
     prompt: `Confirm: ${trimmed}`,
     keywords: extractKeywords(sentence)
   };
+}
+
+function buildDecisionSnippet(sentence: string): string {
+  const normalized = sentence.replace(/\s+/g, " ").trim();
+  let cleaned = normalized.replace(
+    /\b(not sure if i should bill|up to you|do what makes sense|if you think|depends|depending)\b.*$/i,
+    ""
+  );
+  cleaned = cleaned.replace(/\bmaybe\b/gi, "");
+  cleaned = cleaned.replace(/\s*[-–—]\s*$/g, "");
+  cleaned = cleaned.replace(/\s{2,}/g, " ").trim();
+  if (cleaned.length > 120) {
+    return `${cleaned.slice(0, 117)}...`;
+  }
+  return cleaned || normalized;
 }
 
 type TaxDirective = "apply" | "exclude" | "none";
