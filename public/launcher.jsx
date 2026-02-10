@@ -210,6 +210,7 @@ function AIIntake() {
   const [unparsedLines, setUnparsedLines] = useState([]);
   const [auditStatus, setAuditStatus] = useState(null);
   const [auditSummary, setAuditSummary] = useState("");
+  const [auditSummaryAt, setAuditSummaryAt] = useState(null);
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
   const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(false);
   const [decisionToast, setDecisionToast] = useState(null);
@@ -648,6 +649,9 @@ function AIIntake() {
   const summaryTimeLabel = summaryUpdatedAt
     ? summaryUpdatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
     : "";
+  const auditSummaryTimeLabel = auditSummaryAt
+    ? new Date(auditSummaryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : "";
   const summarySnapshot = (() => {
     if (!finishedInvoice || !finishedInvoice.lineItems?.length) {
       return "";
@@ -924,6 +928,7 @@ function AIIntake() {
     }
     setAuditStatus("running");
     setAuditSummary("");
+    setAuditSummaryAt(null);
     auditRequestIdRef.current += 1;
     const auditRequestId = auditRequestIdRef.current;
 
@@ -989,6 +994,7 @@ function AIIntake() {
       } else {
         setAuditSummary("Deep check complete — no changes found.");
       }
+      setAuditSummaryAt(Date.now());
 
       setAuditStatus("completed");
     } catch (error) {
@@ -1100,6 +1106,7 @@ function AIIntake() {
     setUnparsedLines([]);
     setAuditStatus(null);
     setAuditSummary("");
+    setAuditSummaryAt(null);
     setSummaryUpdatedAt(null);
     setDecisionToast(null);
     openDecisionSignatureRef.current = "";
@@ -1170,6 +1177,7 @@ function AIIntake() {
     auditRequestIdRef.current += 1;
     setAuditStatus(null);
     setAuditSummary("");
+    setAuditSummaryAt(null);
     requestIdRef.current += 1;
     const requestId = requestIdRef.current;
     const requestStartedAt = Date.now();
@@ -2254,7 +2262,10 @@ function AIIntake() {
                   <p className="mt-1 text-xs text-amber-600">Deep check failed — continuing with current snapshot.</p>
                 ) : null}
                 {auditStatus === "completed" && auditSummary ? (
-                  <p className="mt-1 text-xs text-slate-500">{auditSummary}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {auditSummary}
+                    {auditSummaryTimeLabel ? ` (${auditSummaryTimeLabel})` : ""}
+                  </p>
                 ) : null}
                 {(auditStatus === "timed_out" || auditStatus === "failed") ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
