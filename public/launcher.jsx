@@ -568,7 +568,8 @@ function AIIntake() {
     id: decision.id ?? `decision-${index}`,
     text: `Decision needed: ${decision.prompt}`,
     prompt: decision.prompt,
-    kind: decision.kind
+    kind: decision.kind,
+    context: decision.sourceSnippet ?? ""
   }));
 
   const assumptionItems = (() => {
@@ -1092,6 +1093,12 @@ function AIIntake() {
     }
     auditRequestIdRef.current += 1;
   };
+
+  useEffect(() => {
+    if (openDecisions.length > 0) {
+      scrollToSection(decisionsRef);
+    }
+  }, [openDecisions.length]);
 
   useEffect(() => {
     listEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -2302,6 +2309,9 @@ function AIIntake() {
                         return (
                           <div key={`quick-${item.id}`} className="space-y-2">
                             <p className="text-sm text-amber-900">{display}</p>
+                            {item.context ? (
+                              <p className="text-xs text-amber-800">{item.context}</p>
+                            ) : null}
                             <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
@@ -2484,9 +2494,12 @@ function AIIntake() {
                         } = buildDecisionActions(item);
                         return (
                           <li key={item.id}>
-                            <div className="space-y-2">
-                              <p>{`Decision needed: ${display}`}</p>
-                              <div className="flex flex-wrap gap-2">
+                          <div className="space-y-2">
+                            <p>{`Decision needed: ${display}`}</p>
+                            {item.context ? (
+                              <p className="text-xs text-amber-800">{item.context}</p>
+                            ) : null}
+                            <div className="flex flex-wrap gap-2">
                                 <button
                                   type="button"
                                   className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
