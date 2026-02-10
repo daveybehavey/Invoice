@@ -551,6 +551,34 @@ function AIIntake() {
     return `${snippet.slice(0, maxLength - 3)}...`;
   };
 
+  const buildDecisionActions = (decision) => {
+    const rawSnippet = extractDecisionSnippet(decision.prompt ?? "");
+    const snippet = shortenSnippet(rawSnippet);
+    const display =
+      decision.kind === "tax"
+        ? "Apply tax?"
+        : rawSnippet
+          ? `Bill this item? ${snippet}`
+          : decision.prompt ?? "Decision needed";
+    const includeLabel = decision.kind === "tax" ? "Apply tax" : "Include item";
+    const excludeLabel = decision.kind === "tax" ? "No tax" : "Don't include";
+    const includeValue =
+      decision.kind === "tax"
+        ? "Apply tax."
+        : `Include ${rawSnippet || decision.prompt || "this item"}.`;
+    const excludeValue =
+      decision.kind === "tax"
+        ? "No tax."
+        : `Don't include ${rawSnippet || decision.prompt || "this item"}.`;
+    return {
+      display,
+      includeLabel,
+      excludeLabel,
+      includeValue,
+      excludeValue
+    };
+  };
+
   const buildDecisionKeywordSets = (decisions) =>
     decisions.map((decision) => {
       const keywords =
@@ -601,7 +629,20 @@ function AIIntake() {
   };
 
   const FAST_MODE_THRESHOLD = 1800;
-  const SLOW_RESPONSE_MS = 35000;
+  const SLOW_RESPONSE_MS_LONG = 30000;
+  const SLOW_RESPONSE_MS_MEDIUM = 45000;
+  const SLOW_RESPONSE_MIN_LENGTH = 800;
+
+  const getSlowResponseDelay = (transcript) => {
+    const length = transcript?.length ?? 0;
+    if (length < SLOW_RESPONSE_MIN_LENGTH) {
+      return null;
+    }
+    if (length >= FAST_MODE_THRESHOLD) {
+      return SLOW_RESPONSE_MS_LONG;
+    }
+    return SLOW_RESPONSE_MS_MEDIUM;
+  };
 
   const shouldUseFastMode = (transcript) => transcript.length >= FAST_MODE_THRESHOLD;
   const shouldRunDeepAudit = (status, transcript) => {
@@ -901,11 +942,14 @@ function AIIntake() {
     abortControllerRef.current = controller;
     setIsTyping(true);
     clearSlowResponseTimer();
-    slowResponseTimeoutRef.current = window.setTimeout(() => {
-      if (requestId === requestIdRef.current && !summaryLockRef.current) {
-        appendTimeoutMessage(requestMode, "intake");
-      }
-    }, SLOW_RESPONSE_MS);
+    const slowDelay = getSlowResponseDelay(transcript);
+    if (slowDelay) {
+      slowResponseTimeoutRef.current = window.setTimeout(() => {
+        if (requestId === requestIdRef.current && !summaryLockRef.current) {
+          appendTimeoutMessage(requestMode, "intake");
+        }
+      }, slowDelay);
+    }
     try {
       const response = await fetch("/api/invoices/from-input", {
         method: "POST",
@@ -1080,11 +1124,14 @@ function AIIntake() {
     abortControllerRef.current = controller;
     setIsTyping(true);
     clearSlowResponseTimer();
-    slowResponseTimeoutRef.current = window.setTimeout(() => {
-      if (requestId === requestIdRef.current && !summaryLockRef.current) {
-        appendTimeoutMessage(lastIntakeModeRef.current, "labor");
-      }
-    }, SLOW_RESPONSE_MS);
+    const slowDelay = getSlowResponseDelay(transcript ?? lastTranscriptRef.current);
+    if (slowDelay) {
+      slowResponseTimeoutRef.current = window.setTimeout(() => {
+        if (requestId === requestIdRef.current && !summaryLockRef.current) {
+          appendTimeoutMessage(lastIntakeModeRef.current, "labor");
+        }
+      }, slowDelay);
+    }
     try {
       const response = await fetch("/api/invoices/from-input/labor-pricing", {
         method: "POST",
@@ -1777,21 +1824,16 @@ function AIIntake() {
                             </p>
                             <div className="mt-2 space-y-2">
                               {payload.decisions.map((decision) => {
-                                const rawSnippet = extractDecisionSnippet(decision.prompt ?? "");
-                                const snippet = shortenSnippet(rawSnippet);
-                                const includeLabel =
-                                  decision.kind === "tax" ? "Apply tax" : `Include: ${snippet}`;
-                                const excludeLabel =
-                                  decision.kind === "tax" ? "No tax" : `Don't include: ${snippet}`;
-                                const includeValue =
-                                  decision.kind === "tax"
-                                    ? "Apply tax."
-                                    : `Include ${rawSnippet}.`;
-                                const excludeValue =
-                                  decision.kind === "tax" ? "No tax." : `Don't include ${rawSnippet}.`;
+                                const {
+                                  display,
+                                  includeLabel,
+                                  excludeLabel,
+                                  includeValue,
+                                  excludeValue
+                                } = buildDecisionActions(decision);
                                 return (
                                   <div key={decision.id} className="space-y-2">
-                                    <p className="text-sm text-amber-900">{decision.prompt}</p>
+                                    <p className="text-sm text-amber-900">{display}</p>
                                     <div className="flex flex-wrap gap-2">
                                       <button
                                         type="button"
@@ -1991,6 +2033,47 @@ function AIIntake() {
                     </div>
                   </div>
                 ) : null}
+                {intakePhase === "ready_to_summarize" && hasDecisions ? (
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                      Quick decisions
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      {decisionItems.map((item) => {
+                        const {
+                          display,
+                          includeLabel,
+                          excludeLabel,
+                          includeValue,
+                          excludeValue
+                        } = buildDecisionActions(item);
+                        return (
+                          <div key={`quick-${item.id}`} className="space-y-2">
+                            <p className="text-sm text-amber-900">{display}</p>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                                onClick={() => submitUserMessage(includeValue)}
+                                disabled={isTyping}
+                              >
+                                {includeLabel}
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                                onClick={() => submitUserMessage(excludeValue)}
+                                disabled={isTyping}
+                              >
+                                {excludeLabel}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
                 {showAssumptionDetails && hasDecisions ? (
                   <div
                     className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"
@@ -2001,19 +2084,17 @@ function AIIntake() {
                     </p>
                     <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-amber-900">
                       {decisionItems.map((item) => {
-                        const rawSnippet = extractDecisionSnippet(item.prompt);
-                        const snippet = shortenSnippet(rawSnippet);
-                        const includeLabel = item.kind === "tax" ? "Apply tax" : `Include: ${snippet}`;
-                        const excludeLabel =
-                          item.kind === "tax" ? "No tax" : `Don't include: ${snippet}`;
-                        const includeValue =
-                          item.kind === "tax" ? "Apply tax." : `Include ${rawSnippet}.`;
-                        const excludeValue =
-                          item.kind === "tax" ? "No tax." : `Don't include ${rawSnippet}.`;
+                        const {
+                          display,
+                          includeLabel,
+                          excludeLabel,
+                          includeValue,
+                          excludeValue
+                        } = buildDecisionActions(item);
                         return (
                           <li key={item.id}>
                             <div className="space-y-2">
-                              <p>{item.text}</p>
+                              <p>{`Decision needed: ${display}`}</p>
                               <div className="flex flex-wrap gap-2">
                                 <button
                                   type="button"
