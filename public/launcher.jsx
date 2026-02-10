@@ -209,6 +209,7 @@ function AIIntake() {
   const [assumptions, setAssumptions] = useState([]);
   const [unparsedLines, setUnparsedLines] = useState([]);
   const [auditStatus, setAuditStatus] = useState(null);
+  const [auditSummary, setAuditSummary] = useState("");
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
   const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(false);
   const [decisionToast, setDecisionToast] = useState(null);
@@ -922,6 +923,7 @@ function AIIntake() {
       return;
     }
     setAuditStatus("running");
+    setAuditSummary("");
     auditRequestIdRef.current += 1;
     const auditRequestId = auditRequestIdRef.current;
 
@@ -983,6 +985,9 @@ function AIIntake() {
           updates.push(`${addedAssumptions} new assumption${addedAssumptions > 1 ? "s" : ""}`);
         }
         appendAiMessage(`Deep check complete — ${updates.join(", ")}.`);
+        setAuditSummary(`Deep check added ${updates.join(", ")}.`);
+      } else {
+        setAuditSummary("Deep check complete — no changes found.");
       }
 
       setAuditStatus("completed");
@@ -1094,6 +1099,7 @@ function AIIntake() {
     setAssumptions([]);
     setUnparsedLines([]);
     setAuditStatus(null);
+    setAuditSummary("");
     setSummaryUpdatedAt(null);
     setDecisionToast(null);
     openDecisionSignatureRef.current = "";
@@ -1163,6 +1169,7 @@ function AIIntake() {
     abortOngoingRequest();
     auditRequestIdRef.current += 1;
     setAuditStatus(null);
+    setAuditSummary("");
     requestIdRef.current += 1;
     const requestId = requestIdRef.current;
     const requestStartedAt = Date.now();
@@ -2245,6 +2252,9 @@ function AIIntake() {
                 ) : null}
                 {auditStatus === "failed" ? (
                   <p className="mt-1 text-xs text-amber-600">Deep check failed — continuing with current snapshot.</p>
+                ) : null}
+                {auditStatus === "completed" && auditSummary ? (
+                  <p className="mt-1 text-xs text-slate-500">{auditSummary}</p>
                 ) : null}
                 {(auditStatus === "timed_out" || auditStatus === "failed") ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
