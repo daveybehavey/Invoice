@@ -213,6 +213,7 @@ function AIIntake() {
   const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(false);
   const [decisionToast, setDecisionToast] = useState(null);
   const [showAllDecisions, setShowAllDecisions] = useState(false);
+  const [decisionFocusIndex, setDecisionFocusIndex] = useState(0);
   const requestIdRef = useRef(0);
   const openDecisionSignatureRef = useRef("");
   const lastDecisionResolutionRef = useRef("");
@@ -669,11 +670,17 @@ function AIIntake() {
   const needsSummaryConfirmation = intakePhase === "ready_to_summarize";
   const showQuickDecisions =
     intakePhase === "ready_to_summarize" && (hasDecisions || taxAssumptionPresent || pendingTaxRate);
-  const maxQuickDecisionCount = 3;
+  const hasMoreDecisions = decisionItems.length > 1;
+  const clampedDecisionIndex = Math.min(
+    decisionFocusIndex,
+    Math.max(0, decisionItems.length - 1)
+  );
+  const focusedDecisionItem = decisionItems[clampedDecisionIndex];
   const visibleDecisionItems = showAllDecisions
     ? decisionItems
-    : decisionItems.slice(0, maxQuickDecisionCount);
-  const hasMoreDecisions = decisionItems.length > maxQuickDecisionCount;
+    : focusedDecisionItem
+      ? [focusedDecisionItem]
+      : [];
   const quickDecisionHeading =
     openDecisionCount > 0 ? `Needs your call (${openDecisionCount})` : "Tax choice";
   const quickReplyLabel = needsLaborHoursOnly
@@ -1093,6 +1100,7 @@ function AIIntake() {
 
   useEffect(() => {
     setShowAllDecisions(false);
+    setDecisionFocusIndex(0);
   }, [openDecisions.length]);
 
   useEffect(() => {
@@ -2281,6 +2289,37 @@ function AIIntake() {
                           </div>
                         );
                       })}
+                      {hasMoreDecisions && !showAllDecisions ? (
+                        <div className="flex flex-wrap items-center gap-3 pt-1 text-xs font-semibold text-amber-800">
+                          <span>
+                            Decision {clampedDecisionIndex + 1} of {decisionItems.length}
+                          </span>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              className="text-xs font-semibold text-amber-800 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                              onClick={() =>
+                                setDecisionFocusIndex((prev) => Math.max(0, prev - 1))
+                              }
+                              disabled={isTyping || clampedDecisionIndex === 0}
+                            >
+                              Previous
+                            </button>
+                            <button
+                              type="button"
+                              className="text-xs font-semibold text-amber-800 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                              onClick={() =>
+                                setDecisionFocusIndex((prev) =>
+                                  Math.min(decisionItems.length - 1, prev + 1)
+                                )
+                              }
+                              disabled={isTyping || clampedDecisionIndex >= decisionItems.length - 1}
+                            >
+                              Next
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                       {hasMoreDecisions ? (
                         <div className="pt-1">
                           <button
@@ -2295,7 +2334,7 @@ function AIIntake() {
                           </button>
                         </div>
                       ) : null}
-                      {decisionItems.length > 1 ? (
+                      {showAllDecisions && decisionItems.length > 1 ? (
                         <div className="space-y-2">
                           <p className="text-sm text-amber-900">Resolve all pending items</p>
                           <div className="flex flex-wrap gap-2">
