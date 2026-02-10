@@ -1205,9 +1205,10 @@ function detectOpenDecisionsFromText(sourceText: string, lastUserMessage?: strin
       const previousHasActionVerb = actionVerbs.test(previousSentence);
       if (previousHasActionVerb) {
         if (sentenceHasUncertainty[index - 1]) {
-          return;
+          decisionSentence = previousSentence;
+        } else {
+          decisionSentence = `${previousSentence} ${sentence}`;
         }
-        decisionSentence = `${previousSentence} ${sentence}`;
       }
     }
     const decision = buildDecisionFromSentence(decisionSentence);
@@ -2036,9 +2037,12 @@ function buildDecisionLabel(sentence: string): string | null {
     /^(on\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\s+\d{1,2}\b[,:-]?\s*/i,
     ""
   );
+  cleaned = cleaned.replace(/^also\s+/i, "");
   cleaned = cleaned.replace(/\b(?:i|we)\b\s+/i, "");
   cleaned = cleaned.replace(/^(bill|charge|invoice)\b\s*/i, "");
   cleaned = cleaned.replace(/\bwhile\s+i\s+was\s+there\b/gi, "");
+  cleaned = cleaned.replace(/\bwhile\s+was\s+there\b/gi, "");
+  cleaned = cleaned.replace(/\bwhile\s+was\b/gi, "");
   cleaned = cleaned.replace(/\bduring\s+the\s+visit\b/gi, "");
   cleaned = cleaned.replace(/\b\d+(?:\.\d+)?\s*(?:mins?|minutes?|hours?|hrs?)\b/gi, "");
   cleaned = cleaned.replace(/\s{2,}/g, " ").trim();
@@ -2245,6 +2249,10 @@ function evaluateDecisionResolution(decision: OpenDecision, resolutionText: stri
   const normalized = normalizeDecisionText(resolutionText);
   if (!normalized) {
     return { resolved: false, reason: "resolution_text_missing" };
+  }
+  const hasAmbiguousResolution = UNCERTAINTY_PHRASES.some((phrase) => normalized.includes(phrase));
+  if (hasAmbiguousResolution) {
+    return { resolved: false, reason: "resolution_ambiguous" };
   }
   const resolutionKeywords = new Set(expandKeywordVariants(extractKeywords(normalized)));
 
