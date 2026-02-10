@@ -214,6 +214,7 @@ function AIIntake() {
   const [decisionToast, setDecisionToast] = useState(null);
   const [showAllDecisions, setShowAllDecisions] = useState(false);
   const [decisionFocusIndex, setDecisionFocusIndex] = useState(0);
+  const [showDecisionWhy, setShowDecisionWhy] = useState(false);
   const requestIdRef = useRef(0);
   const openDecisionSignatureRef = useRef("");
   const lastDecisionResolutionRef = useRef("");
@@ -1101,6 +1102,7 @@ function AIIntake() {
   useEffect(() => {
     setShowAllDecisions(false);
     setDecisionFocusIndex(0);
+    setShowDecisionWhy(false);
   }, [openDecisions.length]);
 
   useEffect(() => {
@@ -2251,9 +2253,25 @@ function AIIntake() {
                     className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"
                     ref={decisionsRef}
                   >
-                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-                      {quickDecisionHeading}
-                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                        {quickDecisionHeading}
+                      </p>
+                      <button
+                        type="button"
+                        className="text-xs font-semibold text-amber-800 hover:text-amber-900"
+                        onClick={() => setShowDecisionWhy((prev) => !prev)}
+                        disabled={isTyping}
+                      >
+                        {showDecisionWhy ? "Hide why" : "Why am I seeing this?"}
+                      </button>
+                    </div>
+                    {showDecisionWhy ? (
+                      <p className="mt-2 text-sm text-amber-900">
+                        These are items your notes were unclear about. Choose Include or Exclude so I
+                        don’t guess on money.
+                      </p>
+                    ) : null}
                     <div className="mt-2 space-y-2">
                       {visibleDecisionItems.map((item) => {
                         const {
