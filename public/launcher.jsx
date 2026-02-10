@@ -522,6 +522,12 @@ function AIIntake() {
   };
 
   const handleDecisionAction = (action, message) => {
+    const currentValue = inputValue.replace(/\s+$/, "");
+    if (currentValue.trim()) {
+      const prefix = currentValue.endsWith("\n") ? currentValue : `${currentValue}\n`;
+      focusInputWithValue(`${prefix}${message}`);
+      return;
+    }
     decisionActionRef.current = action;
     const accepted = submitUserMessage(message);
     if (!accepted) {
