@@ -211,6 +211,7 @@ function AIIntake() {
   const [auditStatus, setAuditStatus] = useState(null);
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
   const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(false);
+  const [decisionToast, setDecisionToast] = useState(null);
   const requestIdRef = useRef(0);
   const openDecisionSignatureRef = useRef("");
   const lastDecisionResolutionRef = useRef("");
@@ -233,6 +234,7 @@ function AIIntake() {
   const openDecisionsRef = useRef([]);
   const assumptionsRef = useRef([]);
   const unparsedLinesRef = useRef([]);
+  const decisionToastTimeoutRef = useRef(null);
   const intakeComplete = intakePhase === "ready_to_generate";
   const confirmationKeywords = ["yes", "yep", "correct", "looks good", "sounds good", "confirm"];
   const rejectionKeywords = ["no", "not correct", "wrong", "incorrect", "needs change"];
@@ -264,6 +266,35 @@ function AIIntake() {
     normalizeSnippet(text)
       .split(" ")
       .filter((word) => word.length >= 4);
+
+  const orderLineItemsForTranscript = (lineItems, transcript) => {
+    if (!Array.isArray(lineItems) || lineItems.length <= 1) {
+      return lineItems;
+    }
+    const normalizedTranscript = normalizeSnippet(transcript ?? "");
+    if (!normalizedTranscript) {
+      return lineItems;
+    }
+    return lineItems
+      .map((item, index) => {
+        const keywords = extractKeywords(item.description ?? "");
+        let position = Number.POSITIVE_INFINITY;
+        keywords.forEach((keyword) => {
+          const idx = normalizedTranscript.indexOf(keyword);
+          if (idx >= 0 && idx < position) {
+            position = idx;
+          }
+        });
+        return { item, position, index };
+      })
+      .sort((a, b) => {
+        if (a.position === b.position) {
+          return a.index - b.index;
+        }
+        return a.position - b.position;
+      })
+      .map((entry) => entry.item);
+  };
 
   const extractTaxRateFromText = (text) => {
     if (!text) {
@@ -355,11 +386,15 @@ function AIIntake() {
     if (!invoice) {
       return null;
     }
+    const orderedLineItems = orderLineItemsForTranscript(
+      invoice.lineItems ?? [],
+      lastTranscriptRef.current
+    );
     return {
       id: `review-${Date.now()}`,
       customerName: invoice.customerName ?? "",
       notes: invoice.notes ?? "",
-      lineItems: invoice.lineItems.map((item, index) => ({
+      lineItems: orderedLineItems.map((item, index) => ({
         id: item.id ?? `review-line-${index}`,
         type: item.type ?? "other",
         description: formatDisplayDescription(item.description),
@@ -388,8 +423,12 @@ function AIIntake() {
       typeof invoice?.issueDate === "string" && /^\d{4}-\d{2}-\d{2}/.test(invoice.issueDate)
         ? invoice.issueDate.slice(0, 10)
         : "";
+    const orderedLineItems = orderLineItemsForTranscript(
+      invoice?.lineItems ?? [],
+      lastTranscriptRef.current
+    );
     const lineItems =
-      invoice?.lineItems?.map((lineItem, index) => {
+      orderedLineItems?.map((lineItem, index) => {
         const hasQuantity = Number.isFinite(lineItem.quantity);
         const hasUnitPrice = Number.isFinite(lineItem.unitPrice);
         const hasAmount = Number.isFinite(lineItem.amount);
@@ -434,12 +473,32 @@ function AIIntake() {
     ]);
   };
 
+  const showDecisionToast = (text) => {
+    if (!text) {
+      return;
+    }
+    setDecisionToast(text);
+    if (decisionToastTimeoutRef.current) {
+      window.clearTimeout(decisionToastTimeoutRef.current);
+    }
+    decisionToastTimeoutRef.current = window.setTimeout(() => {
+      setDecisionToast(null);
+      decisionToastTimeoutRef.current = null;
+    }, 3500);
+  };
+
   const buildDecisionAckMessage = (action, resolvedCount) => {
     if (!resolvedCount || resolvedCount <= 0) {
       return null;
     }
     if (!action) {
       return `Decision updated — ${resolvedCount} item${resolvedCount > 1 ? "s" : ""} resolved.`;
+    }
+    if (action.type === "bulk_include") {
+      return `Got it — I’ll include all pending items. (${resolvedCount} resolved)`;
+    }
+    if (action.type === "bulk_exclude") {
+      return `Got it — I won’t include any pending items. (${resolvedCount} resolved)`;
     }
     if (action.kind === "tax") {
       if (action.type === "tax_apply") {
@@ -503,7 +562,11 @@ function AIIntake() {
 
   const assumptionItems = (() => {
     if (finishedInvoice) {
-      const items = finishedInvoice.lineItems.map((lineItem, index) => ({
+      const orderedLineItems = orderLineItemsForTranscript(
+        finishedInvoice.lineItems ?? [],
+        lastTranscriptRef.current
+      );
+      const items = orderedLineItems.map((lineItem, index) => ({
         id: `assumption-line-${lineItem.id ?? index}`,
         text: `${formatDisplayDescription(lineItem.description)}${
           Number.isFinite(lineItem.amount) ? ` — ${formatMoney(lineItem.amount)}` : ""
@@ -979,9 +1042,14 @@ function AIIntake() {
     setUnparsedLines([]);
     setAuditStatus(null);
     setSummaryUpdatedAt(null);
+    setDecisionToast(null);
     openDecisionSignatureRef.current = "";
     lastDecisionResolutionRef.current = "";
     decisionActionRef.current = null;
+    if (decisionToastTimeoutRef.current) {
+      window.clearTimeout(decisionToastTimeoutRef.current);
+      decisionToastTimeoutRef.current = null;
+    }
     auditRequestIdRef.current += 1;
   };
 
@@ -1097,6 +1165,7 @@ function AIIntake() {
           : "I need a bit more pricing detail. Share either a flat amount or an hourly rate + hours.";
         if (decisionAck) {
           appendAiMessage(decisionAck);
+          showDecisionToast(decisionAck);
         }
         appendAiMessage(followUpText);
         const responseAt = Date.now();
@@ -1126,6 +1195,7 @@ function AIIntake() {
         openDecisionSignatureRef.current = decisionSignature;
         if (decisionAck) {
           appendAiMessage(decisionAck);
+          showDecisionToast(decisionAck);
         }
         isRepeatDecision
           ? appendAiMessage(followUpMessage)
@@ -1159,6 +1229,7 @@ function AIIntake() {
         openDecisionSignatureRef.current = "";
         if (decisionAck) {
           appendAiMessage(decisionAck);
+          showDecisionToast(decisionAck);
         }
         appendSummaryMessage(
           buildSummaryText(payload.invoice, [], nextUnparsedLines.length),
@@ -1300,6 +1371,7 @@ function AIIntake() {
         openDecisionSignatureRef.current = decisionSignature;
         if (decisionAck) {
           appendAiMessage(decisionAck);
+          showDecisionToast(decisionAck);
         }
         isRepeatDecision
           ? appendAiMessage(followUpMessage)
@@ -1332,6 +1404,7 @@ function AIIntake() {
         openDecisionSignatureRef.current = "";
         if (decisionAck) {
           appendAiMessage(decisionAck);
+          showDecisionToast(decisionAck);
         }
         appendSummaryMessage(
           buildSummaryText(payload.invoice, [], nextUnparsedLines.length),
@@ -2208,6 +2281,39 @@ function AIIntake() {
                           </div>
                         );
                       })}
+                      {decisionItems.length > 1 ? (
+                        <div className="space-y-2">
+                          <p className="text-sm text-amber-900">Resolve all pending items</p>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                              onClick={() => {
+                                const includeAll = decisionItems
+                                  .map((item) => buildDecisionActions(item).includeValue)
+                                  .join("\n");
+                                handleDecisionAction({ type: "bulk_include" }, includeAll);
+                              }}
+                              disabled={isTyping}
+                            >
+                              Include all
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                              onClick={() => {
+                                const excludeAll = decisionItems
+                                  .map((item) => buildDecisionActions(item).excludeValue)
+                                  .join("\n");
+                                handleDecisionAction({ type: "bulk_exclude" }, excludeAll);
+                              }}
+                              disabled={isTyping}
+                            >
+                              Exclude all
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                       {taxAssumptionPresent || pendingTaxRate ? (
                         <div className="space-y-2">
                           <p className="text-sm text-amber-900">
@@ -2417,6 +2523,14 @@ function AIIntake() {
           ) : null}
         </div>
       </main>
+
+      {decisionToast ? (
+        <div className="fixed bottom-24 left-0 right-0 z-40 flex justify-center px-4">
+          <div className="max-w-3xl flex-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm">
+            {decisionToast}
+          </div>
+        </div>
+      ) : null}
 
       <form
         onSubmit={handleSend}
