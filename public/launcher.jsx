@@ -363,7 +363,9 @@ function AIIntake() {
     );
     if (decisions.length > 0) {
       summaryLines.push(
-        `${decisions.length} decision${decisions.length > 1 ? "s" : ""} still need your call.`
+        `${decisions.length} decision${decisions.length > 1 ? "s" : ""} still ${
+          decisions.length > 1 ? "need" : "needs"
+        } your call.`
       );
     }
     if (unparsedCount > 0) {
@@ -375,11 +377,11 @@ function AIIntake() {
     if (decisions.length > 0) {
       return `${summaryLines.join(
         " "
-      )}\n\nCheckpoint: Draft ready. Pending decisions can be resolved anytime. Reply \"confirm\" to generate or send edits.`;
+      )}\n\nCheckpoint: Draft ready. You can resolve decisions now or later. Reply \"confirm\" to generate or send edits.`;
     }
     return `${summaryLines.join(
       " "
-    )}\n\nCheckpoint: Draft ready. Reply \"confirm\" to generate or send edits.`;
+    )}\n\nCheckpoint: Draft ready. Reply \"confirm\" to generate, or send edits.`;
   };
 
   const buildReviewPayload = (invoice, decisions = [], unparsed = []) => {
@@ -706,7 +708,7 @@ function AIIntake() {
       decision.kind === "tax"
         ? "Apply tax?"
         : rawSnippet
-          ? `Bill this item? ${snippet}`
+          ? `Bill this item — ${snippet}`
           : decision.prompt ?? "Decision needed";
     const includeLabel = decision.kind === "tax" ? "Apply tax" : "Include item";
     const excludeLabel = decision.kind === "tax" ? "No tax" : "Don't include";
