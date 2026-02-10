@@ -378,11 +378,11 @@ function AIIntake() {
     if (decisions.length > 0) {
       return `${summaryLines.join(
         " "
-      )}\n\nCheckpoint: Draft ready. You can resolve decisions now or later. Reply \"confirm\" to generate or send edits.`;
+      )}\n\nCheckpoint: Draft ready. Tap Confirm to generate (or reply \"confirm\"). You can resolve decisions now or later.`;
     }
     return `${summaryLines.join(
       " "
-    )}\n\nCheckpoint: Draft ready. Reply \"confirm\" to generate, or send edits.`;
+    )}\n\nCheckpoint: Draft ready. Tap Confirm to generate (or reply \"confirm\"). Send edits anytime.`;
   };
 
   const buildReviewPayload = (invoice, decisions = [], unparsed = []) => {
@@ -687,8 +687,8 @@ function AIIntake() {
         ? "Provide labor pricing to continue."
       : needsSummaryConfirmation
         ? openDecisionCount > 0
-          ? "Checkpoint ready — confirm to generate. Pending decisions can be resolved later."
-          : "Checkpoint ready — confirm to generate."
+          ? "Checkpoint ready — tap Confirm to generate (or reply \"confirm\"). Pending decisions can be resolved later."
+          : "Checkpoint ready — tap Confirm to generate (or reply \"confirm\")."
         : openDecisionCount > 0
           ? "Pending decisions can be resolved anytime."
           : "Continue the conversation to build the draft.";
