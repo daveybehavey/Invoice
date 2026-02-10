@@ -3100,6 +3100,8 @@ function InspectorPanel({
   const [assistantStatus, setAssistantStatus] = useState("");
   const [assistantError, setAssistantError] = useState("");
   const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantMessages, setAssistantMessages] = useState([]);
+  const [pendingAssistantEdit, setPendingAssistantEdit] = useState(null);
   const assistantRequestIdRef = useRef(0);
   const tabs = [
     { id: "style", label: "Style", content: "Style controls coming soon" },
@@ -3167,6 +3169,10 @@ function InspectorPanel({
       setAssistantError("Add an instruction for the AI.");
       return;
     }
+    if (pendingAssistantEdit) {
+      setAssistantError("Apply or discard the pending changes first.");
+      return;
+    }
     const payloadResult = buildEditableInvoicePayload?.();
     if (!payloadResult || payloadResult.error) {
       setAssistantError(payloadResult?.error ?? "Add at least one line item before editing.");
@@ -3178,6 +3184,7 @@ function InspectorPanel({
     setAssistantLoading(true);
     setAssistantError("");
     setAssistantStatus("");
+    setAssistantMessages((prev) => [...prev, { role: "user", text: instruction }]);
     fetch("/api/invoices/edit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3195,12 +3202,21 @@ function InspectorPanel({
         }
         if (payload?.followUp) {
           setAssistantStatus(payload.followUp);
+          setAssistantMessages((prev) => [...prev, { role: "ai", text: payload.followUp }]);
           setAssistantLoading(false);
+          setAssistantInstruction("");
           return;
         }
         if (payload?.invoice) {
-          onApplyAiEdit?.(payload.invoice);
-          setAssistantStatus("Changes applied.");
+          const summary = buildEditSummary(invoice, payload.invoice);
+          setPendingAssistantEdit({ invoice: payload.invoice, summary });
+          setAssistantMessages((prev) => [
+            ...prev,
+            {
+              role: "ai",
+              text: "I drafted updates. Review and apply when ready."
+            }
+          ]);
           setAssistantInstruction("");
         } else {
           setAssistantError("No updates returned. Try again.");
@@ -3214,6 +3230,72 @@ function InspectorPanel({
         setAssistantError("AI edit failed. Try again.");
         setAssistantLoading(false);
       });
+  };
+
+  const buildEditSummary = (before, after) => {
+    if (!before || !after) {
+      return ["Review the suggested changes before applying."];
+    }
+    const summary = [];
+    if (before.customerName !== after.customerName) {
+      summary.push("Client updated");
+    }
+    if (before.issueDate !== after.issueDate) {
+      summary.push("Invoice date updated");
+    }
+    if (before.invoiceNumber !== after.invoiceNumber) {
+      summary.push("Invoice number updated");
+    }
+    if ((before.notes ?? "") !== (after.notes ?? "")) {
+      summary.push("Notes updated");
+    }
+    const beforeLines = Array.isArray(before.lineItems) ? before.lineItems : [];
+    const afterLines = Array.isArray(after.lineItems) ? after.lineItems : [];
+    if (beforeLines.length !== afterLines.length) {
+      summary.push(`Line items: ${beforeLines.length} → ${afterLines.length}`);
+    }
+    const changes = [];
+    afterLines.forEach((line) => {
+      const match =
+        beforeLines.find((item) => item.id && line.id && item.id === line.id) ??
+        beforeLines.find((item) => item.description === line.description);
+      if (!match) {
+        changes.push(`Added: ${line.description}`);
+        return;
+      }
+      if (
+        match.description !== line.description ||
+        match.quantity !== line.quantity ||
+        match.unitPrice !== line.unitPrice
+      ) {
+        changes.push(`Updated: ${line.description || match.description}`);
+      }
+    });
+    const trimmedChanges = changes.filter(Boolean).slice(0, 3);
+    if (trimmedChanges.length > 0) {
+      summary.push(...trimmedChanges);
+    }
+    if (summary.length === 0) {
+      summary.push("Minor wording updates");
+    }
+    return summary;
+  };
+
+  const handleApplyPendingEdit = () => {
+    if (!pendingAssistantEdit) {
+      return;
+    }
+    onApplyAiEdit?.(pendingAssistantEdit.invoice);
+    setAssistantMessages((prev) => [...prev, { role: "ai", text: "Changes applied." }]);
+    setPendingAssistantEdit(null);
+  };
+
+  const handleDiscardPendingEdit = () => {
+    if (!pendingAssistantEdit) {
+      return;
+    }
+    setAssistantMessages((prev) => [...prev, { role: "ai", text: "Okay — discarded that draft." }]);
+    setPendingAssistantEdit(null);
   };
 
   const buildPreview = (items, previewNotes) => {
@@ -3409,20 +3491,80 @@ function InspectorPanel({
                 Ask for changes without retyping. The AI will only adjust what you request.
               </p>
             </div>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Conversation
+              </p>
+              <div className="max-h-40 space-y-2 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-3">
+                {assistantMessages.length > 0 ? (
+                  assistantMessages.map((message, index) => (
+                    <div
+                      key={`${message.role}-${index}`}
+                      className={`rounded-lg px-3 py-2 text-xs ${
+                        message.role === "user"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-white text-slate-600"
+                      }`}
+                    >
+                      <p className="font-semibold uppercase tracking-wide text-[10px]">
+                        {message.role === "user" ? "You" : "AI"}
+                      </p>
+                      <p className="mt-1 whitespace-pre-wrap text-xs">{message.text}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    Ask for changes like “Rename the logo line item to Brand refresh” or “Remove the
+                    parking fee.”
+                  </p>
+                )}
+              </div>
+            </div>
             <textarea
               rows={4}
               className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
               placeholder="Example: Change the labor rate to $80/hr and remove the parking line."
               value={assistantInstruction}
               onChange={(event) => setAssistantInstruction(event.target.value)}
+              disabled={assistantLoading}
             />
+            {pendingAssistantEdit ? (
+              <div className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                  Pending changes
+                </p>
+                <ul className="space-y-1 text-xs text-emerald-800">
+                  {pendingAssistantEdit.summary.map((item, index) => (
+                    <li key={`summary-${index}`}>{item}</li>
+                  ))}
+                </ul>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-emerald-300"
+                    onClick={handleApplyPendingEdit}
+                    disabled={assistantLoading}
+                  >
+                    Apply changes
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700"
+                    onClick={handleDiscardPendingEdit}
+                    disabled={assistantLoading}
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            ) : null}
             <button
               type="button"
               className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-emerald-300"
               onClick={submitAssistantEdit}
-              disabled={assistantLoading}
+              disabled={assistantLoading || !!pendingAssistantEdit}
             >
-              Apply edit
+              Draft edit
             </button>
             {assistantLoading ? <p className="text-xs text-slate-500">Applying changes...</p> : null}
             {assistantError ? <p className="text-xs text-rose-600">{assistantError}</p> : null}
