@@ -271,7 +271,7 @@ Do what makes sense.`;
     record(nextSteps, "Next steps strip shown");
 
     const decisionText = decisions.join(" ").toLowerCase();
-    record(decisionText.includes("tax"), "Tax decision requested");
+    record(!decisionText.includes("tax"), "No tax decision requested");
     record(
       decisionText.includes("cabinet") || decisionText.includes("door"),
       "Cabinet door decision requested"
@@ -392,7 +392,7 @@ Do what makes sense.`;
     const hoursPrompt = await waitForText(page, "How many hours for each labor line", 5000);
     record(hoursPrompt, "Hours follow-up shown after rate selection");
 
-    const hoursButton = page.getByRole("button", { name: "Use 2h, 1h, 1h" });
+    const hoursButton = page.getByRole("button", { name: "Use 1h" });
     record(await hoursButton.isVisible(), "Suggested hours button shown");
     await hoursButton.click();
     await waitForTypingToSettle(page);

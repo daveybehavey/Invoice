@@ -180,6 +180,19 @@ const initialIntakeMessages = [
   }
 ];
 
+const readDraftFromStorage = (key) => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const stored = window.localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : null;
+  } catch (error) {
+    console.error("Failed to read draft", error);
+    return null;
+  }
+};
+
 function AIIntake() {
   const navigate = useNavigate();
   const [messages, setMessages] = useState(initialIntakeMessages);
@@ -1405,24 +1418,28 @@ function AIIntake() {
 
 function ManualInvoiceCanvas() {
   const navigate = useNavigate();
-  const [invoiceNumber, setInvoiceNumber] = useState("INV-0001");
-  const [invoiceDate, setInvoiceDate] = useState("");
-  const [fromDetails, setFromDetails] = useState("");
-  const [billToDetails, setBillToDetails] = useState("");
-  const [notes, setNotes] = useState("");
-  const [taxRate, setTaxRate] = useState("0");
-  const [lineItems, setLineItems] = useState([
-    { id: "line-1", description: "", qty: "", rate: "" }
-  ]);
-  const [logoUrl, setLogoUrl] = useState(null);
-  const [stylePreset, setStylePreset] = useState("default");
+  const draftStorageKey = "invoiceDraft";
+  const initialDraftRef = useRef(readDraftFromStorage(draftStorageKey));
+  const initialDraft = initialDraftRef.current;
+  const [invoiceNumber, setInvoiceNumber] = useState(() => initialDraft?.invoiceNumber ?? "INV-0001");
+  const [invoiceDate, setInvoiceDate] = useState(() => initialDraft?.invoiceDate ?? "");
+  const [fromDetails, setFromDetails] = useState(() => initialDraft?.fromDetails ?? "");
+  const [billToDetails, setBillToDetails] = useState(() => initialDraft?.billToDetails ?? "");
+  const [notes, setNotes] = useState(() => initialDraft?.notes ?? "");
+  const [taxRate, setTaxRate] = useState(() => initialDraft?.taxRate ?? "0");
+  const [lineItems, setLineItems] = useState(() =>
+    Array.isArray(initialDraft?.lineItems) && initialDraft.lineItems.length > 0
+      ? initialDraft.lineItems
+      : [{ id: "line-1", description: "", qty: "", rate: "" }]
+  );
+  const [logoUrl, setLogoUrl] = useState(() => initialDraft?.logoUrl ?? null);
+  const [stylePreset, setStylePreset] = useState(() => initialDraft?.stylePreset ?? "default");
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [activeInspectorTab, setActiveInspectorTab] = useState("style");
   const [draftStatus, setDraftStatus] = useState("");
   const saveTimeoutRef = useRef(null);
   const clearStatusTimeoutRef = useRef(null);
-  const hasRestoredRef = useRef(false);
-  const draftStorageKey = "invoiceDraft";
+  const draftStatusLabel = "Draft restored";
 
   const stylePresets = {
     default: { label: "Default", textClass: "text-sm", sectionGap: "space-y-6" },
@@ -1575,75 +1592,39 @@ function ManualInvoiceCanvas() {
     }
   };
 
+  const persistDraft = () => {
+    const payload = {
+      invoiceNumber,
+      invoiceDate,
+      fromDetails,
+      billToDetails,
+      notes,
+      taxRate,
+      lineItems,
+      logoUrl,
+      stylePreset
+    };
+    window.localStorage.setItem(draftStorageKey, JSON.stringify(payload));
+  };
+
   useEffect(() => {
-    const stored = window.localStorage.getItem(draftStorageKey);
-    if (!stored) {
-      hasRestoredRef.current = true;
-      return;
-    }
-    try {
-      const parsed = JSON.parse(stored);
-      if (parsed.invoiceNumber !== undefined) {
-        setInvoiceNumber(parsed.invoiceNumber);
-      }
-      if (parsed.invoiceDate !== undefined) {
-        setInvoiceDate(parsed.invoiceDate);
-      }
-      if (parsed.fromDetails !== undefined) {
-        setFromDetails(parsed.fromDetails);
-      }
-      if (parsed.billToDetails !== undefined) {
-        setBillToDetails(parsed.billToDetails);
-      }
-      if (parsed.notes !== undefined) {
-        setNotes(parsed.notes);
-      }
-      if (parsed.taxRate !== undefined) {
-        setTaxRate(parsed.taxRate);
-      }
-      if (parsed.stylePreset !== undefined) {
-        setStylePreset(parsed.stylePreset);
-      }
-      if (Array.isArray(parsed.lineItems) && parsed.lineItems.length > 0) {
-        setLineItems(parsed.lineItems);
-      }
-      if (parsed.logoUrl !== undefined) {
-        setLogoUrl(parsed.logoUrl);
-      }
-      setDraftStatus("Draft restored");
+    if (initialDraft) {
+      setDraftStatus(draftStatusLabel);
       if (clearStatusTimeoutRef.current) {
         window.clearTimeout(clearStatusTimeoutRef.current);
       }
       clearStatusTimeoutRef.current = window.setTimeout(() => {
         setDraftStatus("");
       }, 2000);
-    } catch (error) {
-      console.error("Failed to restore draft", error);
-    } finally {
-      hasRestoredRef.current = true;
     }
-  }, []);
+  }, [initialDraft, draftStatusLabel]);
 
   useEffect(() => {
-    if (!hasRestoredRef.current) {
-      return;
-    }
     if (saveTimeoutRef.current) {
       window.clearTimeout(saveTimeoutRef.current);
     }
     saveTimeoutRef.current = window.setTimeout(() => {
-      const payload = {
-        invoiceNumber,
-        invoiceDate,
-        fromDetails,
-        billToDetails,
-        notes,
-        taxRate,
-        lineItems,
-        logoUrl,
-        stylePreset
-      };
-      window.localStorage.setItem(draftStorageKey, JSON.stringify(payload));
+      persistDraft();
       setDraftStatus("Draft saved");
       if (clearStatusTimeoutRef.current) {
         window.clearTimeout(clearStatusTimeoutRef.current);
@@ -1695,7 +1676,10 @@ function ManualInvoiceCanvas() {
           <button
             type="button"
             className="text-sm font-semibold text-slate-700"
-            onClick={() => navigate("/")}
+            onClick={() => {
+              persistDraft();
+              navigate("/");
+            }}
           >
             &larr; Back
           </button>

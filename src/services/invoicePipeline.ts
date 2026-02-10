@@ -147,6 +147,9 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   }
 
   const invoice = await generateFinishedInvoice(sanitizedInvoice);
+  const invoiceWithIssueDate = hasExplicitIssueDate(sourceText)
+    ? invoice
+    : { ...invoice, issueDate: undefined };
   const discountIntent = detectDiscountIntent(sourceText);
   const audit = await auditInvoiceInterpretation(sourceText, sanitizedInvoice);
   const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
@@ -172,8 +175,13 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
       ? mergeUnparsedLines(sanitizedNotes.removedLines, mergeUnparsedLines(auditUnparsed, heuristicUnparsed))
       : mergeUnparsedLines(sanitizedNotes.removedLines, heuristicUnparsed);
   const cleanedUnparsed = filterUnparsedLines(unparsedLines);
-  const cleanedDecisions = filterDecisionsAgainstInvoice(openDecisions, invoice, taxDirective);
-  const invoiceWithHolds = applyDecisionPricingHolds(invoice, cleanedDecisions);
+  const cleanedDecisions = filterDecisionsAgainstInvoice(
+    openDecisions,
+    invoiceWithIssueDate,
+    taxDirective,
+    sourceText
+  );
+  const invoiceWithHolds = applyDecisionPricingHolds(invoiceWithIssueDate, cleanedDecisions);
   const cleanedInvoice = filterInvoiceNotes(invoiceWithHolds, sourceText, cleanedDecisions);
   const cleanedAssumptions = filterAssumptionsAgainstDecisions(assumptions, cleanedDecisions);
 
@@ -216,8 +224,11 @@ export async function continueInvoiceAfterLaborPricing(
     ...withLaborPricing,
     notes: sanitizedNotes.cleanedNotes
   };
-  const invoice = await generateFinishedInvoice(sanitizedInvoice);
   const source = sourceText ?? withLaborPricing.notes ?? "";
+  const invoice = await generateFinishedInvoice(sanitizedInvoice);
+  const invoiceWithIssueDate = hasExplicitIssueDate(source)
+    ? invoice
+    : { ...invoice, issueDate: undefined };
   const discountIntent = detectDiscountIntent(source);
   const audit = await auditInvoiceInterpretation(source, sanitizedInvoice);
   const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
@@ -239,8 +250,13 @@ export async function continueInvoiceAfterLaborPricing(
       ? mergeUnparsedLines(sanitizedNotes.removedLines, mergeUnparsedLines(auditUnparsed, heuristicUnparsed))
       : mergeUnparsedLines(sanitizedNotes.removedLines, heuristicUnparsed);
   const cleanedUnparsed = filterUnparsedLines(unparsedLines);
-  const cleanedDecisions = filterDecisionsAgainstInvoice(openDecisions, invoice, taxDirective);
-  const invoiceWithHolds = applyDecisionPricingHolds(invoice, cleanedDecisions);
+  const cleanedDecisions = filterDecisionsAgainstInvoice(
+    openDecisions,
+    invoiceWithIssueDate,
+    taxDirective,
+    source
+  );
+  const invoiceWithHolds = applyDecisionPricingHolds(invoiceWithIssueDate, cleanedDecisions);
   const cleanedInvoice = filterInvoiceNotes(
     invoiceWithHolds,
     sourceText ?? withLaborPricing.notes ?? "",
@@ -395,6 +411,7 @@ async function parseMessyInputToStructuredInvoice(sourceText: string): Promise<S
     "}",
     "Rules:",
     "- Keep tasks itemized, not overly grouped.",
+    "- Prefer the user's task wording; avoid generic labels like \"Labor\" if a specific task is mentioned.",
     "- Group work sessions by date when a date exists.",
     "- Omit unknown numeric fields instead of guessing.",
     "- Never infer or invent labor hours, labor rate, or labor amount when they are missing.",
@@ -1271,7 +1288,18 @@ function filterUnparsedLines(lines: string[]): string[] {
     /\btax\b/i,
     /\b(up to you|do what makes sense|not sure|unsure|maybe|if applicable|sometimes)\b/i
   ];
-  return lines.filter((line) => !skipPatterns.some((pattern) => pattern.test(line)));
+  return lines.filter((line) => {
+    if (skipPatterns.some((pattern) => pattern.test(line))) {
+      return false;
+    }
+    if (/^\s*(bill\s+to|invoice\s+to|customer)\b/i.test(line)) {
+      return false;
+    }
+    if (/^\s*bill\s+[A-Z]/.test(line) && !/\$/.test(line)) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function extractUserNoteCandidates(sourceText: string): string[] {
@@ -1280,7 +1308,7 @@ function extractUserNoteCandidates(sourceText: string): string[] {
   }
 
   const noteMarkers =
-    /\b(notes?|memo|special instructions|terms?|net\s*\d+|due|payment|payable|please|thank you|thanks|warranty|guarantee|invoice\s+to|make\s+checks?\s+payable|remit|ach|wire|bank|venmo|zelle)\b/i;
+    /\b(notes?|memo|special instructions|terms?|net\s*\d+|due|payment|payable|please|thank you|thanks|warranty|guarantee|make\s+checks?\s+payable|remit|ach|wire|bank|venmo|zelle|call|text|email|contact|access|gate|code|lockbox|entry|enter|leave|drop\s+off|pickup|schedule|availability)\b/i;
   const workMarkers =
     /\b(\d+(?:\.\d+)?\s*(?:hours?|hrs?)|\$|parts?|materials?|labor|rate|fixed|repair(?:ed)?|install(?:ed)?|replace(?:d)?|tighten(?:ed)?|adjust(?:ed)?|inspect(?:ed)?|clean(?:ed)?|service|visit)\b/i;
 
@@ -1320,10 +1348,15 @@ function extractUserNoteCandidates(sourceText: string): string[] {
 function filterDecisionsAgainstInvoice(
   decisions: OpenDecision[],
   invoice: FinishedInvoice,
-  taxDirective: TaxDirective
+  taxDirective: TaxDirective,
+  sourceText = ""
 ): OpenDecision[] {
   if (!decisions.length) {
     return decisions;
+  }
+
+  if (!hasExplicitTaxRequest(sourceText)) {
+    decisions = decisions.filter((decision) => decision.kind !== "tax");
   }
 
   if (taxDirective !== "none") {
@@ -1429,9 +1462,8 @@ function filterInvoiceNotes(
   }
 
   const userCandidates = extractUserNoteCandidates(sourceText);
-  const normalizedSource = normalizeDecisionText(sourceText);
   const noteMarkers =
-    /\b(notes?|memo|special instructions|terms?|net\s*\d+|due|payment|payable|please|thank you|thanks|warranty|guarantee|invoice\s+to|make\s+checks?\s+payable|remit|ach|wire|bank|venmo|zelle)\b/i;
+    /\b(notes?|memo|special instructions|terms?|net\s*\d+|due|payment|payable|please|thank you|thanks|warranty|guarantee|make\s+checks?\s+payable|remit|ach|wire|bank|venmo|zelle|call|text|email|contact|access|gate|code|lockbox|entry|enter|leave|drop\s+off|pickup|schedule|availability)\b/i;
   const workMarkers =
     /\b(\d+(?:\.\d+)?\s*(?:hours?|hrs?)|\$|parts?|materials?|labor|rate|fixed|repair(?:ed)?|install(?:ed)?|replace(?:d)?|tighten(?:ed)?|adjust(?:ed)?|inspect(?:ed)?|clean(?:ed)?|service|visit)\b/i;
 
@@ -1468,8 +1500,7 @@ function filterInvoiceNotes(
       });
       keep =
         overlapsCandidate ||
-        userCandidates.some((candidate) => normalizedLine.includes(normalizeDecisionText(candidate))) ||
-        normalizedSource.includes(normalizedLine);
+        userCandidates.some((candidate) => normalizedLine.includes(normalizeDecisionText(candidate)));
     }
 
     if (!keep) {
@@ -1512,6 +1543,13 @@ function buildDecisionFromSentence(sentence: string): Omit<OpenDecision, "id" | 
     return null;
   }
   if (lower.includes("tax")) {
+    const ambiguousTax =
+      /\b(sometimes|maybe|if applicable|not sure|do what makes sense|might|may apply|unless specified)\b/i.test(
+        lower
+      );
+    if (ambiguousTax) {
+      return null;
+    }
     const explicitTaxRequest =
       /\b(apply|add|include|charge)\s+(?:sales\s+)?tax\b/i.test(lower) ||
       /\btax\s*\?\b/i.test(lower) ||
@@ -1576,6 +1614,9 @@ function normalizeAssumptions(assumptions: string[], taxDirective: TaxDirective 
     if (!normalizedText || seen.has(normalizedText)) {
       return;
     }
+    if (taxDirective !== "none" && normalizedText.includes("tax")) {
+      return;
+    }
     if (genericPatterns.some((pattern) => pattern.test(normalizedText))) {
       return;
     }
@@ -1636,6 +1677,46 @@ function detectExplicitTaxDirective(sourceText: string): TaxDirective {
   }
 
   return "none";
+}
+
+function hasExplicitTaxRequest(sourceText: string): boolean {
+  const normalized = normalizeDecisionText(sourceText);
+  if (!normalized || !normalized.includes("tax")) {
+    return false;
+  }
+  const ambiguousTax =
+    /\b(sometimes|maybe|might|if applicable|not sure|do what makes sense|may apply|unless specified)\b/i.test(
+      normalized
+    );
+  if (ambiguousTax) {
+    return false;
+  }
+  const raw = sourceText.toLowerCase();
+  return (
+    /\b(apply|add|include|charge)\s+(?:sales\s+)?tax\b/i.test(raw) ||
+    /\btax\s*\?\b/i.test(raw) ||
+    /\bshould\s+i\s+.*tax\b/i.test(raw) ||
+    /\bdo\s+i\s+.*tax\b/i.test(raw) ||
+    /\bneed\s+.*tax\b/i.test(raw) ||
+    /\bwant\s+.*tax\b/i.test(raw) ||
+    /\bwith\s+tax\b/i.test(raw) ||
+    /\btax\s+at\b/i.test(raw) ||
+    /\b\d+(?:\.\d+)?%\s*tax\b/i.test(raw)
+  );
+}
+
+function hasExplicitIssueDate(sourceText: string): boolean {
+  const normalized = normalizeDecisionText(sourceText);
+  if (!normalized || !normalized.includes("invoice") || !normalized.includes("date")) {
+    return false;
+  }
+  return (
+    /\binvoice\s+(?:date|dated)\b/i.test(normalized) ||
+    /\bissue\s+date\b/i.test(normalized) ||
+    /\bdate\s+of\s+invoice\b/i.test(normalized) ||
+    /\bdate\s+for\s+invoice\b/i.test(normalized) ||
+    /\bdated\s+invoice\b/i.test(normalized)
+  );
 }
 
 function hashString(value: string): string {
@@ -1853,7 +1934,8 @@ function applyDiscountToInvoice(invoice: FinishedInvoice, discountAmount: number
   const withDiscount: FinishedInvoice = {
     ...invoice,
     discountAmount: roundToCents(discountAmount),
-    discountReason: discountReason?.trim() ? discountReason.trim() : invoice.discountReason
+    discountReason: discountReason?.trim() ? discountReason.trim() : invoice.discountReason,
+    balanceDue: undefined
   };
 
   return normalizeInvoice(FinishedInvoiceSchema.parse(withDiscount));
