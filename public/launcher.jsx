@@ -717,6 +717,19 @@ function AIIntake() {
     return prompt.replace(/^Bill this item\?\s*/i, "").replace(/^Confirm:\s*/i, "").trim();
   };
 
+  const cleanDecisionSnippet = (snippet) => {
+    if (!snippet) {
+      return "";
+    }
+    let cleaned = snippet.trim();
+    cleaned = cleaned.replace(/^(on\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\s+\d{1,2}\b[,:-]?\s*/i, "");
+    cleaned = cleaned.replace(/\b(not sure if i should bill|up to you|do what makes sense).*$/i, "");
+    cleaned = cleaned.replace(/\bmaybe\b/gi, "");
+    cleaned = cleaned.replace(/\s*[-–—]\s*$/g, "");
+    cleaned = cleaned.replace(/\s{2,}/g, " ").trim();
+    return cleaned;
+  };
+
   const shortenSnippet = (snippet, maxLength = 48) => {
     if (snippet.length <= maxLength) {
       return snippet;
@@ -726,7 +739,8 @@ function AIIntake() {
 
   const buildDecisionActions = (decision) => {
     const rawSnippet = extractDecisionSnippet(decision.prompt ?? "");
-    const snippet = shortenSnippet(rawSnippet);
+    const cleanedSnippet = cleanDecisionSnippet(rawSnippet) || rawSnippet;
+    const snippet = shortenSnippet(cleanedSnippet);
     const baseAction = { kind: decision.kind, snippet: rawSnippet };
     const display =
       decision.kind === "tax"
