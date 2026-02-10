@@ -3467,6 +3467,29 @@ function InspectorPanel({
       : selectedTone
         ? "Select a tone to see a preview."
         : "Select a tone to see a preview.";
+  const templatePreviews = {
+    default: {
+      title: "bg-slate-900",
+      rule: "bg-slate-200",
+      row: "bg-slate-200",
+      totals: "bg-slate-300",
+      totalStrong: "bg-slate-900"
+    },
+    compact: {
+      title: "bg-slate-400",
+      rule: "bg-slate-200",
+      row: "bg-slate-100",
+      totals: "bg-slate-200",
+      totalStrong: "bg-slate-500"
+    },
+    spacious: {
+      title: "bg-slate-900",
+      rule: "bg-slate-300",
+      row: "bg-slate-200",
+      totals: "bg-slate-300",
+      totalStrong: "bg-slate-900"
+    }
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col border border-slate-200 bg-white shadow-sm md:rounded-2xl">
@@ -3499,22 +3522,48 @@ function InspectorPanel({
         {activeTab === "style" ? (
           <div className="space-y-4">
             <div>
-              <p className="text-sm font-semibold text-slate-900">Presets</p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                {styleOptions.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
-                      stylePreset === option.id
-                        ? "bg-emerald-600 text-white"
-                        : "border border-slate-200 text-slate-600"
-                    }`}
-                    onClick={() => onStylePresetChange(option.id)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+              <p className="text-sm font-semibold text-slate-900">Templates</p>
+              <div className="mt-3 grid gap-3">
+                {styleOptions.map((option) => {
+                  const preview = templatePreviews[option.id] ?? templatePreviews.default;
+                  const isSelected = stylePreset === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`w-full rounded-xl border p-3 text-left transition ${
+                        isSelected
+                          ? "border-emerald-500 bg-emerald-50/60 shadow-sm"
+                          : "border-slate-200 bg-white hover:border-slate-300"
+                      }`}
+                      onClick={() => onStylePresetChange(option.id)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold text-slate-900">
+                          {option.label}
+                        </span>
+                        {isSelected ? (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                            Selected
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        <div className={`h-2 w-20 rounded-sm ${preview.title}`} />
+                        <div className={`h-px ${preview.rule}`} />
+                        <div className="space-y-1">
+                          <div className={`h-2 w-full rounded-sm ${preview.row}`} />
+                          <div className={`h-2 w-5/6 rounded-sm ${preview.row}`} />
+                          <div className={`h-2 w-4/6 rounded-sm ${preview.row}`} />
+                        </div>
+                        <div className="mt-2 flex items-center justify-between">
+                          <div className={`h-2 w-14 rounded-sm ${preview.totals}`} />
+                          <div className={`h-2 w-12 rounded-sm ${preview.totalStrong}`} />
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
             <div>
