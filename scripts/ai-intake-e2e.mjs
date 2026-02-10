@@ -54,7 +54,15 @@ async function getChatMessages(page) {
   );
 }
 
+async function ensureAssumptionsExpanded(page) {
+  const toggle = page.getByRole("button", { name: "Show details" });
+  if (await toggle.isVisible().catch(() => false)) {
+    await toggle.click();
+  }
+}
+
 async function getDecisionItems(page) {
+  await ensureAssumptionsExpanded(page);
   const items = await page
     .locator("section:has-text(\"Assumptions\") li")
     .allTextContents();
@@ -62,6 +70,7 @@ async function getDecisionItems(page) {
 }
 
 async function getAssumptionItems(page) {
+  await ensureAssumptionsExpanded(page);
   const items = await page
     .locator("section:has-text(\"Assumptions\") li")
     .allTextContents();
@@ -71,6 +80,7 @@ async function getAssumptionItems(page) {
 }
 
 async function getUnparsedItems(page) {
+  await ensureAssumptionsExpanded(page);
   const items = await page
     .locator("section:has-text(\"Assumptions\") div:has-text(\"Not yet captured\") li")
     .allTextContents();
@@ -78,6 +88,7 @@ async function getUnparsedItems(page) {
 }
 
 async function getLaborPricingCount(page) {
+  await ensureAssumptionsExpanded(page);
   const items = await page
     .locator("section:has-text(\"Assumptions\") li")
     .allTextContents();

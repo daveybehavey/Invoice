@@ -153,7 +153,8 @@ export const LaborPricingFollowUpRequestSchema = z.object({
   structuredInvoice: StructuredInvoiceSchema,
   laborPricing: LaborPricingChoiceSchema,
   sourceText: OptionalString,
-  lastUserMessage: OptionalString
+  lastUserMessage: OptionalString,
+  mode: z.enum(["full", "fast"]).optional()
 });
 
 export const DiscountFollowUpRequestSchema = z.object({

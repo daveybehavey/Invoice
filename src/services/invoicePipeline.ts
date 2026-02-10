@@ -16,7 +16,10 @@ type CreateInvoiceInput = {
   messyInput?: string;
   uploadedInvoiceText?: string;
   lastUserMessage?: string;
+  mode?: ParseMode;
 };
+
+type ParseMode = "full" | "fast";
 
 type CreateInvoiceReadyResult = {
   kind: "invoice_ready";
@@ -100,7 +103,10 @@ type RewordFullInvoiceResponse = {
 export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise<CreateInvoiceResult> {
   const sourceText = buildSourceText(input);
   const taxDirective = detectExplicitTaxDirective(sourceText);
-  const parsedInvoice = await parseMessyInputToStructuredInvoice(sourceText);
+  const parseMode: ParseMode = input.mode ?? "full";
+  const parsedInvoice = shouldChunkInput(input.messyInput, input.uploadedInvoiceText)
+    ? await parseStructuredInvoiceFromChunks(input.messyInput ?? "")
+    : await parseMessyInputToStructuredInvoice(sourceText);
   const structuredInvoice = applyInlineLaborPricingFromText(parsedInvoice, sourceText);
   const namedInvoice = applyCustomerNameFallback(structuredInvoice, sourceText);
   const optionalLaborTasks = identifyOptionalLaborTasks(structuredInvoice, sourceText);
@@ -151,7 +157,7 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     ? invoice
     : { ...invoice, issueDate: undefined };
   const discountIntent = detectDiscountIntent(sourceText);
-  const audit = await auditInvoiceInterpretation(sourceText, sanitizedInvoice);
+  const audit = parseMode === "fast" ? null : await auditInvoiceInterpretation(sourceText, sanitizedInvoice);
   const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
   const heuristicDecisions = audit ? extractAmbiguousBillingDecisions(sourceText) : [];
   const openDecisions = audit
@@ -214,7 +220,8 @@ export async function continueInvoiceAfterLaborPricing(
   structuredInvoice: StructuredInvoice,
   laborPricing: LaborPricingChoice,
   sourceText?: string,
-  lastUserMessage?: string
+  lastUserMessage?: string,
+  mode?: ParseMode
 ): Promise<CreateInvoiceReadyResult> {
   const parsedStructuredInvoice = StructuredInvoiceSchema.parse(structuredInvoice);
   const withLaborPricing = applyLaborPricing(parsedStructuredInvoice, laborPricing);
@@ -230,7 +237,8 @@ export async function continueInvoiceAfterLaborPricing(
     ? invoice
     : { ...invoice, issueDate: undefined };
   const discountIntent = detectDiscountIntent(source);
-  const audit = await auditInvoiceInterpretation(source, sanitizedInvoice);
+  const parseMode: ParseMode = mode ?? "full";
+  const audit = parseMode === "fast" ? null : await auditInvoiceInterpretation(source, sanitizedInvoice);
   const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
   const heuristicDecisions = audit ? extractAmbiguousBillingDecisions(source) : [];
   const openDecisions = audit
@@ -558,6 +566,92 @@ function buildSourceText(input: CreateInvoiceInput): string {
   }
 
   return parts.join("\n\n---\n\n");
+}
+
+const CHUNK_THRESHOLD = 4000;
+const CHUNK_MAX_CHARS = 2000;
+const CHUNK_LIMIT = 4;
+
+function shouldChunkInput(messyInput?: string, uploadedInvoiceText?: string): boolean {
+  if (!messyInput || uploadedInvoiceText) {
+    return false;
+  }
+  return messyInput.length > CHUNK_THRESHOLD;
+}
+
+function splitInputIntoChunks(input: string): string[] {
+  const paragraphs = input
+    .split(/\n\s*\n/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+  if (!paragraphs.length) {
+    return [input];
+  }
+  const chunks: string[] = [];
+  let current = "";
+  paragraphs.forEach((paragraph) => {
+    const separator = current ? "\n\n" : "";
+    if (current && current.length + separator.length + paragraph.length > CHUNK_MAX_CHARS) {
+      chunks.push(current);
+      current = paragraph;
+      return;
+    }
+    current = `${current}${separator}${paragraph}`;
+  });
+  if (current) {
+    chunks.push(current);
+  }
+  if (chunks.length > CHUNK_LIMIT) {
+    return chunks.slice(0, CHUNK_LIMIT);
+  }
+  return chunks;
+}
+
+function mergeNotes(primary?: string, secondary?: string): string | undefined {
+  const lines = new Set<string>();
+  [primary, secondary]
+    .filter(Boolean)
+    .flatMap((value) => value?.split(/\r?\n+/) ?? [])
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => lines.add(line));
+  if (!lines.size) {
+    return undefined;
+  }
+  return Array.from(lines).join("\n");
+}
+
+function mergeStructuredInvoices(
+  base: StructuredInvoice,
+  next: StructuredInvoice
+): StructuredInvoice {
+  return {
+    customerName: base.customerName ?? next.customerName,
+    invoiceNumber: base.invoiceNumber ?? next.invoiceNumber,
+    issueDate: base.issueDate ?? next.issueDate,
+    servicePeriodStart: base.servicePeriodStart ?? next.servicePeriodStart,
+    servicePeriodEnd: base.servicePeriodEnd ?? next.servicePeriodEnd,
+    workSessions: [...base.workSessions, ...next.workSessions],
+    materials: [...base.materials, ...next.materials],
+    notes: mergeNotes(base.notes, next.notes)
+  };
+}
+
+async function parseStructuredInvoiceFromChunks(input: string): Promise<StructuredInvoice> {
+  const chunks = splitInputIntoChunks(input);
+  let merged: StructuredInvoice | null = null;
+  for (const chunk of chunks) {
+    const chunkSource = buildSourceText({ messyInput: chunk });
+    const parsed = await parseMessyInputToStructuredInvoice(chunkSource);
+    merged = merged ? mergeStructuredInvoices(merged, parsed) : parsed;
+  }
+  if (!merged) {
+    return StructuredInvoiceSchema.parse({
+      workSessions: [],
+      materials: []
+    });
+  }
+  return merged;
 }
 
 function applyCustomerNameFallback(
@@ -1292,7 +1386,13 @@ function filterUnparsedLines(lines: string[]): string[] {
     if (skipPatterns.some((pattern) => pattern.test(line))) {
       return false;
     }
-    if (/^\s*(bill\s+to|invoice\s+to|customer)\b/i.test(line)) {
+    if (/^\s*(bill\s+to|invoice\s+to)\b/i.test(line)) {
+      return false;
+    }
+    if (/^\s*customer\s*[:\-]/i.test(line)) {
+      return false;
+    }
+    if (/^\s*customer\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,4}\s*$/.test(line)) {
       return false;
     }
     if (/^\s*bill\s+[A-Z]/.test(line) && !/\$/.test(line)) {

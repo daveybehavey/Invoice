@@ -208,6 +208,7 @@ function AIIntake() {
   const [assumptions, setAssumptions] = useState([]);
   const [unparsedLines, setUnparsedLines] = useState([]);
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
+  const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(false);
   const requestIdRef = useRef(0);
   const openDecisionSignatureRef = useRef("");
   const lastDecisionResolutionRef = useRef("");
@@ -217,9 +218,18 @@ function AIIntake() {
   const listEndRef = useRef(null);
   const decisionsRef = useRef(null);
   const unparsedRef = useRef(null);
+  const slowResponseTimeoutRef = useRef(null);
+  const timeoutMessageIdRef = useRef(null);
+  const abortControllerRef = useRef(null);
+  const lastMessagesRef = useRef([]);
+  const lastTranscriptRef = useRef("");
+  const lastUserMessageRef = useRef("");
+  const lastIntakeModeRef = useRef("full");
+  const hasAutoCollapsedRef = useRef(false);
   const intakeComplete = intakePhase === "ready_to_generate";
   const confirmationKeywords = ["yes", "yep", "correct", "looks good", "sounds good", "confirm"];
   const rejectionKeywords = ["no", "not correct", "wrong", "incorrect", "needs change"];
+  const hasReviewCard = messages.some((message) => message.kind === "review");
 
   const formatMoney = (value) =>
     Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
@@ -439,6 +449,7 @@ function AIIntake() {
   const hasDecisions = decisionItems.length > 0;
   const openDecisionCount = openDecisions.length;
   const showAssumptionsCard = hasAssumptions || hasDecisions;
+  const showAssumptionDetails = !hasReviewCard || !assumptionsCollapsed;
 
   const summaryTimeLabel = summaryUpdatedAt
     ? summaryUpdatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
@@ -551,6 +562,76 @@ function AIIntake() {
     }, 0);
   };
 
+  const FAST_MODE_THRESHOLD = 1800;
+  const SLOW_RESPONSE_MS = 35000;
+
+  const shouldUseFastMode = (transcript) => transcript.length >= FAST_MODE_THRESHOLD;
+
+  const clearSlowResponseTimer = () => {
+    if (slowResponseTimeoutRef.current) {
+      window.clearTimeout(slowResponseTimeoutRef.current);
+      slowResponseTimeoutRef.current = null;
+    }
+  };
+
+  const dismissTimeoutMessage = (messageId) => {
+    setMessages((prev) => prev.filter((message) => message.id !== messageId));
+    timeoutMessageIdRef.current = null;
+  };
+
+  const appendTimeoutMessage = (mode, context = "intake") => {
+    if (timeoutMessageIdRef.current) {
+      return;
+    }
+    const id = `msg-timeout-${Date.now()}`;
+    timeoutMessageIdRef.current = id;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id,
+        role: "ai",
+        kind: "timeout",
+        payload: { mode, context }
+      }
+    ]);
+  };
+
+  const abortOngoingRequest = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    requestIdRef.current += 1;
+    clearSlowResponseTimer();
+    setIsTyping(false);
+  };
+
+  const retryWithShortPass = () => {
+    if (!timeoutMessageIdRef.current) {
+      return;
+    }
+    dismissTimeoutMessage(timeoutMessageIdRef.current);
+    abortOngoingRequest();
+    if (!lastMessagesRef.current.length) {
+      return;
+    }
+    runIntakeRequest(lastMessagesRef.current, lastUserMessageRef.current, {
+      mode: "fast",
+      forceShortPass: true
+    });
+  };
+
+  const handleTimeoutKeepWorking = (messageId) => {
+    dismissTimeoutMessage(messageId);
+  };
+
+  const handleTimeoutCancel = (messageId) => {
+    dismissTimeoutMessage(messageId);
+    abortOngoingRequest();
+    setIntakePhase("collecting");
+    appendAiMessage("Okay — canceled. You can trim the notes or try again.");
+  };
+
   const quickReplies = (() => {
     if (intakePhase === "awaiting_follow_up" && followUp?.type === "labor_pricing") {
       const laborItems = followUp?.laborItems ?? [];
@@ -646,20 +727,46 @@ function AIIntake() {
     summaryLockRef.current = intakePhase === "ready_to_generate";
   }, [intakePhase]);
 
-  const runIntakeRequest = async (nextMessages, lastUserMessage) => {
+  useEffect(() => {
+    if (hasReviewCard && !hasAutoCollapsedRef.current) {
+      setAssumptionsCollapsed(true);
+      hasAutoCollapsedRef.current = true;
+    }
+  }, [hasReviewCard]);
+
+  const runIntakeRequest = async (nextMessages, lastUserMessage, options = {}) => {
     const transcript = buildTranscript(nextMessages);
     if (!transcript) {
       return;
     }
+    const preferredMode = options.mode ?? (shouldUseFastMode(transcript) ? "fast" : "full");
+    const requestMode = preferredMode === "fast" ? "fast" : "full";
+    lastMessagesRef.current = nextMessages;
+    lastTranscriptRef.current = transcript;
+    lastUserMessageRef.current = lastUserMessage ?? "";
+    lastIntakeModeRef.current = requestMode;
+    if (timeoutMessageIdRef.current) {
+      dismissTimeoutMessage(timeoutMessageIdRef.current);
+    }
+    abortOngoingRequest();
     requestIdRef.current += 1;
     const requestId = requestIdRef.current;
     const requestStartedAt = Date.now();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setIsTyping(true);
+    clearSlowResponseTimer();
+    slowResponseTimeoutRef.current = window.setTimeout(() => {
+      if (requestId === requestIdRef.current && !summaryLockRef.current) {
+        appendTimeoutMessage(requestMode, "intake");
+      }
+    }, SLOW_RESPONSE_MS);
     try {
       const response = await fetch("/api/invoices/from-input", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messyInput: transcript, lastUserMessage })
+        body: JSON.stringify({ messyInput: transcript, lastUserMessage, mode: requestMode }),
+        signal: controller.signal
       });
       const payload = await response.json();
       if (!response.ok) {
@@ -781,6 +888,10 @@ function AIIntake() {
       if (requestId === requestIdRef.current) {
         setIsTyping(false);
       }
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
+      clearSlowResponseTimer();
     }
   };
 
@@ -790,10 +901,22 @@ function AIIntake() {
       setIntakePhase("collecting");
       return;
     }
+    if (timeoutMessageIdRef.current) {
+      dismissTimeoutMessage(timeoutMessageIdRef.current);
+    }
+    abortOngoingRequest();
     requestIdRef.current += 1;
     const requestId = requestIdRef.current;
     const requestStartedAt = Date.now();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     setIsTyping(true);
+    clearSlowResponseTimer();
+    slowResponseTimeoutRef.current = window.setTimeout(() => {
+      if (requestId === requestIdRef.current && !summaryLockRef.current) {
+        appendTimeoutMessage(lastIntakeModeRef.current, "labor");
+      }
+    }, SLOW_RESPONSE_MS);
     try {
       const response = await fetch("/api/invoices/from-input/labor-pricing", {
         method: "POST",
@@ -801,8 +924,10 @@ function AIIntake() {
         body: JSON.stringify({
           structuredInvoice,
           laborPricing,
-          sourceText: transcript
-        })
+          sourceText: transcript,
+          mode: lastIntakeModeRef.current
+        }),
+        signal: controller.signal
       });
       const payload = await response.json();
       if (!response.ok) {
@@ -897,6 +1022,10 @@ function AIIntake() {
       if (requestId === requestIdRef.current) {
         setIsTyping(false);
       }
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
+      clearSlowResponseTimer();
     }
   };
 
@@ -1279,6 +1408,54 @@ function AIIntake() {
           <div className="flex-1 overflow-y-auto pb-4 pt-6">
             <div className="space-y-4">
               {messages.map((message) => {
+                if (message.kind === "timeout" && message.payload) {
+                  const isLaborTimeout = message.payload.context === "labor";
+                  const canRetryShort =
+                    message.payload.context === "intake" && message.payload.mode !== "fast";
+                  return (
+                    <div key={message.id} className="flex justify-start">
+                      <div className="w-full rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm shadow-sm">
+                        <p className="text-sm font-semibold text-amber-900">
+                          {isLaborTimeout ? "Still working on labor pricing." : "Still working on this."}
+                        </p>
+                        <p className="mt-1 text-sm text-amber-800">
+                          {canRetryShort
+                            ? "Want me to keep going or try a shorter pass?"
+                            : "Want me to keep going or cancel?"}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900"
+                            onClick={() => handleTimeoutKeepWorking(message.id)}
+                            disabled={isTyping}
+                          >
+                            Keep working
+                          </button>
+                          {canRetryShort ? (
+                            <button
+                              type="button"
+                              className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900"
+                              onClick={retryWithShortPass}
+                              disabled={isTyping}
+                            >
+                              Retry shorter
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900"
+                            onClick={() => handleTimeoutCancel(message.id)}
+                            disabled={isTyping}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
                 if (message.kind === "review" && message.payload) {
                   const payload = message.payload;
                   const decisionKeywordSets = buildDecisionKeywordSets(payload.decisions ?? []);
@@ -1538,14 +1715,25 @@ function AIIntake() {
             </div>
           </div>
           {showAssumptionsCard ? (
-            <div className="mt-4 space-y-3">
+            <div className="mt-3 space-y-2">
               <section className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-slate-900">Assumptions</h2>
-                  {openDecisionCount > 0 ? (
-                    <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
-                      {openDecisionCount} decision{openDecisionCount > 1 ? "s" : ""} open
-                    </span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-semibold text-slate-900">Assumptions</h2>
+                    {openDecisionCount > 0 ? (
+                      <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
+                        {openDecisionCount} decision{openDecisionCount > 1 ? "s" : ""} open
+                      </span>
+                    ) : null}
+                  </div>
+                  {hasReviewCard ? (
+                    <button
+                      type="button"
+                      className="text-xs font-semibold text-emerald-700"
+                      onClick={() => setAssumptionsCollapsed((prev) => !prev)}
+                    >
+                      {assumptionsCollapsed ? "Show details" : "Hide details"}
+                    </button>
                   ) : null}
                 </div>
                 {summaryTimeLabel ? (
@@ -1553,6 +1741,11 @@ function AIIntake() {
                 ) : null}
                 {summarySnapshot ? (
                   <p className="mt-1 text-xs text-slate-500">{summarySnapshot}</p>
+                ) : null}
+                {hasReviewCard && assumptionsCollapsed ? (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Details hidden — review card above has the latest snapshot.
+                  </p>
                 ) : null}
                 {intakePhase === "ready_to_summarize" ? (
                   <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -1599,7 +1792,7 @@ function AIIntake() {
                     </div>
                   </div>
                 ) : null}
-                {hasDecisions ? (
+                {showAssumptionDetails && hasDecisions ? (
                   <div
                     className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"
                     ref={decisionsRef}
@@ -1647,7 +1840,7 @@ function AIIntake() {
                     </ul>
                   </div>
                 ) : null}
-                {unparsedItems.length > 0 ? (
+                {showAssumptionDetails && unparsedItems.length > 0 ? (
                   <div
                     className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3"
                     ref={unparsedRef}
@@ -1684,7 +1877,7 @@ function AIIntake() {
                     </ul>
                   </div>
                 ) : null}
-                {assumptionItems.length > 0 ? (
+                {showAssumptionDetails && assumptionItems.length > 0 ? (
                   <div className="mt-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Captured from notes
@@ -1696,7 +1889,7 @@ function AIIntake() {
                     </ul>
                   </div>
                 ) : null}
-                {auditAssumptionItems.length > 0 ? (
+                {showAssumptionDetails && auditAssumptionItems.length > 0 ? (
                   <div className="mt-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Assumptions made

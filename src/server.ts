@@ -61,12 +61,14 @@ app.post(
       const messyInput = asOptionalString(req.body.messyInput);
       const uploadedInvoiceTextFromBody = asOptionalString(req.body.uploadedInvoiceText);
       const lastUserMessage = asOptionalString(req.body.lastUserMessage);
+      const mode = asOptionalParseMode(req.body.mode);
       const uploadedInvoiceTextFromFile = req.file ? await extractUploadedInvoiceText(req.file) : undefined;
 
       const result = await createInvoiceFromInput({
         messyInput,
         uploadedInvoiceText: uploadedInvoiceTextFromBody ?? uploadedInvoiceTextFromFile,
-        lastUserMessage
+        lastUserMessage,
+        mode
       });
 
       if (result.kind === "labor_pricing_follow_up") {
@@ -115,7 +117,8 @@ app.post("/api/invoices/from-input/labor-pricing", async (req: Request, res: Res
       parsedRequest.structuredInvoice,
       parsedRequest.laborPricing,
       parsedRequest.sourceText,
-      parsedRequest.lastUserMessage
+      parsedRequest.lastUserMessage,
+      parsedRequest.mode
     );
 
     res.json({
@@ -254,6 +257,10 @@ if (process.env.NODE_ENV !== "test") {
 
 function asOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function asOptionalParseMode(value: unknown): "fast" | "full" | undefined {
+  return value === "fast" || value === "full" ? value : undefined;
 }
 
 function isErrorWithMessage(value: unknown): value is Error {

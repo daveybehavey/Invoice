@@ -168,6 +168,66 @@ test("creates decisions for ambiguous billable items even when audit is empty", 
   assert.ok(hasCabinetDecision);
 });
 
+test("fast mode skips audit and still detects decisions", async () => {
+  useMockResponses([structuredWithLaborPricing()]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput:
+      "Feb 3 fixed leak 2h @ $90/hr. Tightened a cabinet hinge maybe — not sure if I should bill it.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  const decisions = response.body.openDecisions ?? [];
+  assert.ok(Array.isArray(decisions));
+  const hasCabinetDecision = decisions.some((decision: { prompt: string }) =>
+    /cabinet/i.test(decision.prompt)
+  );
+  assert.ok(hasCabinetDecision);
+});
+
+test("chunks long messy input and merges structured invoices", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Jan 5",
+          tasks: [{ description: "Fixed sink", hours: 2, rate: 100, amount: 200 }]
+        }
+      ],
+      materials: []
+    },
+    {
+      workSessions: [],
+      materials: [{ description: "Washer", quantity: 1, unitCost: 5, amount: 5 }]
+    }
+  ]);
+
+  const filler = "lorem ipsum ".repeat(180);
+  const paragraphOne = `Job A: Fixed sink 2 hours at $100/hr. ${filler}`;
+  const paragraphTwo = `Parts: washer $5. ${filler}`;
+  const longInput = `${paragraphOne}\n\n${paragraphTwo}`;
+  assert.ok(longInput.length > 4000);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: longInput,
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  const lineItems = response.body.invoice?.lineItems ?? [];
+  const hasLaborLine = lineItems.some((lineItem: { description: string; type: string }) =>
+    /fixed sink/i.test(lineItem.description)
+  );
+  const hasMaterialLine = lineItems.some((lineItem: { description: string; type: string }) =>
+    /washer/i.test(lineItem.description)
+  );
+  assert.ok(hasLaborLine);
+  assert.ok(hasMaterialLine);
+});
+
 test("moves internal reminder notes to unparsed lines", async () => {
   useMockResponses([
     {
