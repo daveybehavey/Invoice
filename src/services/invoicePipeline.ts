@@ -112,11 +112,15 @@ type RewordFullInvoiceResponse = {
 export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise<CreateInvoiceResult> {
   const sourceText = buildSourceText(input);
   const taxDirective = detectExplicitTaxDirective(sourceText);
+  const taxAmbiguity = detectTaxAmbiguity(sourceText);
   const parseMode: ParseMode = input.mode ?? "full";
   const parsedInvoice = shouldChunkInput(input.messyInput, input.uploadedInvoiceText)
     ? await parseStructuredInvoiceFromChunks(input.messyInput ?? "")
     : await parseMessyInputToStructuredInvoice(sourceText);
-  const structuredInvoice = applyInlineLaborPricingFromText(parsedInvoice, sourceText);
+  const structuredInvoice = applyInlineLaborMinutesFromText(
+    applyInlineLaborPricingFromText(parsedInvoice, sourceText),
+    sourceText
+  );
   const namedInvoice = applyCustomerNameFallback(structuredInvoice, sourceText);
   const optionalLaborTasks = identifyOptionalLaborTasks(structuredInvoice, sourceText);
   const sanitizedNotes = sanitizeStructuredNotes(namedInvoice.notes);
@@ -183,7 +187,9 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   const assumptions = normalizeAssumptions(
     [
       ...(audit?.assumptions ?? []),
-      ...(sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [])
+      ...(sanitizedNotes.taxAmbiguityFound || (taxAmbiguity && taxDirective === "none")
+        ? ["Tax assumed 0%."]
+        : [])
     ],
     taxDirective
   );
@@ -240,13 +246,14 @@ export async function continueInvoiceAfterLaborPricing(
 ): Promise<CreateInvoiceReadyResult> {
   const parsedStructuredInvoice = StructuredInvoiceSchema.parse(structuredInvoice);
   const withLaborPricing = applyLaborPricing(parsedStructuredInvoice, laborPricing);
-  const taxDirective = detectExplicitTaxDirective(sourceText ?? withLaborPricing.notes ?? "");
+  const source = sourceText ?? withLaborPricing.notes ?? "";
+  const taxDirective = detectExplicitTaxDirective(source);
+  const taxAmbiguity = detectTaxAmbiguity(source);
   const sanitizedNotes = sanitizeStructuredNotes(withLaborPricing.notes);
   const sanitizedInvoice: StructuredInvoice = {
     ...withLaborPricing,
     notes: sanitizedNotes.cleanedNotes
   };
-  const source = sourceText ?? withLaborPricing.notes ?? "";
   const invoice = await generateFinishedInvoice(sanitizedInvoice);
   const invoiceWithIssueDate = hasExplicitIssueDate(source)
     ? invoice
@@ -266,7 +273,9 @@ export async function continueInvoiceAfterLaborPricing(
   const assumptions = normalizeAssumptions(
     [
       ...(audit?.assumptions ?? []),
-      ...(sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [])
+      ...(sanitizedNotes.taxAmbiguityFound || (taxAmbiguity && taxDirective === "none")
+        ? ["Tax assumed 0%."]
+        : [])
     ],
     taxDirective
   );
@@ -534,12 +543,15 @@ export async function runInvoiceAuditOverlay(input: {
   const parsedInvoice = StructuredInvoiceSchema.parse(input.structuredInvoice);
   const sanitizedNotes = sanitizeStructuredNotes(parsedInvoice.notes);
   const taxDirective = detectExplicitTaxDirective(sourceText);
+  const taxAmbiguity = detectTaxAmbiguity(sourceText);
   const audit = await auditInvoiceInterpretation(sourceText, parsedInvoice);
   if (!audit) {
     return {
       openDecisions: [],
       assumptions: normalizeAssumptions(
-        sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [],
+        sanitizedNotes.taxAmbiguityFound || (taxAmbiguity && taxDirective === "none")
+          ? ["Tax assumed 0%."]
+          : [],
         taxDirective
       ),
       unparsedLines: filterUnparsedLines(sanitizedNotes.removedLines)
@@ -556,7 +568,9 @@ export async function runInvoiceAuditOverlay(input: {
   const assumptions = normalizeAssumptions(
     [
       ...audit.assumptions,
-      ...(sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [])
+      ...(sanitizedNotes.taxAmbiguityFound || (taxAmbiguity && taxDirective === "none")
+        ? ["Tax assumed 0%."]
+        : [])
     ],
     taxDirective
   );
@@ -613,6 +627,65 @@ function applyInlineLaborPricingFromText(
   ref.task.hours = roundToCents(hours);
   ref.task.rate = roundToCents(rate);
   ref.task.amount = roundToCents(hours * rate);
+
+  return nextStructuredInvoice;
+}
+
+function applyInlineLaborMinutesFromText(
+  structuredInvoice: StructuredInvoice,
+  sourceText: string
+): StructuredInvoice {
+  if (!sourceText.trim()) {
+    return structuredInvoice;
+  }
+
+  const minutesThenRate = sourceText.match(
+    /(\d+(?:\.\d+)?)\s*(?:mins?|minutes?)\s*(?:@|at)\s*\$?\s*(\d+(?:\.\d{1,2})?)\s*(?:\/hr|per hour|hr)\b/i
+  );
+  const rateThenMinutes = sourceText.match(
+    /\$\s*(\d+(?:\.\d{1,2})?)\s*(?:\/hr|per hour|hr)\s*.*?(\d+(?:\.\d+)?)\s*(?:mins?|minutes?)\b/i
+  );
+
+  if (!minutesThenRate && !rateThenMinutes) {
+    return structuredInvoice;
+  }
+
+  const minutes = Number(minutesThenRate?.[1] ?? rateThenMinutes?.[2]);
+  const rate = Number(minutesThenRate?.[2] ?? rateThenMinutes?.[1]);
+  if (!Number.isFinite(minutes) || !Number.isFinite(rate) || minutes <= 0 || rate <= 0) {
+    return structuredInvoice;
+  }
+
+  const nextStructuredInvoice: StructuredInvoice = {
+    ...structuredInvoice,
+    workSessions: structuredInvoice.workSessions.map((session) => ({
+      ...session,
+      tasks: session.tasks.map((task) => ({ ...task }))
+    })),
+    materials: structuredInvoice.materials.map((material) => ({ ...material }))
+  };
+
+  const laborTaskRefs = extractUnpricedLaborTasks(nextStructuredInvoice);
+  if (laborTaskRefs.length !== 1) {
+    return structuredInvoice;
+  }
+
+  const ref = laborTaskRefs[0];
+  const resolvedHours =
+    typeof ref.task.hours === "number" && ref.task.hours > 0
+      ? ref.task.hours
+      : minutes / 60;
+  if (!Number.isFinite(resolvedHours) || resolvedHours <= 0) {
+    return structuredInvoice;
+  }
+
+  ref.task.hours = roundToCents(resolvedHours);
+  if (!(typeof ref.task.rate === "number" && ref.task.rate > 0)) {
+    ref.task.rate = roundToCents(rate);
+  }
+  if (typeof ref.task.rate === "number" && ref.task.rate > 0 && typeof ref.task.amount !== "number") {
+    ref.task.amount = roundToCents(ref.task.hours * ref.task.rate);
+  }
 
   return nextStructuredInvoice;
 }
@@ -965,22 +1038,62 @@ const UNCERTAINTY_PHRASES = [
   "if that makes sense",
   "i guess",
   "i suppose",
+  "not sure",
+  "unsure",
   "sometimes",
   "maybe",
   "if needed",
   "as needed",
-  "if you think"
+  "if you think",
+  "depends",
+  "depending"
 ];
+
+function splitIntoSentences(sourceText: string): string[] {
+  return sourceText
+    .split(/(?:\r?\n)+|(?<!\d)[.!?]+(?!\d)/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
 
 function detectOpenDecisionsFromText(sourceText: string, lastUserMessage?: string): OpenDecision[] {
   if (!sourceText) {
     return [];
   }
-  const sentences = sourceText
-    .split(/[\n.!?]+/)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean);
+  const sentences = splitIntoSentences(sourceText);
+  const taxSentenceIndices = new Set<number>();
+  sentences.forEach((sentence, index) => {
+    if (/\btax\b/i.test(sentence)) {
+      taxSentenceIndices.add(index);
+    }
+  });
   const decisions = new Map<string, { decision: OpenDecision; index: number }>();
+
+  const actionVerbs =
+    /\b(fixed|repair(?:ed)?|install(?:ed)?|replace(?:d)?|tighten(?:ed)?|adjust(?:ed)?|inspect(?:ed)?|clean(?:ed)?|swap(?:ped)?|paint(?:ed)?|design(?:ed)?|refresh(?:ed)?|update(?:d)?)\b/i;
+  const isLowContextBillingSentence = (sentence: string) => {
+    const keywords = extractKeywords(sentence);
+    const hasActionVerb = actionVerbs.test(sentence);
+    const hasTimeOnly = /\b\d+(?:\.\d+)?\s*(?:mins?|minutes?|hours?|hrs?)\b/i.test(sentence);
+    return !hasActionVerb && hasTimeOnly && keywords.length <= 3;
+  };
+
+  const isLikelyTaxSentence = (sentence: string, index: number) => {
+    if (taxSentenceIndices.size === 0) {
+      return false;
+    }
+    const normalized = normalizeDecisionText(sentence);
+    const hasPercent =
+      /\d+(?:\.\d+)?%/.test(sentence) || /\bpercent\b/i.test(sentence);
+    const hasAddIntent = /\b(add|apply|charge|include)\b/i.test(normalized);
+    const hasAmbiguity =
+      /\b(sometimes|depends|depending|maybe|not sure|unsure|if applicable|unless specified)\b/i.test(
+        normalized
+      );
+    const hasTaxWord = /\btax\b/i.test(normalized);
+    const priorIsTax = taxSentenceIndices.has(index - 1);
+    return (hasTaxWord || priorIsTax) && hasPercent && hasAddIntent && hasAmbiguity;
+  };
 
   sentences.forEach((sentence, index) => {
     const lower = sentence.toLowerCase();
@@ -988,7 +1101,14 @@ function detectOpenDecisionsFromText(sourceText: string, lastUserMessage?: strin
     if (!hasUncertainty) {
       return;
     }
-    const decision = buildDecisionFromSentence(sentence);
+    if (isLikelyTaxSentence(sentence, index)) {
+      return;
+    }
+    const decisionSentence =
+      index > 0 && isLowContextBillingSentence(sentence)
+        ? `${sentences[index - 1]} ${sentence}`
+        : sentence;
+    const decision = buildDecisionFromSentence(decisionSentence);
     if (!decision) {
       return;
     }
@@ -1106,10 +1226,7 @@ function mergeDecisions(primary: OpenDecision[], secondary: OpenDecision[]): Ope
 }
 
 function extractAmbiguousBillingDecisions(sourceText: string): OpenDecision[] {
-  const sentences = sourceText
-    .split(/[\n.!?]+/)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean);
+  const sentences = splitIntoSentences(sourceText);
   if (!sentences.length) {
     return [];
   }
@@ -1584,6 +1701,11 @@ function filterDecisionsAgainstInvoice(
   return decisions.filter((decision) => {
     const prompt = decision.prompt ?? "";
     const normalizedPrompt = normalizeDecisionText(prompt);
+    const isItemBillingPrompt =
+      /^bill this item\?/i.test(prompt) || /^confirm:/i.test(prompt);
+    if (isItemBillingPrompt) {
+      return true;
+    }
     const mentionsRate =
       /\brate\b/i.test(prompt) ||
       /\/hr|per hour|hourly/i.test(prompt) ||
@@ -1841,6 +1963,16 @@ function normalizeAssumptions(assumptions: string[], taxDirective: TaxDirective 
   return normalized;
 }
 
+function detectTaxAmbiguity(sourceText: string): boolean {
+  const normalized = normalizeDecisionText(sourceText);
+  if (!normalized || !normalized.includes("tax")) {
+    return false;
+  }
+  return /\b(sometimes|maybe|might|if applicable|not sure|do what makes sense|may apply|unless specified|depends|depending)\b/i.test(
+    normalized
+  );
+}
+
 function detectExplicitTaxDirective(sourceText: string): TaxDirective {
   const normalized = normalizeDecisionText(sourceText);
   if (!normalized || !normalized.includes("tax")) {
@@ -2026,6 +2158,17 @@ function evaluateDecisionResolution(decision: OpenDecision, resolutionText: stri
   const keywords = decision.keywords ?? [];
   const promptKeywords = extractKeywords(decision.prompt ?? "");
   const contextKeywords = expandKeywordVariants(Array.from(new Set([...keywords, ...promptKeywords])));
+
+  const isBillToDirective = /\bbill\s+to\b/i.test(normalized);
+  if (isBillToDirective) {
+    const nonBillContext = contextKeywords.filter((keyword) => keyword !== "bill");
+    const hasNonBillOverlap =
+      nonBillContext.length > 0 &&
+      nonBillContext.some((keyword) => resolutionKeywords.has(keyword) || normalized.includes(keyword));
+    if (!hasNonBillOverlap) {
+      return { resolved: false, reason: "bill_to_directive" };
+    }
+  }
 
   const hasContextOverlap =
     contextKeywords.length > 0 &&

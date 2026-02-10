@@ -103,6 +103,32 @@ test("uses explicit hours and rate in text to avoid labor follow-up", async () =
   assert.equal(laborLines[0].amount, 160);
 });
 
+test("converts explicit minutes with rate into hours to avoid labor follow-up", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Feb 2",
+          tasks: [{ description: "Cabinet door adjustment" }]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Feb 2 cabinet door adjustment, 20 minutes at $80/hr."
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  const laborLines = response.body.invoice.lineItems.filter((lineItem: { type: string }) => lineItem.type === "labor");
+  assert.equal(laborLines.length, 1);
+  assert.equal(laborLines[0].quantity, 0.33);
+  assert.equal(laborLines[0].unitPrice, 80);
+  assert.equal(laborLines[0].amount, 26.4);
+});
+
 test("does not ask labor follow-up for explicit no-charge labor", async () => {
   useMockResponses([
     {
@@ -166,6 +192,176 @@ test("creates decisions for ambiguous billable items even when audit is empty", 
     /cabinet/i.test(decision.prompt)
   );
   assert.ok(hasCabinetDecision);
+});
+
+test("flags unsure billing as a decision and holds pricing in fast mode", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Jan 3",
+          tasks: [
+            {
+              description: "Emergency leak stop",
+              hours: 0.75,
+              rate: 95,
+              amount: 71.25
+            }
+          ]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 3 emergency leak stop, not sure if I should bill.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const decisions = response.body.openDecisions ?? [];
+  assert.ok(decisions.length > 0);
+  const hasLeakDecision = decisions.some((decision: { prompt: string }) =>
+    /leak stop/i.test(decision.prompt)
+  );
+  assert.ok(hasLeakDecision);
+
+  const laborLines = response.body.invoice.lineItems.filter((lineItem: { type: string }) => lineItem.type === "labor");
+  const leakLine = laborLines.find((lineItem: { description: string }) =>
+    /leak stop/i.test(lineItem.description)
+  );
+  assert.ok(leakLine);
+  assert.equal(leakLine.amount, 0);
+});
+
+test("keeps billing decisions even when the prompt includes an hourly rate", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Jan 3",
+          tasks: [
+            {
+              description: "Emergency leak stop",
+              hours: 0.75,
+              rate: 95,
+              amount: 71.25
+            }
+          ]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 3 emergency leak stop, 0.75 hours at $95/hr — not sure if I should bill.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const decisions = response.body.openDecisions ?? [];
+  assert.ok(decisions.length > 0);
+  const hasLeakDecision = decisions.some((decision: { prompt: string }) =>
+    /leak stop/i.test(decision.prompt)
+  );
+  assert.ok(hasLeakDecision);
+
+  const laborLines = response.body.invoice.lineItems.filter((lineItem: { type: string }) => lineItem.type === "labor");
+  const leakLine = laborLines.find((lineItem: { description: string }) =>
+    /leak stop/i.test(lineItem.description)
+  );
+  assert.ok(leakLine);
+  assert.equal(leakLine.amount, 0);
+});
+
+test("does not resolve billing decisions from a bill-to directive", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Feb 4",
+          tasks: [
+            {
+              description: "Cabinet hinge adjustment",
+              hours: 0.25,
+              rate: 95,
+              amount: 23.75
+            }
+          ]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput:
+      "Adjusted a cabinet hinge 0.25 hours at $95/hr — not sure if I should bill. Bill to Jill Parker.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const decisions = response.body.openDecisions ?? [];
+  assert.ok(decisions.length > 0);
+  const hasHingeDecision = decisions.some((decision: { prompt: string }) =>
+    /cabinet hinge/i.test(decision.prompt)
+  );
+  assert.ok(hasHingeDecision);
+});
+
+test("uses prior sentence context for time-only billing uncertainty", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Jan 3",
+          tasks: [
+            {
+              description: "Emergency leak stop at Cafe Luna",
+              hours: 0.75,
+              rate: 95,
+              amount: 71.25
+            }
+          ]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 3 emergency leak stop at Cafe Luna. 45 mins, not sure if I should bill.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const decisions = response.body.openDecisions ?? [];
+  const hasLeakDecision = decisions.some((decision: { prompt: string }) =>
+    /emergency leak stop/i.test(decision.prompt)
+  );
+  assert.ok(hasLeakDecision);
+
+  const laborLines = response.body.invoice.lineItems.filter((lineItem: { type: string }) => lineItem.type === "labor");
+  const leakLine = laborLines.find((lineItem: { description: string }) =>
+    /emergency leak stop/i.test(lineItem.description)
+  );
+  assert.ok(leakLine);
+  assert.equal(leakLine.amount, 0);
+});
+
+test("does not create a decision for ambiguous tax mention in fast mode", async () => {
+  useMockResponses([structuredWithLaborPricing()]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Fixed leak 2h @ $90/hr. Tax? I sometimes add 7.5% depending on job.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const decisions = response.body.openDecisions ?? [];
+  assert.equal(decisions.length, 0);
 });
 
 test("fast mode skips audit and still detects decisions", async () => {

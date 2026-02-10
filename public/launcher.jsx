@@ -552,9 +552,13 @@ function AIIntake() {
   };
 
   const buildDecisionKeywordSets = (decisions) =>
-    decisions.map((decision) =>
-      new Set(extractKeywords(decision.sourceSnippet ?? decision.prompt ?? ""))
-    );
+    decisions.map((decision) => {
+      const keywords =
+        Array.isArray(decision.keywords) && decision.keywords.length
+          ? decision.keywords
+          : extractKeywords(decision.sourceSnippet ?? decision.prompt ?? "");
+      return new Set(keywords);
+    });
 
   const matchesDecision = (lineItem, decisionKeywordSets) => {
     const itemKeywords = new Set(extractKeywords(lineItem.description ?? ""));
@@ -917,6 +921,9 @@ function AIIntake() {
         console.log("[intake:stale]", { requestId, current: requestIdRef.current });
         return;
       }
+      if (timeoutMessageIdRef.current) {
+        dismissTimeoutMessage(timeoutMessageIdRef.current);
+      }
       if (summaryLockRef.current) {
         console.log("[intake:ignored:summary_lock]", {
           requestId,
@@ -1028,6 +1035,9 @@ function AIIntake() {
         console.log("[intake:error:stale]", { requestId, current: requestIdRef.current });
         return;
       }
+      if (timeoutMessageIdRef.current) {
+        dismissTimeoutMessage(timeoutMessageIdRef.current);
+      }
       const responseAt = Date.now();
       const summaryAt = lastSummaryMetaRef.current?.at;
       console.log("[intake:error]", {
@@ -1094,6 +1104,9 @@ function AIIntake() {
       if (requestId !== requestIdRef.current) {
         console.log("[labor:stale]", { requestId, current: requestIdRef.current });
         return;
+      }
+      if (timeoutMessageIdRef.current) {
+        dismissTimeoutMessage(timeoutMessageIdRef.current);
       }
       if (summaryLockRef.current) {
         console.log("[labor:ignored:summary_lock]", {
@@ -1178,6 +1191,9 @@ function AIIntake() {
       if (requestId !== requestIdRef.current) {
         console.log("[labor:error:stale]", { requestId, current: requestIdRef.current });
         return;
+      }
+      if (timeoutMessageIdRef.current) {
+        dismissTimeoutMessage(timeoutMessageIdRef.current);
       }
       const responseAt = Date.now();
       const summaryAt = lastSummaryMetaRef.current?.at;
