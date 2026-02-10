@@ -212,6 +212,7 @@ function AIIntake() {
   const [auditSummary, setAuditSummary] = useState("");
   const [auditSummaryAt, setAuditSummaryAt] = useState(null);
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
+  const [reviewCardCollapsed, setReviewCardCollapsed] = useState(true);
   const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(false);
   const [decisionToast, setDecisionToast] = useState(null);
   const [showAllDecisions, setShowAllDecisions] = useState(false);
@@ -555,6 +556,7 @@ function AIIntake() {
     };
     console.log("[summary:append]", lastSummaryMetaRef.current);
     setIsTyping(false);
+    setReviewCardCollapsed(true);
     setMessages((prev) => {
       const next = [...prev];
       if (reviewPayload) {
@@ -1116,6 +1118,7 @@ function AIIntake() {
     setAuditSummary("");
     setAuditSummaryAt(null);
     setSummaryUpdatedAt(null);
+    setReviewCardCollapsed(true);
     setDecisionToast(null);
     openDecisionSignatureRef.current = "";
     lastDecisionResolutionRef.current = "";
@@ -2078,6 +2081,14 @@ function AIIntake() {
                             >
                               Fix by chat
                             </button>
+                            <button
+                              type="button"
+                              className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                              onClick={() => setReviewCardCollapsed((prev) => !prev)}
+                              disabled={isTyping}
+                            >
+                              {reviewCardCollapsed ? "Show details" : "Hide details"}
+                            </button>
                           </div>
                         </div>
 
@@ -2096,43 +2107,50 @@ function AIIntake() {
                               </button>
                             ) : null}
                           </div>
-                          {sections.map((section) => (
-                            <div key={section.id} className="space-y-2">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                {section.label}
-                              </p>
-                              <div className="space-y-2">
-                                {section.items.map((item) => {
-                                  const status = getLineItemStatus(item, decisionKeywordSets);
-                                  return (
-                                    <div
-                                      key={item.id}
-                                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2"
-                                    >
-                                      <div className="space-y-1">
-                                        <p className="text-sm font-semibold text-slate-800">
-                                          {item.description}
-                                        </p>
-                                        {Number.isFinite(item.amount) ? (
-                                          <p className="text-xs text-slate-500">
-                                            {formatMoney(item.amount)}
-                                          </p>
-                                        ) : null}
-                                      </div>
-                                      <span
-                                        className={`rounded-full px-2 py-1 text-xs font-semibold ${status.badgeClass}`}
-                                      >
-                                        {status.label}
-                                      </span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
+                          {reviewCardCollapsed && summarySnapshot ? (
+                            <div className="rounded-xl border border-slate-100 bg-white px-3 py-2 text-xs text-slate-500">
+                              {summarySnapshot}
                             </div>
-                          ))}
+                          ) : null}
+                          {!reviewCardCollapsed
+                            ? sections.map((section) => (
+                                <div key={section.id} className="space-y-2">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                    {section.label}
+                                  </p>
+                                  <div className="space-y-2">
+                                    {section.items.map((item) => {
+                                      const status = getLineItemStatus(item, decisionKeywordSets);
+                                      return (
+                                        <div
+                                          key={item.id}
+                                          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2"
+                                        >
+                                          <div className="space-y-1">
+                                            <p className="text-sm font-semibold text-slate-800">
+                                              {item.description}
+                                            </p>
+                                            {Number.isFinite(item.amount) ? (
+                                              <p className="text-xs text-slate-500">
+                                                {formatMoney(item.amount)}
+                                              </p>
+                                            ) : null}
+                                          </div>
+                                          <span
+                                            className={`rounded-full px-2 py-1 text-xs font-semibold ${status.badgeClass}`}
+                                          >
+                                            {status.label}
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ))
+                            : null}
                         </div>
 
-                        {payload.notes ? (
+                        {!reviewCardCollapsed && payload.notes ? (
                           <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
                             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                               Notes
@@ -2141,7 +2159,7 @@ function AIIntake() {
                           </div>
                         ) : null}
 
-                        {payload.decisions.length > 0 ? (
+                        {!reviewCardCollapsed && payload.decisions.length > 0 ? (
                           <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
                             <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
                               Decisions pending
@@ -2161,7 +2179,7 @@ function AIIntake() {
                           </div>
                         ) : null}
 
-                        {payload.unparsed.length > 0 ? (
+                        {!reviewCardCollapsed && payload.unparsed.length > 0 ? (
                           <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                               Not yet captured
@@ -2194,7 +2212,7 @@ function AIIntake() {
                           </div>
                         ) : null}
 
-                        {quickFixes.length > 0 ? (
+                        {!reviewCardCollapsed && quickFixes.length > 0 ? (
                           <div className="mt-3">
                             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                               Quick fixes
