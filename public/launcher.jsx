@@ -600,6 +600,15 @@ function AIIntake() {
   const SLOW_RESPONSE_MS = 35000;
 
   const shouldUseFastMode = (transcript) => transcript.length >= FAST_MODE_THRESHOLD;
+  const shouldRunDeepAudit = (status, transcript) => {
+    if (status === "timed_out") {
+      return true;
+    }
+    if (status === "skipped") {
+      return transcript.length >= FAST_MODE_THRESHOLD;
+    }
+    return false;
+  };
 
   const clearSlowResponseTimer = () => {
     if (slowResponseTimeoutRef.current) {
@@ -670,6 +679,7 @@ function AIIntake() {
     if (!structuredInvoice || !sourceText) {
       return;
     }
+    setAuditStatus("running");
     auditRequestIdRef.current += 1;
     const auditRequestId = auditRequestIdRef.current;
 
@@ -738,6 +748,13 @@ function AIIntake() {
       console.log("[audit:error]", error);
       setAuditStatus("failed");
     }
+  };
+
+  const maybeRunDeepAudit = ({ auditStatus: nextAuditStatus, transcript, structuredInvoice, decisionSignature }) => {
+    if (!shouldRunDeepAudit(nextAuditStatus, transcript)) {
+      return;
+    }
+    runDeepAudit({ structuredInvoice, sourceText: transcript, decisionSignature });
   };
 
   const quickReplies = (() => {
@@ -959,13 +976,12 @@ function AIIntake() {
               followUpMessage,
               buildReviewPayload(payload.invoice, nextOpenDecisions, nextUnparsedLines)
             );
-        if (nextAuditStatus === "timed_out" || nextAuditStatus === "skipped") {
-          runDeepAudit({
-            structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
-            sourceText: transcript,
-            decisionSignature
-          });
-        }
+        maybeRunDeepAudit({
+          auditStatus: nextAuditStatus,
+          transcript,
+          structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
+          decisionSignature
+        });
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
         console.log("[intake:response]", {
@@ -988,13 +1004,12 @@ function AIIntake() {
           buildSummaryText(payload.invoice, [], nextUnparsedLines.length),
           buildReviewPayload(payload.invoice, [], nextUnparsedLines)
         );
-        if (nextAuditStatus === "timed_out" || nextAuditStatus === "skipped") {
-          runDeepAudit({
-            structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
-            sourceText: transcript,
-            decisionSignature: ""
-          });
-        }
+        maybeRunDeepAudit({
+          auditStatus: nextAuditStatus,
+          transcript,
+          structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
+          decisionSignature: ""
+        });
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
         console.log("[intake:response]", {
@@ -1114,13 +1129,12 @@ function AIIntake() {
               followUpMessage,
               buildReviewPayload(payload.invoice, nextOpenDecisions, nextUnparsedLines)
             );
-        if (nextAuditStatus === "timed_out" || nextAuditStatus === "skipped") {
-          runDeepAudit({
-            structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
-            sourceText: transcript ?? lastTranscriptRef.current,
-            decisionSignature
-          });
-        }
+        maybeRunDeepAudit({
+          auditStatus: nextAuditStatus,
+          transcript: transcript ?? lastTranscriptRef.current,
+          structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
+          decisionSignature
+        });
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
         console.log("[labor:response]", {
@@ -1142,13 +1156,12 @@ function AIIntake() {
           buildSummaryText(payload.invoice, [], nextUnparsedLines.length),
           buildReviewPayload(payload.invoice, [], nextUnparsedLines)
         );
-        if (nextAuditStatus === "timed_out" || nextAuditStatus === "skipped") {
-          runDeepAudit({
-            structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
-            sourceText: transcript ?? lastTranscriptRef.current,
-            decisionSignature: ""
-          });
-        }
+        maybeRunDeepAudit({
+          auditStatus: nextAuditStatus,
+          transcript: transcript ?? lastTranscriptRef.current,
+          structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
+          decisionSignature: ""
+        });
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
         console.log("[labor:response]", {
@@ -1866,7 +1879,12 @@ function AIIntake() {
               {isTyping ? (
                 <div className="flex justify-start">
                   <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">
-                    AI is typing...
+                    <span>AI is typing</span>
+                    <span className="ml-1 inline-flex w-4 justify-start" aria-hidden="true">
+                      <span className="typing-dot">.</span>
+                      <span className="typing-dot">.</span>
+                      <span className="typing-dot">.</span>
+                    </span>
                   </div>
                 </div>
               ) : null}
@@ -1900,6 +1918,12 @@ function AIIntake() {
                 ) : null}
                 {summarySnapshot ? (
                   <p className="mt-1 text-xs text-slate-500">{summarySnapshot}</p>
+                ) : null}
+                {auditStatus === "running" ? (
+                  <p className="mt-1 text-xs text-slate-500">Deep check running…</p>
+                ) : null}
+                {auditStatus === "failed" ? (
+                  <p className="mt-1 text-xs text-amber-600">Deep check failed — continuing with current snapshot.</p>
                 ) : null}
                 {hasReviewCard && assumptionsCollapsed ? (
                   <p className="mt-2 text-xs text-slate-500">

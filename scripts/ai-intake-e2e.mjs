@@ -21,7 +21,7 @@ async function waitForText(page, text, timeout = DEFAULT_TIMEOUT) {
 }
 
 async function waitForTypingToSettle(page) {
-  const typing = page.getByText("AI is typing...", { exact: false });
+  const typing = page.getByText("AI is typing", { exact: false });
   try {
     await typing.waitFor({ state: "visible", timeout: 3000 });
     await typing.waitFor({ state: "hidden", timeout: DEFAULT_TIMEOUT });
