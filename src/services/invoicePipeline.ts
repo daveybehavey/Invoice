@@ -1804,7 +1804,7 @@ function filterDecisionsAgainstInvoice(
     const prompt = decision.prompt ?? "";
     const normalizedPrompt = normalizeDecisionText(prompt);
     const isItemBillingPrompt =
-      /^bill this item\?/i.test(prompt) || /^confirm:/i.test(prompt);
+      /^bill\b/i.test(prompt) || /^confirm:/i.test(prompt);
     if (isItemBillingPrompt) {
       return true;
     }
@@ -1995,18 +1995,18 @@ function buildDecisionFromSentence(sentence: string): Omit<OpenDecision, "id" | 
       keywords: ["discount"]
     };
   }
+  const label = buildDecisionLabel(sentence);
   if (lower.includes("bill") || lower.includes("charge") || lower.includes("invoice")) {
-    const snippet = buildDecisionSnippet(sentence);
     return {
       kind: "billing",
-      prompt: `Bill this item? "${snippet}"`,
+      prompt: label ? `Bill ${label}?` : "Bill this item?",
       keywords: extractKeywords(sentence)
     };
   }
-  const trimmed = buildDecisionSnippet(sentence);
+  const trimmed = label ?? buildDecisionSnippet(sentence);
   return {
     kind: "billing",
-    prompt: `Confirm: ${trimmed}`,
+    prompt: label ? `Bill ${trimmed}?` : `Confirm: ${trimmed}`,
     keywords: extractKeywords(sentence)
   };
 }
@@ -2024,6 +2024,34 @@ function buildDecisionSnippet(sentence: string): string {
     return `${cleaned.slice(0, 117)}...`;
   }
   return cleaned || normalized;
+}
+
+function buildDecisionLabel(sentence: string): string | null {
+  const base = buildDecisionSnippet(sentence);
+  if (!base) {
+    return null;
+  }
+  let cleaned = base.trim();
+  cleaned = cleaned.replace(
+    /^(on\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\s+\d{1,2}\b[,:-]?\s*/i,
+    ""
+  );
+  cleaned = cleaned.replace(/\b(?:i|we)\b\s+/i, "");
+  cleaned = cleaned.replace(/^(bill|charge|invoice)\b\s*/i, "");
+  cleaned = cleaned.replace(/\bwhile\s+i\s+was\s+there\b/gi, "");
+  cleaned = cleaned.replace(/\bduring\s+the\s+visit\b/gi, "");
+  cleaned = cleaned.replace(/\b\d+(?:\.\d+)?\s*(?:mins?|minutes?|hours?|hrs?)\b/gi, "");
+  cleaned = cleaned.replace(/\s{2,}/g, " ").trim();
+  cleaned = cleaned.replace(/^[,\s]+|[,\s]+$/g, "").trim();
+  cleaned = cleaned.replace(/\s*,\s*/g, " ");
+  if (!cleaned) {
+    return null;
+  }
+  const words = cleaned.split(/\s+/);
+  if (words.length > 8) {
+    cleaned = words.slice(0, 8).join(" ");
+  }
+  return cleaned.trim();
 }
 
 type TaxDirective = "apply" | "exclude" | "none";
