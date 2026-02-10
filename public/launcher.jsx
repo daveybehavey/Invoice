@@ -2745,6 +2745,19 @@ function ManualInvoiceCanvas() {
   const subtotal = lineItems.reduce((sum, item) => sum + getLineAmount(item), 0);
   const taxAmount = subtotal * (parseNumber(taxRate) / 100);
   const total = subtotal + taxAmount;
+  const previewData = {
+    invoiceNumber,
+    invoiceDate,
+    fromDetails,
+    billToDetails,
+    notes,
+    taxRate,
+    subtotal,
+    taxAmount,
+    total,
+    lineItems,
+    logoUrl
+  };
 
   const handleLineItemChange = (id, field, value) => {
     setLineItems((prev) =>
@@ -3184,6 +3197,7 @@ function ManualInvoiceCanvas() {
             onStylePresetChange={setStylePreset}
             onPrint={handlePrint}
             onDownloadPdf={handleDownloadPdf}
+            previewData={previewData}
             toneSource={{ lineItems, notes }}
             buildRewriteInvoicePayload={buildRewriteInvoicePayload}
             onApplyRewrite={applyRewriteChanges}
@@ -3207,6 +3221,7 @@ function ManualInvoiceCanvas() {
             onStylePresetChange={setStylePreset}
             onPrint={handlePrint}
             onDownloadPdf={handleDownloadPdf}
+            previewData={previewData}
             toneSource={{ lineItems, notes }}
             buildRewriteInvoicePayload={buildRewriteInvoicePayload}
             onApplyRewrite={applyRewriteChanges}
@@ -3231,6 +3246,7 @@ function InspectorPanel({
   onStylePresetChange,
   onPrint,
   onDownloadPdf,
+  previewData,
   toneSource,
   buildRewriteInvoicePayload,
   onApplyRewrite,
@@ -3251,6 +3267,8 @@ function InspectorPanel({
   const [assistantMessages, setAssistantMessages] = useState([]);
   const [pendingAssistantEdit, setPendingAssistantEdit] = useState(null);
   const [previewTemplateId, setPreviewTemplateId] = useState(null);
+  const previewCloseButtonRef = useRef(null);
+  const previewFocusReturnRef = useRef(null);
   const assistantRequestIdRef = useRef(0);
   const tabs = [
     { id: "style", label: "Style", content: "Style controls coming soon" },
@@ -3264,6 +3282,29 @@ function InspectorPanel({
     { id: "spacious", label: "Bold" }
   ];
   const toneOptions = ["Formal", "Neutral", "Friendly"];
+
+  useEffect(() => {
+    if (!previewTemplateId) {
+      return undefined;
+    }
+    previewFocusReturnRef.current = document.activeElement;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setPreviewTemplateId(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.requestAnimationFrame(() => {
+      previewCloseButtonRef.current?.focus();
+    });
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      const previous = previewFocusReturnRef.current;
+      if (previous && typeof previous.focus === "function") {
+        previous.focus();
+      }
+    };
+  }, [previewTemplateId]);
 
   const startRewrite = (tone) => {
     setSelectedTone(tone);
@@ -3471,24 +3512,39 @@ function InspectorPanel({
   const templateCatalog = {
     default: {
       name: "Classic",
-      titleClass: "font-['Fraunces'] tracking-[0.14em]",
-      bodyClass: "font-['Manrope']",
-      accentClass: "text-slate-900",
-      metaClass: "text-[10px] uppercase tracking-[0.3em] text-slate-400"
+      textClass: "text-sm text-slate-800 font-['Manrope']",
+      sectionGap: "space-y-6",
+      shellClass: "border-slate-200 bg-white shadow-sm",
+      metaClass: "text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400",
+      titleClass: "text-3xl font-['Fraunces'] tracking-[0.12em] text-slate-900",
+      labelClass: "text-slate-700 font-semibold",
+      tableHeadClass: "text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500",
+      totalsMutedClass: "text-slate-600",
+      totalsStrongClass: "text-slate-900"
     },
     compact: {
       name: "Minimal",
-      titleClass: "font-['Sora'] tracking-[0.08em]",
-      bodyClass: "font-['Sora'] text-slate-600",
-      accentClass: "text-slate-800",
-      metaClass: "text-[10px] uppercase tracking-[0.3em] text-slate-400"
+      textClass: "text-[13px] text-slate-700 font-['Sora']",
+      sectionGap: "space-y-5",
+      shellClass: "border-slate-100 bg-white shadow-sm",
+      metaClass: "text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-400",
+      titleClass: "text-2xl font-semibold tracking-tight text-slate-900",
+      labelClass: "text-slate-600 font-medium",
+      tableHeadClass: "text-[10px] font-semibold uppercase tracking-[0.25em] text-slate-400",
+      totalsMutedClass: "text-slate-600",
+      totalsStrongClass: "text-slate-900"
     },
     spacious: {
       name: "Bold",
-      titleClass: "font-['Archivo_Black'] tracking-[0.18em]",
-      bodyClass: "font-['Manrope'] text-slate-700",
-      accentClass: "text-slate-900",
-      metaClass: "text-[10px] uppercase tracking-[0.35em] text-slate-500"
+      textClass: "text-sm text-slate-800 font-['Manrope']",
+      sectionGap: "space-y-7",
+      shellClass: "border-slate-200 bg-white shadow-md",
+      metaClass: "text-[11px] font-semibold uppercase tracking-[0.35em] text-slate-500",
+      titleClass: "text-3xl font-['Archivo_Black'] tracking-[0.22em] text-slate-900",
+      labelClass: "text-slate-800 font-semibold",
+      tableHeadClass: "text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500",
+      totalsMutedClass: "text-slate-600",
+      totalsStrongClass: "text-slate-900"
     }
   };
   const previewTemplate = previewTemplateId ? templateCatalog[previewTemplateId] : null;
@@ -3515,22 +3571,61 @@ function InspectorPanel({
       totalStrong: "bg-slate-900"
     }
   };
-  const previewInvoice = {
-    number: "INV-104",
-    issueDate: "Feb 10, 2026",
-    billToName: "Mike Johnson",
-    billToAddress: "1423 Pine St",
-    servicePeriod: "Jan 28 - Feb 2",
-    items: [
-      { description: "Faucet repair labor", qty: "2h", rate: "$80", amount: "$160" },
-      { description: "Parts and materials", qty: "1", rate: "$29.25", amount: "$29.25" },
-      { description: "Logo design", qty: "1", rate: "$250", amount: "$250" }
-    ],
-    subtotal: "$439.25",
-    tax: "$0.00",
-    total: "$439.25"
-  };
   const previewIsSelected = previewTemplateId && stylePreset === previewTemplateId;
+  const previewPreset = previewTemplate ?? templateCatalog.default;
+  const previewLineItems = Array.isArray(previewData?.lineItems) ? previewData.lineItems : [];
+  const parsedLineItems = previewLineItems
+    .filter(
+      (item) =>
+        item &&
+        (item.description?.trim() || `${item.qty ?? ""}`.trim() || `${item.rate ?? ""}`.trim())
+    )
+    .map((item) => {
+      const quantity = Number.parseFloat(`${item.qty ?? ""}`);
+      const rate = Number.parseFloat(`${item.rate ?? ""}`);
+      const hasQuantity = Number.isFinite(quantity);
+      const hasRate = Number.isFinite(rate);
+      return {
+        id: item.id,
+        description: item.description?.trim() || "Untitled line item",
+        qty: hasQuantity ? quantity : null,
+        rate: hasRate ? rate : null,
+        amount: hasQuantity && hasRate ? quantity * rate : null
+      };
+    });
+  const previewItems =
+    parsedLineItems.length > 0
+      ? parsedLineItems
+      : [
+          {
+            id: "preview-placeholder",
+            description: "Add line items to see them here.",
+            qty: null,
+            rate: null,
+            amount: null,
+            placeholder: true
+          }
+        ];
+  const formatPreviewMoney = (value) =>
+    Number.isFinite(value) ? `$${value.toFixed(2)}` : "—";
+  const previewSubtotal = Number.isFinite(previewData?.subtotal)
+    ? previewData.subtotal
+    : parsedLineItems.reduce((sum, item) => sum + (item.amount ?? 0), 0);
+  const previewTaxRate = Number.parseFloat(`${previewData?.taxRate ?? ""}`);
+  const previewTaxAmount = Number.isFinite(previewData?.taxAmount)
+    ? previewData.taxAmount
+    : Number.isFinite(previewTaxRate)
+      ? previewSubtotal * (previewTaxRate / 100)
+      : 0;
+  const previewTotal = Number.isFinite(previewData?.total)
+    ? previewData.total
+    : previewSubtotal + previewTaxAmount;
+  const previewInvoiceNumber =
+    previewData?.invoiceNumber?.trim() || (previewItems[0]?.placeholder ? "Invoice" : "Invoice");
+  const previewIssueDate = previewData?.invoiceDate?.trim() || "—";
+  const previewFromDetails = previewData?.fromDetails?.trim() || "Add your business details";
+  const previewBillToDetails = previewData?.billToDetails?.trim() || "Add client details";
+  const previewNotes = previewData?.notes?.trim() || "Add payment terms or a note.";
 
   return (
     <>
@@ -3876,89 +3971,147 @@ function InspectorPanel({
               type="button"
               className="text-sm font-semibold text-slate-500"
               onClick={() => setPreviewTemplateId(null)}
+              ref={previewCloseButtonRef}
             >
               Close
             </button>
           </div>
           <div className="px-6 py-5">
             <div
-              className={`rounded-2xl border border-slate-200 bg-white p-6 shadow-sm ${previewTemplate.bodyClass}`}
+              className={`rounded-2xl border p-6 ${previewPreset.shellClass} ${previewPreset.textClass}`}
             >
-              <div className="flex items-start justify-between gap-6">
-                <div>
-                  <p className={previewTemplate.metaClass}>Invoice</p>
-                  <p className={`mt-2 text-2xl text-slate-900 ${previewTemplate.titleClass}`}>
-                    INVOICE
-                  </p>
+              <div className={previewPreset.sectionGap}>
+                <div className={`flex items-center justify-between ${previewPreset.metaClass}`}>
+                  <span>Invoice Document</span>
+                  <span>Preview</span>
                 </div>
-                <div className="text-right text-xs text-slate-500">
-                  <p className={previewTemplate.metaClass}>Invoice No.</p>
-                  <p className={`mt-1 text-sm font-semibold ${previewTemplate.accentClass}`}>
-                    {previewInvoice.number}
-                  </p>
-                  <p className={`mt-3 ${previewTemplate.metaClass}`}>Issue date</p>
-                  <p className={`mt-1 text-sm font-semibold ${previewTemplate.accentClass}`}>
-                    {previewInvoice.issueDate}
-                  </p>
-                </div>
-              </div>
-              <div className="mt-6 grid gap-4 border-t border-slate-200 pt-4 text-sm md:grid-cols-2">
-                <div>
-                  <p className={previewTemplate.metaClass}>Bill to</p>
-                  <p className={`mt-2 font-semibold ${previewTemplate.accentClass}`}>
-                    {previewInvoice.billToName}
-                  </p>
-                  <p className="text-xs text-slate-500">{previewInvoice.billToAddress}</p>
-                </div>
-                <div className="md:text-right">
-                  <p className={previewTemplate.metaClass}>Service period</p>
-                  <p className={`mt-2 font-semibold ${previewTemplate.accentClass}`}>
-                    {previewInvoice.servicePeriod}
-                  </p>
-                  <p className="text-xs text-slate-500">Work completed onsite.</p>
-                </div>
-              </div>
-              <div className="mt-6 space-y-3">
-                <div className="grid grid-cols-[1fr_auto_auto] gap-4 text-[10px] font-semibold uppercase tracking-[0.25em] text-slate-400">
-                  <span>Description</span>
-                  <span>Qty</span>
-                  <span>Amount</span>
-                </div>
-                <div className="space-y-2 text-sm text-slate-600">
-                  {previewInvoice.items.map((item) => (
-                    <div
-                      key={item.description}
-                      className="grid grid-cols-[1fr_auto_auto] gap-4"
-                    >
-                      <div>
-                        <p className={`font-semibold ${previewTemplate.accentClass}`}>
-                          {item.description}
-                        </p>
-                        <p className="text-xs text-slate-400">{item.rate}</p>
-                      </div>
-                      <p className="text-right text-xs text-slate-500">{item.qty}</p>
-                      <p className={`text-right font-semibold ${previewTemplate.accentClass}`}>
-                        {item.amount}
+
+                <header className="space-y-5">
+                  {previewData?.logoUrl ? (
+                    <div className="flex items-center">
+                      <img
+                        src={previewData.logoUrl}
+                        alt="Company logo"
+                        className="h-10 w-auto max-w-[160px] object-contain"
+                      />
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h1 className={previewPreset.titleClass}>INVOICE</h1>
+                      <p className="mt-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                        Draft document
                       </p>
                     </div>
-                  ))}
-                </div>
-              </div>
-              <div className="mt-6 flex justify-end">
-                <div className="w-full max-w-[220px] space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
-                  <div className="flex items-center justify-between text-slate-500">
-                    <span>Subtotal</span>
-                    <span>{previewInvoice.subtotal}</span>
+                    <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-xs">
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                          Invoice #
+                        </span>
+                        <span className="font-semibold text-slate-900">
+                          {previewInvoiceNumber}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                          Date
+                        </span>
+                        <span className="font-semibold text-slate-900">{previewIssueDate}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center justify-between text-slate-500">
-                    <span>Tax</span>
-                    <span>{previewInvoice.tax}</span>
+                </header>
+
+                <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <p className={`${previewPreset.textClass} ${previewPreset.labelClass}`}>From</p>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                      <p className="whitespace-pre-line">{previewFromDetails}</p>
+                    </div>
                   </div>
-                  <div className="flex items-center justify-between text-base font-semibold text-slate-900">
-                    <span>Total</span>
-                    <span>{previewInvoice.total}</span>
+                  <div className="space-y-2">
+                    <p className={`${previewPreset.textClass} ${previewPreset.labelClass}`}>
+                      Bill To
+                    </p>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                      <p className="whitespace-pre-line">{previewBillToDetails}</p>
+                    </div>
                   </div>
-                </div>
+                </section>
+
+                <section className="space-y-3">
+                  <div className="overflow-x-auto">
+                    <table className={`min-w-full text-left ${previewPreset.textClass}`}>
+                      <thead className={previewPreset.tableHeadClass}>
+                        <tr>
+                          <th className="border-b border-slate-200 pb-2 pr-3">Description</th>
+                          <th className="border-b border-slate-200 pb-2 pr-3">Qty</th>
+                          <th className="border-b border-slate-200 pb-2 pr-3">Rate</th>
+                          <th className="border-b border-slate-200 pb-2 text-right">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {previewItems.map((item) => (
+                          <tr key={item.id} className="odd:bg-slate-50/70">
+                            <td className="py-3 pr-3 align-top">
+                              <p className="font-semibold text-slate-800">{item.description}</p>
+                              {item.placeholder ? (
+                                <p className="mt-1 text-xs text-slate-400">
+                                  Start by adding a line item in the editor.
+                                </p>
+                              ) : null}
+                            </td>
+                            <td className="py-3 pr-3 align-top text-sm text-slate-600">
+                              {Number.isFinite(item.qty) ? item.qty : "—"}
+                            </td>
+                            <td className="py-3 pr-3 align-top text-sm text-slate-600">
+                              {Number.isFinite(item.rate) ? formatPreviewMoney(item.rate) : "—"}
+                            </td>
+                            <td className="py-3 text-right align-top text-sm text-slate-600">
+                              {Number.isFinite(item.amount) ? (
+                                formatPreviewMoney(item.amount)
+                              ) : item.placeholder ? (
+                                "—"
+                              ) : (
+                                <span className="text-xs font-semibold text-amber-600">
+                                  Needs value
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section className="flex justify-end">
+                  <div
+                    className={`w-full max-w-xs space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-4 ${previewPreset.textClass}`}
+                  >
+                    <div className={`flex justify-between ${previewPreset.totalsMutedClass}`}>
+                      <span>Subtotal</span>
+                      <span>{formatPreviewMoney(previewSubtotal)}</span>
+                    </div>
+                    <div className={`flex justify-between ${previewPreset.totalsMutedClass}`}>
+                      <span>Tax</span>
+                      <span>{formatPreviewMoney(previewTaxAmount)}</span>
+                    </div>
+                    <div className={`flex justify-between font-semibold ${previewPreset.totalsStrongClass}`}>
+                      <span>Total</span>
+                      <span>{formatPreviewMoney(previewTotal)}</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-2">
+                  <p className={`${previewPreset.textClass} ${previewPreset.labelClass}`}>
+                    Notes / Terms
+                  </p>
+                  <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                    <p className="whitespace-pre-line">{previewNotes}</p>
+                  </div>
+                </section>
               </div>
             </div>
           </div>
