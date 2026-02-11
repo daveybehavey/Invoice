@@ -214,7 +214,7 @@ function AIIntake() {
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
   const [reviewCardCollapsed, setReviewCardCollapsed] = useState(true);
   const [showChatInput, setShowChatInput] = useState(false);
-  const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(false);
+  const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(true);
   const [decisionToast, setDecisionToast] = useState(null);
   const [showAllDecisions, setShowAllDecisions] = useState(false);
   const [decisionFocusIndex, setDecisionFocusIndex] = useState(0);
@@ -2458,10 +2458,10 @@ function AIIntake() {
                     Details hidden — the review card above has the latest snapshot.
                   </p>
                 ) : null}
-                {intakePhase === "ready_to_summarize" ? (
+                {intakePhase === "ready_to_summarize" && openDecisionCount === 0 ? (
                   <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Review & confirm (required)
+                      Ready to generate
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
                       <button
@@ -2470,28 +2470,8 @@ function AIIntake() {
                         onClick={() => submitUserMessage("Confirm.")}
                         disabled={isTyping}
                       >
-                        Confirm
+                        Confirm &amp; Generate
                       </button>
-                      {hasDecisions && !showQuickDecisions ? (
-                        <button
-                          type="button"
-                          className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
-                          onClick={() => scrollToSection(decisionsRef)}
-                          disabled={isTyping}
-                        >
-                          Resolve decisions
-                        </button>
-                      ) : null}
-                      {unparsedItems.length > 0 ? (
-                        <button
-                          type="button"
-                          className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
-                          onClick={() => scrollToSection(unparsedRef)}
-                          disabled={isTyping}
-                        >
-                          Review not captured
-                        </button>
-                      ) : null}
                     </div>
                   </div>
                 ) : null}
@@ -2748,83 +2728,66 @@ function AIIntake() {
                     </ul>
                   </div>
                 ) : null}
-                {showAssumptionDetails && unparsedItems.length > 0 ? (
+                {showAssumptionDetails && (unparsedItems.length > 0 || assumptionItems.length > 0 || auditAssumptionItems.length > 0) ? (
                   <div
                     className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3"
                     ref={unparsedRef}
                   >
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Not yet captured
+                      Details
                     </p>
-                    <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-slate-700">
-                      {unparsedItems.map((item) => (
-                        <li key={item.id}>
-                          <div className="space-y-2">
-                            <p>{item.text}</p>
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
-                                onClick={() => submitUserMessage(`Add to notes: ${item.text}`)}
-                                disabled={isTyping}
-                              >
-                                Add to notes
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
-                                onClick={() => submitUserMessage(`Add line item: ${item.text}`)}
-                                disabled={isTyping}
-                              >
-                                Create line item
-                              </button>
-                            </div>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                {showAssumptionDetails && assumptionItems.length > 0 ? (
-                  <div className="mt-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Captured from notes
-                    </p>
-                    <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-slate-600">
-                      {assumptionItems.map((item) => (
-                        <li key={item.id}>{item.text}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                {showAssumptionDetails && auditAssumptionItems.length > 0 ? (
-                  <div className="mt-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Assumptions made
-                    </p>
-                    <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-slate-600">
-                      {auditAssumptionItems.map((item) => (
-                        <li key={item.id}>{item.text}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                {quickReplies.length > 0 ? (
-                  <div className="mt-4">
-                    <p className="text-xs font-semibold text-slate-600">{quickReplyLabel}</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {quickReplies.map((reply) => (
-                        <button
-                          key={reply.id}
-                          type="button"
-                          className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-400"
-                          onClick={() => submitUserMessage(reply.value)}
-                          disabled={isTyping}
-                        >
-                          {reply.label}
-                        </button>
-                      ))}
-                    </div>
+                    {unparsedItems.length > 0 ? (
+                      <div className="mt-2 space-y-2">
+                        <p className="text-xs font-semibold text-slate-600">Not yet captured</p>
+                        <ul className="mt-1 list-disc space-y-2 pl-5 text-sm text-slate-700">
+                          {unparsedItems.map((item) => (
+                            <li key={item.id}>
+                              <div className="space-y-2">
+                                <p>{item.text}</p>
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                                    onClick={() => submitUserMessage(`Add to notes: ${item.text}`)}
+                                    disabled={isTyping}
+                                  >
+                                    Add to notes
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                                    onClick={() => submitUserMessage(`Add line item: ${item.text}`)}
+                                    disabled={isTyping}
+                                  >
+                                    Create line item
+                                  </button>
+                                </div>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {assumptionItems.length > 0 ? (
+                      <div className="mt-3">
+                        <p className="text-xs font-semibold text-slate-600">Captured from notes</p>
+                        <ul className="mt-1 list-disc space-y-2 pl-5 text-sm text-slate-600">
+                          {assumptionItems.map((item) => (
+                            <li key={item.id}>{item.text}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {auditAssumptionItems.length > 0 ? (
+                      <div className="mt-3">
+                        <p className="text-xs font-semibold text-slate-600">Assumptions made</p>
+                        <ul className="mt-1 list-disc space-y-2 pl-5 text-sm text-slate-600">
+                          {auditAssumptionItems.map((item) => (
+                            <li key={item.id}>{item.text}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </section>
