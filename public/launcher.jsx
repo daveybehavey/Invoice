@@ -657,6 +657,12 @@ function AIIntake() {
   const suggestedTaxRate = extractTaxRateFromText(lastTranscriptRef.current);
   const showAssumptionsCard = hasAssumptions || hasDecisions || !!finishedInvoice;
   const showAssumptionDetails = !hasReviewCard || !assumptionsCollapsed;
+  const hasDetails =
+    hasAssumptions ||
+    auditStatus === "running" ||
+    auditStatus === "timed_out" ||
+    auditStatus === "failed" ||
+    (auditStatus === "completed" && auditSummary);
 
   const summaryTimeLabel = summaryUpdatedAt
     ? summaryUpdatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
@@ -2342,7 +2348,7 @@ function AIIntake() {
                       </span>
                     ) : null}
                   </div>
-                  {hasReviewCard && showAssumptionDetails ? (
+                  {hasReviewCard && hasDetails ? (
                     <button
                       type="button"
                       className="text-xs font-semibold text-emerald-700"
@@ -2354,43 +2360,6 @@ function AIIntake() {
                 </div>
                 {summaryTimeLabel ? (
                   <p className="mt-1 text-xs text-slate-500">Summary updated {summaryTimeLabel}</p>
-                ) : null}
-                {auditStatus === "running" ? (
-                  <p className="mt-1 text-xs text-slate-500">Deep check running…</p>
-                ) : null}
-                {auditStatus === "timed_out" ? (
-                  <p className="mt-1 text-xs text-amber-600">
-                    Deep check timed out — continuing with current snapshot.
-                  </p>
-                ) : null}
-                {auditStatus === "failed" ? (
-                  <p className="mt-1 text-xs text-amber-600">Deep check failed — continuing with current snapshot.</p>
-                ) : null}
-                {auditStatus === "completed" && auditSummary ? (
-                  <p className="mt-1 text-xs text-slate-500">
-                    {auditSummary}
-                    {auditSummaryTimeLabel ? ` (${auditSummaryTimeLabel})` : ""}
-                  </p>
-                ) : null}
-                {(auditStatus === "timed_out" || auditStatus === "failed") ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
-                      onClick={handleManualDeepAudit}
-                      disabled={auditStatus === "running" || !structuredInvoice}
-                    >
-                      Run deep check
-                    </button>
-                    <span className="text-xs text-slate-400">
-                      Re-check for missed decisions or notes.
-                    </span>
-                  </div>
-                ) : null}
-                {hasReviewCard && assumptionsCollapsed ? (
-                  <p className="mt-2 text-xs text-slate-500">
-                    Details hidden — the review card above has the latest snapshot.
-                  </p>
                 ) : null}
                 {intakePhase === "ready_to_summarize" && openDecisionCount === 0 ? (
                   <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -2662,7 +2631,7 @@ function AIIntake() {
                     </ul>
                   </div>
                 ) : null}
-                {showAssumptionDetails && (unparsedItems.length > 0 || assumptionItems.length > 0 || auditAssumptionItems.length > 0) ? (
+                {showAssumptionDetails && hasDetails ? (
                   <div
                     className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3"
                     ref={unparsedRef}
@@ -2670,8 +2639,42 @@ function AIIntake() {
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Details
                     </p>
+                    {auditStatus === "running" ? (
+                      <p className="mt-2 text-xs text-slate-500">Deep check running…</p>
+                    ) : null}
+                    {auditStatus === "timed_out" ? (
+                      <p className="mt-2 text-xs text-amber-600">
+                        Deep check timed out — continuing with current snapshot.
+                      </p>
+                    ) : null}
+                    {auditStatus === "failed" ? (
+                      <p className="mt-2 text-xs text-amber-600">
+                        Deep check failed — continuing with current snapshot.
+                      </p>
+                    ) : null}
+                    {auditStatus === "completed" && auditSummary ? (
+                      <p className="mt-2 text-xs text-slate-500">
+                        {auditSummary}
+                        {auditSummaryTimeLabel ? ` (${auditSummaryTimeLabel})` : ""}
+                      </p>
+                    ) : null}
+                    {(auditStatus === "timed_out" || auditStatus === "failed") ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                          onClick={handleManualDeepAudit}
+                          disabled={auditStatus === "running" || !structuredInvoice}
+                        >
+                          Run deep check
+                        </button>
+                        <span className="text-xs text-slate-400">
+                          Re-check for missed decisions or notes.
+                        </span>
+                      </div>
+                    ) : null}
                     {unparsedItems.length > 0 ? (
-                      <div className="mt-2 space-y-2">
+                      <div className="mt-3 space-y-2">
                         <p className="text-xs font-semibold text-slate-600">Not yet captured</p>
                         <ul className="mt-1 list-disc space-y-2 pl-5 text-sm text-slate-700">
                           {unparsedItems.map((item) => (
