@@ -2388,7 +2388,7 @@ function AIIntake() {
                       </span>
                     ) : null}
                   </div>
-                  {hasReviewCard ? (
+                  {hasReviewCard && showAssumptionDetails ? (
                     <button
                       type="button"
                       className="text-xs font-semibold text-emerald-700"
