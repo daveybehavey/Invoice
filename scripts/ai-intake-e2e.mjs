@@ -39,9 +39,12 @@ function getPrimaryGenerateButton(page) {
 async function sendMessage(page, text) {
   const visibleInput = page.locator("textarea#ai-intake-input:visible");
   if ((await visibleInput.count()) === 0) {
-    const editButton = page.getByRole("button", { name: "Edit by chat" });
-    if (await editButton.isVisible().catch(() => false)) {
-      await editButton.click();
+    const editWithAIButton = page.getByRole("button", { name: "Edit with AI" });
+    const editByChatButton = page.getByRole("button", { name: "Edit by chat" });
+    if (await editWithAIButton.isVisible().catch(() => false)) {
+      await editWithAIButton.click();
+    } else if (await editByChatButton.isVisible().catch(() => false)) {
+      await editByChatButton.click();
     }
   }
   await visibleInput.waitFor({ state: "visible", timeout: DEFAULT_TIMEOUT });

@@ -2450,23 +2450,6 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                 {summaryTimeLabel ? (
                   <p className="mt-1 text-xs text-slate-500">Summary updated {summaryTimeLabel}</p>
                 ) : null}
-                {intakePhase === "ready_to_summarize" && openDecisionCount === 0 ? (
-                  <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Ready to generate
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
-                        onClick={handleGenerateInvoice}
-                        disabled={!canGenerateInvoice}
-                      >
-                        Generate invoice
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
                 {showQuickDecisions ? (
                   <div
                     className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"
@@ -2845,26 +2828,6 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         </div>
       ) : null}
 
-      {hasReviewCard && !showChatInput ? (
-        <div className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white">
-          <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
-            <div>
-              <p className="text-sm font-semibold text-slate-900">Need to change something?</p>
-              <p className="text-xs text-slate-500">Ask the AI to edit after you review.</p>
-            </div>
-            <button
-              type="button"
-              className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98]"
-              onClick={() => {
-                setShowChatInput(true);
-                focusInputWithValue("Update: ");
-              }}
-            >
-              Edit by chat
-            </button>
-          </div>
-        </div>
-      ) : null}
       {showChatInput ? (
         <form
           onSubmit={handleSend}
