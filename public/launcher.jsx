@@ -2284,26 +2284,6 @@ function AIIntake() {
                           </div>
                         ) : null}
 
-                        {!reviewCardCollapsed && payload.decisions.length > 0 ? (
-                          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-                              Decisions pending
-                            </p>
-                            <p className="mt-1 text-sm text-amber-900">
-                              Resolve {payload.decisions.length} item{payload.decisions.length > 1 ? "s" : ""} below
-                              to generate the invoice.
-                            </p>
-                            <button
-                              type="button"
-                              className="mt-2 inline-flex items-center gap-2 text-xs font-semibold text-amber-800 hover:text-amber-900"
-                              onClick={() => scrollToSection(decisionsRef)}
-                              disabled={isTyping}
-                            >
-                              Jump to decisions
-                            </button>
-                          </div>
-                        ) : null}
-
                         {!reviewCardCollapsed && payload.unparsed.length > 0 ? (
                           <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
