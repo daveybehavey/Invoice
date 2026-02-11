@@ -255,10 +255,19 @@ function AIIntake() {
       )
     : messages.filter((message) => message.kind === "timeout");
 
-  const formatMoney = (value) =>
-    Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
+const formatMoney = (value) =>
+  Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
 
-  const formatDisplayDescription = (text) => {
+const generateInvoiceNumber = () => {
+  const now = new Date();
+  const ymd = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}${String(
+    now.getUTCDate()
+  ).padStart(2, "0")}`;
+  const suffix = Math.floor(1000 + Math.random() * 9000);
+  return `INV-${ymd}-${suffix}`;
+};
+
+const formatDisplayDescription = (text) => {
     if (!text) {
       return "";
     }
@@ -277,10 +286,46 @@ function AIIntake() {
       .replace(/\s+/g, " ")
       .trim();
 
-  const extractKeywords = (text) =>
-    normalizeSnippet(text)
-      .split(" ")
-      .filter((word) => word.length >= 4);
+const extractKeywords = (text) =>
+  normalizeSnippet(text)
+    .split(" ")
+    .filter((word) => word.length >= 4);
+
+const applyDecisionActionToInvoice = (invoice, action) => {
+  if (!invoice || !action) {
+    return invoice;
+  }
+  if (action.type !== "exclude" || !action.snippet) {
+    return invoice;
+  }
+  const decisionKeywords = new Set(extractKeywords(action.snippet));
+  if (decisionKeywords.size === 0) {
+    return invoice;
+  }
+  const nextLineItems = Array.isArray(invoice.lineItems)
+    ? invoice.lineItems.map((item) => {
+        const itemKeywords = new Set(extractKeywords(item.description ?? ""));
+        let overlapCount = 0;
+        decisionKeywords.forEach((keyword) => {
+          if (itemKeywords.has(keyword)) {
+            overlapCount += 1;
+          }
+        });
+        if (overlapCount < 2) {
+          return item;
+        }
+        return {
+          ...item,
+          unitPrice: 0,
+          amount: 0
+        };
+      })
+    : invoice.lineItems;
+  return {
+    ...invoice,
+    lineItems: nextLineItems
+  };
+};
 
   const orderLineItemsForTranscript = (lineItems, transcript) => {
     if (!Array.isArray(lineItems) || lineItems.length <= 1) {
@@ -465,7 +510,10 @@ function AIIntake() {
       }) ?? [];
 
     return {
-      invoiceNumber: invoice?.invoiceNumber ?? "INV-0001",
+      invoiceNumber:
+        typeof invoice?.invoiceNumber === "string" && invoice.invoiceNumber.trim()
+          ? invoice.invoiceNumber
+          : generateInvoiceNumber(),
       invoiceDate: issueDate || today,
       fromDetails: "",
       billToDetails: invoice?.customerName ?? "",
@@ -1305,7 +1353,8 @@ function AIIntake() {
       }
       setFollowUp(null);
       setStructuredInvoice(payload.structuredInvoice ?? null);
-      setFinishedInvoice(payload.invoice ?? null);
+      const adjustedInvoice = applyDecisionActionToInvoice(payload.invoice ?? null, decisionAction);
+      setFinishedInvoice(adjustedInvoice);
       const decisionSignature = nextOpenDecisions.map((decision) => decision.prompt).sort().join("|");
       if (nextOpenDecisions.length > 0) {
         setIntakePhase("ready_to_summarize");
@@ -1313,7 +1362,7 @@ function AIIntake() {
           decisionSignature && decisionSignature === openDecisionSignatureRef.current;
         const followUpMessage = isRepeatDecision
           ? buildDecisionFollowUp(nextOpenDecisions)
-          : buildSummaryText(payload.invoice, nextOpenDecisions, nextUnparsedLines.length);
+          : buildSummaryText(adjustedInvoice ?? payload.invoice, nextOpenDecisions, nextUnparsedLines.length);
         openDecisionSignatureRef.current = decisionSignature;
         if (decisionAck) {
           appendAiMessage(decisionAck);
@@ -1323,7 +1372,7 @@ function AIIntake() {
           ? appendAiMessage(followUpMessage)
           : appendSummaryMessage(
               followUpMessage,
-              buildReviewPayload(payload.invoice, nextOpenDecisions, nextUnparsedLines)
+              buildReviewPayload(adjustedInvoice ?? payload.invoice, nextOpenDecisions, nextUnparsedLines)
             );
         maybeRunDeepAudit({
           auditStatus: nextAuditStatus,
@@ -1354,8 +1403,8 @@ function AIIntake() {
           showDecisionToast(decisionAck);
         }
         appendSummaryMessage(
-          buildSummaryText(payload.invoice, [], nextUnparsedLines.length),
-          buildReviewPayload(payload.invoice, [], nextUnparsedLines)
+          buildSummaryText(adjustedInvoice ?? payload.invoice, [], nextUnparsedLines.length),
+          buildReviewPayload(adjustedInvoice ?? payload.invoice, [], nextUnparsedLines)
         );
         maybeRunDeepAudit({
           auditStatus: nextAuditStatus,
@@ -1964,13 +2013,13 @@ function AIIntake() {
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                   <p className="text-sm font-semibold text-slate-900">Paste your notes</p>
                   <p className="mt-1 text-sm text-slate-600">
-                    Drop anything here — dates, rates, parts, or “not sure” items. I’ll organize it.
+                    Paste anything — dates, rates, parts, “not sure” items. I’ll sort it out.
                   </p>
                   <textarea
                     id="ai-intake-input"
                     rows={6}
                     className="mt-4 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                    placeholder="Example: Jan 10 fixed sink 2h at $90/hr. Parts: washer $5. Not sure if I should bill cabinet adjustment."
+                    placeholder="Example: Jan 10 fixed sink 2h at $90/hr. Parts: washer $5. Not sure about cabinet adjustment."
                     value={inputValue}
                     onChange={(event) => setInputValue(event.target.value)}
                   />
@@ -2138,8 +2187,8 @@ function AIIntake() {
                   if (payload.lineItems.length > 0) {
                     quickFixes.push({
                       id: "fix-exclude",
-                      label: "Exclude item",
-                      value: `Exclude ${payload.lineItems[0].description}.`
+                      label: "Remove item",
+                      value: `Remove ${payload.lineItems[0].description}.`
                     });
                   }
                   if (payload.notes) {
@@ -2179,7 +2228,7 @@ function AIIntake() {
                               onClick={() => focusInputWithValue("Update: ")}
                               disabled={isTyping}
                             >
-                              Fix by chat
+                              Edit with AI
                             </button>
                             <button
                               type="button"
@@ -2217,6 +2266,26 @@ function AIIntake() {
                               ) : null}
                             </p>
                           </div>
+                          {reviewCardCollapsed && quickFixes.length > 0 ? (
+                            <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Quick fixes
+                              </p>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {quickFixes.slice(0, 3).map((fix) => (
+                                  <button
+                                    key={fix.id}
+                                    type="button"
+                                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-400"
+                                    onClick={() => focusInputWithValue(fix.value)}
+                                    disabled={isTyping}
+                                  >
+                                    {fix.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
                           {!reviewCardCollapsed
                             ? sections.map((section) => (
                                 <div key={section.id} className="space-y-2">
@@ -2418,8 +2487,8 @@ function AIIntake() {
                     </div>
                     {showDecisionWhy ? (
                       <p className="mt-2 text-sm text-amber-900">
-                        These are items your notes were unclear about. Choose Include or Exclude so I
-                        don’t guess on money.
+                        These are items your notes were unclear about. Choose Add or Skip so I don’t
+                        guess on money.
                       </p>
                     ) : null}
                     <div className="mt-2 space-y-2">
@@ -2988,7 +3057,7 @@ function ManualInvoiceCanvas() {
   const buildEditableInvoicePayload = () => {
     const itemsWithDescriptions = lineItems.filter((item) => item.description.trim().length > 0);
     if (itemsWithDescriptions.length === 0) {
-      return { error: "Add at least one line item description before using Fix by chat." };
+      return { error: "Add at least one line item description before using Edit with AI." };
     }
     const invoice = {
       invoiceNumber: invoiceNumber?.trim() || undefined,
@@ -3169,7 +3238,7 @@ function ManualInvoiceCanvas() {
                   setInspectorOpen(true);
                 }}
               >
-                Fix by chat
+                Edit with AI
               </button>
               <button
                 type="button"
@@ -3439,7 +3508,7 @@ function InspectorPanel({
   const tabs = [
     { id: "style", label: "Style", content: "Style controls coming soon" },
     { id: "tone", label: "Tone", content: "Tone controls coming soon" },
-    { id: "assistant", label: "Fix by chat", content: "AI edits" },
+    { id: "assistant", label: "Edit with AI", content: "AI edits" },
     { id: "export", label: "Export", content: "Export options coming soon" }
   ];
   const styleOptions = [
@@ -3583,7 +3652,7 @@ function InspectorPanel({
         if (requestId !== assistantRequestIdRef.current) {
           return;
         }
-        setAssistantError("Fix by chat failed. Try again.");
+        setAssistantError("Edit failed. Try again.");
         setAssistantLoading(false);
       });
   };
