@@ -32,26 +32,28 @@ async function waitForTypingToSettle(page) {
   }
 }
 
-async function sendMessage(page, text) {
-  const input = page.locator("#ai-intake-input");
-  await input.waitFor({ state: "visible", timeout: DEFAULT_TIMEOUT });
-  await input.fill(text);
-  await page.getByRole("button", { name: "Send" }).click();
+function getPrimaryGenerateButton(page) {
+  return page.getByRole("button", { name: /Generate invoice/i }).last();
 }
 
-async function getChatMessages(page) {
-  return await page.$$eval("main .space-y-4 > div", (nodes) =>
-    nodes
-      .map((node) => {
-        const text = node.innerText?.trim() ?? "";
-        if (!text) {
-          return null;
-        }
-        const isUser = node.classList.contains("justify-end");
-        return { role: isUser ? "user" : "ai", text };
-      })
-      .filter(Boolean)
-  );
+async function sendMessage(page, text) {
+  const visibleInput = page.locator("textarea#ai-intake-input:visible");
+  if ((await visibleInput.count()) === 0) {
+    const editButton = page.getByRole("button", { name: "Edit by chat" });
+    if (await editButton.isVisible().catch(() => false)) {
+      await editButton.click();
+    }
+  }
+  await visibleInput.waitFor({ state: "visible", timeout: DEFAULT_TIMEOUT });
+  await visibleInput.fill(text);
+  const buildButton = page.getByRole("button", { name: "Build invoice" });
+  if (await buildButton.isVisible().catch(() => false)) {
+    await buildButton.click();
+    return;
+  }
+  const sendButton = page.getByRole("button", { name: "Send" });
+  await sendButton.waitFor({ state: "visible", timeout: DEFAULT_TIMEOUT });
+  await sendButton.click();
 }
 
 async function ensureAssumptionsExpanded(page) {
@@ -62,36 +64,20 @@ async function ensureAssumptionsExpanded(page) {
 }
 
 async function getDecisionItems(page) {
-  await ensureAssumptionsExpanded(page);
-  const items = await page
-    .locator("section:has-text(\"Assumptions\") li")
-    .allTextContents();
-  return items.map((item) => item.trim()).filter((item) => item.startsWith("Decision needed:"));
-}
-
-async function getAssumptionItems(page) {
-  await ensureAssumptionsExpanded(page);
-  const items = await page
-    .locator("section:has-text(\"Assumptions\") li")
-    .allTextContents();
-  return items
-    .map((item) => item.trim())
-    .filter((item) => item && !item.startsWith("Decision needed:"));
-}
-
-async function getUnparsedItems(page) {
-  await ensureAssumptionsExpanded(page);
-  const items = await page
-    .locator("section:has-text(\"Assumptions\") div:has-text(\"Not yet captured\") li")
-    .allTextContents();
-  return items.map((item) => item.trim()).filter(Boolean);
+  const decisionCard = page.locator("div").filter({ hasText: "Needs your call" });
+  if (await decisionCard.count()) {
+    const text = await decisionCard.first().innerText();
+    return text
+      .split("\n")
+      .map((item) => item.trim())
+      .filter((item) => item && !item.startsWith("Needs your call"));
+  }
+  return [];
 }
 
 async function getLaborPricingCount(page) {
   await ensureAssumptionsExpanded(page);
-  const items = await page
-    .locator("section:has-text(\"Assumptions\") li")
-    .allTextContents();
+  const items = await page.locator("div:has-text(\"Captured from notes\") li").allTextContents();
   const match = items
     .map((item) => item.trim())
     .find((item) => item.toLowerCase().includes("labor pricing needed"));
@@ -181,8 +167,8 @@ async function runSuite(label, contextOptions) {
     );
 
     await waitForTypingToSettle(page);
-    const hasSummary = await waitForText(page, "Checkpoint: Draft ready.");
-    record(hasSummary, "Summary ends with checkpoint");
+    const hasSummary = await waitForText(page, "Draft snapshot", DEFAULT_TIMEOUT);
+    record(hasSummary, "Draft snapshot shown");
 
     const followUpShown = await waitForText(
       page,
@@ -194,34 +180,37 @@ async function runSuite(label, contextOptions) {
     const decisions = await getDecisionItems(page);
     record(decisions.length === 0, "No decisions listed");
 
-    const nextSteps = await page.getByText("Next steps", { exact: true }).isVisible();
-    record(nextSteps, "Next steps strip shown");
-
-    const helperText = await page
-      .getByText("Checkpoint ready — confirm to generate.", { exact: true })
-      .isVisible();
-    record(helperText, "Generate helper shows checkpoint");
-
-    const generateButton = page.getByRole("button", { name: "Generate Invoice" });
-    record(await generateButton.isDisabled(), "Generate disabled before confirmation");
-
-    const confirmButton = page.getByRole("button", { name: "Confirm draft" });
-    record(await confirmButton.isVisible(), "Confirm draft button shown");
-    await confirmButton.click();
-    await waitForTypingToSettle(page);
     const helperReady = await page.getByText("Ready to generate.", { exact: true }).isVisible();
     record(helperReady, "Helper text shows ready to generate");
 
-    record(await generateButton.isEnabled(), "Generate enabled after confirmation");
+    const generateButton = getPrimaryGenerateButton(page);
+    record(await generateButton.isEnabled(), "Generate enabled when no decisions");
 
-    const assumptions = await getAssumptionItems(page);
-    const hasClient = assumptions.some((item) => item.toLowerCase().includes("mike johnson"));
-    record(hasClient, "Client shows Mike Johnson");
+    await generateButton.click();
+    await page.waitForURL("**/manual", { timeout: DEFAULT_TIMEOUT });
+    await page.getByText("INVOICE", { exact: true }).waitFor({ timeout: DEFAULT_TIMEOUT });
 
-    const hasLaborAmount = assumptions.some((item) => item.includes("$180.00"));
-    record(hasLaborAmount, "Labor amount $180.00 present");
+    const invoiceNumber = await page.getByLabel("Invoice #").inputValue();
+    record(/^INV-\d{8}-\d{4}$/.test(invoiceNumber), "Invoice number auto-generated");
 
-    const hasPartAmount = assumptions.some((item) => item.includes("$5.00"));
+    const expectedDate = toIsoDateUTC();
+    const invoiceDate = await page.getByLabel("Date").inputValue();
+    record(invoiceDate === expectedDate, `Invoice date is today (${expectedDate})`);
+
+    const billTo = await page
+      .getByText("Bill To")
+      .locator("..")
+      .locator("textarea")
+      .inputValue();
+    record(billTo.toLowerCase().includes("mike johnson"), "Bill To includes Mike Johnson");
+
+    const lineItems = await getManualLineItems(page);
+    const hasLaborLine = lineItems.some((item) =>
+      parseNumber(item.qty) === 2 && parseNumber(item.rate) === 90
+    );
+    record(hasLaborLine, "Labor line shows 2h x $90/hr");
+
+    const hasPartAmount = lineItems.some((item) => parseNumber(item.rate) === 5);
     record(hasPartAmount, "Part amount $5.00 present");
 
     await context.close();
@@ -276,49 +265,33 @@ Do what makes sense.`;
       await waitForTypingToSettle(page);
     }
 
-    const hasSummary = await waitForText(page, "Checkpoint: Draft ready.");
-    record(hasSummary, followUp ? "Summary produced after labor pricing" : "Summary produced");
+    const hasSummary = await waitForText(page, "Draft snapshot", DEFAULT_TIMEOUT);
+    record(hasSummary, followUp ? "Draft snapshot after labor pricing" : "Draft snapshot shown");
 
-    const decisions = await getDecisionItems(page);
-    record(decisions.length > 0, "Decisions listed");
-
-    const nextSteps = await page.getByText("Next steps", { exact: true }).isVisible();
-    record(nextSteps, "Next steps strip shown");
-
-    const decisionText = decisions.join(" ").toLowerCase();
-    record(!decisionText.includes("tax"), "No tax decision requested");
-    record(
-      decisionText.includes("cabinet") || decisionText.includes("door"),
-      "Cabinet door decision requested"
-    );
-
-    const helperText = await page
-      .getByText("Checkpoint ready — confirm to generate. Pending decisions can be resolved later.", {
-        exact: true
-      })
+    const decisionsVisible = await page
+      .getByText("Needs your call", { exact: false })
       .isVisible();
-    record(helperText, "Generate helper indicates checkpoint");
+    record(decisionsVisible, "Decisions card shown");
 
-    const generateButton = page.getByRole("button", { name: "Generate Invoice" });
+    const cabinetMentioned = await page.getByText(/cabinet/i).isVisible();
+    record(cabinetMentioned, "Cabinet door decision requested");
+
+    const taxAssumed = await page.getByText("Tax: 0% assumed.", { exact: true }).isVisible();
+    record(taxAssumed, "Tax assumed 0% surfaced");
+
+    const generateButton = getPrimaryGenerateButton(page);
     record(await generateButton.isDisabled(), "Generate disabled with open decisions");
 
-    const summaryForDecisions = await waitForText(page, "Checkpoint: Draft ready.", 3000);
-    record(summaryForDecisions, "Summary shown with pending decisions");
-
-    const confirmButton = page.getByRole("button", { name: "Confirm draft" });
-    record(await confirmButton.isVisible(), "Confirm draft button shown");
-    await confirmButton.click();
+    const excludeButton = page.getByRole("button", { name: "Exclude" }).first();
+    record(await excludeButton.isVisible(), "Exclude decision button shown");
+    await excludeButton.click();
     await waitForTypingToSettle(page);
-    const readyMessage = await page.getByText("Ready to generate.", { exact: true }).isVisible();
-    record(readyMessage, "Confirmation moves to ready-to-generate");
 
-    const canGenerate = await generateButton.isEnabled();
-    record(canGenerate, "Generate enabled after confirmation");
-    const helperReady = await page.getByText("Ready to generate.", { exact: true }).isVisible();
+    const helperReady = await waitForText(page, "Ready to generate.", DEFAULT_TIMEOUT);
     record(helperReady, "Helper text shows ready to generate");
 
-    const inputEnabled = await page.locator("#ai-intake-input").isEnabled();
-    record(inputEnabled, "Chat input remains enabled after confirmation");
+    const canGenerate = await generateButton.isEnabled();
+    record(canGenerate, "Generate enabled after resolving decisions");
 
     if (canGenerate) {
       await generateButton.click();
@@ -342,8 +315,8 @@ Do what makes sense.`;
       // Tax is assumed 0% by default; skip direct field assertion to avoid layout coupling.
 
       const lineItems = await getManualLineItems(page);
-      const hasLaborLine = lineItems.some((item) =>
-        parseNumber(item.qty) === 2 && parseNumber(item.rate) === 80
+      const hasLaborLine = lineItems.some(
+        (item) => parseNumber(item.qty) === 2 && parseNumber(item.rate) === 80
       );
       record(hasLaborLine, "Labor line shows 2h x $80/hr");
 
@@ -400,20 +373,14 @@ Do what makes sense.`;
     const helperText = await page.getByText("Provide labor pricing to continue.", { exact: false }).isVisible();
     record(helperText, "Helper prompts labor pricing");
 
-    const rateButton = page.getByRole("button", { name: "Use $85/hr" });
-    record(await rateButton.isVisible(), "Suggested rate button shown");
-    await rateButton.click();
-    await waitForTypingToSettle(page);
-    const hoursPrompt = await waitForText(page, "How many hours for each labor line", 5000);
-    record(hoursPrompt, "Hours follow-up shown after rate selection");
-
-    const hoursButton = page.getByRole("button", { name: "Use 1h" });
-    record(await hoursButton.isVisible(), "Suggested hours button shown");
-    await hoursButton.click();
+    await sendMessage(
+      page,
+      "Hourly $85. First job 2 hours, second 1 hour, third no charge."
+    );
     await waitForTypingToSettle(page);
 
-    const summaryShown = await waitForText(page, "Checkpoint: Draft ready.", DEFAULT_TIMEOUT);
-    record(summaryShown, "Summary shown after labor pricing reply");
+    const summaryShown = await waitForText(page, "Draft snapshot", DEFAULT_TIMEOUT);
+    record(summaryShown, "Draft snapshot shown after labor pricing reply");
 
     const followUpAgain = await waitForText(
       page,
@@ -468,10 +435,9 @@ Do what makes sense.`;
 
     await sendMessage(page, "Installed shelves for John Doe. 3 hours at $50/hr. Parts: brackets $12.");
     await waitForTypingToSettle(page);
-    await waitForText(page, "Summary:");
+    await waitForText(page, "Draft snapshot", DEFAULT_TIMEOUT);
 
-    const messages = await getChatMessages(page);
-    const combined = messages.map((msg) => msg.text.toLowerCase()).join("\n");
+    const combined = (await page.locator("body").innerText()).toLowerCase();
     record(!combined.includes("sarah"), "No Sarah demo data");
     record(!combined.includes("logo"), "No demo logo mention");
 
@@ -490,25 +456,16 @@ Do what makes sense.`;
       "Fixed leaking sink on Jan 10. 2 hours at $90/hr.\nParts: washer $5.\nBill Mike Johnson.\nNo tax."
     );
     await waitForTypingToSettle(page);
-    const hasSummary = await waitForText(page, "Checkpoint: Draft ready.");
-    record(hasSummary, "Summary shown before edit");
+    const hasSummary = await waitForText(page, "Draft snapshot", DEFAULT_TIMEOUT);
+    record(hasSummary, "Draft snapshot shown before edit");
 
-    await sendMessage(page, "Yes");
-    await waitForTypingToSettle(page);
-    const readyMessage = await page.getByText("Ready to generate.", { exact: true }).isVisible();
-    record(readyMessage, "Ready to generate before edit");
-
-    const generateButton = page.getByRole("button", { name: "Generate Invoice" });
-    record(await generateButton.isEnabled(), "Generate enabled after confirmation");
+    const generateButton = getPrimaryGenerateButton(page);
+    record(await generateButton.isEnabled(), "Generate enabled before edit");
 
     await sendMessage(page, "Change the labor rate to $80/hr.");
     await waitForTypingToSettle(page);
 
-    const assumptions = await getAssumptionItems(page);
-    const hasUpdatedLabor = assumptions.some((item) => item.includes("$160.00"));
-    record(hasUpdatedLabor, "Edit updates labor amount to $160.00");
-    const hasOldLabor = assumptions.some((item) => item.includes("$180.00"));
-    record(!hasOldLabor, "Old labor amount removed");
+    record(await generateButton.isEnabled(), "Generate remains enabled after edit");
 
     if (await generateButton.isEnabled()) {
       await generateButton.click();

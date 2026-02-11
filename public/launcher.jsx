@@ -1812,7 +1812,12 @@ function AIIntake() {
     setMessages(nextMessages);
     setInputValue("");
 
-    if (intakePhase === "ready_to_generate") {
+    const shouldEditDraft =
+      !!finishedInvoice &&
+      openDecisions.length === 0 &&
+      intakePhase !== "awaiting_follow_up" &&
+      (intakePhase === "ready_to_generate" || (hasReviewCard && showChatInput));
+    if (shouldEditDraft) {
       runInvoiceEditRequest(trimmed);
       return true;
     }
