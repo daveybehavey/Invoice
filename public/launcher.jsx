@@ -371,7 +371,7 @@ function AIIntake() {
     if (!invoice) {
       return "I need a bit more detail before drafting an invoice.";
     }
-    const summaryLines = [];
+  const summaryLines = [];
     const itemCount = invoice.lineItems.length;
     summaryLines.push(
       `Here's what I found: ${itemCount} line item${itemCount > 1 ? "s" : ""} captured.`
@@ -392,11 +392,11 @@ function AIIntake() {
     if (decisions.length > 0) {
       return `${summaryLines.join(
         " "
-      )}\n\nCheckpoint: Draft ready. Tap Confirm to generate (or reply \"confirm\"). You can resolve decisions now or later.`;
+      )}\n\nDraft ready. Resolve the remaining decisions below to generate the invoice.`;
     }
     return `${summaryLines.join(
       " "
-    )}\n\nCheckpoint: Draft ready. Tap Confirm to generate (or reply \"confirm\"). Send edits anytime.`;
+    )}\n\nDraft ready. Generate the invoice whenever you're ready.`;
   };
 
   const buildReviewPayload = (invoice, decisions = [], unparsed = []) => {
@@ -655,7 +655,7 @@ function AIIntake() {
     item.toLowerCase().includes("tax assumed")
   );
   const suggestedTaxRate = extractTaxRateFromText(lastTranscriptRef.current);
-  const showAssumptionsCard = hasAssumptions || hasDecisions;
+  const showAssumptionsCard = hasAssumptions || hasDecisions || !!finishedInvoice;
   const showAssumptionDetails = !hasReviewCard || !assumptionsCollapsed;
 
   const summaryTimeLabel = summaryUpdatedAt
@@ -687,13 +687,10 @@ function AIIntake() {
     if (finishedInvoice && openDecisionCount > 0) {
       return "decisions";
     }
-    if (finishedInvoice && intakePhase !== "ready_to_generate") {
-      return "review";
-    }
-    if (intakePhase === "ready_to_generate") {
+    if (finishedInvoice && openDecisionCount === 0) {
       return "confirm";
     }
-    return "paste";
+    return "review";
   })();
   const wizardSteps = [
     { id: "paste", label: "Paste" },
@@ -737,20 +734,20 @@ function AIIntake() {
     isTyping &&
     intakePhase === "ready_to_summarize" &&
     confirmationKeywords.some((keyword) => normalizedInput.includes(keyword));
-  const ctaDisabled = !intakeComplete;
-  const ctaHelper = intakeComplete
+  const canGenerateInvoice =
+    !!finishedInvoice && openDecisionCount === 0 && intakePhase !== "awaiting_follow_up";
+  const ctaDisabled = !canGenerateInvoice;
+  const ctaHelper = canGenerateInvoice
     ? "Ready to generate."
     : needsLaborHoursOnly
       ? "Add hours for each labor line to continue."
       : needsLaborPricing
         ? "Provide labor pricing to continue."
-      : needsSummaryConfirmation
-        ? openDecisionCount > 0
-          ? "Checkpoint ready — tap Confirm to generate (or reply \"confirm\"). Pending decisions can be resolved later."
-          : "Checkpoint ready — tap Confirm to generate (or reply \"confirm\")."
         : openDecisionCount > 0
-          ? "Pending decisions can be resolved anytime."
-          : "Continue the conversation to build the draft.";
+          ? "Resolve decisions to generate the invoice."
+          : finishedInvoice
+            ? "Review the draft to continue."
+            : "Paste notes to start.";
 
   const extractDecisionSnippet = (prompt) => {
     const quoted = prompt.match(/"([^"]+)"/);
@@ -2145,7 +2142,7 @@ function AIIntake() {
                       ? `Next: resolve ${pendingDecisionCount} decision${
                           pendingDecisionCount > 1 ? "s" : ""
                         } below to generate the invoice.`
-                      : "Next: confirm below to generate the invoice.";
+                      : "Next: generate the invoice below.";
                   if (primaryLaborRate) {
                     quickFixes.push({
                       id: "fix-rate",
@@ -2447,10 +2444,10 @@ function AIIntake() {
                       <button
                         type="button"
                         className="rounded-full bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
-                        onClick={() => submitUserMessage("Confirm.")}
-                        disabled={isTyping}
+                        onClick={handleGenerateInvoice}
+                        disabled={!canGenerateInvoice}
                       >
-                        Confirm &amp; Generate
+                        Generate invoice
                       </button>
                     </div>
                   </div>
