@@ -791,16 +791,16 @@ function AIIntake() {
         : rawSnippet
           ? `Bill ${snippet}?`
           : decision.prompt ?? "Decision needed";
-    const includeLabel = decision.kind === "tax" ? "Apply tax" : "Include";
-    const excludeLabel = decision.kind === "tax" ? "No tax" : "Exclude";
+    const includeLabel = decision.kind === "tax" ? "Apply tax" : "Add";
+    const excludeLabel = decision.kind === "tax" ? "No tax" : "Skip";
     const includeValue =
       decision.kind === "tax"
         ? "Apply tax."
-        : `Include ${rawSnippet || decision.prompt || "this item"}.`;
+        : `Bill ${rawSnippet || decision.prompt || "this item"}.`;
     const excludeValue =
       decision.kind === "tax"
         ? "No tax."
-        : `Don't include ${rawSnippet || decision.prompt || "this item"}.`;
+        : `Don't bill ${rawSnippet || decision.prompt || "this item"}.`;
     return {
       display,
       includeLabel,
@@ -2105,12 +2105,22 @@ function AIIntake() {
                     categorized.labor.find((item) => Number.isFinite(item.amount))?.amount ??
                     null;
                   const pendingDecisionCount = payload.decisions.length;
+                  const foundText =
+                    payload.lineItems.length > 0
+                      ? `${payload.lineItems.length} line item${
+                          payload.lineItems.length > 1 ? "s" : ""
+                        } captured.`
+                      : "No line items captured yet.";
+                  const decisionsText =
+                    pendingDecisionCount > 0
+                      ? `${pendingDecisionCount} decision${
+                          pendingDecisionCount > 1 ? "s" : ""
+                        } need your call.`
+                      : "No decisions pending.";
                   const nextStepText =
                     pendingDecisionCount > 0
-                      ? `Next: resolve ${pendingDecisionCount} decision${
-                          pendingDecisionCount > 1 ? "s" : ""
-                        } below to generate the invoice.`
-                      : "Next: generate the invoice below.";
+                      ? "Resolve the decisions below to generate the invoice."
+                      : "Generate the invoice below.";
                   if (primaryLaborRate) {
                     quickFixes.push({
                       id: "fix-rate",
@@ -2184,24 +2194,29 @@ function AIIntake() {
 
                         <div className="mt-3 space-y-3">
                           <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                            <span className="font-semibold text-slate-900">Next step:</span>{" "}
-                            {nextStepText}
-                            {pendingDecisionCount > 0 ? (
-                              <button
-                                type="button"
-                                className="ml-2 inline-flex items-center text-xs font-semibold text-emerald-700 hover:text-emerald-900"
-                                onClick={() => scrollToSection(decisionsRef)}
-                                disabled={isTyping}
-                              >
-                                Go to decisions
-                              </button>
-                            ) : null}
+                            <p>
+                              <span className="font-semibold text-slate-900">Found:</span>{" "}
+                              {foundText}
+                            </p>
+                            <p className="mt-1">
+                              <span className="font-semibold text-slate-900">Decisions:</span>{" "}
+                              {decisionsText}
+                            </p>
+                            <p className="mt-1">
+                              <span className="font-semibold text-slate-900">Next:</span>{" "}
+                              {nextStepText}
+                              {pendingDecisionCount > 0 ? (
+                                <button
+                                  type="button"
+                                  className="ml-2 inline-flex items-center text-xs font-semibold text-emerald-700 hover:text-emerald-900"
+                                  onClick={() => scrollToSection(decisionsRef)}
+                                  disabled={isTyping}
+                                >
+                                  Go to decisions
+                                </button>
+                              ) : null}
+                            </p>
                           </div>
-                          {reviewCardCollapsed && summarySnapshot ? (
-                            <div className="rounded-xl border border-slate-100 bg-white px-3 py-2 text-xs text-slate-500">
-                              {summarySnapshot}
-                            </div>
-                          ) : null}
                           {!reviewCardCollapsed
                             ? sections.map((section) => (
                                 <div key={section.id} className="space-y-2">
@@ -2505,7 +2520,7 @@ function AIIntake() {
                               }}
                               disabled={isTyping}
                             >
-                              Include all
+                              Add all
                             </button>
                             <button
                               type="button"
@@ -2518,7 +2533,7 @@ function AIIntake() {
                               }}
                               disabled={isTyping}
                             >
-                              Exclude all
+                              Skip all
                             </button>
                           </div>
                         </div>

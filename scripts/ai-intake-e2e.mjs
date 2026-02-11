@@ -282,9 +282,9 @@ Do what makes sense.`;
     const generateButton = getPrimaryGenerateButton(page);
     record(await generateButton.isDisabled(), "Generate disabled with open decisions");
 
-    const excludeButton = page.getByRole("button", { name: "Exclude" }).first();
-    record(await excludeButton.isVisible(), "Exclude decision button shown");
-    await excludeButton.click();
+    const skipButton = page.getByRole("button", { name: "Skip" }).first();
+    record(await skipButton.isVisible(), "Skip decision button shown");
+    await skipButton.click();
     await waitForTypingToSettle(page);
 
     const helperReady = await waitForText(page, "Ready to generate.", DEFAULT_TIMEOUT);
