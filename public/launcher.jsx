@@ -253,7 +253,7 @@ function AIIntake() {
     ? messages.filter(
         (message) => message.kind === "timeout" || message.id === reviewMessageId
       )
-    : messages;
+    : messages.filter((message) => message.kind === "timeout");
 
   const formatMoney = (value) =>
     Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
@@ -677,6 +677,31 @@ function AIIntake() {
     }
     return parts.join(" • ");
   })();
+  const wizardStep = (() => {
+    if (!finishedInvoice && intakePhase === "collecting") {
+      return "paste";
+    }
+    if (intakePhase === "awaiting_follow_up") {
+      return "decisions";
+    }
+    if (finishedInvoice && openDecisionCount > 0) {
+      return "decisions";
+    }
+    if (finishedInvoice && intakePhase !== "ready_to_generate") {
+      return "review";
+    }
+    if (intakePhase === "ready_to_generate") {
+      return "confirm";
+    }
+    return "paste";
+  })();
+  const wizardSteps = [
+    { id: "paste", label: "Paste" },
+    { id: "review", label: "Review" },
+    { id: "decisions", label: "Decisions" },
+    { id: "confirm", label: "Generate" }
+  ];
+  const wizardStepIndex = wizardSteps.findIndex((step) => step.id === wizardStep);
   const scrollToSection = (ref) => {
     if (!ref?.current) {
       return;
@@ -834,6 +859,9 @@ function AIIntake() {
 
   const focusInputWithValue = (value) => {
     setInputValue(value);
+    if (hasReviewCard) {
+      setShowChatInput(true);
+    }
     setTimeout(() => {
       const input = document.getElementById("ai-intake-input");
       if (input) {
@@ -1940,7 +1968,101 @@ function AIIntake() {
       <main className="flex flex-1 flex-col">
         <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-28">
           <div className="flex-1 overflow-y-auto pb-4 pt-6">
-            <div className="space-y-4">
+            <div className="space-y-6">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Intake steps
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                  {wizardSteps.map((step, index) => {
+                    const status =
+                      index < wizardStepIndex ? "complete" : index === wizardStepIndex ? "active" : "upcoming";
+                    const badgeClass =
+                      status === "complete"
+                        ? "bg-emerald-600 text-white"
+                        : status === "active"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-slate-100 text-slate-500";
+                    return (
+                      <div key={step.id} className="flex items-center gap-2">
+                        <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${badgeClass}`}>
+                          {index + 1}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-700">{step.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {wizardStep === "paste" ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <p className="text-sm font-semibold text-slate-900">Paste your notes</p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Drop anything here — dates, rates, parts, or “not sure” items. I’ll organize it.
+                  </p>
+                  <textarea
+                    id="ai-intake-input"
+                    rows={6}
+                    className="mt-4 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    placeholder="Example: Jan 10 fixed sink 2h at $90/hr. Parts: washer $5. Not sure if I should bill cabinet adjustment."
+                    value={inputValue}
+                    onChange={(event) => setInputValue(event.target.value)}
+                  />
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                      onClick={() => submitUserMessage(inputValue)}
+                      disabled={!inputValue.trim() || isTyping}
+                    >
+                      Build invoice
+                    </button>
+                    {isTyping ? <p className="text-xs text-slate-500">Working on it…</p> : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {intakePhase === "awaiting_follow_up" && followUp ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                  <p className="text-sm font-semibold text-amber-900">Pricing needed</p>
+                  <p className="mt-1 text-sm text-amber-900">{followUp.message}</p>
+                  {quickReplies.length > 0 ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {quickReplies.map((reply) => (
+                        <button
+                          key={reply.id}
+                          type="button"
+                          className="rounded-full border border-amber-200 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-400"
+                          onClick={() => submitUserMessage(reply.value)}
+                          disabled={isTyping}
+                        >
+                          {reply.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <textarea
+                      id="ai-intake-input"
+                      rows={2}
+                      className="flex-1 resize-none rounded-xl border border-amber-200 px-4 py-2 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      placeholder="Reply with a rate and hours or a flat amount…"
+                      value={inputValue}
+                      onChange={(event) => setInputValue(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                      onClick={() => submitUserMessage(inputValue)}
+                      disabled={!inputValue.trim() || isTyping}
+                    >
+                      Send
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               {visibleMessages.map((message) => {
                 if (message.kind === "timeout" && message.payload) {
                   const isLaborTimeout = message.payload.context === "labor";
@@ -2277,7 +2399,9 @@ function AIIntake() {
               <section className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-semibold text-slate-900">Review</h2>
+                    <h2 className="text-sm font-semibold text-slate-900">
+                      {openDecisionCount > 0 ? "Decisions" : "Confirm"}
+                    </h2>
                     {openDecisionCount > 0 ? (
                       <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
                         {openDecisionCount} decision{openDecisionCount > 1 ? "s" : ""} open
@@ -2296,9 +2420,6 @@ function AIIntake() {
                 </div>
                 {summaryTimeLabel ? (
                   <p className="mt-1 text-xs text-slate-500">Summary updated {summaryTimeLabel}</p>
-                ) : null}
-                {summarySnapshot ? (
-                  <p className="mt-1 text-xs text-slate-500">{summarySnapshot}</p>
                 ) : null}
                 {auditStatus === "running" ? (
                   <p className="mt-1 text-xs text-slate-500">Deep check running…</p>
@@ -2754,7 +2875,8 @@ function AIIntake() {
             </button>
           </div>
         </div>
-      ) : (
+      ) : null}
+      {showChatInput ? (
         <form
           onSubmit={handleSend}
           className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white"
@@ -2782,7 +2904,7 @@ function AIIntake() {
             </button>
           </div>
         </form>
-      )}
+      ) : null}
     </div>
   );
 }
