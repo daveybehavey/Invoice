@@ -3816,15 +3816,22 @@ function InspectorPanel({
                     const preview = templatePreviews[option.id] ?? templatePreviews.default;
                     const isSelected = stylePreset === option.id;
                     return (
-                      <button
+                      <div
                         key={option.id}
-                        type="button"
-                        className={`w-full rounded-xl border p-3 text-left transition ${
+                        role="button"
+                        tabIndex={0}
+                        className={`w-full cursor-pointer rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 ${
                           isSelected
                             ? "border-emerald-500 bg-emerald-50/60 shadow-sm"
                             : "border-slate-200 bg-white hover:border-slate-300"
                         }`}
                         onClick={() => onStylePresetChange(option.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            onStylePresetChange(option.id);
+                          }
+                        }}
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-sm font-semibold text-slate-900">
@@ -3859,7 +3866,7 @@ function InspectorPanel({
                             <div className={`h-2 w-12 rounded-sm ${preview.totalStrong}`} />
                           </div>
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
