@@ -243,7 +243,7 @@ function AIIntake() {
   const unparsedLinesRef = useRef([]);
   const decisionToastTimeoutRef = useRef(null);
   const intakeComplete = intakePhase === "ready_to_generate";
-  const confirmationKeywords = ["yes", "yep", "correct", "looks good", "sounds good", "confirm"];
+  const confirmationKeywords = [];
   const rejectionKeywords = ["no", "not correct", "wrong", "incorrect", "needs change"];
   const hasReviewCard = messages.some((message) => message.kind === "review");
   const reviewMessageId = hasReviewCard
@@ -730,10 +730,7 @@ function AIIntake() {
       ? "Suggested rates"
       : "Quick replies";
   const normalizedInput = inputValue.trim().toLowerCase();
-  const canSendWhileTyping =
-    isTyping &&
-    intakePhase === "ready_to_summarize" &&
-    confirmationKeywords.some((keyword) => normalizedInput.includes(keyword));
+  const canSendWhileTyping = false;
   const canGenerateInvoice =
     !!finishedInvoice && openDecisionCount === 0 && intakePhase !== "awaiting_follow_up";
   const ctaDisabled = !canGenerateInvoice;
@@ -1797,34 +1794,7 @@ function AIIntake() {
     if (detectedTaxRate !== null) {
       setPendingTaxRate(String(detectedTaxRate));
     }
-    const canConfirmWhileTyping =
-      intakePhase === "ready_to_summarize" &&
-      confirmationKeywords.some((keyword) => normalized.includes(keyword));
-    const confirmationCandidate = confirmationKeywords.some((keyword) => normalized.includes(keyword));
-    const decisionSnapshot = openDecisions.map((decision) => ({
-      id: decision.id,
-      kind: decision.kind,
-      resolved: false
-    }));
-    if (confirmationCandidate) {
-      console.log("[confirm:submit]", {
-        message: trimmed,
-        intakePhase,
-        openDecisionsCount: openDecisions.length,
-        openDecisions: decisionSnapshot,
-        isTyping,
-        canConfirmWhileTyping
-      });
-    }
-    if (isTyping && !canConfirmWhileTyping) {
-      if (confirmationCandidate) {
-        console.log("[confirm:block:isTyping]", {
-          intakePhase,
-          openDecisionsCount: openDecisions.length,
-          isTyping,
-          canConfirmWhileTyping
-        });
-      }
+    if (isTyping) {
       return false;
     }
     const userMessage = {
@@ -1842,22 +1812,9 @@ function AIIntake() {
     }
 
     if (intakePhase === "ready_to_summarize") {
-      const isAffirmative = confirmationKeywords.some((keyword) => normalized.includes(keyword));
       const isNegative = rejectionKeywords.some((keyword) => normalized.includes(keyword));
       const hasNumbers = /\d/.test(normalized);
       const wordCount = normalized.split(/\s+/).length;
-
-      if (isAffirmative) {
-        console.log("[confirm:enter]", {
-          intakePhase,
-          openDecisionsCount: openDecisions.length,
-          isTyping,
-          canConfirmWhileTyping
-        });
-        setIntakePhase("ready_to_generate");
-        appendAiMessage("Checkpoint confirmed — ready to generate the draft invoice.");
-        return true;
-      }
 
       if (isNegative && !hasNumbers && wordCount <= 4) {
         setIntakePhase("collecting");
