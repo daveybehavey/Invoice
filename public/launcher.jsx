@@ -228,6 +228,7 @@ function AIIntake() {
   const summaryLockRef = useRef(false);
   const listEndRef = useRef(null);
   const decisionsRef = useRef(null);
+  const lastDecisionCountRef = useRef(0);
   const unparsedRef = useRef(null);
   const slowResponseTimeoutRef = useRef(null);
   const timeoutMessageIdRef = useRef(null);
@@ -703,15 +704,6 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     item.toLowerCase().includes("tax assumed")
   );
   const suggestedTaxRate = extractTaxRateFromText(lastTranscriptRef.current);
-  const showAssumptionsCard =
-    intakePhase !== "collecting" ||
-    hasReviewCard ||
-    openDecisionCount > 0 ||
-    hasVisibleDetails ||
-    hasDecisions;
-  const showConfirmDetails =
-    openDecisionCount > 0 || hasVisibleDetails || hasDecisions || needsLaborPricing;
-  const showAssumptionDetails = !hasReviewCard || !assumptionsCollapsed;
   const hasNonTaxAssumptions = assumptions.some(
     (item) => !item.toLowerCase().includes("tax assumed")
   );
@@ -719,10 +711,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
   const hasVisibleAssumptions = hasNonTaxAssumptions || unparsedItems.length > 0 || hasExplicitTaxDraft;
   const hasVisibleDetails =
     hasVisibleAssumptions ||
-    auditStatus === "running" ||
     auditStatus === "timed_out" ||
-    auditStatus === "failed" ||
-    (auditStatus === "completed" && auditSummary);
+    auditStatus === "failed";
+  const needsLaborPricing = intakePhase === "awaiting_follow_up" || Boolean(followUp);
+  const needsLaborHoursOnly = needsLaborPricing && Number.isFinite(pendingLaborRate);
+  const showConfirmDetails =
+    openDecisionCount > 0 || hasVisibleDetails || hasDecisions || needsLaborPricing;
+  const showAssumptionsCard = hasReviewCard || showConfirmDetails;
+  const showAssumptionDetails = !hasReviewCard || !assumptionsCollapsed;
 
   const summaryTimeLabel = summaryUpdatedAt
     ? summaryUpdatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
@@ -772,8 +768,6 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const needsLaborPricing = intakePhase === "awaiting_follow_up" || Boolean(followUp);
-  const needsLaborHoursOnly = needsLaborPricing && Number.isFinite(pendingLaborRate);
   const needsSummaryConfirmation = intakePhase === "ready_to_summarize";
   const showQuickDecisions =
     intakePhase === "ready_to_summarize" && (hasDecisions || taxAssumptionPresent || pendingTaxRate);
@@ -1223,9 +1217,12 @@ const applyDecisionActionToInvoice = (invoice, action) => {
   };
 
   useEffect(() => {
-    if (openDecisions.length > 0) {
+    const previousCount = lastDecisionCountRef.current;
+    if (openDecisions.length > 0 && previousCount === 0) {
       scrollToSection(decisionsRef);
+      setReviewCardCollapsed(true);
     }
+    lastDecisionCountRef.current = openDecisions.length;
   }, [openDecisions.length]);
 
   useEffect(() => {
@@ -2284,6 +2281,15 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                               ) : null}
                             </p>
                           </div>
+                          <p className="text-xs text-slate-500">
+                            I’ll flag anything unclear below — you decide on money.
+                          </p>
+                          {pendingDecisionCount > 0 ? (
+                            <p className="text-xs font-semibold text-amber-700">
+                              {pendingDecisionCount} decision{pendingDecisionCount > 1 ? "s" : ""}{" "}
+                              below to finish.
+                            </p>
+                          ) : null}
                           {reviewCardCollapsed && quickFixes.length > 0 ? (
                             <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
                               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -2341,6 +2347,12 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                               ))
                             : null}
                         </div>
+
+                        {!reviewCardCollapsed && auditStatus === "completed" && auditSummary ? (
+                          <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
+                            {auditSummary}
+                          </div>
+                        ) : null}
 
                         {!reviewCardCollapsed && payload.notes ? (
                           <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
@@ -2443,9 +2455,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
           </div>
           {showAssumptionsCard ? (
             <div className="mt-2 space-y-2 sm:mt-3">
-              <section className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                {showConfirmDetails ? (
-                  <>
+              {showConfirmDetails ? (
+                <section className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <h2 className="text-sm font-semibold text-slate-900">
@@ -2470,6 +2481,11 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     {summaryTimeLabel ? (
                       <p className="mt-1 text-xs text-slate-500">
                         Summary updated {summaryTimeLabel}
+                      </p>
+                    ) : null}
+                    {openDecisionCount > 0 ? (
+                      <p className="mt-2 text-xs text-amber-800">
+                        Unclear items from your notes — choose Add or Skip.
                       </p>
                     ) : null}
                     {showQuickDecisions || hasVisibleDetails || hasDecisions ? (
@@ -2825,15 +2841,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                 ) : null}
                       </>
                     ) : null}
-                  </>
-                ) : (
-                  <p className="text-xs text-slate-500">
-                    {needsLaborPricing
-                      ? "Labor pricing needed before you can generate."
-                      : "All set. Generate when you’re ready."}
-                  </p>
-                )}
-              </section>
+                </section>
+              ) : null}
               <div className="space-y-2">
                 <button
                   type="button"
