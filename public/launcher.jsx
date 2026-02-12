@@ -1321,7 +1321,6 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     const previousCount = lastDecisionCountRef.current;
     if (openDecisions.length > 0 && previousCount === 0) {
       scrollToSection(decisionsRef);
-      setReviewCardCollapsed(true);
     }
     lastDecisionCountRef.current = openDecisions.length;
   }, [openDecisions.length]);
@@ -2448,20 +2447,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                               ) : null}
                             </p>
                           </div>
-                          <p className="text-xs text-slate-500">
-                            I’ll flag anything unclear below — you decide on money.
-                          </p>
-                          {pendingDecisionCount > 0 ? (
-                            <p className="text-xs font-semibold text-amber-700">
-                              {pendingDecisionCount} decision{pendingDecisionCount > 1 ? "s" : ""}{" "}
-                              below to finish.
-                            </p>
-                          ) : null}
                           {canToggleReviewDetails ? (
-                            <div className="flex justify-end">
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                              <span className="font-semibold uppercase tracking-wide text-slate-400">
+                                Details
+                              </span>
                               <button
                                 type="button"
-                                className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                                className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
                                 onClick={() => setReviewCardCollapsed((prev) => !prev)}
                                 disabled={isTyping}
                               >
@@ -2469,7 +2462,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                               </button>
                             </div>
                           ) : null}
-                          {reviewCardCollapsed && quickFixes.length > 0 ? (
+                          {quickFixes.length > 0 ? (
                             <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
                               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                                 Quick fixes
@@ -2488,6 +2481,15 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                                 ))}
                               </div>
                             </div>
+                          ) : null}
+                          <p className="text-xs text-slate-500">
+                            I’ll flag anything unclear below — you decide on money.
+                          </p>
+                          {pendingDecisionCount > 0 ? (
+                            <p className="text-xs font-semibold text-amber-700">
+                              {pendingDecisionCount} decision{pendingDecisionCount > 1 ? "s" : ""}{" "}
+                              below to finish.
+                            </p>
                           ) : null}
                           {!reviewCardCollapsed
                             ? sections.map((section) => (
