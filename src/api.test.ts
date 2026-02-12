@@ -885,6 +885,48 @@ test("delete removes saved invoice", async () => {
   assert.equal(listAfterDelete.body.invoices.length, 0);
 });
 
+test("soft delete hides invoice and restore brings it back", async () => {
+  useMockResponses([structuredWithLaborPricing()]);
+
+  const generated = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7"
+  });
+
+  const acceptedSave = await request(app).post("/api/invoices/save").send({
+    confirmSave: true,
+    sourceType: "text_input",
+    invoiceData: {
+      structuredInvoice: generated.body.structuredInvoice,
+      finishedInvoice: generated.body.invoice
+    }
+  });
+
+  const savedId = acceptedSave.body.invoice.invoiceId;
+  const softDelete = await request(app)
+    .post(`/api/invoices/${savedId}/status`)
+    .send({ status: "deleted" });
+
+  assert.equal(softDelete.status, 200);
+  assert.equal(softDelete.body.invoice.status, "deleted");
+
+  const listAfterSoftDelete = await request(app).get("/api/invoices");
+  assert.equal(listAfterSoftDelete.status, 200);
+  assert.equal(listAfterSoftDelete.body.invoices.length, 0);
+
+  const listIncludingDeleted = await request(app).get("/api/invoices?includeDeleted=true");
+  assert.equal(listIncludingDeleted.status, 200);
+  assert.equal(listIncludingDeleted.body.invoices.length, 1);
+  assert.equal(listIncludingDeleted.body.invoices[0].status, "deleted");
+
+  const restore = await request(app).post(`/api/invoices/${savedId}/restore`);
+  assert.equal(restore.status, 200);
+  assert.equal(restore.body.invoice.status, "draft");
+
+  const listAfterRestore = await request(app).get("/api/invoices");
+  assert.equal(listAfterRestore.status, 200);
+  assert.equal(listAfterRestore.body.invoices.length, 1);
+});
+
 function useMockResponses(responses: unknown[]): void {
   const queue = [...responses];
   setJsonTaskRunnerForTests(async <T>(): Promise<T> => {

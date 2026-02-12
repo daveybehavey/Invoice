@@ -169,7 +169,7 @@ export const InvoiceAuditRequestSchema = z.object({
   lastUserMessage: OptionalString
 });
 
-export const SavedInvoiceStatusSchema = z.enum(["draft", "sent", "paid"]);
+export const SavedInvoiceStatusSchema = z.enum(["draft", "sent", "paid", "deleted"]);
 export const SavedInvoiceSourceTypeSchema = z.enum(["text_input", "upload"]);
 
 export const SavedInvoiceDataSchema = z.object({
@@ -182,6 +182,8 @@ export const SavedInvoiceSchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   status: SavedInvoiceStatusSchema,
+  previousStatus: SavedInvoiceStatusSchema.optional(),
+  deletedAt: OptionalString,
   sourceType: SavedInvoiceSourceTypeSchema,
   invoiceData: SavedInvoiceDataSchema
 });

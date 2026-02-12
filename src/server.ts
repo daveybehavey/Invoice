@@ -29,6 +29,7 @@ import {
   deleteSavedInvoice,
   getSavedInvoiceById,
   listSavedInvoiceMetadata,
+  restoreSavedInvoice,
   saveInvoiceDocument,
   updateSavedInvoiceStatus
 } from "./services/savedInvoiceStore.js";
@@ -223,7 +224,8 @@ app.post("/api/invoices/save", async (req: Request, res: Response, next: NextFun
 
 app.get("/api/invoices", async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    const invoices = await listSavedInvoiceMetadata();
+    const includeDeleted = _req.query.includeDeleted === "true";
+    const invoices = await listSavedInvoiceMetadata(includeDeleted);
     res.json({ invoices });
   } catch (error) {
     next(error);
@@ -255,6 +257,16 @@ app.post("/api/invoices/:id/status", async (req: Request, res: Response, next: N
     const invoiceId = z.string().uuid().parse(req.params.id);
     const parsedRequest = UpdateInvoiceStatusRequestSchema.parse(req.body);
     const invoice = await updateSavedInvoiceStatus(invoiceId, parsedRequest.status);
+    res.json({ invoice });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/invoices/:id/restore", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invoiceId = z.string().uuid().parse(req.params.id);
+    const invoice = await restoreSavedInvoice(invoiceId);
     res.json({ invoice });
   } catch (error) {
     next(error);
