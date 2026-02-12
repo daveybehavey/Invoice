@@ -62,6 +62,25 @@ function UploadIcon({ className }) {
   );
 }
 
+function ArchiveIcon({ className }) {
+  return (
+    <svg
+      className={className}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M3.75 6.75h16.5M6.75 6.75V18a2.25 2.25 0 002.25 2.25h6a2.25 2.25 0 002.25-2.25V6.75M9 11.25h6"
+      />
+    </svg>
+  );
+}
+
 function LauncherCard({ title, description, icon, onClick, disabled, badge }) {
   const iconClass = disabled ? "h-6 w-6 text-slate-400" : "h-6 w-6 text-emerald-600";
   return (
@@ -107,6 +126,14 @@ function Launcher() {
       disabled: false
     },
     {
+      key: "import",
+      title: "Import Existing Invoice",
+      description: "Upload a PDF or text invoice to edit.",
+      icon: <UploadIcon />,
+      onClick: () => navigate("/import"),
+      disabled: false
+    },
+    {
       key: "manual",
       title: "Build It Yourself",
       description: "Start with a clean, editable invoice.",
@@ -115,19 +142,18 @@ function Launcher() {
       disabled: false
     },
     {
-      key: "import",
-      title: "Import Existing Invoice",
-      description: "Upload a PDF to edit and restyle.",
-      icon: <UploadIcon />,
-      onClick: () => navigate("/import"),
-      disabled: true,
-      badge: "Coming soon"
+      key: "library",
+      title: "Invoice Library",
+      description: "Reopen saved invoices and drafts.",
+      icon: <ArchiveIcon />,
+      onClick: () => navigate("/invoices"),
+      disabled: false
     }
   ];
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <main className="mx-auto max-w-xl px-4 py-10 md:max-w-4xl md:py-16">
+      <main className="mx-auto max-w-xl px-4 py-10 md:max-w-5xl md:py-16">
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Invoice Builder</p>
           <h1 className="text-2xl font-semibold text-slate-900 md:text-3xl">Create a New Invoice</h1>
@@ -135,7 +161,7 @@ function Launcher() {
             Choose how you want to start. You can always switch modes later.
           </p>
         </div>
-        <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-6">
+        <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 lg:grid-cols-4">
           {options.map((option) => (
             <LauncherCard
               key={option.key}
@@ -193,68 +219,7 @@ const readDraftFromStorage = (key) => {
   }
 };
 
-function AIIntake() {
-  const navigate = useNavigate();
-  const [messages, setMessages] = useState(initialIntakeMessages);
-  const [inputValue, setInputValue] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
-  const [intakePhase, setIntakePhase] = useState("collecting");
-  const [followUp, setFollowUp] = useState(null);
-  const [structuredInvoice, setStructuredInvoice] = useState(null);
-  const [finishedInvoice, setFinishedInvoice] = useState(null);
-  const [laborPricingNote, setLaborPricingNote] = useState("");
-  const [pendingLaborRate, setPendingLaborRate] = useState(null);
-  const [pendingTaxRate, setPendingTaxRate] = useState(null);
-  const [openDecisions, setOpenDecisions] = useState([]);
-  const [assumptions, setAssumptions] = useState([]);
-  const [unparsedLines, setUnparsedLines] = useState([]);
-  const [auditStatus, setAuditStatus] = useState(null);
-  const [auditSummary, setAuditSummary] = useState("");
-  const [auditSummaryAt, setAuditSummaryAt] = useState(null);
-  const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
-  const [reviewCardCollapsed, setReviewCardCollapsed] = useState(false);
-  const [showChatInput, setShowChatInput] = useState(false);
-  const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(true);
-  const [decisionToast, setDecisionToast] = useState(null);
-  const [showAllDecisions, setShowAllDecisions] = useState(false);
-  const [decisionFocusIndex, setDecisionFocusIndex] = useState(0);
-  const [showDecisionWhy, setShowDecisionWhy] = useState(false);
-  const requestIdRef = useRef(0);
-  const openDecisionSignatureRef = useRef("");
-  const lastDecisionResolutionRef = useRef("");
-  const decisionActionRef = useRef(null);
-  const lastSummaryMetaRef = useRef({ at: null, requestId: null });
-  const intakePhaseRef = useRef(intakePhase);
-  const summaryLockRef = useRef(false);
-  const listEndRef = useRef(null);
-  const decisionsRef = useRef(null);
-  const lastDecisionCountRef = useRef(0);
-  const unparsedRef = useRef(null);
-  const slowResponseTimeoutRef = useRef(null);
-  const timeoutMessageIdRef = useRef(null);
-  const abortControllerRef = useRef(null);
-  const lastMessagesRef = useRef([]);
-  const lastTranscriptRef = useRef("");
-  const lastUserMessageRef = useRef("");
-  const lastIntakeModeRef = useRef("full");
-  const hasAutoCollapsedRef = useRef(false);
-  const auditRequestIdRef = useRef(0);
-  const openDecisionsRef = useRef([]);
-  const assumptionsRef = useRef([]);
-  const unparsedLinesRef = useRef([]);
-  const decisionToastTimeoutRef = useRef(null);
-  const intakeComplete = intakePhase === "ready_to_generate";
-  const confirmationKeywords = [];
-  const rejectionKeywords = ["no", "not correct", "wrong", "incorrect", "needs change"];
-  const hasReviewCard = messages.some((message) => message.kind === "review");
-  const reviewMessageId = hasReviewCard
-    ? [...messages].reverse().find((message) => message.kind === "review")?.id ?? null
-    : null;
-  const visibleMessages = hasReviewCard
-    ? messages.filter(
-        (message) => message.kind === "timeout" || message.id === reviewMessageId
-      )
-    : messages.filter((message) => message.kind === "timeout");
+const importSeedStorageKey = "invoiceImportSeed";
 
 const formatMoney = (value) =>
   Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
@@ -304,6 +269,115 @@ const polishLineItemDescription = (text) => {
 };
 
 const formatDisplayDescription = (text) => polishLineItemDescription(text);
+
+const buildDraftFromFinishedInvoice = (invoice, options = {}) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const issueDate =
+    typeof invoice?.issueDate === "string" && /^\d{4}-\d{2}-\d{2}/.test(invoice.issueDate)
+      ? invoice.issueDate.slice(0, 10)
+      : "";
+  const lineItems =
+    invoice?.lineItems?.map((lineItem, index) => {
+      const hasQuantity = Number.isFinite(lineItem.quantity);
+      const hasUnitPrice = Number.isFinite(lineItem.unitPrice);
+      const hasAmount = Number.isFinite(lineItem.amount);
+      const qtyValue = hasQuantity ? String(lineItem.quantity) : "";
+      const rateValue = hasUnitPrice
+        ? String(lineItem.unitPrice)
+        : !hasQuantity && !hasUnitPrice && hasAmount && lineItem.amount > 0
+          ? String(lineItem.amount)
+          : "";
+      const finalQty = rateValue && !qtyValue ? "1" : qtyValue;
+      return {
+        id: lineItem.id ?? `line-${Date.now()}-${index}`,
+        description: polishLineItemDescription(lineItem.description ?? ""),
+        qty: finalQty,
+        rate: rateValue
+      };
+    }) ?? [];
+
+  return {
+    invoiceNumber:
+      typeof invoice?.invoiceNumber === "string" && invoice.invoiceNumber.trim()
+        ? invoice.invoiceNumber
+        : generateInvoiceNumber(),
+    invoiceDate: issueDate || today,
+    fromDetails: "",
+    billToDetails: invoice?.customerName ?? "",
+    notes: invoice?.notes ?? "",
+    taxRate: options.taxRate ?? "0",
+    lineItems: lineItems.length
+      ? lineItems
+      : [{ id: `line-${Date.now()}`, description: "", qty: "", rate: "" }],
+    logoUrl: null,
+    stylePreset: "default",
+    savedInvoiceId: options.savedInvoiceId ?? ""
+  };
+};
+
+function AIIntake() {
+  const navigate = useNavigate();
+  const [messages, setMessages] = useState(initialIntakeMessages);
+  const [inputValue, setInputValue] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const [intakePhase, setIntakePhase] = useState("collecting");
+  const [followUp, setFollowUp] = useState(null);
+  const [structuredInvoice, setStructuredInvoice] = useState(null);
+  const [finishedInvoice, setFinishedInvoice] = useState(null);
+  const [laborPricingNote, setLaborPricingNote] = useState("");
+  const [pendingLaborRate, setPendingLaborRate] = useState(null);
+  const [pendingTaxRate, setPendingTaxRate] = useState(null);
+  const [openDecisions, setOpenDecisions] = useState([]);
+  const [assumptions, setAssumptions] = useState([]);
+  const [unparsedLines, setUnparsedLines] = useState([]);
+  const [auditStatus, setAuditStatus] = useState(null);
+  const [auditSummary, setAuditSummary] = useState("");
+  const [auditSummaryAt, setAuditSummaryAt] = useState(null);
+  const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
+  const [reviewCardCollapsed, setReviewCardCollapsed] = useState(false);
+  const [showChatInput, setShowChatInput] = useState(false);
+  const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(true);
+  const [decisionToast, setDecisionToast] = useState(null);
+  const [showAllDecisions, setShowAllDecisions] = useState(false);
+  const [decisionFocusIndex, setDecisionFocusIndex] = useState(0);
+  const [showDecisionWhy, setShowDecisionWhy] = useState(false);
+  const requestIdRef = useRef(0);
+  const openDecisionSignatureRef = useRef("");
+  const lastDecisionResolutionRef = useRef("");
+  const decisionActionRef = useRef(null);
+  const lastSummaryMetaRef = useRef({ at: null, requestId: null });
+  const intakePhaseRef = useRef(intakePhase);
+  const summaryLockRef = useRef(false);
+  const listEndRef = useRef(null);
+  const decisionsRef = useRef(null);
+  const lastDecisionCountRef = useRef(0);
+  const unparsedRef = useRef(null);
+  const slowResponseTimeoutRef = useRef(null);
+  const timeoutMessageIdRef = useRef(null);
+  const abortControllerRef = useRef(null);
+  const lastMessagesRef = useRef([]);
+  const lastTranscriptRef = useRef("");
+  const lastUserMessageRef = useRef("");
+  const lastIntakeModeRef = useRef("full");
+  const importSeedRef = useRef(false);
+  const hasAutoCollapsedRef = useRef(false);
+  const auditRequestIdRef = useRef(0);
+  const openDecisionsRef = useRef([]);
+  const assumptionsRef = useRef([]);
+  const unparsedLinesRef = useRef([]);
+  const decisionToastTimeoutRef = useRef(null);
+  const intakeComplete = intakePhase === "ready_to_generate";
+  const confirmationKeywords = [];
+  const rejectionKeywords = ["no", "not correct", "wrong", "incorrect", "needs change"];
+  const hasReviewCard = messages.some((message) => message.kind === "review");
+  const reviewMessageId = hasReviewCard
+    ? [...messages].reverse().find((message) => message.kind === "review")?.id ?? null
+    : null;
+  const visibleMessages = hasReviewCard
+    ? messages.filter(
+        (message) => message.kind === "timeout" || message.id === reviewMessageId
+      )
+    : messages.filter((message) => message.kind === "timeout");
 
   const normalizeSnippet = (text) =>
     text
@@ -1259,6 +1333,82 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     intakePhaseRef.current = intakePhase;
     summaryLockRef.current = intakePhase === "ready_to_generate";
   }, [intakePhase]);
+
+  useEffect(() => {
+    if (importSeedRef.current) {
+      return;
+    }
+    const seed = readDraftFromStorage(importSeedStorageKey);
+    if (!seed) {
+      return;
+    }
+    importSeedRef.current = true;
+    window.localStorage.removeItem(importSeedStorageKey);
+
+    const payload = seed?.payload ?? {};
+    const nextOpenDecisions = Array.isArray(payload?.openDecisions) ? payload.openDecisions : [];
+    const nextAssumptions = Array.isArray(payload?.assumptions) ? payload.assumptions : [];
+    const nextUnparsedLines = Array.isArray(payload?.unparsedLines) ? payload.unparsedLines : [];
+    const fileName = typeof seed?.fileName === "string" ? seed.fileName.trim() : "";
+    const notes = typeof seed?.notes === "string" ? seed.notes.trim() : "";
+    const userText =
+      [fileName ? `Uploaded invoice: ${fileName}.` : "", notes].filter(Boolean).join(" ").trim() ||
+      "Uploaded an invoice to import.";
+    const seedTranscript =
+      typeof seed?.sourceText === "string" && seed.sourceText.trim()
+        ? seed.sourceText.trim()
+        : userText;
+    const seededMessages = [
+      initialIntakeMessages[0],
+      { id: `msg-${Date.now()}-user`, role: "user", text: userText }
+    ];
+
+    setMessages(seededMessages);
+    setInputValue("");
+    setIsTyping(false);
+    setAuditSummary("");
+    setAuditSummaryAt(null);
+    setSummaryUpdatedAt(null);
+    setOpenDecisions(nextOpenDecisions);
+    setAssumptions(nextAssumptions);
+    setUnparsedLines(nextUnparsedLines);
+    setAuditStatus(payload?.auditStatus ?? null);
+    setStructuredInvoice(payload?.structuredInvoice ?? null);
+    setPendingLaborRate(null);
+    setPendingTaxRate(null);
+
+    lastMessagesRef.current = seededMessages;
+    lastTranscriptRef.current = seedTranscript;
+    lastUserMessageRef.current = userText;
+    lastIntakeModeRef.current = "full";
+
+    if (payload?.needsFollowUp) {
+      setLaborPricingNote("");
+      setFollowUp(payload.followUp ?? null);
+      setFinishedInvoice(null);
+      setIntakePhase("awaiting_follow_up");
+      return;
+    }
+
+    const nextInvoice = payload?.invoice ?? null;
+    if (!nextInvoice) {
+      appendAiMessage(
+        "I couldn’t pull a usable draft from that upload. Try another file or paste the key details."
+      );
+      setIntakePhase("collecting");
+      return;
+    }
+
+    setFollowUp(null);
+    setFinishedInvoice(nextInvoice);
+    const decisionSignature = nextOpenDecisions.map((decision) => decision.prompt).sort().join("|");
+    openDecisionSignatureRef.current = decisionSignature;
+    setIntakePhase("ready_to_summarize");
+    appendSummaryMessage(
+      buildSummaryText(nextInvoice, nextOpenDecisions, nextUnparsedLines.length),
+      buildReviewPayload(nextInvoice, nextOpenDecisions, nextUnparsedLines)
+    );
+  }, []);
 
   useEffect(() => {
     if (hasReviewCard && !hasAutoCollapsedRef.current) {
@@ -2932,6 +3082,468 @@ const applyDecisionActionToInvoice = (invoice, action) => {
   );
 }
 
+function ImportInvoice() {
+  const navigate = useNavigate();
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [notes, setNotes] = useState("");
+  const [error, setError] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const supportedExtensions = [".pdf", ".txt", ".md", ".csv", ".json"];
+  const supportedTypes = [
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/json"
+  ];
+
+  const formatBytes = (bytes) => {
+    if (!Number.isFinite(bytes)) {
+      return "";
+    }
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    }
+    const kb = bytes / 1024;
+    if (kb < 1024) {
+      return `${kb.toFixed(1)} KB`;
+    }
+    return `${(kb / 1024).toFixed(1)} MB`;
+  };
+
+  const isSupportedFile = (file) => {
+    if (!file) {
+      return false;
+    }
+    const lowerName = file.name.toLowerCase();
+    if (supportedTypes.includes(file.type)) {
+      return true;
+    }
+    return supportedExtensions.some((ext) => lowerName.endsWith(ext));
+  };
+
+  const handleFileSelect = (file) => {
+    if (!file) {
+      return;
+    }
+    if (!isSupportedFile(file)) {
+      setError("Unsupported file type. Upload a PDF or text file.");
+      return;
+    }
+    setError("");
+    setSelectedFile(file);
+  };
+
+  const handleFileChange = (event) => {
+    const nextFile = event.target.files?.[0];
+    handleFileSelect(nextFile);
+  };
+
+  const clearFile = () => {
+    setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    setDragActive(false);
+    const nextFile = event.dataTransfer?.files?.[0];
+    handleFileSelect(nextFile);
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile) {
+      setError("Upload a PDF or text file first.");
+      return;
+    }
+    setIsUploading(true);
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.append("invoiceFile", selectedFile);
+      const trimmedNotes = notes.trim();
+      if (trimmedNotes) {
+        formData.append("messyInput", trimmedNotes);
+      }
+      const response = await fetch("/api/invoices/from-input", {
+        method: "POST",
+        body: formData
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || "Upload failed.");
+      }
+      const nextOpenDecisions = Array.isArray(payload?.openDecisions) ? payload.openDecisions : [];
+      const seedSourceText = [selectedFile.name ? `Uploaded invoice: ${selectedFile.name}.` : "", trimmedNotes]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+      if (payload?.needsFollowUp || nextOpenDecisions.length > 0) {
+        const seed = {
+          fileName: selectedFile.name,
+          notes: trimmedNotes,
+          sourceText: seedSourceText,
+          payload: {
+            needsFollowUp: Boolean(payload?.needsFollowUp),
+            followUp: payload?.followUp ?? null,
+            structuredInvoice: payload?.structuredInvoice ?? null,
+            invoice: payload?.invoice ?? null,
+            openDecisions: nextOpenDecisions,
+            assumptions: Array.isArray(payload?.assumptions) ? payload.assumptions : [],
+            unparsedLines: Array.isArray(payload?.unparsedLines) ? payload.unparsedLines : [],
+            auditStatus: payload?.auditStatus ?? null
+          }
+        };
+        window.localStorage.setItem(importSeedStorageKey, JSON.stringify(seed));
+        navigate("/ai-intake");
+        return;
+      }
+      if (!payload?.invoice) {
+        throw new Error("Upload parsed, but no invoice data was returned.");
+      }
+      const draft = buildDraftFromFinishedInvoice(payload.invoice, { taxRate: "0" });
+      window.localStorage.setItem("invoiceDraft", JSON.stringify(draft));
+      navigate("/manual");
+    } catch (uploadError) {
+      console.error("Upload failed", uploadError);
+      setError(uploadError?.message || "Upload failed. Try again.");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <main className="mx-auto max-w-3xl px-4 py-10">
+        <button
+          type="button"
+          className="text-sm font-semibold text-emerald-700"
+          onClick={() => navigate("/")}
+        >
+          Back to launcher
+        </button>
+        <div className="mt-4 space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">
+            Import invoice
+          </p>
+          <h1 className="text-2xl font-semibold text-slate-900">Upload an invoice to edit</h1>
+          <p className="text-sm text-slate-600">
+            Drop in a PDF or text export. We’ll extract line items and open it in the editor.
+          </p>
+        </div>
+
+        <div className="mt-6 space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div
+            className={`relative rounded-2xl border-2 border-dashed px-6 py-8 text-center transition ${
+              dragActive ? "border-emerald-400 bg-emerald-50/60" : "border-slate-200 bg-slate-50/60"
+            }`}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragActive(true);
+            }}
+            onDragLeave={(event) => {
+              event.preventDefault();
+              setDragActive(false);
+            }}
+            onDrop={handleDrop}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.txt,.md,.csv,.json,application/pdf,text/plain,text/markdown,text/csv,application/json"
+              className="absolute inset-0 cursor-pointer opacity-0"
+              onChange={handleFileChange}
+            />
+            <div className="mx-auto flex max-w-sm flex-col items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-emerald-600 shadow-sm">
+                <UploadIcon className="h-6 w-6" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-semibold text-slate-900">
+                  Drop a PDF or text export here
+                </p>
+                <p className="text-xs text-slate-500">
+                  PDF, TXT, CSV, or JSON. We’ll extract and format the invoice.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {selectedFile ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+              <div>
+                <p className="font-semibold text-slate-900">{selectedFile.name}</p>
+                <p className="text-xs text-slate-500">{formatBytes(selectedFile.size)}</p>
+              </div>
+              <button
+                type="button"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-300 hover:text-slate-900"
+                onClick={clearFile}
+              >
+                Remove
+              </button>
+            </div>
+          ) : null}
+
+          <div>
+            <label className="text-sm font-semibold text-slate-900">Optional notes</label>
+            <p className="mt-1 text-xs text-slate-500">
+              Add any context or pricing notes you want the AI to consider.
+            </p>
+            <textarea
+              rows={3}
+              className="mt-3 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              placeholder="Example: This invoice includes a revised hourly rate."
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+            />
+          </div>
+
+          {error ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+              onClick={handleUpload}
+              disabled={!selectedFile || isUploading}
+            >
+              {isUploading ? "Importing…" : "Build draft"}
+            </button>
+            <p className="text-xs text-slate-500">
+              {isUploading ? "Extracting details from your invoice." : "We’ll open the editor next."}
+            </p>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function InvoiceLibrary() {
+  const navigate = useNavigate();
+  const [invoices, setInvoices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [actionId, setActionId] = useState("");
+
+  const formatDate = (timestamp) => {
+    if (!timestamp) {
+      return "";
+    }
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+    return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+  };
+
+  const deriveTaxRate = (invoice) => {
+    if (!invoice) {
+      return "0";
+    }
+    const subtotal = Number(invoice.subtotal);
+    const total = Number(invoice.total);
+    if (!Number.isFinite(subtotal) || !Number.isFinite(total) || subtotal <= 0) {
+      return "0";
+    }
+    const taxAmount = total - subtotal;
+    if (taxAmount <= 0) {
+      return "0";
+    }
+    return ((taxAmount / subtotal) * 100).toFixed(2);
+  };
+
+  const loadInvoices = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/invoices");
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to load invoices.");
+      }
+      setInvoices(Array.isArray(payload?.invoices) ? payload.invoices : []);
+    } catch (loadError) {
+      console.error("Failed to load invoices", loadError);
+      setError(loadError?.message || "Failed to load invoices.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadInvoices();
+  }, []);
+
+  const openSavedInvoice = async (invoiceId, endpoint) => {
+    setActionId(invoiceId);
+    try {
+      const response = await fetch(endpoint);
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to open invoice.");
+      }
+      const savedInvoice = payload?.invoice;
+      const invoiceData = savedInvoice?.invoiceData;
+      if (!invoiceData?.finishedInvoice) {
+        throw new Error("Saved invoice data is incomplete.");
+      }
+      const draft = buildDraftFromFinishedInvoice(invoiceData.finishedInvoice, {
+        taxRate: deriveTaxRate(invoiceData.finishedInvoice),
+        savedInvoiceId: savedInvoice?.invoiceId ?? ""
+      });
+      window.localStorage.setItem("invoiceDraft", JSON.stringify(draft));
+      navigate("/manual");
+    } catch (openError) {
+      console.error("Failed to open invoice", openError);
+      setError(openError?.message || "Failed to open invoice.");
+    } finally {
+      setActionId("");
+    }
+  };
+
+  const handleOpen = (invoiceId) => openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`);
+  const handleDuplicate = (invoiceId) =>
+    openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}/duplicate`);
+
+  const statusStyles = {
+    draft: "bg-slate-100 text-slate-700",
+    sent: "bg-blue-100 text-blue-700",
+    paid: "bg-emerald-100 text-emerald-700"
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <main className="mx-auto max-w-4xl px-4 py-10">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <button
+              type="button"
+              className="text-sm font-semibold text-emerald-700"
+              onClick={() => navigate("/")}
+            >
+              Back to launcher
+            </button>
+            <h1 className="mt-3 text-2xl font-semibold text-slate-900">Invoice Library</h1>
+            <p className="mt-1 text-sm text-slate-600">
+              Reopen saved drafts, duplicates, and exports.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300"
+              onClick={() => navigate("/ai-intake")}
+            >
+              New intake
+            </button>
+            <button
+              type="button"
+              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+              onClick={() => navigate("/manual")}
+            >
+              Blank invoice
+            </button>
+          </div>
+        </div>
+
+        {error ? (
+          <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="mt-6 space-y-4">
+          {loading ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
+              Loading saved invoices…
+            </div>
+          ) : null}
+
+          {!loading && invoices.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center shadow-sm">
+              <p className="text-sm font-semibold text-slate-900">No saved invoices yet</p>
+              <p className="mt-2 text-sm text-slate-600">
+                Save a draft from the editor and it will show up here.
+              </p>
+              <button
+                type="button"
+                className="mt-4 inline-flex h-10 items-center justify-center rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm"
+                onClick={() => navigate("/ai-intake")}
+              >
+                Create your first draft
+              </button>
+            </div>
+          ) : null}
+
+          {!loading && invoices.length > 0
+            ? invoices.map((invoice) => {
+                const statusClass = statusStyles[invoice.status] ?? statusStyles.draft;
+                const totalLabel = Number.isFinite(invoice.total)
+                  ? formatMoney(invoice.total)
+                  : "—";
+                return (
+                  <div
+                    key={invoice.invoiceId}
+                    className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+                  >
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          {invoice.sourceType === "upload" ? "Imported invoice" : "Invoice draft"}
+                        </p>
+                        <p className="mt-1 text-lg font-semibold text-slate-900">
+                          {invoice.invoiceNumber || "Draft invoice"}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Updated {formatDate(invoice.updatedAt)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusClass}`}>
+                          {invoice.status}
+                        </span>
+                        <span className="text-sm font-semibold text-slate-900">{totalLabel}</span>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+                        onClick={() => handleOpen(invoice.invoiceId)}
+                        disabled={actionId === invoice.invoiceId}
+                      >
+                        {actionId === invoice.invoiceId ? "Opening…" : "Open"}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300"
+                        onClick={() => handleDuplicate(invoice.invoiceId)}
+                        disabled={actionId === invoice.invoiceId}
+                      >
+                        Duplicate
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            : null}
+        </div>
+      </main>
+    </div>
+  );
+}
+
 function ManualInvoiceCanvas() {
   const navigate = useNavigate();
   const draftStorageKey = "invoiceDraft";
@@ -4549,11 +5161,9 @@ function App() {
       <Routes>
         <Route path="/" element={<Launcher />} />
         <Route path="/ai-intake" element={<AIIntake />} />
+        <Route path="/invoices" element={<InvoiceLibrary />} />
         <Route path="/manual" element={<ManualInvoiceCanvas />} />
-        <Route
-          path="/import"
-          element={<Placeholder title="Import Invoice" description="This screen is queued up next." />}
-        />
+        <Route path="/import" element={<ImportInvoice />} />
         <Route
           path="*"
           element={<Placeholder title="Page not found" description="Return to the launcher to continue." />}
