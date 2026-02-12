@@ -212,7 +212,7 @@ function AIIntake() {
   const [auditSummary, setAuditSummary] = useState("");
   const [auditSummaryAt, setAuditSummaryAt] = useState(null);
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
-  const [reviewCardCollapsed, setReviewCardCollapsed] = useState(true);
+  const [reviewCardCollapsed, setReviewCardCollapsed] = useState(false);
   const [showChatInput, setShowChatInput] = useState(false);
   const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(true);
   const [decisionToast, setDecisionToast] = useState(null);
@@ -268,16 +268,42 @@ const generateInvoiceNumber = () => {
   return `INV-${ymd}-${suffix}`;
 };
 
-const formatDisplayDescription = (text) => {
-    if (!text) {
-      return "";
+const polishLineItemDescription = (text) => {
+  if (!text) {
+    return "";
+  }
+  let cleaned = text.trim().replace(/\s+/g, " ").replace(/\.+$/, "");
+  if (!cleaned) {
+    return "";
+  }
+  cleaned = cleaned.replace(/^(i|we)\s+/i, "");
+  cleaned = cleaned.replace(/^did\s+(an|a|the)?\s*/i, "");
+  const words = cleaned.split(" ");
+  if (words.length <= 4) {
+    const nounMappings = [
+      { re: /^(fixed|repaired?)\s+(.+)/i, suffix: "repair" },
+      { re: /^(replaced|replace)\s+(.+)/i, suffix: "replacement" },
+      { re: /^(installed|install)\s+(.+)/i, suffix: "installation" },
+      { re: /^(cleaned|clean)\s+(.+)/i, suffix: "cleaning" },
+      { re: /^(inspected|inspect)\s+(.+)/i, suffix: "inspection" },
+      { re: /^(adjusted|adjust|tightened|tighten)\s+(.+)/i, suffix: "adjustment" },
+      { re: /^(tuned|tune)\s+(.+)/i, suffix: "tuning" },
+      { re: /^(painted|paint)\s+(.+)/i, suffix: "painting" }
+    ];
+    for (const mapping of nounMappings) {
+      const match = cleaned.match(mapping.re);
+      if (match?.[2]) {
+        const candidate = `${match[2]} ${mapping.suffix}`;
+        cleaned = candidate;
+        break;
+      }
     }
-    const trimmed = text.trim();
-    if (!trimmed) {
-      return "";
-    }
-    return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
-  };
+  }
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+  return cleaned ? `${cleaned.charAt(0).toUpperCase()}${cleaned.slice(1)}` : "";
+};
+
+const formatDisplayDescription = (text) => polishLineItemDescription(text);
 
   const normalizeSnippet = (text) =>
     text
@@ -504,7 +530,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         const finalQty = rateValue && !qtyValue ? "1" : qtyValue;
         return {
           id: lineItem.id ?? `line-${Date.now()}-${index}`,
-          description: lineItem.description,
+          description: polishLineItemDescription(lineItem.description),
           qty: finalQty,
           rate: rateValue
         };
@@ -606,7 +632,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     };
     console.log("[summary:append]", lastSummaryMetaRef.current);
     setIsTyping(false);
-    setReviewCardCollapsed(true);
+    setReviewCardCollapsed(false);
     setShowChatInput(false);
     setMessages((prev) => {
       const next = [...prev];
@@ -1203,7 +1229,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     setAuditSummary("");
     setAuditSummaryAt(null);
     setSummaryUpdatedAt(null);
-    setReviewCardCollapsed(true);
+    setReviewCardCollapsed(false);
     setShowChatInput(false);
     setDecisionToast(null);
     openDecisionSignatureRef.current = "";
@@ -2237,16 +2263,6 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                             >
                               Edit with AI
                             </button>
-                            {canToggleReviewDetails ? (
-                              <button
-                                type="button"
-                                className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
-                                onClick={() => setReviewCardCollapsed((prev) => !prev)}
-                                disabled={isTyping}
-                              >
-                                {reviewCardCollapsed ? "Show details" : "Hide details"}
-                              </button>
-                            ) : null}
                           </div>
                         </div>
 
@@ -2289,6 +2305,18 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                               {pendingDecisionCount} decision{pendingDecisionCount > 1 ? "s" : ""}{" "}
                               below to finish.
                             </p>
+                          ) : null}
+                          {canToggleReviewDetails ? (
+                            <div className="flex justify-end">
+                              <button
+                                type="button"
+                                className="text-xs font-semibold text-slate-500 hover:text-slate-700"
+                                onClick={() => setReviewCardCollapsed((prev) => !prev)}
+                                disabled={isTyping}
+                              >
+                                {reviewCardCollapsed ? "Show details" : "Hide details"}
+                              </button>
+                            </div>
                           ) : null}
                           {reviewCardCollapsed && quickFixes.length > 0 ? (
                             <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
@@ -3267,7 +3295,7 @@ function ManualInvoiceCanvas() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <main className="mx-auto flex w-full max-w-6xl flex-col px-4 py-8 md:grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-6">
+      <main className="mx-auto flex w-full max-w-6xl flex-col px-4 py-8 pb-24 md:grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-6 md:pb-8">
         <div className="mb-4 md:col-span-2 no-print">
           <button
             type="button"
@@ -3291,7 +3319,7 @@ function ManualInvoiceCanvas() {
                 <span>Draft</span>
               </span>
             </div>
-            <div className="flex justify-end gap-2 no-print">
+            <div className="hidden justify-end gap-2 no-print md:flex">
               <button
                 type="button"
                 className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700"
@@ -3507,6 +3535,34 @@ function ManualInvoiceCanvas() {
           />
         </div>
       </main>
+
+      <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white md:hidden no-print">
+        <div className="mx-auto flex max-w-6xl items-center justify-around px-4 py-2">
+          {[
+            { id: "style", label: "Style" },
+            { id: "tone", label: "Tone" },
+            { id: "assistant", label: "Edit" },
+            { id: "export", label: "Export" }
+          ].map((tab) => {
+            const isActive = activeInspectorTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                className={`text-xs font-semibold ${
+                  isActive ? "text-emerald-700" : "text-slate-500"
+                }`}
+                onClick={() => {
+                  setActiveInspectorTab(tab.id);
+                  setInspectorOpen(true);
+                }}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {isMobileInspectorOpen ? (
         <div className="fixed inset-0 z-50 flex flex-col bg-white/95 md:hidden no-print">
