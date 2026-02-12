@@ -854,6 +854,37 @@ test("save remains explicit-only", async () => {
   assert.equal(listAfterSave.body.invoices.length, 1);
 });
 
+test("delete removes saved invoice", async () => {
+  useMockResponses([structuredWithLaborPricing()]);
+
+  const generated = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7"
+  });
+
+  assert.equal(generated.status, 200);
+
+  const acceptedSave = await request(app).post("/api/invoices/save").send({
+    confirmSave: true,
+    sourceType: "text_input",
+    invoiceData: {
+      structuredInvoice: generated.body.structuredInvoice,
+      finishedInvoice: generated.body.invoice
+    }
+  });
+
+  assert.equal(acceptedSave.status, 200);
+  const savedId = acceptedSave.body.invoice.invoiceId;
+  assert.ok(savedId);
+
+  const deleteResponse = await request(app).delete(`/api/invoices/${savedId}`);
+  assert.equal(deleteResponse.status, 200);
+  assert.equal(deleteResponse.body.ok, true);
+
+  const listAfterDelete = await request(app).get("/api/invoices");
+  assert.equal(listAfterDelete.status, 200);
+  assert.equal(listAfterDelete.body.invoices.length, 0);
+});
+
 function useMockResponses(responses: unknown[]): void {
   const queue = [...responses];
   setJsonTaskRunnerForTests(async <T>(): Promise<T> => {

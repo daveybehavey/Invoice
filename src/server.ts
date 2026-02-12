@@ -26,6 +26,7 @@ import {
 } from "./services/invoicePipeline.js";
 import {
   duplicateSavedInvoice,
+  deleteSavedInvoice,
   getSavedInvoiceById,
   listSavedInvoiceMetadata,
   saveInvoiceDocument,
@@ -255,6 +256,16 @@ app.post("/api/invoices/:id/status", async (req: Request, res: Response, next: N
     const parsedRequest = UpdateInvoiceStatusRequestSchema.parse(req.body);
     const invoice = await updateSavedInvoiceStatus(invoiceId, parsedRequest.status);
     res.json({ invoice });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/invoices/:id", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invoiceId = z.string().uuid().parse(req.params.id);
+    await deleteSavedInvoice(invoiceId);
+    res.json({ ok: true });
   } catch (error) {
     next(error);
   }

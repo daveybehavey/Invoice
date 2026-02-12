@@ -3335,6 +3335,8 @@ function InvoiceLibrary() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [actionId, setActionId] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const formatDate = (timestamp) => {
     if (!timestamp) {
@@ -3415,6 +3417,29 @@ function InvoiceLibrary() {
   const handleOpen = (invoiceId) => openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`);
   const handleDuplicate = (invoiceId) =>
     openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}/duplicate`);
+
+  const confirmDelete = async () => {
+    if (!deleteTarget?.invoiceId) {
+      setDeleteTarget(null);
+      return;
+    }
+    setIsDeleting(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/invoices/${deleteTarget.invoiceId}`, { method: "DELETE" });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to delete invoice.");
+      }
+      await loadInvoices();
+      setDeleteTarget(null);
+    } catch (deleteError) {
+      console.error("Failed to delete invoice", deleteError);
+      setError(deleteError?.message || "Failed to delete invoice.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const statusStyles = {
     draft: "bg-slate-100 text-slate-700",
@@ -3533,12 +3558,52 @@ function InvoiceLibrary() {
                       >
                         Duplicate
                       </button>
+                      <button
+                        type="button"
+                        className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-600 shadow-sm transition hover:border-rose-300 hover:text-rose-700 disabled:cursor-not-allowed disabled:text-rose-300"
+                        onClick={() => setDeleteTarget(invoice)}
+                        disabled={actionId === invoice.invoiceId}
+                      >
+                        Delete
+                      </button>
                     </div>
                   </div>
                 );
               })
             : null}
         </div>
+        {deleteTarget ? (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 px-4">
+            <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+              <p className="text-sm font-semibold text-slate-900">Delete this invoice?</p>
+              <p className="mt-2 text-sm text-slate-600">
+                This will remove{" "}
+                <span className="font-semibold text-slate-800">
+                  {deleteTarget.invoiceNumber || "the saved draft"}
+                </span>{" "}
+                from your library.
+              </p>
+              <div className="mt-5 flex flex-wrap justify-end gap-3">
+                <button
+                  type="button"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300"
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={isDeleting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-300"
+                  onClick={confirmDelete}
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? "Deleting…" : "Delete invoice"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </main>
     </div>
   );

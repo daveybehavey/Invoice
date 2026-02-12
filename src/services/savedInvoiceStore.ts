@@ -139,6 +139,18 @@ export async function updateSavedInvoiceStatus(invoiceId: string, status: SavedI
   });
 }
 
+export async function deleteSavedInvoice(invoiceId: string): Promise<void> {
+  return withMutationLock(async () => {
+    const collection = await readCollection();
+    const invoiceIndex = collection.invoices.findIndex((item) => item.invoiceId === invoiceId);
+    if (invoiceIndex === -1) {
+      throw new Error(`Invoice "${invoiceId}" was not found.`);
+    }
+    collection.invoices.splice(invoiceIndex, 1);
+    await writeCollection(collection);
+  });
+}
+
 async function withMutationLock<T>(mutation: () => Promise<T>): Promise<T> {
   const runMutation = mutationQueue.then(mutation, mutation);
   mutationQueue = runMutation.then(
