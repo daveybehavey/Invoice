@@ -3539,17 +3539,17 @@ function ManualInvoiceCanvas() {
       <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white md:hidden no-print">
         <div className="mx-auto flex max-w-6xl items-center justify-around px-4 py-2">
           {[
-            { id: "style", label: "Style" },
-            { id: "tone", label: "Tone" },
-            { id: "assistant", label: "Edit" },
-            { id: "export", label: "Export" }
+            { id: "style", label: "Style", icon: "✨" },
+            { id: "tone", label: "Tone", icon: "🎙️" },
+            { id: "assistant", label: "Edit", icon: "✍️" },
+            { id: "export", label: "Export", icon: "⬇️" }
           ].map((tab) => {
             const isActive = activeInspectorTab === tab.id;
             return (
               <button
                 key={tab.id}
                 type="button"
-                className={`text-xs font-semibold ${
+                className={`flex flex-col items-center gap-0.5 text-xs font-semibold ${
                   isActive ? "text-emerald-700" : "text-slate-500"
                 }`}
                 onClick={() => {
@@ -3557,7 +3557,10 @@ function ManualInvoiceCanvas() {
                   setInspectorOpen(true);
                 }}
               >
-                {tab.label}
+                <span>{tab.label}</span>
+                <span className="text-[10px] leading-none" aria-hidden="true">
+                  {tab.icon}
+                </span>
               </button>
             );
           })}
