@@ -2925,6 +2925,9 @@ function ManualInvoiceCanvas() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [activeInspectorTab, setActiveInspectorTab] = useState("style");
   const [draftStatus, setDraftStatus] = useState("");
+  const [saveStatus, setSaveStatus] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [savedInvoiceId, setSavedInvoiceId] = useState(() => initialDraft?.savedInvoiceId ?? "");
   const saveTimeoutRef = useRef(null);
   const clearStatusTimeoutRef = useRef(null);
   const draftStatusLabel = "Draft restored";
@@ -3142,7 +3145,8 @@ function ManualInvoiceCanvas() {
       taxRate,
       lineItems,
       logoUrl,
-      stylePreset
+      stylePreset,
+      savedInvoiceId
     };
     window.localStorage.setItem(draftStorageKey, JSON.stringify(payload));
   };
@@ -3187,7 +3191,8 @@ function ManualInvoiceCanvas() {
     taxRate,
     lineItems,
     logoUrl,
-    stylePreset
+    stylePreset,
+    savedInvoiceId
   ]);
 
   const handlePrint = () => {
@@ -3202,6 +3207,57 @@ function ManualInvoiceCanvas() {
     window.setTimeout(() => {
       document.title = previousTitle;
     }, 1000);
+  };
+
+  const buildStructuredInvoiceFromDraft = () => ({
+    customerName: billToDetails?.trim() || undefined,
+    invoiceNumber: invoiceNumber?.trim() || undefined,
+    issueDate: invoiceDate || undefined,
+    servicePeriodStart: undefined,
+    servicePeriodEnd: undefined,
+    workSessions: [],
+    materials: [],
+    notes: notes?.trim() || undefined
+  });
+
+  const handleSaveInvoice = async () => {
+    const editableResult = buildEditableInvoicePayload();
+    if (editableResult.error) {
+      setSaveError(editableResult.error);
+      setSaveStatus("");
+      return;
+    }
+    setSaveError("");
+    setSaveStatus(savedInvoiceId ? "Updating..." : "Saving...");
+    try {
+      const response = await fetch("/api/invoices/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          confirmSave: true,
+          invoiceId: savedInvoiceId || undefined,
+          sourceType: "text_input",
+          invoiceData: {
+            structuredInvoice: buildStructuredInvoiceFromDraft(),
+            finishedInvoice: editableResult.invoice
+          }
+        })
+      });
+      if (!response.ok) {
+        throw new Error("Save failed");
+      }
+      const payload = await response.json();
+      const nextId = payload?.invoice?.invoiceId ?? "";
+      if (nextId) {
+        setSavedInvoiceId(nextId);
+      }
+      setSaveStatus("Saved");
+      window.setTimeout(() => setSaveStatus(""), 1500);
+    } catch (error) {
+      console.error("Failed to save invoice", error);
+      setSaveError("Save failed. Try again.");
+      setSaveStatus("");
+    }
   };
 
   const isMobileInspectorOpen = inspectorOpen;
@@ -3438,6 +3494,10 @@ function ManualInvoiceCanvas() {
             onStylePresetChange={setStylePreset}
             onPrint={handlePrint}
             onDownloadPdf={handleDownloadPdf}
+            onSaveInvoice={handleSaveInvoice}
+            saveStatus={saveStatus}
+            saveError={saveError}
+            savedInvoiceId={savedInvoiceId}
             previewData={previewData}
             toneSource={{ lineItems, notes }}
             buildRewriteInvoicePayload={buildRewriteInvoicePayload}
@@ -3462,6 +3522,10 @@ function ManualInvoiceCanvas() {
             onStylePresetChange={setStylePreset}
             onPrint={handlePrint}
             onDownloadPdf={handleDownloadPdf}
+            onSaveInvoice={handleSaveInvoice}
+            saveStatus={saveStatus}
+            saveError={saveError}
+            savedInvoiceId={savedInvoiceId}
             previewData={previewData}
             toneSource={{ lineItems, notes }}
             buildRewriteInvoicePayload={buildRewriteInvoicePayload}
@@ -3487,6 +3551,10 @@ function InspectorPanel({
   onStylePresetChange,
   onPrint,
   onDownloadPdf,
+  onSaveInvoice,
+  saveStatus,
+  saveError,
+  savedInvoiceId,
   previewData,
   toneSource,
   buildRewriteInvoicePayload,
@@ -4168,6 +4236,26 @@ function InspectorPanel({
           </div>
         ) : activeTab === "export" ? (
           <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-slate-900">Save to library</p>
+                {saveStatus ? (
+                  <span className="text-xs font-semibold text-emerald-600">{saveStatus}</span>
+                ) : null}
+              </div>
+              <p className="text-xs text-slate-500">
+                Store this invoice so you can reopen or duplicate it later.
+              </p>
+              <button
+                type="button"
+                className="w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-emerald-300"
+                onClick={onSaveInvoice}
+                disabled={Boolean(saveStatus && saveStatus !== "Saved")}
+              >
+                {savedInvoiceId ? "Update saved invoice" : "Save invoice"}
+              </button>
+              {saveError ? <p className="text-xs text-rose-600">{saveError}</p> : null}
+            </div>
             <div className="space-y-2">
               <p className="text-sm font-semibold text-slate-900">Download PDF</p>
               <p className="text-xs text-slate-500">Save a PDF copy of the current invoice.</p>
