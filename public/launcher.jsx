@@ -221,6 +221,33 @@ const readDraftFromStorage = (key) => {
 
 const importSeedStorageKey = "invoiceImportSeed";
 const deleteSkipStorageKey = "invoiceDeleteSkipConfirm";
+const laborRatePresetStorageKey = "invoiceLastLaborRate";
+
+const readStoredLaborRate = () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const stored = Number(window.localStorage.getItem(laborRatePresetStorageKey));
+  return Number.isFinite(stored) && stored > 0 ? stored : null;
+};
+
+const storeLaborRate = (rate) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  if (!Number.isFinite(rate) || rate <= 0) {
+    return;
+  }
+  window.localStorage.setItem(laborRatePresetStorageKey, String(Math.round(rate * 100) / 100));
+};
+
+const formatRateToken = (rate) => {
+  if (!Number.isFinite(rate)) {
+    return "";
+  }
+  const rounded = Math.round(rate * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+};
 
 const formatMoney = (value) =>
   Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
@@ -432,6 +459,7 @@ function AIIntake() {
   const [showAllDecisions, setShowAllDecisions] = useState(false);
   const [decisionFocusIndex, setDecisionFocusIndex] = useState(0);
   const [showDecisionWhy, setShowDecisionWhy] = useState(false);
+  const [savedLaborRate, setSavedLaborRate] = useState(() => readStoredLaborRate());
   const requestIdRef = useRef(0);
   const openDecisionSignatureRef = useRef("");
   const lastDecisionResolutionRef = useRef("");
@@ -1379,10 +1407,18 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       }
 
       const commonRates = [85, 95, 120];
-      return commonRates.map((rate) => ({
-        id: `labor-rate-${rate}`,
-        label: `Use $${rate}/hr`,
-        value: `Hourly $${rate}/hr.`
+      const savedRate =
+        Number.isFinite(savedLaborRate) && savedLaborRate > 0 ? Math.round(savedLaborRate * 100) / 100 : null;
+      const orderedRates = savedRate
+        ? [savedRate, ...commonRates.filter((rate) => Math.round(rate * 100) / 100 !== savedRate)]
+        : commonRates;
+      return orderedRates.slice(0, 4).map((rate, index) => ({
+        id: index === 0 && savedRate ? `labor-rate-saved-${rate}` : `labor-rate-${rate}`,
+        label:
+          index === 0 && savedRate
+            ? `Use last ($${formatRateToken(rate)}/hr)`
+            : `Use $${formatRateToken(rate)}/hr`,
+        value: `Hourly $${formatRateToken(rate)}/hr.`
       }));
     }
     return [];
@@ -2221,6 +2257,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         return true;
       }
       if (parseResult?.laborPricing) {
+        if (
+          parseResult.laborPricing.billingType === "hourly" &&
+          Number.isFinite(parseResult.laborPricing.hourlyRate)
+        ) {
+          const nextRate = Math.round(parseResult.laborPricing.hourlyRate * 100) / 100;
+          setSavedLaborRate(nextRate);
+          storeLaborRate(nextRate);
+        }
         setPendingLaborRate(null);
         setLaborPricingNote("");
         appendAiMessage(
@@ -2237,6 +2281,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       }
       if (parseResult?.rateOnly) {
         const rate = parseResult.rateOnly;
+        setSavedLaborRate(rate);
+        storeLaborRate(rate);
         setPendingLaborRate(rate);
         const itemCount = followUp?.laborItems?.length ?? 0;
         const rateNote = itemCount

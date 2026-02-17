@@ -32,10 +32,14 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
     - Suggest date range when multiple dates appear.
 11. Merge duplicate items suggestion
     - Detect similar parts and offer merge.
+12. Photo notes intake (OCR + user review)
+    - Let users upload handwritten or printed note images.
+    - Extract text, then require user review/edit before parsing.
+    - Show disclaimer that extraction may be imperfect.
+    - Keep existing money decision and confirmation gates unchanged.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.
 - No money decisions happen without explicit confirmation.
 - Post-generate edits feel safe and fast.
 - Testing remains deterministic.
-
