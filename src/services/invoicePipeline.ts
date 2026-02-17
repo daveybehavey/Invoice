@@ -158,8 +158,11 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     ? await parseStructuredInvoiceFromChunks(input.messyInput ?? "")
     : await parseMessyInputToStructuredInvoice(sourceText);
   const structuredInvoice = applyExplicitServicePeriod(
-    applyInlineLaborMinutesFromText(
-      applyInlineLaborPricingFromText(parsedInvoice, sourceText),
+    applyFreeLaborMinutesFromText(
+      applyInlineLaborMinutesFromText(
+        applyInlineLaborPricingFromText(parsedInvoice, sourceText),
+        sourceText
+      ),
       sourceText
     ),
     sourceText
@@ -209,9 +212,16 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   }
 
   const invoice = await generateFinishedInvoice(sanitizedInvoice);
+  const customerFallback = extractCustomerNameFromSource(sourceText);
+  const invoiceWithCustomer =
+    invoice.customerName && invoice.customerName.trim()
+      ? invoice
+      : customerFallback
+        ? { ...invoice, customerName: customerFallback }
+        : invoice;
   const invoiceWithIssueDate = hasExplicitIssueDate(sourceText)
-    ? invoice
-    : { ...invoice, issueDate: undefined };
+    ? invoiceWithCustomer
+    : { ...invoiceWithCustomer, issueDate: undefined };
   const discountIntent = detectDiscountIntent(sourceText);
   const auditOutcome =
     parseMode === "fast"
@@ -290,17 +300,25 @@ export async function continueInvoiceAfterLaborPricing(
   const parsedStructuredInvoice = StructuredInvoiceSchema.parse(structuredInvoice);
   const withLaborPricing = applyLaborPricing(parsedStructuredInvoice, laborPricing);
   const source = sourceText ?? withLaborPricing.notes ?? "";
+  const withFreeMinutes = applyFreeLaborMinutesFromText(withLaborPricing, source);
   const taxDirective = detectExplicitTaxDirective(source);
   const taxAmbiguity = detectTaxAmbiguity(source);
-  const sanitizedNotes = sanitizeStructuredNotes(withLaborPricing.notes);
+  const sanitizedNotes = sanitizeStructuredNotes(withFreeMinutes.notes);
   const sanitizedInvoice: StructuredInvoice = {
-    ...withLaborPricing,
+    ...withFreeMinutes,
     notes: sanitizedNotes.cleanedNotes
   };
   const invoice = await generateFinishedInvoice(sanitizedInvoice);
+  const customerFallback = extractCustomerNameFromSource(source);
+  const invoiceWithCustomer =
+    invoice.customerName && invoice.customerName.trim()
+      ? invoice
+      : customerFallback
+        ? { ...invoice, customerName: customerFallback }
+        : invoice;
   const invoiceWithIssueDate = hasExplicitIssueDate(source)
-    ? invoice
-    : { ...invoice, issueDate: undefined };
+    ? invoiceWithCustomer
+    : { ...invoiceWithCustomer, issueDate: undefined };
   const discountIntent = detectDiscountIntent(source);
   const parseMode: ParseMode = mode ?? "full";
   const auditOutcome =
@@ -733,6 +751,67 @@ function applyInlineLaborMinutesFromText(
   return nextStructuredInvoice;
 }
 
+function applyFreeLaborMinutesFromText(
+  structuredInvoice: StructuredInvoice,
+  sourceText: string
+): StructuredInvoice {
+  if (!sourceText.trim()) {
+    return structuredInvoice;
+  }
+
+  const normalizedSource = sourceText.replace(/[’‘]/g, "'").replace(/[“”]/g, "\"");
+  const freeChargeRegex = /\b(?:did\s+not\s+charge|didn't\s+charge|didnt\s+charge|no\s+charge|free)\b/i;
+  const freeMinuteSentences = normalizedSource
+    .split(/\r?\n|[.!?]+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((sentence) => ({
+      sentence,
+      minutesMatch: sentence.match(/(\d+(?:\.\d+)?)\s*(?:mins?|minutes?)\b/i)
+    }))
+    .filter(
+      ({ sentence, minutesMatch }) =>
+        minutesMatch && freeChargeRegex.test(sentence)
+    );
+
+  if (freeMinuteSentences.length === 0) {
+    return structuredInvoice;
+  }
+
+  const nextStructuredInvoice: StructuredInvoice = {
+    ...structuredInvoice,
+    workSessions: structuredInvoice.workSessions.map((session) => ({
+      ...session,
+      tasks: session.tasks.map((task) => ({ ...task }))
+    })),
+    materials: structuredInvoice.materials.map((material) => ({ ...material }))
+  };
+
+  const freeTasks: Task[] = [];
+  nextStructuredInvoice.workSessions.forEach((session) => {
+    session.tasks.forEach((task) => {
+      if (typeof task.amount === "number" && task.amount === 0) {
+        const hasHours = typeof task.hours === "number" && task.hours > 0;
+        if (!hasHours) {
+          freeTasks.push(task);
+        }
+      }
+    });
+  });
+
+  if (freeTasks.length !== 1) {
+    return structuredInvoice;
+  }
+
+  const minutesValue = Number(freeMinuteSentences[0].minutesMatch?.[1]);
+  if (!Number.isFinite(minutesValue) || minutesValue <= 0) {
+    return structuredInvoice;
+  }
+
+  freeTasks[0].hours = roundToCents(minutesValue / 60);
+  return nextStructuredInvoice;
+}
+
 async function generateFinishedInvoice(structuredInvoice: StructuredInvoice): Promise<FinishedInvoice> {
   const laborLineItems = structuredInvoice.workSessions.flatMap((session) =>
     session.tasks.map((task) => buildLaborLineItem(task, session.date))
@@ -929,16 +1008,21 @@ function extractCustomerNameFromSource(sourceText: string): string | undefined {
   if (!sourceText.trim()) {
     return undefined;
   }
-  const lines = sourceText
+  const normalizedSource = sourceText
+    .replace(/[’‘]/g, "'")
+    .replace(/[“”]/g, "\"");
+  const lines = normalizedSource
     .split(/\r?\n+/)
     .map((line) => line.trim())
     .filter(Boolean);
 
   const candidates: string[] = [];
-  const billRegex = /\b(?:bill to|bill)\s+([A-Za-z][A-Za-z'.-]+(?:\s+[A-Za-z][A-Za-z'.-]+){1,4})/i;
-  const clientRegex = /\b(?:client|customer)\s*[:\-]\s*([A-Za-z][A-Za-z'.-]+(?:\s+[A-Za-z][A-Za-z'.-]+){1,4})/i;
-  const parenRegex = /\(([A-Za-z][A-Za-z'.-]+(?:\s+[A-Za-z][A-Za-z'.-]+){1,4}),\s*\d{1,5}\s+[^)]+\)/;
-  const addressRegex = /([A-Za-z][A-Za-z'.-]+(?:\s+[A-Za-z][A-Za-z'.-]+){1,4}),\s*\d{1,5}\s+[A-Za-z0-9.\s]+\b/;
+  const nameToken = "[\\p{L}][\\p{L}'.-]+";
+  const namePattern = `${nameToken}(?:\\s+${nameToken}){1,4}`;
+  const billRegex = new RegExp(`\\b(?:bill to|bill)\\s+(${namePattern})`, "iu");
+  const clientRegex = new RegExp(`\\b(?:client|customer)\\s*[:\\-]\\s*(${namePattern})`, "iu");
+  const parenRegex = new RegExp(`\\((${namePattern}),\\s*\\d{1,5}\\s+[^)]+\\)`, "iu");
+  const addressRegex = new RegExp(`(${namePattern}),\\s*\\d{1,5}\\s+[\\p{L}0-9.\\s]+\\b`, "iu");
 
   lines.forEach((line) => {
     const billMatch = line.match(billRegex);
@@ -1288,13 +1372,36 @@ function filterResolvedDecisions(
   sourceText: string,
   lastUserMessage?: string
 ): OpenDecision[] {
+  const candidateTexts = splitIntoSentences(sourceText)
+    .map((candidate) => candidate.trim())
+    .filter(Boolean);
   const trimmedLast = lastUserMessage?.trim();
-  if (!trimmedLast) {
+  if (trimmedLast) {
+    candidateTexts.push(trimmedLast);
+  }
+
+  if (!candidateTexts.length) {
     return decisions;
   }
 
   return decisions.filter((decision) => {
-    return !evaluateDecisionResolution(decision, trimmedLast).resolved;
+    const resolved = candidateTexts.some((candidate) =>
+      evaluateDecisionResolution(decision, candidate).resolved
+    );
+    if (resolved) {
+      return false;
+    }
+    if (trimmedLast) {
+      const result = evaluateDecisionResolution(decision, trimmedLast);
+      if (!result.resolved) {
+        logDecisionUnresolved(
+          decision,
+          result.reason ?? "resolution_mismatch",
+          normalizeDecisionText(trimmedLast)
+        );
+      }
+    }
+    return true;
   });
 }
 
@@ -2436,6 +2543,40 @@ function applyDiscountToInvoice(invoice: FinishedInvoice, discountAmount: number
   return normalizeInvoice(FinishedInvoiceSchema.parse(withDiscount));
 }
 
+function polishLineItemDescription(text?: string): string {
+  if (!text) {
+    return "";
+  }
+  let cleaned = text.trim().replace(/\s+/g, " ").replace(/\.+$/, "");
+  if (!cleaned) {
+    return "";
+  }
+  cleaned = cleaned.replace(/^(i|we)\s+/i, "");
+  cleaned = cleaned.replace(/^did\s+(an|a|the)?\s*/i, "");
+  const words = cleaned.split(" ");
+  if (words.length <= 4) {
+    const nounMappings = [
+      { re: /^(fixed|repaired?)\s+(.+)/i, suffix: "repair" },
+      { re: /^(replaced|replace)\s+(.+)/i, suffix: "replacement" },
+      { re: /^(installed|install)\s+(.+)/i, suffix: "installation" },
+      { re: /^(cleaned|clean)\s+(.+)/i, suffix: "cleaning" },
+      { re: /^(inspected|inspect)\s+(.+)/i, suffix: "inspection" },
+      { re: /^(adjusted|adjust|tightened|tighten)\s+(.+)/i, suffix: "adjustment" },
+      { re: /^(tuned|tune)\s+(.+)/i, suffix: "tuning" },
+      { re: /^(painted|paint)\s+(.+)/i, suffix: "painting" }
+    ];
+    for (const mapping of nounMappings) {
+      const match = cleaned.match(mapping.re);
+      if (match?.[2]) {
+        cleaned = `${match[2]} ${mapping.suffix}`;
+        break;
+      }
+    }
+  }
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+  return cleaned ? `${cleaned.charAt(0).toUpperCase()}${cleaned.slice(1)}` : "";
+}
+
 function buildLaborLineItem(task: Task, sessionDate?: string) {
   const hours = task.hours;
   const rate = task.rate;
@@ -2443,11 +2584,12 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
   const hasAmount = typeof amount === "number";
   const hasHours = typeof hours === "number";
   const hasRate = typeof rate === "number";
+  const description = polishLineItemDescription(task.description);
 
   if (hasHours && hasRate && (rate > 0 || !hasAmount)) {
     return {
       type: "labor" as const,
-      description: task.description,
+      description,
       quantity: roundToCents(hours),
       unitPrice: roundToCents(rate),
       amount: roundToCents(typeof amount === "number" ? amount : hours * rate),
@@ -2458,7 +2600,7 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
   if (hasAmount && hasHours && hours > 0) {
     return {
       type: "labor" as const,
-      description: task.description,
+      description,
       quantity: roundToCents(hours),
       unitPrice: roundToCents(amount / hours),
       amount: roundToCents(amount),
@@ -2469,7 +2611,7 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
   if (hasAmount && hasRate && rate > 0) {
     return {
       type: "labor" as const,
-      description: task.description,
+      description,
       quantity: roundToCents(amount / rate),
       unitPrice: roundToCents(rate),
       amount: roundToCents(amount),
@@ -2480,7 +2622,7 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
   if (hasAmount) {
     return {
       type: "labor" as const,
-      description: task.description,
+      description,
       quantity: 1,
       unitPrice: roundToCents(amount),
       amount: roundToCents(amount),
@@ -2491,7 +2633,7 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
   if (hasHours && !hasRate) {
     return {
       type: "labor" as const,
-      description: task.description,
+      description,
       quantity: roundToCents(hours),
       unitPrice: 0,
       amount: 0,
@@ -2502,7 +2644,7 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
   if (hasRate) {
     return {
       type: "labor" as const,
-      description: task.description,
+      description,
       quantity: 1,
       unitPrice: roundToCents(rate),
       amount: roundToCents(rate),
@@ -2512,7 +2654,7 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
 
   return {
     type: "labor" as const,
-    description: task.description,
+    description,
     quantity: 1,
     unitPrice: 0,
     amount: 0,
@@ -2523,6 +2665,7 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
 function buildMaterialLineItem(material: Material) {
   const quantity = typeof material.quantity === "number" ? material.quantity : 1;
   const safeQuantity = quantity > 0 ? quantity : 1;
+  const description = polishLineItemDescription(material.description);
 
   let unitPrice: number | undefined;
   if (typeof material.unitCost === "number") {
@@ -2540,7 +2683,7 @@ function buildMaterialLineItem(material: Material) {
 
   return {
     type: "material" as const,
-    description: material.description,
+    description,
     quantity: roundToCents(safeQuantity),
     unitPrice: roundToCents(unitPrice ?? 0),
     amount: roundToCents(amount)

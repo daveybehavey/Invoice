@@ -194,6 +194,41 @@ test("creates decisions for ambiguous billable items even when audit is empty", 
   assert.ok(hasCabinetDecision);
 });
 
+test("keeps decisions resolved when explicit resolution exists in source transcript", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Feb 3",
+          tasks: [{ description: "Fixed leak", hours: 2, rate: 90, amount: 180 }]
+        }
+      ],
+      materials: []
+    },
+    {
+      assumptions: [],
+      decisions: [
+        {
+          kind: "billing",
+          prompt: 'Bill this item? "Tightened a cabinet hinge maybe — not sure if I should bill it"',
+          sourceSnippet: "Tightened a cabinet hinge maybe — not sure if I should bill it"
+        }
+      ],
+      unparsedLines: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput:
+      "Feb 3 fixed leak 2h @ $90/hr. Tightened a cabinet hinge maybe — not sure if I should bill it. Don't bill the cabinet hinge."
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  assert.ok(Array.isArray(response.body.openDecisions));
+  assert.equal(response.body.openDecisions.length, 0);
+});
+
 test("flags unsure billing as a decision and holds pricing in fast mode", async () => {
   useMockResponses([
     {
@@ -503,8 +538,9 @@ test("chunks long messy input and merges structured invoices", async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body.needsFollowUp, false);
   const lineItems = response.body.invoice?.lineItems ?? [];
-  const hasLaborLine = lineItems.some((lineItem: { description: string; type: string }) =>
-    /fixed sink/i.test(lineItem.description)
+  const hasLaborLine = lineItems.some(
+    (lineItem: { description: string; type: string }) =>
+      lineItem.type === "labor" && /sink/i.test(lineItem.description)
   );
   const hasMaterialLine = lineItems.some((lineItem: { description: string; type: string }) =>
     /washer/i.test(lineItem.description)

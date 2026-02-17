@@ -225,6 +225,18 @@ const deleteSkipStorageKey = "invoiceDeleteSkipConfirm";
 const formatMoney = (value) =>
   Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
 
+const formatLaborDuration = (hours) => {
+  if (!Number.isFinite(hours) || hours <= 0) {
+    return "";
+  }
+  if (hours < 1) {
+    const minutes = Math.round(hours * 60);
+    return minutes > 0 ? `${minutes} min` : "";
+  }
+  const rounded = Math.round(hours * 100) / 100;
+  return Number.isInteger(rounded) ? `${rounded}h` : `${rounded}h`;
+};
+
 const generateInvoiceNumber = () => {
   const now = new Date();
   const ymd = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}${String(
@@ -335,7 +347,7 @@ function AIIntake() {
   const [auditSummary, setAuditSummary] = useState("");
   const [auditSummaryAt, setAuditSummaryAt] = useState(null);
   const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
-  const [reviewCardCollapsed, setReviewCardCollapsed] = useState(false);
+  const [reviewCardCollapsed, setReviewCardCollapsed] = useState(true);
   const [showChatInput, setShowChatInput] = useState(false);
   const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(true);
   const [decisionToast, setDecisionToast] = useState(null);
@@ -707,7 +719,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     };
     console.log("[summary:append]", lastSummaryMetaRef.current);
     setIsTyping(false);
-    setReviewCardCollapsed(false);
+    setReviewCardCollapsed(true);
     setShowChatInput(false);
     setMessages((prev) => {
       const next = [...prev];
@@ -1014,7 +1026,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
   };
 
   const focusInputWithValue = (value) => {
-    setInputValue(value);
+    const nextValue = value ?? "";
+    setInputValue(nextValue);
     if (hasReviewCard) {
       setShowChatInput(true);
     }
@@ -1022,6 +1035,10 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       const input = document.getElementById("ai-intake-input");
       if (input) {
         input.focus();
+        if (typeof input.setSelectionRange === "function") {
+          const length = input.value.length;
+          input.setSelectionRange(length, length);
+        }
       }
     }, 0);
   };
@@ -1082,6 +1099,27 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     ]);
   };
 
+  const isSummaryPhase = (phase) =>
+    phase === "ready_to_summarize" || phase === "ready_to_generate";
+
+  const shouldIgnorePostSummaryResponse = (requestStartedAt, requestId, channel) => {
+    const summaryAt = lastSummaryMetaRef.current?.at;
+    const phase = intakePhaseRef.current;
+    if (!summaryAt || !isSummaryPhase(phase)) {
+      return false;
+    }
+    if (requestStartedAt < summaryAt) {
+      console.log(`[${channel}:ignored:post_summary]`, {
+        requestId,
+        requestStartedAt,
+        summaryAt,
+        phase
+      });
+      return true;
+    }
+    return false;
+  };
+
   const abortOngoingRequest = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -1118,7 +1156,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     appendAiMessage("Okay — canceled. You can trim the notes or try again.");
   };
 
-  const runDeepAudit = async ({ structuredInvoice, sourceText, decisionSignature }) => {
+  const runDeepAudit = async ({ structuredInvoice, sourceText, decisionSignature, summaryRequestId }) => {
     if (!structuredInvoice || !sourceText) {
       return;
     }
@@ -1143,6 +1181,13 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         throw new Error(payload?.error || "Audit failed.");
       }
       if (auditRequestId !== auditRequestIdRef.current) {
+        return;
+      }
+      if (
+        summaryRequestId !== undefined &&
+        summaryRequestId !== null &&
+        summaryRequestId !== lastSummaryMetaRef.current?.requestId
+      ) {
         return;
       }
       if (summaryLockRef.current || intakePhaseRef.current !== "ready_to_summarize") {
@@ -1207,15 +1252,27 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     runDeepAudit({
       structuredInvoice,
       sourceText: transcript,
-      decisionSignature: openDecisionSignatureRef.current ?? ""
+      decisionSignature: openDecisionSignatureRef.current ?? "",
+      summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null
     });
   };
 
-  const maybeRunDeepAudit = ({ auditStatus: nextAuditStatus, transcript, structuredInvoice, decisionSignature }) => {
+  const maybeRunDeepAudit = ({
+    auditStatus: nextAuditStatus,
+    transcript,
+    structuredInvoice,
+    decisionSignature,
+    summaryRequestId
+  }) => {
     if (!shouldRunDeepAudit(nextAuditStatus, transcript)) {
       return;
     }
-    runDeepAudit({ structuredInvoice, sourceText: transcript, decisionSignature });
+    runDeepAudit({
+      structuredInvoice,
+      sourceText: transcript,
+      decisionSignature,
+      summaryRequestId
+    });
   };
 
   const quickReplies = (() => {
@@ -1484,6 +1541,9 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         console.log("[intake:stale]", { requestId, current: requestIdRef.current });
         return;
       }
+      if (shouldIgnorePostSummaryResponse(requestStartedAt, requestId, "intake")) {
+        return;
+      }
       if (timeoutMessageIdRef.current) {
         dismissTimeoutMessage(timeoutMessageIdRef.current);
       }
@@ -1564,7 +1624,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
           auditStatus: nextAuditStatus,
           transcript,
           structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
-          decisionSignature
+          decisionSignature,
+          summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null
         });
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
@@ -1596,7 +1657,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
           auditStatus: nextAuditStatus,
           transcript,
           structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
-          decisionSignature: ""
+          decisionSignature: "",
+          summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null
         });
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
@@ -1642,7 +1704,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     }
   };
 
-  const runLaborPricingRequest = async (laborPricing, transcript) => {
+  const runLaborPricingRequest = async (laborPricing, transcript, lastUserMessage) => {
     if (!structuredInvoice) {
       appendAiMessage("I need to re-check the details before finishing. Please resend your notes.");
       setIntakePhase("collecting");
@@ -1678,6 +1740,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
           structuredInvoice,
           laborPricing,
           sourceText: transcript,
+          lastUserMessage: lastUserMessage ?? undefined,
           mode: lastIntakeModeRef.current
         }),
         signal: controller.signal
@@ -1688,6 +1751,9 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       }
       if (requestId !== requestIdRef.current) {
         console.log("[labor:stale]", { requestId, current: requestIdRef.current });
+        return;
+      }
+      if (shouldIgnorePostSummaryResponse(requestStartedAt, requestId, "labor")) {
         return;
       }
       if (timeoutMessageIdRef.current) {
@@ -1740,7 +1806,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
           auditStatus: nextAuditStatus,
           transcript: transcript ?? lastTranscriptRef.current,
           structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
-          decisionSignature
+          decisionSignature,
+          summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null
         });
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
@@ -1771,7 +1838,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
           auditStatus: nextAuditStatus,
           transcript: transcript ?? lastTranscriptRef.current,
           structuredInvoice: payload.structuredInvoice ?? structuredInvoice,
-          decisionSignature: ""
+          decisionSignature: "",
+          summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null
         });
         const responseAt = Date.now();
         const summaryAt = lastSummaryMetaRef.current?.at;
@@ -2102,7 +2170,11 @@ const applyDecisionActionToInvoice = (invoice, action) => {
             ? "Flat labor amount noted."
             : "Hourly rate noted."
         );
-        runLaborPricingRequest(parseResult.laborPricing, buildTranscript(nextMessages));
+        runLaborPricingRequest(
+          parseResult.laborPricing,
+          buildTranscript(nextMessages),
+          trimmed
+        );
         return true;
       }
       if (parseResult?.rateOnly) {
@@ -2340,6 +2412,28 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     categorized.labor.find((item) => Number.isFinite(item.amount))?.amount ??
                     null;
                   const pendingDecisionCount = payload.decisions.length;
+                  const previewItems = payload.lineItems.slice(0, 3).map((item, index) => {
+                    const label = formatDisplayDescription(item.description) || `Line item ${index + 1}`;
+                    const amount = Number.isFinite(item.amount) ? formatMoney(item.amount) : "";
+                    const duration =
+                      item.type === "labor" ? formatLaborDuration(item.quantity) : "";
+                    const valueText =
+                      duration && amount ? `${duration} • ${amount}` : duration || amount;
+                    const needsRate =
+                      item.type === "labor" &&
+                      (!Number.isFinite(item.quantity) || !Number.isFinite(item.unitPrice));
+                    const needsAmount = !Number.isFinite(item.amount);
+                    return {
+                      id: item.id ?? `preview-${index}`,
+                      label,
+                      valueText,
+                      needsRate,
+                      needsAmount
+                    };
+                  });
+                  const remainingPreviewCount = Math.max(0, payload.lineItems.length - previewItems.length);
+                  const decisionCtaLabel =
+                    pendingDecisionCount > 1 ? "Resolve decision 1" : "Resolve decision";
                   const foundText =
                     payload.lineItems.length > 0
                       ? `${payload.lineItems.length} line item${
@@ -2393,10 +2487,28 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                   }
 
                   const canToggleReviewDetails = sections.length > 0;
+                  const hasMissingAmounts = payload.lineItems.some(
+                    (item) => !Number.isFinite(item.amount)
+                  );
+                  const hasLaborGaps = payload.lineItems.some(
+                    (item) =>
+                      item.type === "labor" &&
+                      (!Number.isFinite(item.quantity) || !Number.isFinite(item.unitPrice))
+                  );
+                  const hasUnparsed = payload.unparsed.length > 0;
+                  const shouldShowSuggestedEdits =
+                    quickFixes.length > 0 &&
+                    (pendingDecisionCount > 0 || hasLaborGaps || hasMissingAmounts || hasUnparsed);
 
                   return (
                     <div key={message.id} className="flex justify-start">
-                      <div className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-sm shadow-sm">
+                      <div
+                        className={`w-full border border-slate-200 bg-white p-4 text-sm shadow-sm ${
+                          showAssumptionsCard
+                            ? "rounded-t-2xl rounded-b-none border-b-0 sm:rounded-2xl sm:border-b"
+                            : "rounded-2xl"
+                        }`}
+                      >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -2442,11 +2554,55 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                                   onClick={() => scrollToSection(decisionsRef)}
                                   disabled={isTyping}
                                 >
-                                  Go to decisions
+                                  {decisionCtaLabel}
                                 </button>
                               ) : null}
                             </p>
                           </div>
+                          {previewItems.length > 0 ? (
+                            <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Preview
+                              </p>
+                              <div className="mt-2 space-y-1.5">
+                                {previewItems.map((item) => (
+                                  <div key={item.id} className="flex items-center justify-between gap-3 text-sm">
+                                    <span className="flex-1 truncate text-slate-700">{item.label}</span>
+                                    {item.valueText ? (
+                                      <span className="text-slate-600">{item.valueText}</span>
+                                    ) : (
+                                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                                        {item.needsRate ? "needs rate" : item.needsAmount ? "needs amount" : "needs info"}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                                {remainingPreviewCount > 0 ? (
+                                  <p className="text-xs text-slate-400">+{remainingPreviewCount} more</p>
+                                ) : null}
+                              </div>
+                            </div>
+                          ) : null}
+                          {shouldShowSuggestedEdits ? (
+                            <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Suggested edits
+                              </p>
+                              <div className="mt-2 flex flex-wrap gap-2">
+                                {quickFixes.slice(0, 2).map((fix) => (
+                                  <button
+                                    key={fix.id}
+                                    type="button"
+                                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-400"
+                                    onClick={() => focusInputWithValue(fix.value)}
+                                    disabled={isTyping}
+                                  >
+                                    {fix.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
                           {canToggleReviewDetails ? (
                             <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                               <span className="font-semibold uppercase tracking-wide text-slate-400">
@@ -2460,26 +2616,6 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                               >
                                 {reviewCardCollapsed ? "Show details" : "Hide details"}
                               </button>
-                            </div>
-                          ) : null}
-                          {quickFixes.length > 0 ? (
-                            <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                Quick fixes
-                              </p>
-                              <div className="mt-2 flex flex-wrap gap-2">
-                                {quickFixes.slice(0, 3).map((fix) => (
-                                  <button
-                                    key={fix.id}
-                                    type="button"
-                                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-400"
-                                    onClick={() => focusInputWithValue(fix.value)}
-                                    disabled={isTyping}
-                                  >
-                                    {fix.label}
-                                  </button>
-                                ))}
-                              </div>
                             </div>
                           ) : null}
                           <p className="text-xs text-slate-500">
@@ -2500,6 +2636,17 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                                   <div className="space-y-2">
                                     {section.items.map((item) => {
                                       const status = getLineItemStatus(item, decisionKeywordSets);
+                                      const amount = Number.isFinite(item.amount)
+                                        ? formatMoney(item.amount)
+                                        : "";
+                                      const duration =
+                                        item.type === "labor" ? formatLaborDuration(item.quantity) : "";
+                                      const rate =
+                                        item.type === "labor" && Number.isFinite(item.unitPrice)
+                                          ? `${formatMoney(item.unitPrice)}/hr`
+                                          : "";
+                                      const laborMeta = [duration, rate].filter(Boolean).join(" × ");
+                                      const meta = laborMeta && amount ? `${laborMeta} • ${amount}` : laborMeta || amount;
                                       return (
                                         <div
                                           key={item.id}
@@ -2509,10 +2656,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                                             <p className="text-sm font-semibold text-slate-800">
                                               {item.description}
                                             </p>
-                                            {Number.isFinite(item.amount) ? (
-                                              <p className="text-xs text-slate-500">
-                                                {formatMoney(item.amount)}
-                                              </p>
+                                            {meta ? (
+                                              <p className="text-xs text-slate-500">{meta}</p>
                                             ) : null}
                                           </div>
                                           <span
@@ -2577,26 +2722,6 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                           </div>
                         ) : null}
 
-                        {!reviewCardCollapsed && quickFixes.length > 0 ? (
-                          <div className="mt-3">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                              Quick fixes
-                            </p>
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {quickFixes.map((fix) => (
-                                <button
-                                  key={fix.id}
-                                  type="button"
-                                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-400"
-                                  onClick={() => focusInputWithValue(fix.value)}
-                                  disabled={isTyping}
-                                >
-                                  {fix.label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        ) : null}
                       </div>
                     </div>
                   );
@@ -2635,13 +2760,22 @@ const applyDecisionActionToInvoice = (invoice, action) => {
             </div>
           </div>
           {showAssumptionsCard ? (
-            <div className="mt-2 space-y-2 sm:mt-3">
-              {showConfirmDetails ? (
-                <section className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className={`space-y-2 ${hasReviewCard ? "mt-0 sm:mt-3" : "mt-2 sm:mt-3"}`}>
+                <section
+                  className={`w-full border border-slate-200 bg-white p-4 shadow-sm ${
+                    hasReviewCard
+                      ? "rounded-b-2xl rounded-t-none border-t-0 sm:rounded-2xl sm:border"
+                      : "rounded-2xl"
+                  }`}
+                >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <h2 className="text-sm font-semibold text-slate-900">
-                          {openDecisionCount > 0 ? "Decisions" : "Confirm"}
+                          {openDecisionCount > 0
+                            ? "Decisions"
+                            : canGenerateInvoice
+                              ? "Ready to generate"
+                              : "Confirm"}
                         </h2>
                         {openDecisionCount > 0 ? (
                           <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
@@ -2664,12 +2798,12 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                         Summary updated {summaryTimeLabel}
                       </p>
                     ) : null}
-                    {openDecisionCount > 0 ? (
+                    {openDecisionCount > 0 && showConfirmDetails ? (
                       <p className="mt-2 text-xs text-amber-800">
                         Unclear items from your notes — choose Add or Skip.
                       </p>
                     ) : null}
-                    {showQuickDecisions || hasVisibleDetails || hasDecisions ? (
+                    {showConfirmDetails && (showQuickDecisions || hasVisibleDetails || hasDecisions) ? (
                       <>
                         {showQuickDecisions ? (
                   <div
@@ -2738,7 +2872,19 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                           <span>
                             Decision {clampedDecisionIndex + 1} of {decisionItems.length}
                           </span>
-                          <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="text-xs font-semibold text-amber-800 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300 sm:hidden"
+                            onClick={() =>
+                              setDecisionFocusIndex((prev) =>
+                                Math.min(decisionItems.length - 1, prev + 1)
+                              )
+                            }
+                            disabled={isTyping || clampedDecisionIndex >= decisionItems.length - 1}
+                          >
+                            Next decision
+                          </button>
+                          <div className="hidden flex-wrap gap-2 sm:flex">
                             <button
                               type="button"
                               className="text-xs font-semibold text-amber-800 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
@@ -2773,8 +2919,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                             disabled={isTyping}
                           >
                             {showAllDecisions
-                              ? "Show fewer decisions"
-                              : `Show all decisions (${decisionItems.length})`}
+                              ? "Show one decision"
+                              : `See all decisions (${decisionItems.length})`}
                           </button>
                         </div>
                       ) : null}
@@ -3022,23 +3168,22 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                 ) : null}
                       </>
                     ) : null}
+                    <div className="mt-3 space-y-2">
+                      <button
+                        type="button"
+                        className={`inline-flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 active:scale-[0.98] ${
+                          ctaDisabled
+                            ? "cursor-not-allowed bg-slate-200 text-slate-500"
+                            : "bg-emerald-600 text-white"
+                        }`}
+                        disabled={ctaDisabled}
+                        onClick={handleGenerateInvoice}
+                      >
+                        Generate Invoice
+                      </button>
+                      <p className="text-xs text-slate-500">{ctaHelper}</p>
+                    </div>
                 </section>
-              ) : null}
-              <div className="space-y-2">
-                <button
-                  type="button"
-                  className={`inline-flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 active:scale-[0.98] ${
-                    ctaDisabled
-                      ? "cursor-not-allowed bg-slate-200 text-slate-500"
-                      : "bg-emerald-600 text-white"
-                  }`}
-                  disabled={ctaDisabled}
-                  onClick={handleGenerateInvoice}
-                >
-                  Generate Invoice
-                </button>
-                <p className="text-xs text-slate-500">{ctaHelper}</p>
-              </div>
             </div>
           ) : null}
         </div>
