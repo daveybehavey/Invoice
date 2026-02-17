@@ -151,6 +151,55 @@ test("does not ask labor follow-up for explicit no-charge labor", async () => {
   assert.equal(response.body.invoice.total, 4);
 });
 
+test("maps explicit free labor minutes to hours for $0 labor items", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Jan 28",
+          tasks: [{ description: "Inspection visit", amount: 0 }]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 28 inspection visit, maybe 30 mins. Didn't charge for that visit."
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  const laborLines = response.body.invoice.lineItems.filter((lineItem: { type: string }) => lineItem.type === "labor");
+  assert.equal(laborLines.length, 1);
+  assert.equal(laborLines[0].quantity, 0.5);
+  assert.equal(laborLines[0].unitPrice, 0);
+  assert.equal(laborLines[0].amount, 0);
+});
+
+test("extracts customer name from parenthetical name + address text", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Jan 30",
+          tasks: [{ description: "Fixed sink leak" }]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput:
+      "Jan 30 fixed sink leak for 1 hour at $90/hr at Mike's place (Mike Johnson, 1423 Pine St)."
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  assert.equal(response.body.invoice.customerName, "Mike Johnson");
+});
+
 test("returns unparsed lines when messy notes include unrelated items", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 

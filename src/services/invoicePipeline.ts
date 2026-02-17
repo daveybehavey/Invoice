@@ -761,20 +761,31 @@ function applyFreeLaborMinutesFromText(
 
   const normalizedSource = sourceText.replace(/[’‘]/g, "'").replace(/[“”]/g, "\"");
   const freeChargeRegex = /\b(?:did\s+not\s+charge|didn't\s+charge|didnt\s+charge|no\s+charge|free)\b/i;
-  const freeMinuteSentences = normalizedSource
+  const sentenceSignals = normalizedSource
     .split(/\r?\n|[.!?]+/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((sentence) => ({
+    .map((sentence, index) => ({
+      index,
       sentence,
-      minutesMatch: sentence.match(/(\d+(?:\.\d+)?)\s*(?:mins?|minutes?)\b/i)
-    }))
-    .filter(
-      ({ sentence, minutesMatch }) =>
-        minutesMatch && freeChargeRegex.test(sentence)
+      minutesMatch: sentence.match(/(\d+(?:\.\d+)?)\s*(?:mins?|minutes?)\b/i),
+      hasFreeCharge: freeChargeRegex.test(sentence)
+    }));
+
+  const directMatch = sentenceSignals.find(
+    ({ minutesMatch, hasFreeCharge }) => Boolean(minutesMatch) && hasFreeCharge
+  );
+  const contextualMatch =
+    directMatch ??
+    sentenceSignals.find(
+      ({ index, minutesMatch }) =>
+        Boolean(minutesMatch) &&
+        sentenceSignals.some(
+          (candidate) => candidate.hasFreeCharge && Math.abs(candidate.index - index) <= 1
+        )
     );
 
-  if (freeMinuteSentences.length === 0) {
+  if (!contextualMatch) {
     return structuredInvoice;
   }
 
@@ -803,7 +814,7 @@ function applyFreeLaborMinutesFromText(
     return structuredInvoice;
   }
 
-  const minutesValue = Number(freeMinuteSentences[0].minutesMatch?.[1]);
+  const minutesValue = Number(contextualMatch.minutesMatch?.[1]);
   if (!Number.isFinite(minutesValue) || minutesValue <= 0) {
     return structuredInvoice;
   }
