@@ -237,6 +237,7 @@ const formatLaborDuration = (hours) => {
   return Number.isInteger(rounded) ? `${rounded}h` : `${rounded}h`;
 };
 
+// Keep this in sync with src/services/intakeReadiness.ts.
 const evaluateIntakeReadiness = ({
   intakePhase,
   followUp,
@@ -244,10 +245,12 @@ const evaluateIntakeReadiness = ({
   openDecisionCount,
   pendingLaborRate
 }) => {
+  const normalizedDecisionCount =
+    Number.isFinite(openDecisionCount) && openDecisionCount > 0 ? Math.floor(openDecisionCount) : 0;
   const hasFinishedInvoice = Boolean(finishedInvoice);
   const needsFollowUp = intakePhase === "awaiting_follow_up" || Boolean(followUp);
   const needsLaborHoursOnly = needsFollowUp && Number.isFinite(pendingLaborRate);
-  const canGenerate = hasFinishedInvoice && openDecisionCount === 0 && !needsFollowUp;
+  const canGenerate = hasFinishedInvoice && normalizedDecisionCount === 0 && !needsFollowUp;
   const needsSummaryConfirmation = intakePhase === "ready_to_summarize";
 
   let lockReason = "missing_input";
@@ -257,7 +260,7 @@ const evaluateIntakeReadiness = ({
     lockReason = "labor_hours_missing";
   } else if (needsFollowUp) {
     lockReason = "labor_pricing_missing";
-  } else if (openDecisionCount > 0) {
+  } else if (normalizedDecisionCount > 0) {
     lockReason = "open_decisions";
   } else if (hasFinishedInvoice) {
     lockReason = "review_required";
@@ -276,10 +279,10 @@ const evaluateIntakeReadiness = ({
     if (!hasFinishedInvoice && !needsFollowUp) {
       return "paste";
     }
-    if (needsFollowUp || openDecisionCount > 0) {
+    if (needsFollowUp || normalizedDecisionCount > 0) {
       return "decisions";
     }
-    if (hasFinishedInvoice && openDecisionCount === 0) {
+    if (hasFinishedInvoice && normalizedDecisionCount === 0) {
       return "confirm";
     }
     return "review";
@@ -302,7 +305,7 @@ const evaluateIntakeReadiness = ({
     hasFinishedInvoice,
     needsFollowUp,
     needsLaborHoursOnly,
-    openDecisionCount,
+    openDecisionCount: normalizedDecisionCount,
     canGenerate,
     needsSummaryConfirmation,
     lockReason,
