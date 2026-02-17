@@ -237,6 +237,81 @@ const formatLaborDuration = (hours) => {
   return Number.isInteger(rounded) ? `${rounded}h` : `${rounded}h`;
 };
 
+const evaluateIntakeReadiness = ({
+  intakePhase,
+  followUp,
+  finishedInvoice,
+  openDecisionCount,
+  pendingLaborRate
+}) => {
+  const hasFinishedInvoice = Boolean(finishedInvoice);
+  const needsFollowUp = intakePhase === "awaiting_follow_up" || Boolean(followUp);
+  const needsLaborHoursOnly = needsFollowUp && Number.isFinite(pendingLaborRate);
+  const canGenerate = hasFinishedInvoice && openDecisionCount === 0 && !needsFollowUp;
+  const needsSummaryConfirmation = intakePhase === "ready_to_summarize";
+
+  let lockReason = "missing_input";
+  if (canGenerate) {
+    lockReason = "ready";
+  } else if (needsLaborHoursOnly) {
+    lockReason = "labor_hours_missing";
+  } else if (needsFollowUp) {
+    lockReason = "labor_pricing_missing";
+  } else if (openDecisionCount > 0) {
+    lockReason = "open_decisions";
+  } else if (hasFinishedInvoice) {
+    lockReason = "review_required";
+  }
+
+  const helperTextByReason = {
+    ready: "Ready to generate.",
+    labor_hours_missing: "Add hours for each labor line to continue.",
+    labor_pricing_missing: "Provide labor pricing to continue.",
+    open_decisions: "Resolve decisions to generate the invoice.",
+    review_required: "Review the draft to continue.",
+    missing_input: "Paste notes to start."
+  };
+
+  const wizardStep = (() => {
+    if (!hasFinishedInvoice && !needsFollowUp) {
+      return "paste";
+    }
+    if (needsFollowUp || openDecisionCount > 0) {
+      return "decisions";
+    }
+    if (hasFinishedInvoice && openDecisionCount === 0) {
+      return "confirm";
+    }
+    return "review";
+  })();
+
+  const targetPhase = (() => {
+    if (needsFollowUp) {
+      return "awaiting_follow_up";
+    }
+    if (!hasFinishedInvoice) {
+      return "collecting";
+    }
+    if (canGenerate) {
+      return intakePhase === "ready_to_generate" ? "ready_to_generate" : "ready_to_summarize";
+    }
+    return "ready_to_summarize";
+  })();
+
+  return {
+    hasFinishedInvoice,
+    needsFollowUp,
+    needsLaborHoursOnly,
+    openDecisionCount,
+    canGenerate,
+    needsSummaryConfirmation,
+    lockReason,
+    helperText: helperTextByReason[lockReason] ?? helperTextByReason.missing_input,
+    wizardStep,
+    targetPhase
+  };
+};
+
 const generateInvoiceNumber = () => {
   const now = new Date();
   const ymd = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}${String(
@@ -812,7 +887,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
   const hasAssumptions =
     assumptionItems.length > 0 || auditAssumptionItems.length > 0 || unparsedItems.length > 0;
   const hasDecisions = decisionItems.length > 0;
-  const openDecisionCount = openDecisions.length;
+  const intakeReadiness = evaluateIntakeReadiness({
+    intakePhase,
+    followUp,
+    finishedInvoice,
+    openDecisionCount: openDecisions.length,
+    pendingLaborRate
+  });
+  const openDecisionCount = intakeReadiness.openDecisionCount;
   const taxAssumptionPresent = assumptions.some((item) =>
     item.toLowerCase().includes("tax assumed")
   );
@@ -826,8 +908,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     hasVisibleAssumptions ||
     auditStatus === "timed_out" ||
     auditStatus === "failed";
-  const needsLaborPricing = intakePhase === "awaiting_follow_up" || Boolean(followUp);
-  const needsLaborHoursOnly = needsLaborPricing && Number.isFinite(pendingLaborRate);
+  const needsLaborPricing = intakeReadiness.needsFollowUp;
+  const needsLaborHoursOnly = intakeReadiness.needsLaborHoursOnly;
   const showConfirmDetails =
     openDecisionCount > 0 || hasVisibleDetails || hasDecisions || needsLaborPricing;
   const showAssumptionsCard = hasReviewCard || showConfirmDetails;
@@ -852,21 +934,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     }
     return parts.join(" • ");
   })();
-  const wizardStep = (() => {
-    if (!finishedInvoice && intakePhase === "collecting") {
-      return "paste";
-    }
-    if (intakePhase === "awaiting_follow_up") {
-      return "decisions";
-    }
-    if (finishedInvoice && openDecisionCount > 0) {
-      return "decisions";
-    }
-    if (finishedInvoice && openDecisionCount === 0) {
-      return "confirm";
-    }
-    return "review";
-  })();
+  const wizardStep = intakeReadiness.wizardStep;
   const wizardSteps = [
     { id: "paste", label: "Paste" },
     { id: "review", label: "Review" },
@@ -881,7 +949,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const needsSummaryConfirmation = intakePhase === "ready_to_summarize";
+  const needsSummaryConfirmation = intakeReadiness.needsSummaryConfirmation;
   const showQuickDecisions =
     intakePhase === "ready_to_summarize" && (hasDecisions || taxAssumptionPresent || pendingTaxRate);
   const hasMoreDecisions = decisionItems.length > 1;
@@ -904,20 +972,9 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       : "Quick replies";
   const normalizedInput = inputValue.trim().toLowerCase();
   const canSendWhileTyping = false;
-  const canGenerateInvoice =
-    !!finishedInvoice && openDecisionCount === 0 && intakePhase !== "awaiting_follow_up";
+  const canGenerateInvoice = intakeReadiness.canGenerate;
   const ctaDisabled = !canGenerateInvoice;
-  const ctaHelper = canGenerateInvoice
-    ? "Ready to generate."
-    : needsLaborHoursOnly
-      ? "Add hours for each labor line to continue."
-      : needsLaborPricing
-        ? "Provide labor pricing to continue."
-        : openDecisionCount > 0
-          ? "Resolve decisions to generate the invoice."
-          : finishedInvoice
-            ? "Review the draft to continue."
-            : "Paste notes to start.";
+  const ctaHelper = intakeReadiness.helperText;
 
   const extractDecisionSnippet = (prompt) => {
     const quoted = prompt.match(/"([^"]+)"/);
@@ -2116,9 +2173,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     setInputValue("");
 
     const shouldEditDraft =
-      !!finishedInvoice &&
-      openDecisions.length === 0 &&
-      intakePhase !== "awaiting_follow_up" &&
+      intakeReadiness.canGenerate &&
       (intakePhase === "ready_to_generate" || (hasReviewCard && showChatInput));
     if (shouldEditDraft) {
       runInvoiceEditRequest(trimmed);
