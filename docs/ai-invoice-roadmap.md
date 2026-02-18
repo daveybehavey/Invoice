@@ -55,14 +55,26 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
 20. Flow friction capture script
    - Added `npm run test:friction` scripted first-time-user pass.
    - Script logs ambiguity/hidden-state checks and writes `docs/flow-friction-latest.json`.
+21. Friction follow-up tuning
+   - Review-card guidance now uses clearer next-step language ("Use the Decisions card to choose Add or Skip.").
+   - Removed duplicate decision reminder copy to reduce visual repetition.
+22. Mobile editor navigation polish
+   - Mobile tools now open in a bottom-sheet drawer instead of full-screen replacement.
+   - Bottom bar shows active panel state and removes duplicate tab controls inside the drawer.
+23. OCR confidence confirmation gate
+   - Low-confidence OCR now requires an explicit user checkbox confirmation before draft build.
+   - Guard resets cleanly when file/extracted text changes.
+24. At-a-glance capture trust signal
+   - Review summary now always shows a short "Captured:" preview line with first detected items.
+   - Users can verify extraction quality without expanding details first.
 
 ## Next (current priorities)
-1. Friction follow-up tuning
-   - Use `test:friction` output plus manual messy-input runs to tighten copy and action order.
-2. Mobile editor navigation polish
-   - Consolidate mobile actions for Manual Editor so style/tone/AI/export feel single-surface.
-3. Future: image notes quality guardrails
-   - Add explicit OCR confidence review UX before parse for lower-confidence uploads.
+1. Decision card simplification pass
+   - Tighten one-decision mode wording and actions so Add/Skip reads as a single obvious next step.
+2. Review details placement polish
+   - Reduce top-right control density by clarifying where "Show details" lives on mobile vs desktop.
+3. OCR quality iteration (later)
+   - Consider optional re-extract guidance and richer warning reasons for borderline OCR output.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.

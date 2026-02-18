@@ -2942,6 +2942,11 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     };
                   });
                   const remainingPreviewCount = Math.max(0, payload.lineItems.length - previewItems.length);
+                  const capturedPreviewSummary = previewItems
+                    .slice(0, 2)
+                    .map((item) => item.label)
+                    .join(", ");
+                  const capturedPreviewHiddenCount = Math.max(0, payload.lineItems.length - 2);
                   const decisionCtaLabel = "Go to decisions";
                   const foundText =
                     payload.lineItems.length > 0
@@ -3134,6 +3139,15 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                                 </button>
                               ) : null}
                             </p>
+                            {capturedPreviewSummary ? (
+                              <p className="mt-1 text-xs text-slate-500">
+                                <span className="font-semibold text-slate-700">Captured:</span>{" "}
+                                {capturedPreviewSummary}
+                                {capturedPreviewHiddenCount > 0
+                                  ? ` (+${capturedPreviewHiddenCount} more)`
+                                  : ""}
+                              </p>
+                            ) : null}
                             {pendingDecisionCount > 0 ? (
                               <p className="mt-1 text-xs text-amber-700">
                                 Some amounts stay hidden until you choose Add or Skip.
