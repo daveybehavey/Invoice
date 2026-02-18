@@ -202,7 +202,7 @@ const initialIntakeMessages = [
   {
     id: "msg-1",
     role: "ai",
-    text: "Hi! Paste notes or describe the job and I'll build a draft invoice."
+    text: "Paste your notes in any format. I will structure them into an invoice draft."
   }
 ];
 
@@ -302,10 +302,10 @@ const evaluateIntakeReadiness = ({
 
   const helperTextByReason = {
     ready: "Ready to generate.",
-    labor_hours_missing: "Add hours for each labor line to continue.",
-    labor_pricing_missing: "Provide labor pricing to continue.",
-    open_decisions: "Resolve decisions to generate the invoice.",
-    review_required: "Review the draft to continue.",
+    labor_hours_missing: "Add missing hours to continue.",
+    labor_pricing_missing: "Add labor pricing to continue.",
+    open_decisions: "Resolve open decisions to continue.",
+    review_required: "Review the draft, then generate.",
     missing_input: "Paste notes to start."
   };
 
@@ -644,34 +644,32 @@ const applyDecisionActionToInvoice = (invoice, action) => {
 
   const buildSummaryText = (invoice, decisions = [], unparsedCount = 0) => {
     if (!invoice) {
-      return "I need a bit more detail before drafting an invoice.";
+      return "I need a little more detail before I can draft the invoice.";
     }
-  const summaryLines = [];
+    const summaryLines = [];
     const itemCount = invoice.lineItems.length;
-    summaryLines.push(
-      `Here's what I found: ${itemCount} line item${itemCount > 1 ? "s" : ""} captured.`
-    );
+    summaryLines.push(`I captured ${itemCount} line item${itemCount > 1 ? "s" : ""}.`);
     if (decisions.length > 0) {
       summaryLines.push(
-        `${decisions.length} decision${decisions.length > 1 ? "s" : ""} still ${
-          decisions.length > 1 ? "need" : "needs"
-        } your call.`
+        `I still need your decision on ${decisions.length} item${
+          decisions.length > 1 ? "s" : ""
+        }.`
       );
     }
     if (unparsedCount > 0) {
       summaryLines.push(
-        `${unparsedCount} note${unparsedCount > 1 ? "s" : ""} not captured yet.`
+        `${unparsedCount} note${unparsedCount > 1 ? "s" : ""} still need${
+          unparsedCount > 1 ? "" : "s"
+        } review.`
       );
     }
-    summaryLines.push("Review the snapshot below.");
+    summaryLines.push("Check the draft snapshot below.");
     if (decisions.length > 0) {
       return `${summaryLines.join(
         " "
-      )}\n\nDraft ready. Resolve the remaining decisions below to generate the invoice.`;
+      )}\n\nDraft is almost ready. Resolve the decisions below, then generate.`;
     }
-    return `${summaryLines.join(
-      " "
-    )}\n\nDraft ready. Generate the invoice whenever you're ready.`;
+    return `${summaryLines.join(" ")}\n\nDraft is ready. Generate when you are ready.`;
   };
 
   const buildReviewPayload = (invoice, decisions = [], unparsed = []) => {
@@ -706,7 +704,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
 
   const buildDecisionFollowUp = (decisions) => {
     const lines = decisions.map((decision) => `- ${decision.prompt}`);
-    return `Pending decisions (optional to resolve now):\n${lines.join("\n")}`;
+    return `These decisions are still open:\n${lines.join("\n")}\n\nChoose Add or Skip for each one.`;
   };
 
   const buildDraftFromInvoice = (invoice, taxOverride) => {
@@ -1332,7 +1330,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     dismissTimeoutMessage(messageId);
     abortOngoingRequest();
     setIntakePhase("collecting");
-    appendAiMessage("Okay — canceled. You can trim the notes or try again.");
+    appendAiMessage("Canceled. You can shorten the notes and try again.");
   };
 
   const runDeepAudit = async ({ structuredInvoice, sourceText, decisionSignature, summaryRequestId }) => {
@@ -1656,7 +1654,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     const nextInvoice = payload?.invoice ?? null;
     if (!nextInvoice) {
       appendAiMessage(
-        "I couldn’t pull a usable draft from that upload. Try another file or paste the key details."
+        "I could not build a usable draft from that upload. Try another file, or paste the key details."
       );
       setIntakePhase("collecting");
       return;
@@ -1791,8 +1789,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         setFinishedInvoice(null);
         setIntakePhase("awaiting_follow_up");
         const followUpText = payload?.followUp?.message
-          ? `${payload.followUp.message} Reply with either a flat amount (e.g. "flat $300") or an hourly rate and hours per line. You can also tap a suggested rate below.`
-          : "I need a bit more pricing detail. Share either a flat amount or an hourly rate + hours.";
+          ? `${payload.followUp.message} Reply with either "flat $300" or "$95/hr" plus hours per line. You can also tap a suggestion below.`
+          : "I still need labor pricing. Share either a flat amount or an hourly rate plus hours.";
         if (decisionAck) {
           appendAiMessage(decisionAck);
           showDecisionToast(decisionAck, { durationMs: canUndoDecision ? 9000 : 3500 });
@@ -1907,7 +1905,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null,
         completedAfterSummary: summaryAt ? responseAt > summaryAt : false
       });
-      appendAiMessage("Sorry—something went wrong. Can you try that again?");
+      appendAiMessage("Something went wrong. Please try again.");
     } finally {
       if (requestId === requestIdRef.current) {
         setIsTyping(false);
@@ -1921,7 +1919,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
 
   const runLaborPricingRequest = async (laborPricing, transcript, lastUserMessage) => {
     if (!structuredInvoice) {
-      appendAiMessage("I need to re-check the details before finishing. Please resend your notes.");
+      appendAiMessage("I need to re-check the details first. Please resend your notes.");
       setIntakePhase("collecting");
       return;
     }
@@ -2096,7 +2094,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null,
         completedAfterSummary: summaryAt ? responseAt > summaryAt : false
       });
-      appendAiMessage("I still need the labor pricing details to finish the invoice.");
+      appendAiMessage("I still need labor pricing details to finish this invoice.");
     } finally {
       if (requestId === requestIdRef.current) {
         setIsTyping(false);
@@ -2110,7 +2108,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
 
   const runInvoiceEditRequest = async (instruction) => {
     if (!finishedInvoice) {
-      appendAiMessage("I need a draft before I can edit it. Please generate one first.");
+      appendAiMessage("Generate a draft first, then I can apply edits.");
       return;
     }
     requestIdRef.current += 1;
@@ -2156,7 +2154,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         return;
       }
       console.log("[edit:error]", { requestId, requestStartedAt, responseAt: Date.now() });
-      appendAiMessage("Sorry—something went wrong while updating the draft.");
+      appendAiMessage("Something went wrong while updating the draft. Please try again.");
     } finally {
       if (requestId === requestIdRef.current) {
         setIsTyping(false);
@@ -2354,7 +2352,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
 
       if (isNegative && !hasNumbers && wordCount <= 4) {
         setIntakePhase("collecting");
-        appendAiMessage("Got it. What should I fix?");
+        appendAiMessage("Got it. Tell me what you want changed.");
         return true;
       }
     }
@@ -2365,14 +2363,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       });
       if (parseResult?.resolutionType) {
         const resolutionCopy = {
-          included_in_flat_fee: "Included in flat fee — no separate charge.",
-          no_charge: "No extra charge — got it.",
-          already_covered: "Already covered — I’ll move on.",
-          declined_billing: "Not billed separately — understood."
+          included_in_flat_fee: "Included in the flat fee. No separate charge.",
+          no_charge: "Marked as no charge.",
+          already_covered: "Marked as already covered.",
+          declined_billing: "Marked as not billed separately."
         }[parseResult.resolutionType];
         setLaborPricingNote(resolutionCopy ?? "");
         setPendingLaborRate(null);
-        appendAiMessage(resolutionCopy ?? "Got it — no separate charge.");
+        appendAiMessage(resolutionCopy ?? "Marked as no separate charge.");
         setIntakePhase("collecting");
         const shouldResolveDecisions = openDecisions.length > 0 && intakePhase !== "awaiting_follow_up";
         const resolutionText = shouldResolveDecisions
@@ -2400,8 +2398,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         setLaborPricingNote("");
         appendAiMessage(
           parseResult.laborPricing.billingType === "flat"
-            ? "Flat labor amount noted."
-            : "Hourly rate noted."
+            ? "Flat labor amount captured."
+            : "Hourly rate captured."
         );
         runLaborPricingRequest(
           parseResult.laborPricing,
@@ -2417,11 +2415,11 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         setPendingLaborRate(rate);
         const itemCount = followUp?.laborItems?.length ?? 0;
         const rateNote = itemCount
-          ? `Rate noted at $${rate}/hr — add hours for ${itemCount} item${itemCount > 1 ? "s" : ""}.`
-          : `Rate noted at $${rate}/hr — add hours for each labor line.`;
+          ? `Saved $${rate}/hr. Add hours for ${itemCount} labor line${itemCount > 1 ? "s" : ""}.`
+          : `Saved $${rate}/hr. Add hours for each labor line.`;
         setLaborPricingNote(rateNote);
         appendAiMessage(
-          `Got it — $${rate}/hr. How many hours for each labor line? Reply like: \"2 hours, 1 hour\".`
+          `Got it: $${rate}/hr. Now share hours for each labor line (example: "2 hours, 1 hour").`
         );
         return true;
       }
@@ -2506,13 +2504,13 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                   <p className="text-sm font-semibold text-slate-900">Paste your notes</p>
                   <p className="mt-1 text-sm text-slate-600">
-                    Paste anything — dates, rates, parts, “not sure” items. I’ll sort it out.
+                    Paste messy notes as-is: dates, hours, rates, parts, and unsure items.
                   </p>
                   <textarea
                     id="ai-intake-input"
                     rows={6}
                     className="mt-4 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                    placeholder="Example: Jan 10 fixed sink 2h at $90/hr. Parts: washer $5. Not sure about cabinet adjustment."
+                    placeholder="Example: Jan 10 fixed sink, 2h at $90/hr. Parts: washer $5. Not sure if cabinet adjustment should be billed."
                     value={inputValue}
                     onChange={(event) => setInputValue(event.target.value)}
                   />
@@ -2525,7 +2523,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     >
                       Build invoice
                     </button>
-                    {isTyping ? <p className="text-xs text-slate-500">Working on it…</p> : null}
+                    {isTyping ? <p className="text-xs text-slate-500">Reading your notes…</p> : null}
                   </div>
                 </div>
               ) : null}
@@ -2579,12 +2577,12 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     <div key={message.id} className="flex justify-start">
                       <div className="w-full rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm shadow-sm">
                         <p className="text-sm font-semibold text-amber-900">
-                          {isLaborTimeout ? "Still working on labor pricing." : "Still working on this."}
+                          {isLaborTimeout ? "Still checking labor pricing..." : "Still working..."}
                         </p>
                         <p className="mt-1 text-sm text-amber-800">
                           {canRetryShort
-                            ? "Want me to keep going or try a shorter pass?"
-                            : "Want me to keep going or cancel?"}
+                            ? "Do you want me to keep going, or run a faster pass?"
+                            : "Do you want me to keep going, or cancel?"}
                         </p>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <button
@@ -2602,7 +2600,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                               onClick={retryWithShortPass}
                               disabled={isTyping}
                             >
-                              Retry shorter
+                              Retry faster
                             </button>
                           ) : null}
                           <button
@@ -2683,8 +2681,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                       : "No decisions pending.";
                   const nextStepText =
                     pendingDecisionCount > 0
-                      ? "Resolve the decisions below to generate the invoice."
-                      : "Generate the invoice below.";
+                      ? "Resolve decisions below, then generate."
+                      : "Generate your invoice below.";
                   if (primaryLaborRate) {
                     quickFixes.push({
                       id: "fix-rate",
@@ -2893,12 +2891,12 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                             </p>
                           ) : null}
                           <p className="text-xs text-slate-500">
-                            I’ll flag anything unclear below — you decide on money.
+                            I flag unclear money items below. You decide what to bill.
                           </p>
                           {pendingDecisionCount > 0 ? (
                             <p className="text-xs font-semibold text-amber-700">
-                              {pendingDecisionCount} decision{pendingDecisionCount > 1 ? "s" : ""}{" "}
-                              below to finish.
+                              Resolve {pendingDecisionCount} decision
+                              {pendingDecisionCount > 1 ? "s" : ""} below to continue.
                             </p>
                           ) : null}
                           {!reviewCardCollapsed
@@ -3077,7 +3075,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     ) : null}
                     {openDecisionCount > 0 && showConfirmDetails ? (
                       <p className="mt-2 text-xs text-amber-800">
-                        Unclear items from your notes — choose Add or Skip.
+                        I found unclear money items. Choose Add or Skip.
                       </p>
                     ) : null}
                     {showConfirmDetails && (showQuickDecisions || hasVisibleDetails || hasDecisions) ? (
@@ -3102,8 +3100,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     </div>
                     {showDecisionWhy ? (
                       <p className="mt-2 text-sm text-amber-900">
-                        These are items your notes were unclear about. Choose Add or Skip so I don’t
-                        guess on money.
+                        These items were unclear in your notes. Choose Add or Skip so no money is guessed.
                       </p>
                     ) : null}
                     <div className="mt-2 space-y-2">
@@ -3203,7 +3200,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                       ) : null}
                       {showAllDecisions && decisionItems.length > 1 ? (
                         <div className="space-y-2">
-                          <p className="text-sm text-amber-900">Resolve all pending items</p>
+                          <p className="text-sm text-amber-900">Resolve all remaining decisions</p>
                           <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
@@ -3239,7 +3236,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                           <p className="text-sm text-amber-900">
                             {pendingTaxRate
                               ? `Tax set to ${pendingTaxRate}% (draft).`
-                              : "Tax: 0% assumed."}
+                              : "Tax default: 0%."}
                           </p>
                           <div className="flex flex-wrap gap-2">
                             {pendingTaxRate ? (
@@ -3391,7 +3388,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     ) : null}
                     {unparsedItems.length > 0 ? (
                       <div className="mt-3 space-y-2">
-                        <p className="text-xs font-semibold text-slate-600">Not yet captured</p>
+                        <p className="text-xs font-semibold text-slate-600">Needs review</p>
                         <ul className="mt-1 list-disc space-y-2 pl-5 text-sm text-slate-700">
                           {unparsedItems.map((item) => (
                             <li key={item.id}>
@@ -3423,7 +3420,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     ) : null}
                     {assumptionItems.length > 0 ? (
                       <div className="mt-3">
-                        <p className="text-xs font-semibold text-slate-600">Captured from notes</p>
+                        <p className="text-xs font-semibold text-slate-600">Captured context</p>
                         <ul className="mt-1 list-disc space-y-2 pl-5 text-sm text-slate-600">
                           {assumptionItems.map((item) => (
                             <li key={item.id}>{item.text}</li>
@@ -3433,7 +3430,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     ) : null}
                     {auditAssumptionItems.length > 0 ? (
                       <div className="mt-3">
-                        <p className="text-xs font-semibold text-slate-600">Assumptions made</p>
+                        <p className="text-xs font-semibold text-slate-600">AI assumptions</p>
                         <ul className="mt-1 list-disc space-y-2 pl-5 text-sm text-slate-600">
                           {auditAssumptionItems.map((item) => (
                             <li key={item.id}>{item.text}</li>
