@@ -34,19 +34,18 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
 14. Draft polish pass
    - Stronger line-item wording cleanup across intake + manual editor.
    - Description cleanup keeps all qty/rate/amount math untouched.
+15. Canonical readiness contract
+   - Readiness evaluator now drives phase transitions from intake/labor responses.
+   - Generate CTA state and primary decision CTA derive from readiness lock state.
+   - Follow-up state now prefers payload data over stale phase labels.
 
 ## Next (current priorities)
-1. Real-user messy-flow QA pack
-   - Add a repeatable "messy script" regression set (API + UI).
-   - Capture friction notes and expected outputs.
-2. Mobile intake simplification (state-density pass)
-   - Keep decision-first focus on small screens.
-   - Continue hiding non-critical controls until needed.
-3. OCR confidence indicator
-   - Add explicit High/Medium/Low confidence label in review block.
-4. Canonical readiness contract
-   - Centralize canGenerate / openDecisions / follow-up readiness in one evaluator.
-   - Use evaluator output for phase transitions + generate button state.
+1. Readiness telemetry + auditability
+   - Emit compact readiness snapshots in debug logs to speed up regression triage.
+2. Manual editor polish (non-monetary)
+   - Keep improving wording/grammar cleanup without mutating qty/rate/amount.
+3. Mobile complexity gating pass
+   - Keep one primary action visible; reveal secondary details progressively.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.

@@ -80,3 +80,17 @@ test("keeps ready_to_generate when invoice is complete and already confirmed", (
   assert.equal(readiness.wizardStep, "confirm");
   assert.equal(readiness.targetPhase, "ready_to_generate");
 });
+
+test("does not stay in follow-up when phase says awaiting but followUp data is cleared", () => {
+  const readiness = evaluateIntakeReadiness({
+    intakePhase: "awaiting_follow_up",
+    followUp: null,
+    finishedInvoice: { lineItems: [{ id: "line-1" }] },
+    openDecisionCount: 0,
+    pendingLaborRate: null
+  });
+
+  assert.equal(readiness.needsFollowUp, false);
+  assert.equal(readiness.canGenerate, true);
+  assert.equal(readiness.targetPhase, "ready_to_summarize");
+});

@@ -37,10 +37,10 @@ export interface IntakeReadinessState {
 
 const HELPER_TEXT_BY_REASON: Record<IntakeLockReason, string> = {
   ready: "Ready to generate.",
-  labor_hours_missing: "Add hours for each labor line to continue.",
-  labor_pricing_missing: "Provide labor pricing to continue.",
-  open_decisions: "Resolve decisions to generate the invoice.",
-  review_required: "Review the draft to continue.",
+  labor_hours_missing: "Add missing hours to continue.",
+  labor_pricing_missing: "Add labor pricing to continue.",
+  open_decisions: "Resolve open decisions to continue.",
+  review_required: "Review the draft, then generate.",
   missing_input: "Paste notes to start."
 };
 
@@ -54,10 +54,11 @@ export function evaluateIntakeReadiness({
   const normalizedDecisionCount =
     Number.isFinite(openDecisionCount) && openDecisionCount > 0 ? Math.floor(openDecisionCount) : 0;
   const hasFinishedInvoice = Boolean(finishedInvoice);
-  const needsFollowUp = intakePhase === "awaiting_follow_up" || Boolean(followUp);
+  // Data authority first: follow-up payload drives follow-up state, not phase labels.
+  const needsFollowUp = Boolean(followUp);
   const needsLaborHoursOnly = needsFollowUp && Number.isFinite(pendingLaborRate);
   const canGenerate = hasFinishedInvoice && normalizedDecisionCount === 0 && !needsFollowUp;
-  const needsSummaryConfirmation = intakePhase === "ready_to_summarize";
+  const needsSummaryConfirmation = canGenerate && intakePhase !== "ready_to_generate";
 
   let lockReason: IntakeLockReason = "missing_input";
   if (canGenerate) {
@@ -92,8 +93,11 @@ export function evaluateIntakeReadiness({
     if (!hasFinishedInvoice) {
       return "collecting";
     }
-    if (canGenerate) {
-      return intakePhase === "ready_to_generate" ? "ready_to_generate" : "ready_to_summarize";
+    if (normalizedDecisionCount > 0) {
+      return "ready_to_summarize";
+    }
+    if (intakePhase === "ready_to_generate") {
+      return "ready_to_generate";
     }
     return "ready_to_summarize";
   })();

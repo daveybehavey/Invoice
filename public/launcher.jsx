@@ -282,10 +282,11 @@ const evaluateIntakeReadiness = ({
   const normalizedDecisionCount =
     Number.isFinite(openDecisionCount) && openDecisionCount > 0 ? Math.floor(openDecisionCount) : 0;
   const hasFinishedInvoice = Boolean(finishedInvoice);
-  const needsFollowUp = intakePhase === "awaiting_follow_up" || Boolean(followUp);
+  // Data authority first: follow-up payload drives follow-up state, not phase labels.
+  const needsFollowUp = Boolean(followUp);
   const needsLaborHoursOnly = needsFollowUp && Number.isFinite(pendingLaborRate);
   const canGenerate = hasFinishedInvoice && normalizedDecisionCount === 0 && !needsFollowUp;
-  const needsSummaryConfirmation = intakePhase === "ready_to_summarize";
+  const needsSummaryConfirmation = canGenerate && intakePhase !== "ready_to_generate";
 
   let lockReason = "missing_input";
   if (canGenerate) {
@@ -329,8 +330,11 @@ const evaluateIntakeReadiness = ({
     if (!hasFinishedInvoice) {
       return "collecting";
     }
-    if (canGenerate) {
-      return intakePhase === "ready_to_generate" ? "ready_to_generate" : "ready_to_summarize";
+    if (normalizedDecisionCount > 0) {
+      return "ready_to_summarize";
+    }
+    if (intakePhase === "ready_to_generate") {
+      return "ready_to_generate";
     }
     return "ready_to_summarize";
   })();
@@ -348,6 +352,20 @@ const evaluateIntakeReadiness = ({
     targetPhase
   };
 };
+
+const evaluateResponseReadiness = ({
+  followUp,
+  finishedInvoice,
+  openDecisionCount,
+  pendingLaborRate = null
+}) =>
+  evaluateIntakeReadiness({
+    intakePhase: "collecting",
+    followUp,
+    finishedInvoice,
+    openDecisionCount,
+    pendingLaborRate
+  });
 
 const generateInvoiceNumber = () => {
   const now = new Date();
@@ -1076,7 +1094,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
 
   const needsSummaryConfirmation = intakeReadiness.needsSummaryConfirmation;
   const showQuickDecisions =
-    intakePhase === "ready_to_summarize" && (hasDecisions || taxAssumptionPresent || pendingTaxRate);
+    intakeReadiness.lockReason === "open_decisions" &&
+    (hasDecisions || taxAssumptionPresent || pendingTaxRate);
   const hasMoreDecisions = decisionItems.length > 1;
   const clampedDecisionIndex = Math.min(
     decisionFocusIndex,
@@ -1100,7 +1119,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
   const canGenerateInvoice = intakeReadiness.canGenerate;
   const ctaDisabled = !canGenerateInvoice;
   const ctaHelper = intakeReadiness.helperText;
-  const hasDecisionPrimaryPath = openDecisionCount > 0;
+  const hasDecisionPrimaryPath = intakeReadiness.lockReason === "open_decisions";
   const primaryCtaLabel = hasDecisionPrimaryPath ? "Resolve decisions" : "Generate Invoice";
   const primaryCtaDisabled = hasDecisionPrimaryPath ? false : ctaDisabled;
 
@@ -1635,6 +1654,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       typeof seed?.sourceText === "string" && seed.sourceText.trim()
         ? seed.sourceText.trim()
         : userText;
+    const nextSeedFollowUp = payload?.needsFollowUp ? payload.followUp ?? null : null;
+    const nextSeedInvoice = payload?.needsFollowUp ? null : payload?.invoice ?? null;
+    const seedReadiness = evaluateResponseReadiness({
+      followUp: nextSeedFollowUp,
+      finishedInvoice: nextSeedInvoice,
+      openDecisionCount: nextOpenDecisions.length,
+      pendingLaborRate: null
+    });
     const seededMessages = [
       initialIntakeMessages[0],
       { id: `msg-${Date.now()}-user`, role: "user", text: userText }
@@ -1663,7 +1690,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       setLaborPricingNote("");
       setFollowUp(payload.followUp ?? null);
       setFinishedInvoice(null);
-      setIntakePhase("awaiting_follow_up");
+      setIntakePhase(seedReadiness.targetPhase);
       return;
     }
 
@@ -1672,7 +1699,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       appendAiMessage(
         "I could not build a usable draft from that upload. Try another file, or paste the key details."
       );
-      setIntakePhase("collecting");
+      setIntakePhase(seedReadiness.targetPhase);
       return;
     }
 
@@ -1680,7 +1707,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     setFinishedInvoice(nextInvoice);
     const decisionSignature = nextOpenDecisions.map((decision) => decision.prompt).sort().join("|");
     openDecisionSignatureRef.current = decisionSignature;
-    setIntakePhase("ready_to_summarize");
+    setIntakePhase(seedReadiness.targetPhase);
     appendSummaryMessage(
       buildSummaryText(nextInvoice, nextOpenDecisions, nextUnparsedLines.length),
       buildReviewPayload(nextInvoice, nextOpenDecisions, nextUnparsedLines)
@@ -1796,6 +1823,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       } else if (decisionAction) {
         clearDecisionUndoState();
       }
+      const adjustedInvoice = applyDecisionActionToInvoice(payload.invoice ?? null, decisionAction);
+      const nextFollowUp = payload?.needsFollowUp ? payload.followUp ?? null : null;
+      const responseReadiness = evaluateResponseReadiness({
+        followUp: nextFollowUp,
+        finishedInvoice: payload?.needsFollowUp ? null : adjustedInvoice,
+        openDecisionCount: nextOpenDecisions.length,
+        pendingLaborRate: null
+      });
 
       if (payload?.needsFollowUp) {
         setLaborPricingNote("");
@@ -1803,7 +1838,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         setFollowUp(payload.followUp ?? null);
         setStructuredInvoice(payload.structuredInvoice ?? null);
         setFinishedInvoice(null);
-        setIntakePhase("awaiting_follow_up");
+        setIntakePhase(responseReadiness.targetPhase);
         const followUpText = payload?.followUp?.message
           ? `${payload.followUp.message} Reply with either "flat $300" or "$95/hr" plus hours per line. You can also tap a suggestion below.`
           : "I still need labor pricing. Share either a flat amount or an hourly rate plus hours.";
@@ -1827,11 +1862,10 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       }
       setFollowUp(null);
       setStructuredInvoice(payload.structuredInvoice ?? null);
-      const adjustedInvoice = applyDecisionActionToInvoice(payload.invoice ?? null, decisionAction);
       setFinishedInvoice(adjustedInvoice);
+      setIntakePhase(responseReadiness.targetPhase);
       const decisionSignature = nextOpenDecisions.map((decision) => decision.prompt).sort().join("|");
       if (nextOpenDecisions.length > 0) {
-        setIntakePhase("ready_to_summarize");
         const isRepeatDecision =
           decisionSignature && decisionSignature === openDecisionSignatureRef.current;
         const followUpMessage = isRepeatDecision
@@ -1871,7 +1905,6 @@ const applyDecisionActionToInvoice = (invoice, action) => {
           }))
         });
       } else {
-        setIntakePhase("ready_to_summarize");
         openDecisionSignatureRef.current = "";
         if (decisionAck) {
           appendAiMessage(decisionAck);
@@ -2017,12 +2050,18 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       } else if (decisionAction) {
         clearDecisionUndoState();
       }
+      const responseReadiness = evaluateResponseReadiness({
+        followUp: null,
+        finishedInvoice: payload.invoice ?? null,
+        openDecisionCount: nextOpenDecisions.length,
+        pendingLaborRate: null
+      });
       setFollowUp(null);
       setStructuredInvoice(payload.structuredInvoice ?? structuredInvoice);
       setFinishedInvoice(payload.invoice ?? null);
+      setIntakePhase(responseReadiness.targetPhase);
       const decisionSignature = nextOpenDecisions.map((decision) => decision.prompt).sort().join("|");
       if (nextOpenDecisions.length > 0) {
-        setIntakePhase("ready_to_summarize");
         const isRepeatDecision =
           decisionSignature && decisionSignature === openDecisionSignatureRef.current;
         const followUpMessage = isRepeatDecision
@@ -2061,7 +2100,6 @@ const applyDecisionActionToInvoice = (invoice, action) => {
           }))
         });
       } else {
-        setIntakePhase("ready_to_summarize");
         openDecisionSignatureRef.current = "";
         if (decisionAck) {
           appendAiMessage(decisionAck);
@@ -2157,7 +2195,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       if (payload?.followUp) {
         appendAiMessage(payload.followUp);
       }
-      setIntakePhase("ready_to_generate");
+      const editReadiness = evaluateIntakeReadiness({
+        intakePhase: "ready_to_generate",
+        followUp: null,
+        finishedInvoice: nextInvoice,
+        openDecisionCount: openDecisions.length,
+        pendingLaborRate
+      });
+      setIntakePhase(editReadiness.targetPhase);
       const responseAt = Date.now();
       console.log("[edit:response]", {
         requestId,
@@ -2388,7 +2433,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         setPendingLaborRate(null);
         appendAiMessage(resolutionCopy ?? "Marked as no separate charge.");
         setIntakePhase("collecting");
-        const shouldResolveDecisions = openDecisions.length > 0 && intakePhase !== "awaiting_follow_up";
+        const shouldResolveDecisions =
+          intakeReadiness.lockReason === "open_decisions" && openDecisions.length > 0;
         const resolutionText = shouldResolveDecisions
           ? trimmed
           : lastDecisionResolutionRef.current || undefined;
@@ -2445,7 +2491,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       }
     }
 
-    const shouldResolveDecisions = openDecisions.length > 0 && intakePhase !== "awaiting_follow_up";
+    const shouldResolveDecisions =
+      intakeReadiness.lockReason === "open_decisions" && openDecisions.length > 0;
     const resolutionText = shouldResolveDecisions ? trimmed : lastDecisionResolutionRef.current || undefined;
     if (shouldResolveDecisions) {
       lastDecisionResolutionRef.current = trimmed;
