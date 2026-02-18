@@ -46,14 +46,23 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added "Quick clean descriptions" action in the Tone panel (desktop + mobile drawer).
    - Uses deterministic wording cleanup only; does not alter qty/rate/amount.
    - Added UI regression coverage for bulk clean behavior.
+18. Mobile complexity gating pass
+   - On mobile, review secondary content now starts collapsed behind a single "Show details" toggle.
+   - Decisions + primary CTA stay visible; secondary panels are progressively disclosed.
+19. Readiness debug panel (developer-only)
+   - Added optional floating readiness panel with live snapshot + recent readiness events.
+   - Enabled by `?readinessDebug=1` or `localStorage.invoiceReadinessDebug = "true"`.
+20. Flow friction capture script
+   - Added `npm run test:friction` scripted first-time-user pass.
+   - Script logs ambiguity/hidden-state checks and writes `docs/flow-friction-latest.json`.
 
 ## Next (current priorities)
-1. Mobile complexity gating pass
-   - Keep one primary action visible; reveal secondary details progressively.
-2. Readiness debug panel (optional)
-   - Small developer-only drawer that shows current readiness snapshot live.
-3. Flow friction capture script
-   - Scripted "first-time user" pass that logs ambiguous copy or hidden states.
+1. Friction follow-up tuning
+   - Use `test:friction` output plus manual messy-input runs to tighten copy and action order.
+2. Mobile editor navigation polish
+   - Consolidate mobile actions for Manual Editor so style/tone/AI/export feel single-surface.
+3. Future: image notes quality guardrails
+   - Add explicit OCR confidence review UX before parse for lower-confidence uploads.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.

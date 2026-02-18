@@ -1,0 +1,42 @@
+{
+  "timestamp": "2026-02-18T18:40:09.688Z",
+  "baseUrl": "http://localhost:3000",
+  "checks": [
+    {
+      "name": "single primary action on paste",
+      "pass": true,
+      "details": "visible primary buttons: Build invoice"
+    },
+    {
+      "name": "quick actions hidden by default on mobile",
+      "pass": true,
+      "details": ""
+    },
+    {
+      "name": "at most one details toggle visible in decision state",
+      "pass": true,
+      "details": "visible toggles: 1"
+    },
+    {
+      "name": "single primary action with open decisions",
+      "pass": true,
+      "details": "visible primary buttons: Resolve decisions"
+    },
+    {
+      "name": "decision-first CTA is active while decisions are open",
+      "pass": true,
+      "details": "Primary CTA should guide user to resolve decisions first."
+    },
+    {
+      "name": "generate action hidden until decisions are resolved",
+      "pass": true,
+      "details": "Visible Generate buttons: 0"
+    },
+    {
+      "name": "generate enabled after resolving decision",
+      "pass": true,
+      "details": "Generate should unlock once no open decisions remain."
+    }
+  ],
+  "issues": []
+}

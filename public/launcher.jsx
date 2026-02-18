@@ -276,6 +276,17 @@ const logReadinessEvent = (event, payload) => {
     return;
   }
   console.log(`[readiness:${event}]`, payload);
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+    window.dispatchEvent(
+      new CustomEvent("invoice:readiness-debug", {
+        detail: {
+          event,
+          payload,
+          timestamp: Date.now()
+        }
+      })
+    );
+  }
 };
 
 const formatMoney = (value) =>
@@ -522,6 +533,15 @@ function AIIntake() {
   const [showDecisionWhy, setShowDecisionWhy] = useState(false);
   const [savedLaborRate, setSavedLaborRate] = useState(() => readStoredLaborRate());
   const [decisionUndoState, setDecisionUndoState] = useState(null);
+  const [isCompactViewport, setIsCompactViewport] = useState(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return false;
+    }
+    return window.matchMedia("(max-width: 767px)").matches;
+  });
+  const readinessDebugEnabled = isReadinessDebugEnabled();
+  const [readinessPanelOpen, setReadinessPanelOpen] = useState(readinessDebugEnabled);
+  const [readinessDebugEvents, setReadinessDebugEvents] = useState([]);
   const requestIdRef = useRef(0);
   const openDecisionSignatureRef = useRef("");
   const lastDecisionResolutionRef = useRef("");
@@ -961,6 +981,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     console.log("[summary:append]", lastSummaryMetaRef.current);
     setIsTyping(false);
     setReviewCardCollapsed(true);
+    setAssumptionsCollapsed(true);
     setShowChatInput(false);
     setMessages((prev) => {
       const next = [...prev];
@@ -1091,6 +1112,33 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     openDecisionCount > 0 || hasVisibleDetails || hasDecisions || needsLaborPricing;
   const showAssumptionsCard = hasReviewCard || showConfirmDetails;
   const showAssumptionDetails = !hasReviewCard || !assumptionsCollapsed;
+  const showReviewSecondary = isCompactViewport ? !reviewCardCollapsed : true;
+  const showReviewExpandedSections = !reviewCardCollapsed;
+  const readinessDebugSnapshot = {
+    ...readinessSnapshot,
+    showAssumptionsCard,
+    showAssumptionDetails,
+    showReviewSecondary,
+    showReviewExpandedSections,
+    showChatInput,
+    summaryLocked: summaryLockRef.current,
+    requestId: requestIdRef.current,
+    followUpType: followUp?.type ?? null,
+    pendingLaborRate,
+    pendingTaxRate
+  };
+  const readinessDebugFields = [
+    ["phase", readinessDebugSnapshot.intakePhase],
+    ["target", readinessDebugSnapshot.targetPhase],
+    ["lock", readinessDebugSnapshot.lockReason],
+    ["step", intakeReadiness.wizardStep],
+    ["canGenerate", readinessDebugSnapshot.canGenerate ? "true" : "false"],
+    ["needsFollowUp", readinessDebugSnapshot.needsFollowUp ? "true" : "false"],
+    ["openDecisions", String(readinessDebugSnapshot.openDecisionCount)],
+    ["needsConfirm", readinessDebugSnapshot.needsSummaryConfirmation ? "true" : "false"],
+    ["showChatInput", readinessDebugSnapshot.showChatInput ? "true" : "false"],
+    ["summaryLocked", readinessDebugSnapshot.summaryLocked ? "true" : "false"]
+  ];
 
   const summaryTimeLabel = summaryUpdatedAt
     ? summaryUpdatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
@@ -1278,7 +1326,16 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       setShowChatInput(true);
     }
     setTimeout(() => {
-      const input = document.getElementById("ai-intake-input");
+      const inputs = Array.from(document.querySelectorAll("textarea#ai-intake-input"));
+      const input =
+        inputs.find((candidate) => {
+          const element = candidate;
+          if (!(element instanceof HTMLElement)) {
+            return false;
+          }
+          const style = window.getComputedStyle(element);
+          return style.display !== "none" && style.visibility !== "hidden" && element.offsetParent !== null;
+        }) ?? inputs[0];
       if (input) {
         input.focus();
         if (typeof input.setSelectionRange === "function") {
@@ -1615,8 +1672,12 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     setAuditSummary("");
     setAuditSummaryAt(null);
     setSummaryUpdatedAt(null);
-    setReviewCardCollapsed(false);
+    setReviewCardCollapsed(true);
     setShowChatInput(false);
+    setAssumptionsCollapsed(true);
+    setShowAllDecisions(false);
+    setDecisionFocusIndex(0);
+    setShowDecisionWhy(false);
     setDecisionToast(null);
     setDecisionUndoState(null);
     openDecisionSignatureRef.current = "";
@@ -1633,6 +1694,55 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     }
     auditRequestIdRef.current += 1;
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const handleMediaChange = (event) => {
+      setIsCompactViewport(Boolean(event?.matches));
+    };
+    setIsCompactViewport(mediaQuery.matches);
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleMediaChange);
+      return () => mediaQuery.removeEventListener("change", handleMediaChange);
+    }
+    mediaQuery.addListener(handleMediaChange);
+    return () => mediaQuery.removeListener(handleMediaChange);
+  }, []);
+
+  useEffect(() => {
+    if (!readinessDebugEnabled) {
+      setReadinessPanelOpen(false);
+      setReadinessDebugEvents([]);
+      return;
+    }
+    setReadinessPanelOpen(true);
+  }, [readinessDebugEnabled]);
+
+  useEffect(() => {
+    if (!readinessDebugEnabled || typeof window === "undefined") {
+      return;
+    }
+    const handleReadinessEvent = (event) => {
+      const detail = event?.detail;
+      if (!detail?.event) {
+        return;
+      }
+      setReadinessDebugEvents((previous) => {
+        const nextEvent = {
+          event: detail.event,
+          payload: detail.payload ?? {},
+          timestamp: Number.isFinite(detail.timestamp) ? detail.timestamp : Date.now()
+        };
+        const tail = previous.slice(-11);
+        return [...tail, nextEvent];
+      });
+    };
+    window.addEventListener("invoice:readiness-debug", handleReadinessEvent);
+    return () => window.removeEventListener("invoice:readiness-debug", handleReadinessEvent);
+  }, [readinessDebugEnabled]);
 
   useEffect(() => {
     const previousCount = lastDecisionCountRef.current;
@@ -2920,7 +3030,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     });
                   }
 
-                  const canToggleReviewDetails = sections.length > 0;
+                  const hasStructuredSections = sections.length > 0;
                   const hasMissingAmounts = payload.lineItems.some(
                     (item) => !Number.isFinite(item.amount)
                   );
@@ -2934,6 +3044,13 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     quickFixes.length > 0 &&
                     pendingDecisionCount === 0 &&
                     (hasLaborGaps || hasMissingAmounts || hasUnparsed || Boolean(duplicateMergeTarget));
+                  const hasReviewSecondaryContent =
+                    hasStructuredSections ||
+                    previewItems.length > 0 ||
+                    shouldShowSuggestedEdits ||
+                    pendingDecisionCount > 0 ||
+                    Boolean(payload.notes) ||
+                    payload.unparsed.length > 0;
 
                   return (
                     <div key={message.id} className="flex justify-start">
@@ -2960,6 +3077,16 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                             >
                               Edit with AI
                             </button>
+                            {hasReviewSecondaryContent ? (
+                              <button
+                                type="button"
+                                className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                                onClick={() => setReviewCardCollapsed((prev) => !prev)}
+                                disabled={isTyping}
+                              >
+                                {reviewCardCollapsed ? "Show details" : "Hide details"}
+                              </button>
+                            ) : null}
                           </div>
                         </div>
 
@@ -3015,7 +3142,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                               </p>
                             ) : null}
                           </div>
-                          {previewItems.length > 0 ? (
+                          {showReviewSecondary && previewItems.length > 0 ? (
                             <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
                               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                                 Preview
@@ -3039,7 +3166,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                               </div>
                             </div>
                           ) : null}
-                          {shouldShowSuggestedEdits ? (
+                          {showReviewSecondary && shouldShowSuggestedEdits ? (
                             <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
                               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                                 Quick actions
@@ -3059,29 +3186,18 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                               </div>
                             </div>
                           ) : null}
-                          {canToggleReviewDetails ? (
+                          {showReviewSecondary ? (
                             <p className="text-xs text-slate-500">
-                              Details {reviewCardCollapsed ? "hidden." : "shown."}
-                              <button
-                                type="button"
-                                className="ml-1 font-semibold text-slate-600 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
-                                onClick={() => setReviewCardCollapsed((prev) => !prev)}
-                                disabled={isTyping}
-                              >
-                                {reviewCardCollapsed ? "Show details" : "Hide details"}
-                              </button>
+                              I flag unclear money items below. You decide what to bill.
                             </p>
                           ) : null}
-                          <p className="text-xs text-slate-500">
-                            I flag unclear money items below. You decide what to bill.
-                          </p>
-                          {pendingDecisionCount > 0 ? (
+                          {showReviewSecondary && pendingDecisionCount > 0 ? (
                             <p className="text-xs font-semibold text-amber-700">
                               Resolve {pendingDecisionCount} decision
                               {pendingDecisionCount > 1 ? "s" : ""} below to continue.
                             </p>
                           ) : null}
-                          {!reviewCardCollapsed
+                          {showReviewExpandedSections
                             ? sections.map((section) => (
                                 <div key={section.id} className="space-y-2">
                                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -3128,13 +3244,13 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                             : null}
                         </div>
 
-                        {!reviewCardCollapsed && auditStatus === "completed" && auditSummary ? (
+                        {showReviewExpandedSections && auditStatus === "completed" && auditSummary ? (
                           <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
                             {auditSummary}
                           </div>
                         ) : null}
 
-                        {!reviewCardCollapsed && payload.notes ? (
+                        {showReviewExpandedSections && payload.notes ? (
                           <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
                             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                               Notes
@@ -3143,7 +3259,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                           </div>
                         ) : null}
 
-                        {!reviewCardCollapsed && payload.unparsed.length > 0 ? (
+                        {showReviewExpandedSections && payload.unparsed.length > 0 ? (
                           <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
                             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                               Not yet captured
@@ -3237,22 +3353,19 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                           </span>
                         ) : null}
                       </div>
-                    </div>
-                    {summaryTimeLabel ? (
-                      <p className="mt-1 text-xs text-slate-500">
-                        Summary updated {summaryTimeLabel}
-                      </p>
-                    ) : null}
-                    {hasReviewCard && hasVisibleDetails ? (
-                      <p className="mt-1 text-xs text-slate-500">
-                        Details {assumptionsCollapsed ? "hidden." : "shown."}
+                      {hasReviewCard && hasVisibleDetails ? (
                         <button
                           type="button"
-                          className="ml-1 font-semibold text-slate-600 hover:text-slate-900"
+                          className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
                           onClick={() => setAssumptionsCollapsed((prev) => !prev)}
                         >
                           {assumptionsCollapsed ? "Show details" : "Hide details"}
                         </button>
+                      ) : null}
+                    </div>
+                    {summaryTimeLabel ? (
+                      <p className="mt-1 text-xs text-slate-500">
+                        Summary updated {summaryTimeLabel}
                       </p>
                     ) : null}
                     {openDecisionCount > 0 && showConfirmDetails ? (
@@ -3672,6 +3785,71 @@ const applyDecisionActionToInvoice = (invoice, action) => {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {readinessDebugEnabled ? (
+        <aside className="fixed bottom-24 right-3 z-40 w-[min(92vw,24rem)] rounded-xl border border-slate-300 bg-white/95 text-xs shadow-lg backdrop-blur-sm">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-2 rounded-t-xl border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700"
+            onClick={() => setReadinessPanelOpen((prev) => !prev)}
+          >
+            <span>Readiness debug</span>
+            <span className="text-[11px] text-slate-500">
+              {readinessPanelOpen ? "Hide" : "Show"}
+            </span>
+          </button>
+          {readinessPanelOpen ? (
+            <div className="space-y-3 px-3 py-2">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                {readinessDebugFields.map(([label, value]) => (
+                  <React.Fragment key={label}>
+                    <span className="text-slate-500">{label}</span>
+                    <span className="font-mono text-[11px] text-slate-700">{String(value)}</span>
+                  </React.Fragment>
+                ))}
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                <p className="font-semibold text-slate-600">latest snapshot</p>
+                <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] text-slate-600">
+                  {JSON.stringify(readinessDebugSnapshot, null, 2)}
+                </pre>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                <p className="font-semibold text-slate-600">
+                  events ({readinessDebugEvents.length})
+                </p>
+                <div className="mt-1 max-h-36 space-y-1 overflow-auto">
+                  {readinessDebugEvents.length === 0 ? (
+                    <p className="text-[10px] text-slate-500">No readiness events yet.</p>
+                  ) : (
+                    readinessDebugEvents
+                      .slice()
+                      .reverse()
+                      .map((entry, index) => (
+                        <div
+                          key={`${entry.timestamp}-${entry.event}-${index}`}
+                          className="rounded border border-slate-200 bg-white px-2 py-1"
+                        >
+                          <p className="font-mono text-[10px] text-slate-700">
+                            {entry.event} @{" "}
+                            {new Date(entry.timestamp).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit"
+                            })}
+                          </p>
+                          <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[10px] text-slate-500">
+                            {JSON.stringify(entry.payload)}
+                          </pre>
+                        </div>
+                      ))
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </aside>
       ) : null}
 
       {showChatInput ? (
