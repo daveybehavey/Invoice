@@ -105,6 +105,43 @@ test("uses explicit hours and rate in text to avoid labor follow-up", async () =
   assert.equal(laborLines[0].amount, 160);
 });
 
+test("polishes action-first line item descriptions without changing math", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Jan 10",
+          tasks: [{ description: "fixed sink", hours: 2, rate: 90, amount: 180 }]
+        }
+      ],
+      materials: [{ description: "replaced washer", quantity: 1, unitCost: 5, amount: 5 }]
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 10 fixed sink 2h @ $90/hr. replaced washer $5."
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+
+  const laborLines = response.body.invoice.lineItems.filter((lineItem: { type: string }) => lineItem.type === "labor");
+  assert.equal(laborLines.length, 1);
+  assert.equal(laborLines[0].description, "Sink repair");
+  assert.equal(laborLines[0].quantity, 2);
+  assert.equal(laborLines[0].unitPrice, 90);
+  assert.equal(laborLines[0].amount, 180);
+
+  const materialLines = response.body.invoice.lineItems.filter(
+    (lineItem: { type: string }) => lineItem.type === "material"
+  );
+  assert.equal(materialLines.length, 1);
+  assert.equal(materialLines[0].description, "Washer replacement");
+  assert.equal(materialLines[0].quantity, 1);
+  assert.equal(materialLines[0].unitPrice, 5);
+  assert.equal(materialLines[0].amount, 5);
+});
+
 test("converts explicit minutes with rate into hours to avoid labor follow-up", async () => {
   useMockResponses([
     {

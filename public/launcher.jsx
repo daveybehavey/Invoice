@@ -368,26 +368,40 @@ const polishLineItemDescription = (text) => {
   }
   cleaned = cleaned.replace(/^(i|we)\s+/i, "");
   cleaned = cleaned.replace(/^did\s+(an|a|the)?\s*/i, "");
-  const words = cleaned.split(" ");
-  if (words.length <= 4) {
-    const nounMappings = [
-      { re: /^(fixed|repaired?)\s+(.+)/i, suffix: "repair" },
-      { re: /^(replaced|replace)\s+(.+)/i, suffix: "replacement" },
-      { re: /^(installed|install)\s+(.+)/i, suffix: "installation" },
-      { re: /^(cleaned|clean)\s+(.+)/i, suffix: "cleaning" },
-      { re: /^(inspected|inspect)\s+(.+)/i, suffix: "inspection" },
-      { re: /^(adjusted|adjust|tightened|tighten)\s+(.+)/i, suffix: "adjustment" },
-      { re: /^(tuned|tune)\s+(.+)/i, suffix: "tuning" },
-      { re: /^(painted|paint)\s+(.+)/i, suffix: "painting" }
-    ];
-    for (const mapping of nounMappings) {
-      const match = cleaned.match(mapping.re);
-      if (match?.[2]) {
-        const candidate = `${match[2]} ${mapping.suffix}`;
-        cleaned = candidate;
-        break;
-      }
+  cleaned = cleaned.replace(
+    /\b(?:about|around|roughly|approximately|maybe|quickly|real quick|kind of|sort of)\b/gi,
+    ""
+  );
+  cleaned = cleaned.replace(/\b\d+(?:\.\d+)?\s*(?:mins?|minutes?|hours?|hrs?)\b/gi, "");
+  cleaned = cleaned.replace(/\b(?:at|@)\s*\$?\d+(?:\.\d+)?\s*\/?\s*(?:hr|hour)\b/gi, "");
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+  const nounMappings = [
+    { re: /^(fixed|fix|repaired?|repair|patched?|patch)\s+(.+)/i, suffix: "repair" },
+    { re: /^(replaced|replace|swapped?|swap)\s+(.+)/i, suffix: "replacement" },
+    { re: /^(installed|install)\s+(.+)/i, suffix: "installation" },
+    { re: /^(cleaned|clean)\s+(.+)/i, suffix: "cleaning" },
+    { re: /^(inspected|inspect|checked|check)\s+(.+)/i, suffix: "inspection" },
+    { re: /^(adjusted|adjust|tightened|tighten)\s+(.+)/i, suffix: "adjustment" },
+    { re: /^(tuned|tune)\s+(.+)/i, suffix: "tuning" },
+    { re: /^(painted|paint)\s+(.+)/i, suffix: "painting" },
+    { re: /^(updated|update|tweaked|tweak)\s+(.+)/i, suffix: "update" },
+    { re: /^(designed|design)\s+(.+)/i, suffix: "design" }
+  ];
+  for (const mapping of nounMappings) {
+    const match = cleaned.match(mapping.re);
+    const objectText = match?.[2]?.trim();
+    if (!objectText) {
+      continue;
     }
+    const normalizedObject = objectText
+      .replace(/^(the|a|an|my|our|your|his|her|their)\s+/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!normalizedObject || normalizedObject.split(" ").length > 8) {
+      continue;
+    }
+    cleaned = `${normalizedObject} ${mapping.suffix}`;
+    break;
   }
   cleaned = cleaned.replace(/\s+/g, " ").trim();
   return cleaned ? `${cleaned.charAt(0).toUpperCase()}${cleaned.slice(1)}` : "";
@@ -4767,6 +4781,21 @@ function ManualInvoiceCanvas() {
     );
   };
 
+  const handleLineItemDescriptionBlur = (id) => {
+    setLineItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) {
+          return item;
+        }
+        const polished = polishLineItemDescription(item.description);
+        if (!polished || polished === item.description) {
+          return item;
+        }
+        return { ...item, description: polished };
+      })
+    );
+  };
+
   const handleAddLineItem = () => {
     setLineItems((prev) => [
       ...prev,
@@ -4808,7 +4837,7 @@ function ManualInvoiceCanvas() {
       lineItems: itemsWithDescriptions.map((item) => ({
         id: item.id,
         type: "other",
-        description: item.description.trim(),
+        description: polishLineItemDescription(item.description),
         quantity: item.qty === "" ? undefined : parseNumber(item.qty),
         unitPrice: item.rate === "" ? undefined : parseNumber(item.rate),
         amount: getLineAmount(item)
@@ -4834,7 +4863,7 @@ function ManualInvoiceCanvas() {
       lineItems: itemsWithDescriptions.map((item) => ({
         id: item.id,
         type: "other",
-        description: item.description.trim(),
+        description: polishLineItemDescription(item.description),
         quantity: item.qty === "" ? undefined : parseNumber(item.qty),
         unitPrice: item.rate === "" ? undefined : parseNumber(item.rate),
         amount: getLineAmount(item)
@@ -4867,7 +4896,7 @@ function ManualInvoiceCanvas() {
       setLineItems(
         updatedInvoice.lineItems.map((item, index) => ({
           id: item.id ?? `line-${Date.now()}-${index}`,
-          description: item.description ?? "",
+          description: polishLineItemDescription(item.description ?? ""),
           qty: Number.isFinite(item.quantity) ? String(item.quantity) : "",
           rate: Number.isFinite(item.unitPrice) ? String(item.unitPrice) : ""
         }))
@@ -4882,7 +4911,7 @@ function ManualInvoiceCanvas() {
           const match =
             rewrittenLines.find((line) => line.id && line.id === item.id) ?? rewrittenLines[index];
           if (match && typeof match.description === "string") {
-            return { ...item, description: match.description };
+            return { ...item, description: polishLineItemDescription(match.description) };
           }
           return item;
         })
@@ -5155,6 +5184,7 @@ function ManualInvoiceCanvas() {
                             onChange={(event) =>
                               handleLineItemChange(item.id, "description", event.target.value)
                             }
+                            onBlur={() => handleLineItemDescriptionBlur(item.id)}
                           />
                         </td>
                         <td className="py-3 pr-3 align-top">
@@ -5685,7 +5715,7 @@ function InspectorPanel({
       const hasRate = Number.isFinite(rate);
       return {
         id: item.id,
-        description: item.description?.trim() || "Untitled line item",
+        description: polishLineItemDescription(item.description?.trim()) || "Untitled line item",
         qty: hasQuantity ? quantity : null,
         rate: hasRate ? rate : null,
         amount: hasQuantity && hasRate ? quantity * rate : null

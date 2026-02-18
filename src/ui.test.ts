@@ -168,6 +168,24 @@ test("importing image notes requires OCR review before building draft", async ()
   }
 });
 
+test("manual editor polishes line item wording on blur", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const description = page.getByPlaceholder("Description").first();
+    await description.fill("fixed sink");
+    await description.press("Tab");
+
+    await page.waitForFunction(() => {
+      const input = document.querySelector('input[placeholder="Description"]');
+      return input instanceof HTMLInputElement && input.value === "Sink repair";
+    });
+  } finally {
+    await context.close();
+  }
+});
+
 async function openIntake(page: Page): Promise<void> {
   await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
   await page.getByText("AI Invoice Assistant").waitFor({ state: "visible" });

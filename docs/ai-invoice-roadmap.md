@@ -31,6 +31,9 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Existing money decision/confirmation gates unchanged.
 13. OCR and upload guardrails
    - 8MB upload cap, image-type checks, OCR warning surfacing.
+14. Draft polish pass
+   - Stronger line-item wording cleanup across intake + manual editor.
+   - Description cleanup keeps all qty/rate/amount math untouched.
 
 ## Next (current priorities)
 1. Real-user messy-flow QA pack
@@ -41,8 +44,9 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Continue hiding non-critical controls until needed.
 3. OCR confidence indicator
    - Add explicit High/Medium/Low confidence label in review block.
-4. Draft polish pass
-   - Improve final line-item wording consistency (without changing amounts).
+4. Canonical readiness contract
+   - Centralize canGenerate / openDecisions / follow-up readiness in one evaluator.
+   - Use evaluator output for phase transitions + generate button state.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.

@@ -2604,25 +2604,40 @@ function polishLineItemDescription(text?: string): string {
   }
   cleaned = cleaned.replace(/^(i|we)\s+/i, "");
   cleaned = cleaned.replace(/^did\s+(an|a|the)?\s*/i, "");
-  const words = cleaned.split(" ");
-  if (words.length <= 4) {
-    const nounMappings = [
-      { re: /^(fixed|repaired?)\s+(.+)/i, suffix: "repair" },
-      { re: /^(replaced|replace)\s+(.+)/i, suffix: "replacement" },
-      { re: /^(installed|install)\s+(.+)/i, suffix: "installation" },
-      { re: /^(cleaned|clean)\s+(.+)/i, suffix: "cleaning" },
-      { re: /^(inspected|inspect)\s+(.+)/i, suffix: "inspection" },
-      { re: /^(adjusted|adjust|tightened|tighten)\s+(.+)/i, suffix: "adjustment" },
-      { re: /^(tuned|tune)\s+(.+)/i, suffix: "tuning" },
-      { re: /^(painted|paint)\s+(.+)/i, suffix: "painting" }
-    ];
-    for (const mapping of nounMappings) {
-      const match = cleaned.match(mapping.re);
-      if (match?.[2]) {
-        cleaned = `${match[2]} ${mapping.suffix}`;
-        break;
-      }
+  cleaned = cleaned.replace(
+    /\b(?:about|around|roughly|approximately|maybe|quickly|real quick|kind of|sort of)\b/gi,
+    ""
+  );
+  cleaned = cleaned.replace(/\b\d+(?:\.\d+)?\s*(?:mins?|minutes?|hours?|hrs?)\b/gi, "");
+  cleaned = cleaned.replace(/\b(?:at|@)\s*\$?\d+(?:\.\d+)?\s*\/?\s*(?:hr|hour)\b/gi, "");
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+  const nounMappings = [
+    { re: /^(fixed|fix|repaired?|repair|patched?|patch)\s+(.+)/i, suffix: "repair" },
+    { re: /^(replaced|replace|swapped?|swap)\s+(.+)/i, suffix: "replacement" },
+    { re: /^(installed|install)\s+(.+)/i, suffix: "installation" },
+    { re: /^(cleaned|clean)\s+(.+)/i, suffix: "cleaning" },
+    { re: /^(inspected|inspect|checked|check)\s+(.+)/i, suffix: "inspection" },
+    { re: /^(adjusted|adjust|tightened|tighten)\s+(.+)/i, suffix: "adjustment" },
+    { re: /^(tuned|tune)\s+(.+)/i, suffix: "tuning" },
+    { re: /^(painted|paint)\s+(.+)/i, suffix: "painting" },
+    { re: /^(updated|update|tweaked|tweak)\s+(.+)/i, suffix: "update" },
+    { re: /^(designed|design)\s+(.+)/i, suffix: "design" }
+  ];
+  for (const mapping of nounMappings) {
+    const match = cleaned.match(mapping.re);
+    const objectText = match?.[2]?.trim();
+    if (!objectText) {
+      continue;
     }
+    const normalizedObject = objectText
+      .replace(/^(the|a|an|my|our|your|his|her|their)\s+/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!normalizedObject || normalizedObject.split(" ").length > 8) {
+      continue;
+    }
+    cleaned = `${normalizedObject} ${mapping.suffix}`;
+    break;
   }
   cleaned = cleaned.replace(/\s+/g, " ").trim();
   return cleaned ? `${cleaned.charAt(0).toUpperCase()}${cleaned.slice(1)}` : "";
