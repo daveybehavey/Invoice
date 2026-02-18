@@ -36,7 +36,15 @@ import {
 import { extractUploadedImageText, extractUploadedInvoiceText } from "./services/uploadTextExtractor.js";
 
 const app = express();
-const upload = multer({ storage: multer.memoryStorage() });
+const MAX_UPLOAD_SIZE_BYTES = 8 * 1024 * 1024;
+const importUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_UPLOAD_SIZE_BYTES }
+});
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_UPLOAD_SIZE_BYTES }
+});
 const port = Number(process.env.PORT ?? 3000);
 const publicDir = path.resolve(process.cwd(), "public");
 
@@ -59,7 +67,7 @@ app.get("/health", (_req: Request, res: Response) => {
 
 app.post(
   "/api/invoices/from-input",
-  upload.single("invoiceFile"),
+  importUpload.single("invoiceFile"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const messyInput = asOptionalString(req.body.messyInput);
@@ -117,7 +125,7 @@ app.post(
   }
 );
 
-app.post("/api/invoices/extract-notes", upload.single("invoiceFile"), async (req: Request, res: Response, next: NextFunction) => {
+app.post("/api/invoices/extract-notes", imageUpload.single("invoiceFile"), async (req: Request, res: Response, next: NextFunction) => {
   try {
     if (!req.file) {
       throw new Error("Upload an image file first.");
@@ -300,6 +308,10 @@ app.delete("/api/invoices/:id", async (req: Request, res: Response, next: NextFu
 });
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if (error instanceof multer.MulterError && error.code === "LIMIT_FILE_SIZE") {
+    res.status(413).json({ error: "File is too large. Max upload size is 8MB." });
+    return;
+  }
   if (isErrorWithMessage(error)) {
     res.status(400).json({ error: error.message });
     return;

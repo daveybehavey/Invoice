@@ -3535,6 +3535,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
 
 function ImportInvoice() {
   const navigate = useNavigate();
+  const MAX_UPLOAD_SIZE_BYTES = 8 * 1024 * 1024;
   const [selectedFile, setSelectedFile] = useState(null);
   const [notes, setNotes] = useState("");
   const [reviewedText, setReviewedText] = useState("");
@@ -3599,6 +3600,10 @@ function ImportInvoice() {
 
   const handleFileSelect = (file) => {
     if (!file) {
+      return;
+    }
+    if (Number.isFinite(file.size) && file.size > MAX_UPLOAD_SIZE_BYTES) {
+      setError("File is too large. Max upload size is 8MB.");
       return;
     }
     if (!isSupportedFile(file)) {
@@ -3833,7 +3838,7 @@ function ImportInvoice() {
                   Drop PDF, text, or image notes here
                 </p>
                 <p className="text-xs text-slate-500">
-                  PDF/TXT/CSV/JSON build directly. PNG/JPG/WEBP goes through OCR review first.
+                  PDF/TXT/CSV/JSON build directly. PNG/JPG/WEBP goes through OCR review first. Max 8MB.
                 </p>
               </div>
             </div>

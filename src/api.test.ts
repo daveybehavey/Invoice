@@ -297,6 +297,19 @@ test("extract-notes rejects non-image uploads", async () => {
   assert.match(response.body.error, /Unsupported image type/i);
 });
 
+test("extract-notes rejects files over 8MB", async () => {
+  const oversized = Buffer.alloc(8 * 1024 * 1024 + 1, 1);
+  const response = await request(app)
+    .post("/api/invoices/extract-notes")
+    .attach("invoiceFile", oversized, {
+      filename: "large.png",
+      contentType: "image/png"
+    });
+
+  assert.equal(response.status, 413);
+  assert.match(response.body.error, /max upload size is 8mb/i);
+});
+
 test("returns unparsed lines when messy notes include unrelated items", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 

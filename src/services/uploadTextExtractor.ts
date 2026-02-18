@@ -63,6 +63,12 @@ export async function extractUploadedImageText(file: UploadedFile): Promise<Imag
   if (text.length < 30) {
     warnings.add("Very little text was detected. Please review carefully.");
   }
+  if (text.split(/\s+/).filter(Boolean).length < 6) {
+    warnings.add("Low OCR confidence: only a small amount of readable text was found.");
+  }
+  if (/[�]/.test(text)) {
+    warnings.add("Some characters could not be read clearly.");
+  }
   (ocrResult.warnings ?? []).forEach((warning) => {
     if (typeof warning === "string" && warning.trim()) {
       warnings.add(warning.trim());
