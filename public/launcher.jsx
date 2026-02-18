@@ -1189,8 +1189,10 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     : focusedDecisionItem
       ? [focusedDecisionItem]
       : [];
-  const quickDecisionHeading =
-    openDecisionCount > 0 ? `Needs your call (${openDecisionCount})` : "Tax choice";
+  const decisionProgressLabel = hasMoreDecisions
+    ? `${clampedDecisionIndex + 1} of ${decisionItems.length}`
+    : "1 of 1";
+  const quickDecisionHeading = openDecisionCount > 0 ? "Choose Add or Skip" : "Tax choice";
   const quickReplyLabel = needsLaborHoursOnly
     ? "Suggested hours"
     : needsLaborPricing
@@ -1204,6 +1206,10 @@ const applyDecisionActionToInvoice = (invoice, action) => {
   const hasDecisionPrimaryPath = intakeReadiness.lockReason === "open_decisions";
   const primaryCtaLabel = hasDecisionPrimaryPath ? "Resolve decisions" : "Generate Invoice";
   const primaryCtaDisabled = hasDecisionPrimaryPath ? false : ctaDisabled;
+  const decisionIncludeButtonClass =
+    "rounded-full border border-amber-600 bg-amber-600 px-3 py-1 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:border-amber-300 disabled:bg-amber-300";
+  const decisionExcludeButtonClass =
+    "rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300";
 
   const handlePrimaryCta = () => {
     if (hasDecisionPrimaryPath) {
@@ -3387,9 +3393,16 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     ref={decisionsRef}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-                        {quickDecisionHeading}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                          {quickDecisionHeading}
+                        </p>
+                        {openDecisionCount > 0 ? (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                            {`Decision ${decisionProgressLabel}`}
+                          </span>
+                        ) : null}
+                      </div>
                       <button
                         type="button"
                         className="text-xs font-semibold text-amber-800 hover:text-amber-900"
@@ -3409,6 +3422,11 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                         )}
                       </button>
                     </div>
+                    {openDecisionCount > 0 ? (
+                      <p className="mt-2 text-xs font-semibold text-amber-800">
+                        Pick one option below to continue.
+                      </p>
+                    ) : null}
                     {showDecisionWhy ? (
                       <p className="mt-2 text-sm text-amber-900">
                         These items were unclear in your notes. Choose Add or Skip so no money is guessed.
@@ -3434,7 +3452,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                             <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
-                                className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                                className={decisionIncludeButtonClass}
                                 onClick={() => handleDecisionAction(includeAction, includeValue)}
                                 disabled={isTyping}
                               >
@@ -3442,7 +3460,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                               </button>
                               <button
                                 type="button"
-                                className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                                className={decisionExcludeButtonClass}
                                 onClick={() => handleDecisionAction(excludeAction, excludeValue)}
                                 disabled={isTyping}
                               >
@@ -3455,7 +3473,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                       {hasMoreDecisions && !showAllDecisions ? (
                         <div className="flex flex-wrap items-center gap-3 pt-1 text-xs font-semibold text-amber-800">
                           <span>
-                            Decision {clampedDecisionIndex + 1} of {decisionItems.length}
+                            {`Decision ${clampedDecisionIndex + 1} of ${decisionItems.length}`}
                           </span>
                           <button
                             type="button"
@@ -3467,7 +3485,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                             }
                             disabled={isTyping || clampedDecisionIndex >= decisionItems.length - 1}
                           >
-                            Next decision
+                            Next
                           </button>
                           <div className="hidden flex-wrap gap-2 sm:flex">
                             <button
@@ -3478,7 +3496,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                               }
                               disabled={isTyping || clampedDecisionIndex === 0}
                             >
-                              Previous
+                              Back
                             </button>
                             <button
                               type="button"
@@ -3511,11 +3529,13 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                       ) : null}
                       {showAllDecisions && decisionItems.length > 1 ? (
                         <div className="space-y-2">
-                          <p className="text-sm text-amber-900">Resolve all remaining decisions</p>
+                          <p className="text-sm text-amber-900">
+                            Optional: apply one choice to all remaining decisions
+                          </p>
                           <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
-                              className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                              className={decisionIncludeButtonClass}
                               onClick={() => {
                                 const includeAll = decisionItems
                                   .map((item) => buildDecisionActions(item).includeValue)
@@ -3528,7 +3548,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                             </button>
                             <button
                               type="button"
-                              className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                              className={decisionExcludeButtonClass}
                               onClick={() => {
                                 const excludeAll = decisionItems
                                   .map((item) => buildDecisionActions(item).excludeValue)
@@ -3542,7 +3562,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                           </div>
                         </div>
                       ) : null}
-                      {taxAssumptionPresent || pendingTaxRate ? (
+                      {!hasDecisions && (taxAssumptionPresent || pendingTaxRate) ? (
                         <div className="space-y-2">
                           <p className="text-sm text-amber-900">
                             {pendingTaxRate
@@ -3633,7 +3653,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                             <div className="flex flex-wrap gap-2">
                                 <button
                                   type="button"
-                                  className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                                  className={decisionIncludeButtonClass}
                                   onClick={() => handleDecisionAction(includeAction, includeValue)}
                                   disabled={isTyping}
                                 >
@@ -3641,7 +3661,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                                 </button>
                                 <button
                                   type="button"
-                                  className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                                  className={decisionExcludeButtonClass}
                                   onClick={() => handleDecisionAction(excludeAction, excludeValue)}
                                   disabled={isTyping}
                                 >

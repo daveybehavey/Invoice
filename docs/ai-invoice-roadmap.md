@@ -67,14 +67,18 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
 24. At-a-glance capture trust signal
    - Review summary now always shows a short "Captured:" preview line with first detected items.
    - Users can verify extraction quality without expanding details first.
+25. Decision card simplification pass
+   - One-decision mode now emphasizes a single next action ("Choose Add or Skip").
+   - Decision card shows clear progress (Decision X of Y) and highlights Add/Skip actions.
+   - Tax quick-choice controls are hidden while billing decisions are still open.
 
 ## Next (current priorities)
-1. Decision card simplification pass
-   - Tighten one-decision mode wording and actions so Add/Skip reads as a single obvious next step.
-2. Review details placement polish
+1. Review details placement polish
    - Reduce top-right control density by clarifying where "Show details" lives on mobile vs desktop.
-3. OCR quality iteration (later)
+2. OCR quality iteration (later)
    - Consider optional re-extract guidance and richer warning reasons for borderline OCR output.
+3. Decision outcome copy polish
+   - Tighten post-click confirmation text so users instantly understand what changed in totals.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.

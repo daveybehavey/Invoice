@@ -196,7 +196,12 @@ async function run() {
     await page.getByRole("button", { name: "Build invoice" }).click();
 
     await page.getByText("Draft snapshot").waitFor({ timeout: DEFAULT_TIMEOUT });
-    await page.getByText("Needs your call", { exact: false }).waitFor({ timeout: DEFAULT_TIMEOUT });
+    const simplifiedDecisionHeading = page.getByText("Choose Add or Skip", { exact: true });
+    if ((await simplifiedDecisionHeading.count()) > 0) {
+      await simplifiedDecisionHeading.first().waitFor({ timeout: DEFAULT_TIMEOUT });
+    } else {
+      await page.getByText("Needs your call", { exact: false }).first().waitFor({ timeout: DEFAULT_TIMEOUT });
+    }
 
     const quickActionsVisible = await page.getByText("Quick actions", { exact: true }).isVisible();
     recorder.addCheck(
