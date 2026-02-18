@@ -4947,6 +4947,30 @@ function ManualInvoiceCanvas() {
     );
   };
 
+  const handlePolishDescriptions = () => {
+    const nextLineItems = lineItems.map((item) => {
+      const polished = polishLineItemDescription(item.description);
+      if (!polished) {
+        return item;
+      }
+      return { ...item, description: polished };
+    });
+    const changedCount = nextLineItems.reduce((count, item, index) => {
+      return item.description !== lineItems[index]?.description ? count + 1 : count;
+    }, 0);
+    if (changedCount > 0) {
+      setLineItems(nextLineItems);
+      setDraftStatus(`Polished ${changedCount} line item${changedCount > 1 ? "s" : ""}`);
+      if (clearStatusTimeoutRef.current) {
+        window.clearTimeout(clearStatusTimeoutRef.current);
+      }
+      clearStatusTimeoutRef.current = window.setTimeout(() => {
+        setDraftStatus("");
+      }, 1800);
+    }
+    return changedCount;
+  };
+
   const handleAddLineItem = () => {
     setLineItems((prev) => [
       ...prev,
@@ -5439,6 +5463,7 @@ function ManualInvoiceCanvas() {
             savedInvoiceId={savedInvoiceId}
             previewData={previewData}
             toneSource={{ lineItems, notes }}
+            onPolishDescriptions={handlePolishDescriptions}
             buildRewriteInvoicePayload={buildRewriteInvoicePayload}
             onApplyRewrite={applyRewriteChanges}
             buildEditableInvoicePayload={buildEditableInvoicePayload}
@@ -5498,6 +5523,7 @@ function ManualInvoiceCanvas() {
             savedInvoiceId={savedInvoiceId}
             previewData={previewData}
             toneSource={{ lineItems, notes }}
+            onPolishDescriptions={handlePolishDescriptions}
             buildRewriteInvoicePayload={buildRewriteInvoicePayload}
             onApplyRewrite={applyRewriteChanges}
             buildEditableInvoicePayload={buildEditableInvoicePayload}
@@ -5527,6 +5553,7 @@ function InspectorPanel({
   savedInvoiceId,
   previewData,
   toneSource,
+  onPolishDescriptions,
   buildRewriteInvoicePayload,
   onApplyRewrite,
   buildEditableInvoicePayload,
@@ -6059,6 +6086,21 @@ function InspectorPanel({
                 }}
               >
                 Rewrite entire invoice text
+              </button>
+              <button
+                type="button"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                onClick={() => {
+                  const changedCount = Number(onPolishDescriptions?.() ?? 0);
+                  setToneStatus(
+                    changedCount > 0
+                      ? `Polished ${changedCount} line item${changedCount > 1 ? "s" : ""}.`
+                      : "No wording updates needed."
+                  );
+                  setToneError("");
+                }}
+              >
+                Quick clean descriptions
               </button>
             </div>
 

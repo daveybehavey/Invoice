@@ -42,14 +42,18 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added debug-only readiness event logs for submit routing + response transitions.
    - Added readiness snapshot logs to quickly diagnose phase/readiness drift.
    - Enable via `?readinessDebug=1` or `localStorage.invoiceReadinessDebug = "true"`.
+17. Manual editor polish (non-monetary)
+   - Added "Quick clean descriptions" action in the Tone panel (desktop + mobile drawer).
+   - Uses deterministic wording cleanup only; does not alter qty/rate/amount.
+   - Added UI regression coverage for bulk clean behavior.
 
 ## Next (current priorities)
-1. Manual editor polish (non-monetary)
-   - Keep improving wording/grammar cleanup without mutating qty/rate/amount.
-2. Mobile complexity gating pass
+1. Mobile complexity gating pass
    - Keep one primary action visible; reveal secondary details progressively.
-3. Readiness debug panel (optional)
+2. Readiness debug panel (optional)
    - Small developer-only drawer that shows current readiness snapshot live.
+3. Flow friction capture script
+   - Scripted "first-time user" pass that logs ambiguous copy or hidden states.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.

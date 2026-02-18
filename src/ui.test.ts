@@ -186,6 +186,53 @@ test("manual editor polishes line item wording on blur", async () => {
   }
 });
 
+test("manual editor quick clean descriptions polishes existing draft line items", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem(
+      "invoiceDraft",
+      JSON.stringify({
+        invoiceNumber: "INV-9001",
+        invoiceDate: "2026-02-10",
+        fromDetails: "",
+        billToDetails: "",
+        notes: "",
+        taxRate: "0",
+        lineItems: [
+          { id: "line-1", description: "fixed sink", qty: "2", rate: "90" },
+          { id: "line-2", description: "replaced washer", qty: "1", rate: "5" }
+        ],
+        logoUrl: null,
+        stylePreset: "default",
+        savedInvoiceId: ""
+      })
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Tone" }).first().click();
+    await page.getByRole("button", { name: "Quick clean descriptions" }).click();
+
+    await page.waitForFunction(() => {
+      const inputs = Array.from(document.querySelectorAll('input[placeholder="Description"]'));
+      if (inputs.length < 2) {
+        return false;
+      }
+      const first = inputs[0];
+      const second = inputs[1];
+      return (
+        first instanceof HTMLInputElement &&
+        second instanceof HTMLInputElement &&
+        first.value === "Sink repair" &&
+        second.value === "Washer replacement"
+      );
+    });
+  } finally {
+    await context.close();
+  }
+});
+
 async function openIntake(page: Page): Promise<void> {
   await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
   await page.getByText("AI Invoice Assistant").waitFor({ state: "visible" });
