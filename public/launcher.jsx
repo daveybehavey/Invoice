@@ -249,6 +249,13 @@ const formatRateToken = (rate) => {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 };
 
+const cloneJson = (value) => {
+  if (value === null || value === undefined) {
+    return value;
+  }
+  return JSON.parse(JSON.stringify(value));
+};
+
 const formatMoney = (value) =>
   Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
 
@@ -460,6 +467,7 @@ function AIIntake() {
   const [decisionFocusIndex, setDecisionFocusIndex] = useState(0);
   const [showDecisionWhy, setShowDecisionWhy] = useState(false);
   const [savedLaborRate, setSavedLaborRate] = useState(() => readStoredLaborRate());
+  const [decisionUndoState, setDecisionUndoState] = useState(null);
   const requestIdRef = useRef(0);
   const openDecisionSignatureRef = useRef("");
   const lastDecisionResolutionRef = useRef("");
@@ -485,6 +493,8 @@ function AIIntake() {
   const assumptionsRef = useRef([]);
   const unparsedLinesRef = useRef([]);
   const decisionToastTimeoutRef = useRef(null);
+  const decisionUndoTimeoutRef = useRef(null);
+  const pendingDecisionUndoRef = useRef(null);
   const intakeComplete = intakePhase === "ready_to_generate";
   const confirmationKeywords = [];
   const rejectionKeywords = ["no", "not correct", "wrong", "incorrect", "needs change"];
@@ -758,10 +768,12 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     ]);
   };
 
-  const showDecisionToast = (text) => {
+  const showDecisionToast = (text, options = {}) => {
     if (!text) {
       return;
     }
+    const durationMs =
+      Number.isFinite(options.durationMs) && options.durationMs > 0 ? options.durationMs : 3500;
     setDecisionToast(text);
     if (decisionToastTimeoutRef.current) {
       window.clearTimeout(decisionToastTimeoutRef.current);
@@ -769,7 +781,33 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     decisionToastTimeoutRef.current = window.setTimeout(() => {
       setDecisionToast(null);
       decisionToastTimeoutRef.current = null;
-    }, 3500);
+    }, durationMs);
+  };
+
+  const clearDecisionUndoState = () => {
+    setDecisionUndoState(null);
+    if (decisionUndoTimeoutRef.current) {
+      window.clearTimeout(decisionUndoTimeoutRef.current);
+      decisionUndoTimeoutRef.current = null;
+    }
+  };
+
+  const startDecisionUndoWindow = (snapshot, message) => {
+    if (!snapshot) {
+      clearDecisionUndoState();
+      return;
+    }
+    setDecisionUndoState({
+      ...snapshot,
+      message: message || "Decision updated."
+    });
+    if (decisionUndoTimeoutRef.current) {
+      window.clearTimeout(decisionUndoTimeoutRef.current);
+    }
+    decisionUndoTimeoutRef.current = window.setTimeout(() => {
+      setDecisionUndoState(null);
+      decisionUndoTimeoutRef.current = null;
+    }, 9000);
   };
 
   const buildDecisionAckMessage = (action, resolvedCount) => {
@@ -803,6 +841,16 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     return `Decision updated — ${resolvedCount} item${resolvedCount > 1 ? "s" : ""} resolved.`;
   };
 
+  const captureDecisionUndoSnapshot = () => ({
+    intakePhase,
+    finishedInvoice: cloneJson(finishedInvoice),
+    structuredInvoice: cloneJson(structuredInvoice),
+    openDecisions: cloneJson(openDecisions),
+    assumptions: cloneJson(assumptions),
+    unparsedLines: cloneJson(unparsedLines),
+    pendingTaxRate
+  });
+
   const handleDecisionAction = (action, message) => {
     const currentValue = inputValue.replace(/\s+$/, "");
     if (currentValue.trim()) {
@@ -810,11 +858,43 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       focusInputWithValue(`${prefix}${message}`);
       return;
     }
+    pendingDecisionUndoRef.current = captureDecisionUndoSnapshot();
     decisionActionRef.current = action;
     const accepted = submitUserMessage(message);
     if (!accepted) {
       decisionActionRef.current = null;
+      pendingDecisionUndoRef.current = null;
     }
+  };
+
+  const handleUndoDecision = () => {
+    if (!decisionUndoState) {
+      return;
+    }
+    const restoredInvoice = decisionUndoState.finishedInvoice ?? null;
+    const restoredDecisions = Array.isArray(decisionUndoState.openDecisions)
+      ? decisionUndoState.openDecisions
+      : [];
+    const restoredUnparsed = Array.isArray(decisionUndoState.unparsedLines)
+      ? decisionUndoState.unparsedLines
+      : [];
+    setFinishedInvoice(restoredInvoice);
+    setStructuredInvoice(decisionUndoState.structuredInvoice ?? null);
+    setOpenDecisions(restoredDecisions);
+    setAssumptions(Array.isArray(decisionUndoState.assumptions) ? decisionUndoState.assumptions : []);
+    setUnparsedLines(restoredUnparsed);
+    setPendingTaxRate(decisionUndoState.pendingTaxRate ?? null);
+    setFollowUp(null);
+    setIntakePhase(decisionUndoState.intakePhase ?? "ready_to_summarize");
+    openDecisionSignatureRef.current = restoredDecisions.map((decision) => decision.prompt).sort().join("|");
+    if (restoredInvoice) {
+      appendSummaryMessage(
+        buildSummaryText(restoredInvoice, restoredDecisions, restoredUnparsed.length),
+        buildReviewPayload(restoredInvoice, restoredDecisions, restoredUnparsed)
+      );
+    }
+    clearDecisionUndoState();
+    showDecisionToast("Undid last decision.");
   };
 
   const appendSummaryMessage = (text, reviewPayload) => {
@@ -1006,6 +1086,17 @@ const applyDecisionActionToInvoice = (invoice, action) => {
   const canGenerateInvoice = intakeReadiness.canGenerate;
   const ctaDisabled = !canGenerateInvoice;
   const ctaHelper = intakeReadiness.helperText;
+  const hasDecisionPrimaryPath = openDecisionCount > 0;
+  const primaryCtaLabel = hasDecisionPrimaryPath ? "Resolve decisions" : "Generate Invoice";
+  const primaryCtaDisabled = hasDecisionPrimaryPath ? false : ctaDisabled;
+
+  const handlePrimaryCta = () => {
+    if (hasDecisionPrimaryPath) {
+      scrollToSection(decisionsRef);
+      return;
+    }
+    handleGenerateInvoice();
+  };
 
   const extractDecisionSnippet = (prompt) => {
     const quoted = prompt.match(/"([^"]+)"/);
@@ -1460,12 +1551,18 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     setReviewCardCollapsed(false);
     setShowChatInput(false);
     setDecisionToast(null);
+    setDecisionUndoState(null);
     openDecisionSignatureRef.current = "";
     lastDecisionResolutionRef.current = "";
     decisionActionRef.current = null;
+    pendingDecisionUndoRef.current = null;
     if (decisionToastTimeoutRef.current) {
       window.clearTimeout(decisionToastTimeoutRef.current);
       decisionToastTimeoutRef.current = null;
+    }
+    if (decisionUndoTimeoutRef.current) {
+      window.clearTimeout(decisionUndoTimeoutRef.current);
+      decisionUndoTimeoutRef.current = null;
     }
     auditRequestIdRef.current += 1;
   };
@@ -1481,6 +1578,19 @@ const applyDecisionActionToInvoice = (invoice, action) => {
   useEffect(() => {
     listEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, isTyping]);
+
+  useEffect(() => {
+    return () => {
+      if (decisionToastTimeoutRef.current) {
+        window.clearTimeout(decisionToastTimeoutRef.current);
+        decisionToastTimeoutRef.current = null;
+      }
+      if (decisionUndoTimeoutRef.current) {
+        window.clearTimeout(decisionUndoTimeoutRef.current);
+        decisionUndoTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     intakePhaseRef.current = intakePhase;
@@ -1663,7 +1773,15 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       const resolvedCount = Math.max(0, previousDecisions.length - nextOpenDecisions.length);
       const decisionAction = decisionActionRef.current;
       decisionActionRef.current = null;
+      const decisionUndoSnapshot = pendingDecisionUndoRef.current;
+      pendingDecisionUndoRef.current = null;
       const decisionAck = buildDecisionAckMessage(decisionAction, resolvedCount);
+      const canUndoDecision = Boolean(decisionAction && resolvedCount > 0 && decisionUndoSnapshot);
+      if (canUndoDecision) {
+        startDecisionUndoWindow(decisionUndoSnapshot, decisionAck);
+      } else if (decisionAction) {
+        clearDecisionUndoState();
+      }
 
       if (payload?.needsFollowUp) {
         setLaborPricingNote("");
@@ -1677,7 +1795,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
           : "I need a bit more pricing detail. Share either a flat amount or an hourly rate + hours.";
         if (decisionAck) {
           appendAiMessage(decisionAck);
-          showDecisionToast(decisionAck);
+          showDecisionToast(decisionAck, { durationMs: canUndoDecision ? 9000 : 3500 });
         }
         appendAiMessage(followUpText);
         const responseAt = Date.now();
@@ -1708,7 +1826,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         openDecisionSignatureRef.current = decisionSignature;
         if (decisionAck) {
           appendAiMessage(decisionAck);
-          showDecisionToast(decisionAck);
+          showDecisionToast(decisionAck, { durationMs: canUndoDecision ? 9000 : 3500 });
         }
         isRepeatDecision
           ? appendAiMessage(followUpMessage)
@@ -1743,7 +1861,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         openDecisionSignatureRef.current = "";
         if (decisionAck) {
           appendAiMessage(decisionAck);
-          showDecisionToast(decisionAck);
+          showDecisionToast(decisionAck, { durationMs: canUndoDecision ? 9000 : 3500 });
         }
         appendSummaryMessage(
           buildSummaryText(adjustedInvoice ?? payload.invoice, [], nextUnparsedLines.length),
@@ -1775,6 +1893,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         return;
       }
       decisionActionRef.current = null;
+      pendingDecisionUndoRef.current = null;
       if (timeoutMessageIdRef.current) {
         dismissTimeoutMessage(timeoutMessageIdRef.current);
       }
@@ -1875,7 +1994,15 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       const resolvedCount = Math.max(0, previousDecisions.length - nextOpenDecisions.length);
       const decisionAction = decisionActionRef.current;
       decisionActionRef.current = null;
+      const decisionUndoSnapshot = pendingDecisionUndoRef.current;
+      pendingDecisionUndoRef.current = null;
       const decisionAck = buildDecisionAckMessage(decisionAction, resolvedCount);
+      const canUndoDecision = Boolean(decisionAction && resolvedCount > 0 && decisionUndoSnapshot);
+      if (canUndoDecision) {
+        startDecisionUndoWindow(decisionUndoSnapshot, decisionAck);
+      } else if (decisionAction) {
+        clearDecisionUndoState();
+      }
       setFollowUp(null);
       setStructuredInvoice(payload.structuredInvoice ?? structuredInvoice);
       setFinishedInvoice(payload.invoice ?? null);
@@ -1890,7 +2017,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         openDecisionSignatureRef.current = decisionSignature;
         if (decisionAck) {
           appendAiMessage(decisionAck);
-          showDecisionToast(decisionAck);
+          showDecisionToast(decisionAck, { durationMs: canUndoDecision ? 9000 : 3500 });
         }
         isRepeatDecision
           ? appendAiMessage(followUpMessage)
@@ -1924,7 +2051,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         openDecisionSignatureRef.current = "";
         if (decisionAck) {
           appendAiMessage(decisionAck);
-          showDecisionToast(decisionAck);
+          showDecisionToast(decisionAck, { durationMs: canUndoDecision ? 9000 : 3500 });
         }
         appendSummaryMessage(
           buildSummaryText(payload.invoice, [], nextUnparsedLines.length),
@@ -1955,6 +2082,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         return;
       }
       decisionActionRef.current = null;
+      pendingDecisionUndoRef.current = null;
       if (timeoutMessageIdRef.current) {
         dismissTimeoutMessage(timeoutMessageIdRef.current);
       }
@@ -2589,6 +2717,41 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                       value: `Update the client name to `
                     });
                   }
+                  const duplicateMergeTarget = (() => {
+                    const groups = new Map();
+                    payload.lineItems.forEach((item) => {
+                      const normalizedDescription = (item.description ?? "")
+                        .toLowerCase()
+                        .replace(/[^a-z0-9\s]/g, " ")
+                        .replace(/\s+/g, " ")
+                        .trim();
+                      if (!normalizedDescription) {
+                        return;
+                      }
+                      const unitPrice = Number.isFinite(item.unitPrice)
+                        ? Number(item.unitPrice).toFixed(2)
+                        : "na";
+                      const key = `${item.type ?? "other"}|${unitPrice}|${normalizedDescription}`;
+                      const current = groups.get(key) ?? {
+                        count: 0,
+                        description: item.description
+                      };
+                      current.count += 1;
+                      groups.set(key, current);
+                    });
+                    const duplicateGroup = Array.from(groups.values()).find((entry) => entry.count > 1);
+                    if (!duplicateGroup?.description) {
+                      return null;
+                    }
+                    return formatDisplayDescription(duplicateGroup.description);
+                  })();
+                  if (duplicateMergeTarget) {
+                    quickFixes.push({
+                      id: "fix-merge-duplicates",
+                      label: "Merge duplicates",
+                      value: `Merge duplicate line items for ${duplicateMergeTarget}.`
+                    });
+                  }
 
                   const canToggleReviewDetails = sections.length > 0;
                   const hasMissingAmounts = payload.lineItems.some(
@@ -2690,10 +2853,10 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                           {shouldShowSuggestedEdits ? (
                             <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
                               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                Suggested edits
+                                Quick actions
                               </p>
                               <div className="mt-2 flex flex-wrap gap-2">
-                                {quickFixes.slice(0, 2).map((fix) => (
+                                {quickFixes.slice(0, 3).map((fix) => (
                                   <button
                                     key={fix.id}
                                     type="button"
@@ -2708,19 +2871,17 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                             </div>
                           ) : null}
                           {canToggleReviewDetails ? (
-                            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                              <span className="font-semibold uppercase tracking-wide text-slate-400">
-                                Details
-                              </span>
+                            <p className="text-xs text-slate-500">
+                              Details {reviewCardCollapsed ? "hidden." : "shown."}
                               <button
                                 type="button"
-                                className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                                className="ml-1 font-semibold text-slate-600 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
                                 onClick={() => setReviewCardCollapsed((prev) => !prev)}
                                 disabled={isTyping}
                               >
                                 {reviewCardCollapsed ? "Show details" : "Hide details"}
                               </button>
-                            </div>
+                            </p>
                           ) : null}
                           <p className="text-xs text-slate-500">
                             I’ll flag anything unclear below — you decide on money.
@@ -2887,19 +3048,22 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                           </span>
                         ) : null}
                       </div>
-                      {hasReviewCard && hasVisibleDetails ? (
-                        <button
-                          type="button"
-                          className="text-xs font-semibold text-emerald-700"
-                          onClick={() => setAssumptionsCollapsed((prev) => !prev)}
-                        >
-                          {assumptionsCollapsed ? "Show details" : "Hide details"}
-                        </button>
-                      ) : null}
                     </div>
                     {summaryTimeLabel ? (
                       <p className="mt-1 text-xs text-slate-500">
                         Summary updated {summaryTimeLabel}
+                      </p>
+                    ) : null}
+                    {hasReviewCard && hasVisibleDetails ? (
+                      <p className="mt-1 text-xs text-slate-500">
+                        Details {assumptionsCollapsed ? "hidden." : "shown."}
+                        <button
+                          type="button"
+                          className="ml-1 font-semibold text-slate-600 hover:text-slate-900"
+                          onClick={() => setAssumptionsCollapsed((prev) => !prev)}
+                        >
+                          {assumptionsCollapsed ? "Show details" : "Hide details"}
+                        </button>
                       </p>
                     ) : null}
                     {openDecisionCount > 0 && showConfirmDetails ? (
@@ -3276,14 +3440,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                       <button
                         type="button"
                         className={`inline-flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 active:scale-[0.98] ${
-                          ctaDisabled
+                          primaryCtaDisabled
                             ? "cursor-not-allowed bg-slate-200 text-slate-500"
                             : "bg-emerald-600 text-white"
                         }`}
-                        disabled={ctaDisabled}
-                        onClick={handleGenerateInvoice}
+                        disabled={primaryCtaDisabled}
+                        onClick={handlePrimaryCta}
                       >
-                        Generate Invoice
+                        {primaryCtaLabel}
                       </button>
                       <p className="text-xs text-slate-500">{ctaHelper}</p>
                     </div>
@@ -3296,7 +3460,18 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       {decisionToast ? (
         <div className="fixed bottom-24 left-0 right-0 z-40 flex justify-center px-4">
           <div className="max-w-3xl flex-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm">
-            {decisionToast}
+            <div className="flex items-center justify-between gap-3">
+              <span>{decisionToast}</span>
+              {decisionUndoState ? (
+                <button
+                  type="button"
+                  className="rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-400 hover:text-emerald-900"
+                  onClick={handleUndoDecision}
+                >
+                  Undo
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : null}
