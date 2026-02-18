@@ -2385,11 +2385,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         return true;
       }
       if (parseResult?.laborPricing) {
-        if (
-          parseResult.laborPricing.billingType === "hourly" &&
-          Number.isFinite(parseResult.laborPricing.hourlyRate)
-        ) {
-          const nextRate = Math.round(parseResult.laborPricing.hourlyRate * 100) / 100;
+        const parsedHourlyRate =
+          parseResult.laborPricing.billingType === "hourly"
+            ? Number(
+                parseResult.laborPricing.hourlyRate ?? parseResult.laborPricing.rate
+              )
+            : null;
+        if (Number.isFinite(parsedHourlyRate) && parsedHourlyRate > 0) {
+          const nextRate = Math.round(parsedHourlyRate * 100) / 100;
           setSavedLaborRate(nextRate);
           storeLaborRate(nextRate);
         }
@@ -2746,7 +2749,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     return formatDisplayDescription(duplicateGroup.description);
                   })();
                   if (duplicateMergeTarget) {
-                    quickFixes.push({
+                    quickFixes.unshift({
                       id: "fix-merge-duplicates",
                       label: "Merge duplicates",
                       value: `Merge duplicate line items for ${duplicateMergeTarget}.`
@@ -2765,7 +2768,13 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                   const hasUnparsed = payload.unparsed.length > 0;
                   const shouldShowSuggestedEdits =
                     quickFixes.length > 0 &&
-                    (pendingDecisionCount > 0 || hasLaborGaps || hasMissingAmounts || hasUnparsed);
+                    (
+                      pendingDecisionCount > 0 ||
+                      hasLaborGaps ||
+                      hasMissingAmounts ||
+                      hasUnparsed ||
+                      Boolean(duplicateMergeTarget)
+                    );
 
                   return (
                     <div key={message.id} className="flex justify-start">
