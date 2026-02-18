@@ -15,6 +15,7 @@ const IMAGE_MIME_TYPES = new Set([
 export type ImageOcrExtraction = {
   text: string;
   warnings: string[];
+  confidence: "high" | "medium" | "low";
 };
 
 export async function extractUploadedInvoiceText(file: UploadedFile): Promise<string> {
@@ -60,22 +61,31 @@ export async function extractUploadedImageText(file: UploadedFile): Promise<Imag
     throw new Error("Could not extract readable text from the uploaded image.");
   }
   const warnings = new Set<string>();
+  const externalWarnings = (ocrResult.warnings ?? []).filter(
+    (warning): warning is string => typeof warning === "string" && warning.trim().length > 0
+  );
+  const lowConfidenceSignals: string[] = [];
   if (text.length < 30) {
     warnings.add("Very little text was detected. Please review carefully.");
+    lowConfidenceSignals.push("short_text");
   }
-  if (text.split(/\s+/).filter(Boolean).length < 6) {
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  if (wordCount < 6) {
     warnings.add("Low OCR confidence: only a small amount of readable text was found.");
+    lowConfidenceSignals.push("very_low_word_count");
   }
   if (/[�]/.test(text)) {
     warnings.add("Some characters could not be read clearly.");
+    lowConfidenceSignals.push("replacement_characters");
   }
-  (ocrResult.warnings ?? []).forEach((warning) => {
-    if (typeof warning === "string" && warning.trim()) {
-      warnings.add(warning.trim());
-    }
+  externalWarnings.forEach((warning) => {
+    warnings.add(warning.trim());
   });
+  const confidence: ImageOcrExtraction["confidence"] =
+    lowConfidenceSignals.length > 0 ? "low" : externalWarnings.length > 0 || wordCount < 20 ? "medium" : "high";
   return {
     text,
-    warnings: Array.from(warnings)
+    warnings: Array.from(warnings),
+    confidence
   };
 }

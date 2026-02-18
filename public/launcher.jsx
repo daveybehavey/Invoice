@@ -3549,6 +3549,7 @@ function ImportInvoice() {
   const [notes, setNotes] = useState("");
   const [reviewedText, setReviewedText] = useState("");
   const [ocrWarnings, setOcrWarnings] = useState([]);
+  const [ocrConfidence, setOcrConfidence] = useState(null);
   const [error, setError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -3623,6 +3624,7 @@ function ImportInvoice() {
     setError("");
     setReviewedText("");
     setOcrWarnings([]);
+    setOcrConfidence(null);
     setSelectedFile(file);
   };
 
@@ -3635,6 +3637,7 @@ function ImportInvoice() {
     setSelectedFile(null);
     setReviewedText("");
     setOcrWarnings([]);
+    setOcrConfidence(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -3689,6 +3692,7 @@ function ImportInvoice() {
     setIsExtracting(true);
     setError("");
     setOcrWarnings([]);
+    setOcrConfidence(null);
     try {
       const formData = new FormData();
       formData.append("invoiceFile", selectedFile);
@@ -3704,8 +3708,13 @@ function ImportInvoice() {
       if (!extractedText) {
         throw new Error("No readable text found in the image. Try a clearer image.");
       }
+      const nextConfidence =
+        payload?.confidence === "high" || payload?.confidence === "medium" || payload?.confidence === "low"
+          ? payload.confidence
+          : null;
       setReviewedText(extractedText);
       setOcrWarnings(Array.isArray(payload?.warnings) ? payload.warnings : []);
+      setOcrConfidence(nextConfidence);
     } catch (uploadError) {
       console.error("Image text extraction failed", uploadError);
       setError(uploadError?.message || "Could not extract text from image.");
@@ -3876,6 +3885,22 @@ function ImportInvoice() {
               <p className="text-xs text-amber-800">
                 OCR can miss or alter words. Check this text before building the invoice.
               </p>
+              {ocrConfidence ? (
+                <p className="text-xs text-amber-900">
+                  OCR confidence:{" "}
+                  <span
+                    className={`inline-flex rounded-full px-2 py-0.5 font-semibold ${
+                      ocrConfidence === "high"
+                        ? "bg-emerald-100 text-emerald-800"
+                        : ocrConfidence === "medium"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-rose-100 text-rose-700"
+                    }`}
+                  >
+                    {ocrConfidence === "high" ? "High" : ocrConfidence === "medium" ? "Medium" : "Low"}
+                  </span>
+                </p>
+              ) : null}
               {ocrWarnings.length > 0 ? (
                 <ul className="list-disc space-y-1 pl-5 text-xs text-amber-800">
                   {ocrWarnings.map((warning, index) => (

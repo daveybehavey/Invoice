@@ -283,6 +283,30 @@ test("extract-notes returns OCR text and warnings for image uploads", async () =
   assert.match(response.body.extractedText, /Jan 28 inspection/i);
   assert.ok(Array.isArray(response.body.warnings));
   assert.ok(response.body.warnings.length >= 1);
+  assert.equal(response.body.confidence, "medium");
+});
+
+test("extract-notes returns low OCR confidence for tiny extracted text", async () => {
+  setImageOcrRunnerForTests(async () => ({
+    extractedText: "Fix sink",
+    warnings: []
+  }));
+
+  const response = await request(app)
+    .post("/api/invoices/extract-notes")
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes.png",
+      contentType: "image/png"
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.sourceType, "image");
+  assert.equal(response.body.confidence, "low");
+  const warnings = response.body.warnings ?? [];
+  assert.ok(Array.isArray(warnings));
+  assert.ok(
+    warnings.some((warning: string) => /low ocr confidence|very little text/i.test(warning))
+  );
 });
 
 test("extract-notes rejects non-image uploads", async () => {

@@ -155,6 +155,8 @@ test("importing image notes requires OCR review before building draft", async ()
     await page.getByRole("button", { name: "Extract text" }).click();
 
     await page.getByText("One line was hard to read.").waitFor({ state: "visible" });
+    await page.getByText("OCR confidence:").waitFor({ state: "visible" });
+    await page.getByText("Medium").first().waitFor({ state: "visible" });
     await page
       .locator('textarea[placeholder="Review and edit extracted text if needed."]')
       .waitFor({ state: "visible" });

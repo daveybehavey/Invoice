@@ -134,7 +134,8 @@ app.post("/api/invoices/extract-notes", imageUpload.single("invoiceFile"), async
     res.json({
       sourceType: "image",
       extractedText: extraction.text,
-      warnings: extraction.warnings
+      warnings: extraction.warnings,
+      confidence: extraction.confidence
     });
   } catch (error) {
     next(error);
