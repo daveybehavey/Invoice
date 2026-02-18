@@ -2957,8 +2957,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                       : "No decisions pending.";
                   const nextStepText =
                     pendingDecisionCount > 0
-                      ? "Resolve decisions below, then generate."
-                      : "Generate your invoice below.";
+                      ? "Use the Decisions card to choose Add or Skip."
+                      : "Generate invoice when ready.";
                   if (primaryLaborRate) {
                     quickFixes.push({
                       id: "fix-rate",
@@ -3041,9 +3041,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                   );
                   const hasUnparsed = payload.unparsed.length > 0;
                   const shouldShowSuggestedEdits =
-                    quickFixes.length > 0 &&
-                    pendingDecisionCount === 0 &&
-                    (hasLaborGaps || hasMissingAmounts || hasUnparsed || Boolean(duplicateMergeTarget));
+                    quickFixes.length > 0 && pendingDecisionCount === 0;
                   const hasReviewSecondaryContent =
                     hasStructuredSections ||
                     previewItems.length > 0 ||
@@ -3189,12 +3187,6 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                           {showReviewSecondary ? (
                             <p className="text-xs text-slate-500">
                               I flag unclear money items below. You decide what to bill.
-                            </p>
-                          ) : null}
-                          {showReviewSecondary && pendingDecisionCount > 0 ? (
-                            <p className="text-xs font-semibold text-amber-700">
-                              Resolve {pendingDecisionCount} decision
-                              {pendingDecisionCount > 1 ? "s" : ""} below to continue.
                             </p>
                           ) : null}
                           {showReviewExpandedSections
@@ -3893,6 +3885,7 @@ function ImportInvoice() {
   const [reviewedText, setReviewedText] = useState("");
   const [ocrWarnings, setOcrWarnings] = useState([]);
   const [ocrConfidence, setOcrConfidence] = useState(null);
+  const [lowConfidenceConfirmed, setLowConfidenceConfirmed] = useState(false);
   const [error, setError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -3912,6 +3905,7 @@ function ImportInvoice() {
   ];
   const imageMimeTypes = ["image/png", "image/jpeg", "image/webp"];
   const hasReviewedText = reviewedText.trim().length > 0;
+  const requiresLowConfidenceConfirm = hasReviewedText && ocrConfidence === "low";
 
   const formatBytes = (bytes) => {
     if (!Number.isFinite(bytes)) {
@@ -3968,6 +3962,7 @@ function ImportInvoice() {
     setReviewedText("");
     setOcrWarnings([]);
     setOcrConfidence(null);
+    setLowConfidenceConfirmed(false);
     setSelectedFile(file);
   };
 
@@ -3981,6 +3976,7 @@ function ImportInvoice() {
     setReviewedText("");
     setOcrWarnings([]);
     setOcrConfidence(null);
+    setLowConfidenceConfirmed(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -4036,6 +4032,7 @@ function ImportInvoice() {
     setError("");
     setOcrWarnings([]);
     setOcrConfidence(null);
+    setLowConfidenceConfirmed(false);
     try {
       const formData = new FormData();
       formData.append("invoiceFile", selectedFile);
@@ -4058,6 +4055,7 @@ function ImportInvoice() {
       setReviewedText(extractedText);
       setOcrWarnings(Array.isArray(payload?.warnings) ? payload.warnings : []);
       setOcrConfidence(nextConfidence);
+      setLowConfidenceConfirmed(false);
     } catch (uploadError) {
       console.error("Image text extraction failed", uploadError);
       setError(uploadError?.message || "Could not extract text from image.");
@@ -4074,6 +4072,10 @@ function ImportInvoice() {
     const extractedText = reviewedText.trim();
     if (!extractedText) {
       setError("Review the extracted text before building the draft.");
+      return;
+    }
+    if (ocrConfidence === "low" && !lowConfidenceConfirmed) {
+      setError("Confirm low-confidence OCR text before building the draft.");
       return;
     }
     setIsUploading(true);
@@ -4270,6 +4272,20 @@ function ImportInvoice() {
                   Click Extract text, then review before building the draft.
                 </p>
               )}
+              {requiresLowConfidenceConfirm ? (
+                <label className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 rounded border-rose-300 text-rose-600 focus:ring-rose-300"
+                    checked={lowConfidenceConfirmed}
+                    onChange={(event) => setLowConfidenceConfirmed(event.target.checked)}
+                    disabled={isExtracting || isUploading}
+                  />
+                  <span>
+                    I reviewed the OCR text and understand it may be inaccurate.
+                  </span>
+                </label>
+              ) : null}
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -4317,7 +4333,13 @@ function ImportInvoice() {
                 type="button"
                 className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
                 onClick={handleBuildFromReviewedText}
-                disabled={!selectedFile || !hasReviewedText || isUploading || isExtracting}
+                disabled={
+                  !selectedFile ||
+                  !hasReviewedText ||
+                  isUploading ||
+                  isExtracting ||
+                  (ocrConfidence === "low" && !lowConfidenceConfirmed)
+                }
               >
                 {isUploading ? "Building draft..." : "Build draft from reviewed text"}
               </button>
@@ -4334,12 +4356,14 @@ function ImportInvoice() {
             <p className="text-xs text-slate-500">
               {isExtracting
                 ? "Extracting text from image..."
-                : isUploading
-                  ? "Building your draft..."
+                  : isUploading
+                    ? "Building your draft..."
                   : selectedFile && isImageFile(selectedFile)
-                    ? "Extract text, review it, then build."
+                    ? requiresLowConfidenceConfirm
+                      ? "Low confidence OCR: review and confirm before building."
+                      : "Extract text, review it, then build."
                     : "We’ll open the editor next."}
-            </p>
+              </p>
           </div>
         </div>
       </main>
@@ -5404,6 +5428,14 @@ function ManualInvoiceCanvas() {
   const invoiceInteractionClass = isMobileInspectorOpen
     ? "pointer-events-none select-none opacity-60 md:pointer-events-auto md:opacity-100"
     : "";
+  const mobileInspectorTabs = [
+    { id: "style", label: "Style", icon: "✨" },
+    { id: "tone", label: "Tone", icon: "🎙️" },
+    { id: "assistant", label: "AI Edit", icon: "✍️" },
+    { id: "export", label: "Export", icon: "⬇️" }
+  ];
+  const activeMobileTabLabel =
+    mobileInspectorTabs.find((tab) => tab.id === activeInspectorTab)?.label ?? "Tools";
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -5651,62 +5683,82 @@ function ManualInvoiceCanvas() {
       </main>
 
       <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white md:hidden no-print">
-        <div className="mx-auto flex max-w-6xl items-center justify-around px-4 py-2">
-          {[
-            { id: "style", label: "Style", icon: "✨" },
-            { id: "tone", label: "Tone", icon: "🎙️" },
-            { id: "assistant", label: "Edit", icon: "✍️" },
-            { id: "export", label: "Export", icon: "⬇️" }
-          ].map((tab) => {
-            const isActive = activeInspectorTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                className={`flex flex-col items-center gap-0.5 text-xs font-semibold ${
-                  isActive ? "text-emerald-700" : "text-slate-500"
-                }`}
-                onClick={() => {
-                  setActiveInspectorTab(tab.id);
-                  setInspectorOpen(true);
-                }}
-              >
-                <span>{tab.label}</span>
-                <span className="text-[10px] leading-none" aria-hidden="true">
-                  {tab.icon}
-                </span>
-              </button>
-            );
-          })}
+        <div className="mx-auto max-w-6xl px-4 py-2">
+          <p className="mb-1 text-center text-[11px] font-semibold text-slate-500">
+            {isMobileInspectorOpen ? `${activeMobileTabLabel} panel open` : "Invoice tools"}
+          </p>
+          <div className="flex items-center justify-around">
+            {mobileInspectorTabs.map((tab) => {
+              const isActive = activeInspectorTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`flex min-w-[68px] flex-col items-center gap-0.5 rounded-lg px-2 py-1 text-xs font-semibold transition ${
+                    isActive ? "bg-emerald-50 text-emerald-700" : "text-slate-500"
+                  }`}
+                  onClick={() => {
+                    setActiveInspectorTab(tab.id);
+                    setInspectorOpen(true);
+                  }}
+                >
+                  <span>{tab.label}</span>
+                  <span className="text-[10px] leading-none" aria-hidden="true">
+                    {tab.icon}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
       {isMobileInspectorOpen ? (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white/95 md:hidden no-print">
-          <InspectorPanel
-            activeTab={activeInspectorTab}
-            onTabChange={setActiveInspectorTab}
-            onClose={() => setInspectorOpen(false)}
-            showCloseButton
-            logoUrl={logoUrl}
-            onLogoChange={handleLogoChange}
-            onLogoRemove={handleLogoRemove}
-            stylePreset={stylePreset}
-            onStylePresetChange={setStylePreset}
-            onPrint={handlePrint}
-            onDownloadPdf={handleDownloadPdf}
-            onSaveInvoice={handleSaveInvoice}
-            saveStatus={saveStatus}
-            saveError={saveError}
-            savedInvoiceId={savedInvoiceId}
-            previewData={previewData}
-            toneSource={{ lineItems, notes }}
-            onPolishDescriptions={handlePolishDescriptions}
-            buildRewriteInvoicePayload={buildRewriteInvoicePayload}
-            onApplyRewrite={applyRewriteChanges}
-            buildEditableInvoicePayload={buildEditableInvoicePayload}
-            onApplyAiEdit={applyAiEdit}
+        <div className="fixed inset-0 z-50 md:hidden no-print">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-900/35"
+            aria-label="Close tools panel"
+            onClick={() => setInspectorOpen(false)}
           />
+          <div className="absolute inset-x-0 bottom-0 max-h-[82vh] rounded-t-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2">
+              <span className="text-sm font-semibold text-slate-700">{activeMobileTabLabel}</span>
+              <button
+                type="button"
+                className="text-xs font-semibold text-slate-600"
+                onClick={() => setInspectorOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div className="h-[calc(82vh-44px)] overflow-hidden">
+              <InspectorPanel
+                activeTab={activeInspectorTab}
+                onTabChange={setActiveInspectorTab}
+                onClose={() => setInspectorOpen(false)}
+                hideInternalTabs
+                logoUrl={logoUrl}
+                onLogoChange={handleLogoChange}
+                onLogoRemove={handleLogoRemove}
+                stylePreset={stylePreset}
+                onStylePresetChange={setStylePreset}
+                onPrint={handlePrint}
+                onDownloadPdf={handleDownloadPdf}
+                onSaveInvoice={handleSaveInvoice}
+                saveStatus={saveStatus}
+                saveError={saveError}
+                savedInvoiceId={savedInvoiceId}
+                previewData={previewData}
+                toneSource={{ lineItems, notes }}
+                onPolishDescriptions={handlePolishDescriptions}
+                buildRewriteInvoicePayload={buildRewriteInvoicePayload}
+                onApplyRewrite={applyRewriteChanges}
+                buildEditableInvoicePayload={buildEditableInvoicePayload}
+                onApplyAiEdit={applyAiEdit}
+              />
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
@@ -5718,6 +5770,7 @@ function InspectorPanel({
   onTabChange,
   onClose,
   showCloseButton,
+  hideInternalTabs,
   logoUrl,
   onLogoChange,
   onLogoRemove,
@@ -6114,32 +6167,34 @@ function InspectorPanel({
   return (
     <>
       <div className="flex h-full min-h-0 flex-col border border-slate-200 bg-white shadow-sm md:rounded-2xl">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
-          <div className="flex gap-2">
-            {tabs.map((tab) => (
+        {!hideInternalTabs ? (
+          <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+            <div className="flex gap-2">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                    activeTab === tab.id ? "bg-emerald-600 text-white" : "text-slate-600"
+                  }`}
+                  onClick={() => onTabChange(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            {showCloseButton ? (
               <button
-                key={tab.id}
                 type="button"
-                className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
-                  activeTab === tab.id ? "bg-emerald-600 text-white" : "text-slate-600"
-                }`}
-                onClick={() => onTabChange(tab.id)}
+                className="text-sm font-semibold text-slate-600"
+                onClick={onClose}
               >
-                {tab.label}
+                Close
               </button>
-            ))}
+            ) : null}
           </div>
-          {showCloseButton ? (
-            <button
-              type="button"
-              className="text-sm font-semibold text-slate-600"
-              onClick={onClose}
-            >
-              Close
-            </button>
-          ) : null}
-        </div>
-        <div className="flex-1 overflow-y-auto px-4 py-5 text-sm text-slate-600">
+        ) : null}
+        <div className={`flex-1 overflow-y-auto px-4 py-5 text-sm text-slate-600 ${hideInternalTabs ? "pt-4" : ""}`}>
           {activeTab === "style" ? (
             <div className="space-y-4">
               <div>

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-02-18T18:40:09.688Z",
+  "timestamp": "2026-02-18T20:27:45.129Z",
   "baseUrl": "http://localhost:3000",
   "checks": [
     {
@@ -36,6 +36,11 @@
       "name": "generate enabled after resolving decision",
       "pass": true,
       "details": "Generate should unlock once no open decisions remain."
+    },
+    {
+      "name": "quick action focuses visible chat input with cursor at end",
+      "pass": true,
+      "details": "Typing cursor should be after prefilled quick-action text."
     }
   ],
   "issues": []

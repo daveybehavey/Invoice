@@ -73,7 +73,8 @@ const fixtureResolved = {
     subtotal: 178.75,
     total: 178.75
   },
-  openDecisions: []
+  openDecisions: [],
+  unparsedLines: ["parking receipt had smudged text"]
 };
 
 function createRecorder() {
@@ -268,6 +269,39 @@ async function run() {
       await generateButton.isEnabled(),
       "Generate should unlock once no open decisions remain."
     );
+
+    const reviewDetailsToggle = page.getByRole("button", { name: /show details|hide details/i }).first();
+    if (await reviewDetailsToggle.isVisible().catch(() => false)) {
+      await reviewDetailsToggle.click();
+    }
+    const quickActionButtons = page
+      .locator("button:visible")
+      .filter({ hasText: /change rate|update hours|remove item|update client|merge duplicates|edit notes/i });
+    const quickActionCount = await quickActionButtons.count();
+    if (quickActionCount === 0) {
+      recorder.addIssue(
+        "minor",
+        "No review quick action was visible for cursor-position testing.",
+        "Expected at least one quick action after decisions resolve."
+      );
+    } else {
+      const quickAction = quickActionButtons.first();
+      await quickAction.waitFor({ state: "visible", timeout: DEFAULT_TIMEOUT });
+      await quickAction.click();
+      await page.waitForTimeout(150);
+      const cursorAtEnd = await page.evaluate(() => {
+        const input = document.querySelector("textarea#ai-intake-input");
+        if (!(input instanceof HTMLTextAreaElement)) {
+          return false;
+        }
+        return input.selectionStart === input.value.length && input.selectionEnd === input.value.length;
+      });
+      recorder.addCheck(
+        "quick action focuses visible chat input with cursor at end",
+        cursorAtEnd,
+        "Typing cursor should be after prefilled quick-action text."
+      );
+    }
 
     const report = {
       timestamp: new Date().toISOString(),
