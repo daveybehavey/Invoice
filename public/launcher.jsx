@@ -256,6 +256,28 @@ const cloneJson = (value) => {
   return JSON.parse(JSON.stringify(value));
 };
 
+const isReadinessDebugEnabled = () => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("readinessDebug") === "1") {
+      return true;
+    }
+    return window.localStorage.getItem("invoiceReadinessDebug") === "true";
+  } catch (_error) {
+    return false;
+  }
+};
+
+const logReadinessEvent = (event, payload) => {
+  if (!isReadinessDebugEnabled()) {
+    return;
+  }
+  console.log(`[readiness:${event}]`, payload);
+};
+
 const formatMoney = (value) =>
   Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
 
@@ -505,6 +527,7 @@ function AIIntake() {
   const lastDecisionResolutionRef = useRef("");
   const decisionActionRef = useRef(null);
   const lastSummaryMetaRef = useRef({ at: null, requestId: null });
+  const readinessSignatureRef = useRef("");
   const intakePhaseRef = useRef(intakePhase);
   const summaryLockRef = useRef(false);
   const listEndRef = useRef(null);
@@ -1038,6 +1061,17 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     pendingLaborRate
   });
   const openDecisionCount = intakeReadiness.openDecisionCount;
+  const readinessSnapshot = {
+    intakePhase,
+    targetPhase: intakeReadiness.targetPhase,
+    lockReason: intakeReadiness.lockReason,
+    canGenerate: intakeReadiness.canGenerate,
+    needsFollowUp: intakeReadiness.needsFollowUp,
+    openDecisionCount: intakeReadiness.openDecisionCount,
+    hasFinishedInvoice: intakeReadiness.hasFinishedInvoice,
+    needsSummaryConfirmation: intakeReadiness.needsSummaryConfirmation
+  };
+  const readinessSignature = JSON.stringify(readinessSnapshot);
   const taxAssumptionPresent = assumptions.some((item) =>
     item.toLowerCase().includes("tax assumed")
   );
@@ -1631,6 +1665,17 @@ const applyDecisionActionToInvoice = (invoice, action) => {
   }, [intakePhase]);
 
   useEffect(() => {
+    if (!isReadinessDebugEnabled()) {
+      return;
+    }
+    if (readinessSignature === readinessSignatureRef.current) {
+      return;
+    }
+    readinessSignatureRef.current = readinessSignature;
+    console.log("[readiness:snapshot]", readinessSnapshot);
+  }, [readinessSignature]);
+
+  useEffect(() => {
     if (importSeedRef.current) {
       return;
     }
@@ -1661,6 +1706,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       finishedInvoice: nextSeedInvoice,
       openDecisionCount: nextOpenDecisions.length,
       pendingLaborRate: null
+    });
+    logReadinessEvent("import_seed", {
+      payloadNeedsFollowUp: Boolean(payload?.needsFollowUp),
+      seedTargetPhase: seedReadiness.targetPhase,
+      seedLockReason: seedReadiness.lockReason,
+      seedCanGenerate: seedReadiness.canGenerate,
+      openDecisionCount: nextOpenDecisions.length,
+      hasInvoice: Boolean(nextSeedInvoice)
     });
     const seededMessages = [
       initialIntakeMessages[0],
@@ -1830,6 +1883,15 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         finishedInvoice: payload?.needsFollowUp ? null : adjustedInvoice,
         openDecisionCount: nextOpenDecisions.length,
         pendingLaborRate: null
+      });
+      logReadinessEvent("intake_response", {
+        requestId,
+        payloadNeedsFollowUp: Boolean(payload?.needsFollowUp),
+        responseTargetPhase: responseReadiness.targetPhase,
+        responseLockReason: responseReadiness.lockReason,
+        responseCanGenerate: responseReadiness.canGenerate,
+        openDecisionCount: nextOpenDecisions.length,
+        hasInvoice: Boolean(adjustedInvoice)
       });
 
       if (payload?.needsFollowUp) {
@@ -2056,6 +2118,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         openDecisionCount: nextOpenDecisions.length,
         pendingLaborRate: null
       });
+      logReadinessEvent("labor_response", {
+        requestId,
+        responseTargetPhase: responseReadiness.targetPhase,
+        responseLockReason: responseReadiness.lockReason,
+        responseCanGenerate: responseReadiness.canGenerate,
+        openDecisionCount: nextOpenDecisions.length,
+        hasInvoice: Boolean(payload.invoice)
+      });
       setFollowUp(null);
       setStructuredInvoice(payload.structuredInvoice ?? structuredInvoice);
       setFinishedInvoice(payload.invoice ?? null);
@@ -2201,6 +2271,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
         finishedInvoice: nextInvoice,
         openDecisionCount: openDecisions.length,
         pendingLaborRate
+      });
+      logReadinessEvent("edit_response", {
+        requestId,
+        editTargetPhase: editReadiness.targetPhase,
+        editLockReason: editReadiness.lockReason,
+        editCanGenerate: editReadiness.canGenerate,
+        openDecisionCount: openDecisions.length,
+        hasInvoice: Boolean(nextInvoice)
       });
       setIntakePhase(editReadiness.targetPhase);
       const responseAt = Date.now();
@@ -2387,6 +2465,13 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       setPendingTaxRate(String(detectedTaxRate));
     }
     if (isTyping) {
+      logReadinessEvent("submit_blocked", {
+        reason: "typing",
+        messageLength: trimmed.length,
+        intakePhase,
+        lockReason: intakeReadiness.lockReason,
+        canGenerate: intakeReadiness.canGenerate
+      });
       return false;
     }
     const userMessage = {
@@ -2402,6 +2487,12 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       intakeReadiness.canGenerate &&
       (intakePhase === "ready_to_generate" || (hasReviewCard && showChatInput));
     if (shouldEditDraft) {
+      logReadinessEvent("submit_route", {
+        route: "edit_draft",
+        messageLength: trimmed.length,
+        intakePhase,
+        lockReason: intakeReadiness.lockReason
+      });
       runInvoiceEditRequest(trimmed);
       return true;
     }
@@ -2419,6 +2510,12 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     }
 
     if (intakePhase === "awaiting_follow_up" && followUp?.type === "labor_pricing") {
+      logReadinessEvent("submit_route", {
+        route: "labor_follow_up",
+        messageLength: trimmed.length,
+        intakePhase,
+        lockReason: intakeReadiness.lockReason
+      });
       const parseResult = parseLaborPricing(trimmed, followUp?.laborItems ?? [], {
         pendingRate: pendingLaborRate
       });
@@ -2497,6 +2594,13 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     if (shouldResolveDecisions) {
       lastDecisionResolutionRef.current = trimmed;
     }
+    logReadinessEvent("submit_route", {
+      route: shouldResolveDecisions ? "resolve_decision" : "intake_parse",
+      messageLength: trimmed.length,
+      intakePhase,
+      lockReason: intakeReadiness.lockReason,
+      openDecisionCount: openDecisions.length
+    });
     runIntakeRequest(nextMessages, resolutionText);
     return true;
   };

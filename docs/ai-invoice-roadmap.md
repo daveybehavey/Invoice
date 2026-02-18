@@ -38,14 +38,18 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Readiness evaluator now drives phase transitions from intake/labor responses.
    - Generate CTA state and primary decision CTA derive from readiness lock state.
    - Follow-up state now prefers payload data over stale phase labels.
+16. Readiness telemetry + auditability
+   - Added debug-only readiness event logs for submit routing + response transitions.
+   - Added readiness snapshot logs to quickly diagnose phase/readiness drift.
+   - Enable via `?readinessDebug=1` or `localStorage.invoiceReadinessDebug = "true"`.
 
 ## Next (current priorities)
-1. Readiness telemetry + auditability
-   - Emit compact readiness snapshots in debug logs to speed up regression triage.
-2. Manual editor polish (non-monetary)
+1. Manual editor polish (non-monetary)
    - Keep improving wording/grammar cleanup without mutating qty/rate/amount.
-3. Mobile complexity gating pass
+2. Mobile complexity gating pass
    - Keep one primary action visible; reveal secondary details progressively.
+3. Readiness debug panel (optional)
+   - Small developer-only drawer that shows current readiness snapshot live.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.
