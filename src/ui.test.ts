@@ -7,7 +7,7 @@ import { chromium, type Browser, type Page } from "playwright";
 
 process.env.NODE_ENV = "test";
 
-const [{ app }, { setJsonTaskRunnerForTests }] = await Promise.all([
+const [{ app }, { setImageOcrRunnerForTests, setJsonTaskRunnerForTests }] = await Promise.all([
   import("./server.js"),
   import("./ai/openaiClient.js")
 ]);
@@ -26,10 +26,12 @@ before(async () => {
 
 afterEach(() => {
   setJsonTaskRunnerForTests(null);
+  setImageOcrRunnerForTests(null);
 });
 
 after(async () => {
   setJsonTaskRunnerForTests(null);
+  setImageOcrRunnerForTests(null);
   await browser.close();
   await new Promise<void>((resolve, reject) => {
     server.close((error) => {
@@ -128,6 +130,42 @@ test("review quick actions include merge duplicates when duplicate line items ar
   }
 });
 
+test("importing image notes requires OCR review before building draft", async () => {
+  setImageOcrRunnerForTests(async () => ({
+    extractedText: "Jan 30 faucet repair, 2 hours at $80/hr.",
+    warnings: ["One line was hard to read."]
+  }));
+  useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/import`, { waitUntil: "networkidle" });
+    await page.getByRole("heading", { name: "Upload invoice files or photo notes" }).waitFor({
+      state: "visible"
+    });
+
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "notes.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("fake-image-content")
+    });
+
+    await page.getByText("Review extracted text (required)").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Extract text" }).click();
+
+    await page.getByText("One line was hard to read.").waitFor({ state: "visible" });
+    await page
+      .locator('textarea[placeholder="Extract text first, then review and edit if needed."]')
+      .waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Build draft from reviewed text" }).click();
+
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+  } finally {
+    await context.close();
+  }
+});
+
 async function openIntake(page: Page): Promise<void> {
   await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
   await page.getByText("AI Invoice Assistant").waitFor({ state: "visible" });
@@ -198,6 +236,19 @@ function structuredDuplicateDraft() {
       { description: "Washer", quantity: 1, unitCost: 5, amount: 5 },
       { description: "Washer", quantity: 1, unitCost: 5, amount: 5 }
     ]
+  };
+}
+
+function structuredInvoiceForImport() {
+  return {
+    customerName: "Mike Johnson",
+    workSessions: [
+      {
+        date: "Jan 30",
+        tasks: [{ description: "Faucet repair", hours: 2, rate: 80, amount: 160 }]
+      }
+    ],
+    materials: []
   };
 }
 

@@ -9,7 +9,7 @@ import request from "supertest";
 process.env.NODE_ENV = "test";
 process.env.INVOICE_STORE_FILE = path.join(os.tmpdir(), `invoice-test-store-${randomUUID()}.json`);
 
-const [{ app }, { setJsonTaskRunnerForTests }] = await Promise.all([
+const [{ app }, { setImageOcrRunnerForTests, setJsonTaskRunnerForTests }] = await Promise.all([
   import("./server.js"),
   import("./ai/openaiClient.js")
 ]);
@@ -26,10 +26,12 @@ beforeEach(async () => {
 
 afterEach(() => {
   setJsonTaskRunnerForTests(null);
+  setImageOcrRunnerForTests(null);
 });
 
 after(async () => {
   setJsonTaskRunnerForTests(null);
+  setImageOcrRunnerForTests(null);
   await fs.rm(storeFilePath, { force: true });
 });
 
@@ -261,6 +263,38 @@ test("keeps explicit service period when parser already provides a range", async
   assert.equal(response.body.needsFollowUp, false);
   assert.equal(response.body.invoice.servicePeriodStart, "Jan 1");
   assert.equal(response.body.invoice.servicePeriodEnd, "Jan 31");
+});
+
+test("extract-notes returns OCR text and warnings for image uploads", async () => {
+  setImageOcrRunnerForTests(async () => ({
+    extractedText: "Jan 28 inspection visit. Jan 30 faucet repair 2h at $80/hr.",
+    warnings: ["Handwriting in one line was unclear."]
+  }));
+
+  const response = await request(app)
+    .post("/api/invoices/extract-notes")
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes.png",
+      contentType: "image/png"
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.sourceType, "image");
+  assert.match(response.body.extractedText, /Jan 28 inspection/i);
+  assert.ok(Array.isArray(response.body.warnings));
+  assert.ok(response.body.warnings.length >= 1);
+});
+
+test("extract-notes rejects non-image uploads", async () => {
+  const response = await request(app)
+    .post("/api/invoices/extract-notes")
+    .attach("invoiceFile", Buffer.from("fake-text"), {
+      filename: "notes.txt",
+      contentType: "text/plain"
+    });
+
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /Unsupported image type/i);
 });
 
 test("returns unparsed lines when messy notes include unrelated items", async () => {

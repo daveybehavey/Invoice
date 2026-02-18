@@ -33,7 +33,7 @@ import {
   saveInvoiceDocument,
   updateSavedInvoiceStatus
 } from "./services/savedInvoiceStore.js";
-import { extractUploadedInvoiceText } from "./services/uploadTextExtractor.js";
+import { extractUploadedImageText, extractUploadedInvoiceText } from "./services/uploadTextExtractor.js";
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -116,6 +116,22 @@ app.post(
     }
   }
 );
+
+app.post("/api/invoices/extract-notes", upload.single("invoiceFile"), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    if (!req.file) {
+      throw new Error("Upload an image file first.");
+    }
+    const extraction = await extractUploadedImageText(req.file);
+    res.json({
+      sourceType: "image",
+      extractedText: extraction.text,
+      warnings: extraction.warnings
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 app.post("/api/invoices/from-input/labor-pricing", async (req: Request, res: Response, next: NextFunction) => {
   try {

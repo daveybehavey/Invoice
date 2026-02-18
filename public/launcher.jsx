@@ -3537,19 +3537,26 @@ function ImportInvoice() {
   const navigate = useNavigate();
   const [selectedFile, setSelectedFile] = useState(null);
   const [notes, setNotes] = useState("");
+  const [reviewedText, setReviewedText] = useState("");
+  const [ocrWarnings, setOcrWarnings] = useState([]);
   const [error, setError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  const [isExtracting, setIsExtracting] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef(null);
 
-  const supportedExtensions = [".pdf", ".txt", ".md", ".csv", ".json"];
+  const supportedExtensions = [".pdf", ".txt", ".md", ".csv", ".json", ".png", ".jpg", ".jpeg", ".webp"];
   const supportedTypes = [
     "application/pdf",
     "text/plain",
     "text/markdown",
     "text/csv",
-    "application/json"
+    "application/json",
+    "image/png",
+    "image/jpeg",
+    "image/webp"
   ];
+  const imageMimeTypes = ["image/png", "image/jpeg", "image/webp"];
 
   const formatBytes = (bytes) => {
     if (!Number.isFinite(bytes)) {
@@ -3576,15 +3583,31 @@ function ImportInvoice() {
     return supportedExtensions.some((ext) => lowerName.endsWith(ext));
   };
 
+  const isImageFile = (file) => {
+    if (!file) {
+      return false;
+    }
+    const lowerName = file.name.toLowerCase();
+    return (
+      imageMimeTypes.includes(file.type) ||
+      lowerName.endsWith(".png") ||
+      lowerName.endsWith(".jpg") ||
+      lowerName.endsWith(".jpeg") ||
+      lowerName.endsWith(".webp")
+    );
+  };
+
   const handleFileSelect = (file) => {
     if (!file) {
       return;
     }
     if (!isSupportedFile(file)) {
-      setError("Unsupported file type. Upload a PDF or text file.");
+      setError("Unsupported file type. Upload PDF, text, or an image.");
       return;
     }
     setError("");
+    setReviewedText("");
+    setOcrWarnings([]);
     setSelectedFile(file);
   };
 
@@ -3595,6 +3618,8 @@ function ImportInvoice() {
 
   const clearFile = () => {
     setSelectedFile(null);
+    setReviewedText("");
+    setOcrWarnings([]);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
@@ -3607,9 +3632,120 @@ function ImportInvoice() {
     handleFileSelect(nextFile);
   };
 
+  const handleParsedIntakePayload = (payload, options = {}) => {
+    const nextOpenDecisions = Array.isArray(payload?.openDecisions) ? payload.openDecisions : [];
+    if (payload?.needsFollowUp || nextOpenDecisions.length > 0) {
+      const seed = {
+        fileName: options.fileName ?? "",
+        notes: options.notes ?? "",
+        sourceText: options.sourceText ?? "",
+        payload: {
+          needsFollowUp: Boolean(payload?.needsFollowUp),
+          followUp: payload?.followUp ?? null,
+          structuredInvoice: payload?.structuredInvoice ?? null,
+          invoice: payload?.invoice ?? null,
+          openDecisions: nextOpenDecisions,
+          assumptions: Array.isArray(payload?.assumptions) ? payload.assumptions : [],
+          unparsedLines: Array.isArray(payload?.unparsedLines) ? payload.unparsedLines : [],
+          auditStatus: payload?.auditStatus ?? null
+        }
+      };
+      window.localStorage.setItem(importSeedStorageKey, JSON.stringify(seed));
+      navigate("/ai-intake");
+      return;
+    }
+    if (!payload?.invoice) {
+      throw new Error("Import parsed, but no invoice data was returned.");
+    }
+    const draft = buildDraftFromFinishedInvoice(payload.invoice, { taxRate: "0" });
+    window.localStorage.setItem("invoiceDraft", JSON.stringify(draft));
+    navigate("/manual");
+  };
+
+  const handleExtractText = async () => {
+    if (!selectedFile) {
+      setError("Upload an image file first.");
+      return;
+    }
+    if (!isImageFile(selectedFile)) {
+      setError("Text extraction is only for image uploads.");
+      return;
+    }
+    setIsExtracting(true);
+    setError("");
+    setOcrWarnings([]);
+    try {
+      const formData = new FormData();
+      formData.append("invoiceFile", selectedFile);
+      const response = await fetch("/api/invoices/extract-notes", {
+        method: "POST",
+        body: formData
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || "Could not extract text from image.");
+      }
+      const extractedText = typeof payload?.extractedText === "string" ? payload.extractedText.trim() : "";
+      if (!extractedText) {
+        throw new Error("No readable text found in the image. Try a clearer image.");
+      }
+      setReviewedText(extractedText);
+      setOcrWarnings(Array.isArray(payload?.warnings) ? payload.warnings : []);
+    } catch (uploadError) {
+      console.error("Image text extraction failed", uploadError);
+      setError(uploadError?.message || "Could not extract text from image.");
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
+  const handleBuildFromReviewedText = async () => {
+    if (!selectedFile || !isImageFile(selectedFile)) {
+      setError("Upload an image file first.");
+      return;
+    }
+    const extractedText = reviewedText.trim();
+    if (!extractedText) {
+      setError("Review the extracted text before building the draft.");
+      return;
+    }
+    setIsUploading(true);
+    setError("");
+    try {
+      const trimmedNotes = notes.trim();
+      const response = await fetch("/api/invoices/from-input", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          uploadedInvoiceText: extractedText,
+          messyInput: trimmedNotes || undefined
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || "Build draft failed.");
+      }
+      const seedSourceText = [extractedText, trimmedNotes].filter(Boolean).join("\n\n").trim();
+      handleParsedIntakePayload(payload, {
+        fileName: selectedFile.name,
+        notes: trimmedNotes,
+        sourceText: seedSourceText
+      });
+    } catch (uploadError) {
+      console.error("Build from reviewed text failed", uploadError);
+      setError(uploadError?.message || "Build draft failed. Try again.");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleUpload = async () => {
     if (!selectedFile) {
-      setError("Upload a PDF or text file first.");
+      setError("Upload a file first.");
+      return;
+    }
+    if (isImageFile(selectedFile)) {
+      setError("Extract and review text first for image uploads.");
       return;
     }
     setIsUploading(true);
@@ -3629,37 +3765,15 @@ function ImportInvoice() {
       if (!response.ok) {
         throw new Error(payload?.error || "Upload failed.");
       }
-      const nextOpenDecisions = Array.isArray(payload?.openDecisions) ? payload.openDecisions : [];
       const seedSourceText = [selectedFile.name ? `Uploaded invoice: ${selectedFile.name}.` : "", trimmedNotes]
         .filter(Boolean)
         .join(" ")
         .trim();
-      if (payload?.needsFollowUp || nextOpenDecisions.length > 0) {
-        const seed = {
-          fileName: selectedFile.name,
-          notes: trimmedNotes,
-          sourceText: seedSourceText,
-          payload: {
-            needsFollowUp: Boolean(payload?.needsFollowUp),
-            followUp: payload?.followUp ?? null,
-            structuredInvoice: payload?.structuredInvoice ?? null,
-            invoice: payload?.invoice ?? null,
-            openDecisions: nextOpenDecisions,
-            assumptions: Array.isArray(payload?.assumptions) ? payload.assumptions : [],
-            unparsedLines: Array.isArray(payload?.unparsedLines) ? payload.unparsedLines : [],
-            auditStatus: payload?.auditStatus ?? null
-          }
-        };
-        window.localStorage.setItem(importSeedStorageKey, JSON.stringify(seed));
-        navigate("/ai-intake");
-        return;
-      }
-      if (!payload?.invoice) {
-        throw new Error("Upload parsed, but no invoice data was returned.");
-      }
-      const draft = buildDraftFromFinishedInvoice(payload.invoice, { taxRate: "0" });
-      window.localStorage.setItem("invoiceDraft", JSON.stringify(draft));
-      navigate("/manual");
+      handleParsedIntakePayload(payload, {
+        fileName: selectedFile.name,
+        notes: trimmedNotes,
+        sourceText: seedSourceText
+      });
     } catch (uploadError) {
       console.error("Upload failed", uploadError);
       setError(uploadError?.message || "Upload failed. Try again.");
@@ -3682,9 +3796,9 @@ function ImportInvoice() {
           <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">
             Import invoice
           </p>
-          <h1 className="text-2xl font-semibold text-slate-900">Upload an invoice to edit</h1>
+          <h1 className="text-2xl font-semibold text-slate-900">Upload invoice files or photo notes</h1>
           <p className="text-sm text-slate-600">
-            Drop in a PDF or text export. We’ll extract line items and open it in the editor.
+            PDF/text files build a draft directly. Photo notes require text review before parsing.
           </p>
         </div>
 
@@ -3706,7 +3820,7 @@ function ImportInvoice() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.txt,.md,.csv,.json,application/pdf,text/plain,text/markdown,text/csv,application/json"
+              accept=".pdf,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.webp,application/pdf,text/plain,text/markdown,text/csv,application/json,image/png,image/jpeg,image/webp"
               className="absolute inset-0 cursor-pointer opacity-0"
               onChange={handleFileChange}
             />
@@ -3716,10 +3830,10 @@ function ImportInvoice() {
               </div>
               <div className="space-y-1">
                 <p className="text-sm font-semibold text-slate-900">
-                  Drop a PDF or text export here
+                  Drop PDF, text, or image notes here
                 </p>
                 <p className="text-xs text-slate-500">
-                  PDF, TXT, CSV, or JSON. We’ll extract and format the invoice.
+                  PDF/TXT/CSV/JSON build directly. PNG/JPG/WEBP goes through OCR review first.
                 </p>
               </div>
             </div>
@@ -3738,6 +3852,48 @@ function ImportInvoice() {
               >
                 Remove
               </button>
+            </div>
+          ) : null}
+
+          {selectedFile && isImageFile(selectedFile) ? (
+            <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-4">
+              <p className="text-sm font-semibold text-amber-900">Review extracted text (required)</p>
+              <p className="text-xs text-amber-800">
+                OCR can miss or alter words. Check this text before building the invoice.
+              </p>
+              {ocrWarnings.length > 0 ? (
+                <ul className="list-disc space-y-1 pl-5 text-xs text-amber-800">
+                  {ocrWarnings.map((warning, index) => (
+                    <li key={`ocr-warning-${index}`}>{warning}</li>
+                  ))}
+                </ul>
+              ) : null}
+              <textarea
+                rows={6}
+                className="w-full resize-none rounded-xl border border-amber-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                placeholder="Extract text first, then review and edit if needed."
+                value={reviewedText}
+                onChange={(event) => setReviewedText(event.target.value)}
+                disabled={!reviewedText && !isExtracting}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800 hover:border-amber-300 disabled:cursor-not-allowed disabled:text-amber-400"
+                  onClick={handleExtractText}
+                  disabled={isExtracting || isUploading}
+                >
+                  {isExtracting ? "Extracting..." : reviewedText ? "Re-extract" : "Extract text"}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800 hover:border-amber-300 disabled:cursor-not-allowed disabled:text-amber-400"
+                  onClick={clearFile}
+                  disabled={isExtracting || isUploading}
+                >
+                  Replace image
+                </button>
+              </div>
             </div>
           ) : null}
 
@@ -3762,16 +3918,33 @@ function ImportInvoice() {
           ) : null}
 
           <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
-              onClick={handleUpload}
-              disabled={!selectedFile || isUploading}
-            >
-              {isUploading ? "Importing…" : "Build draft"}
-            </button>
+            {selectedFile && isImageFile(selectedFile) ? (
+              <button
+                type="button"
+                className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                onClick={handleBuildFromReviewedText}
+                disabled={!selectedFile || !reviewedText.trim() || isUploading || isExtracting}
+              >
+                {isUploading ? "Building draft..." : "Build draft from reviewed text"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                onClick={handleUpload}
+                disabled={!selectedFile || isUploading || isExtracting}
+              >
+                {isUploading ? "Importing..." : "Build draft"}
+              </button>
+            )}
             <p className="text-xs text-slate-500">
-              {isUploading ? "Extracting details from your invoice." : "We’ll open the editor next."}
+              {isExtracting
+                ? "Extracting text from image..."
+                : isUploading
+                  ? "Building your draft..."
+                  : selectedFile && isImageFile(selectedFile)
+                    ? "Extract text, review it, then build."
+                    : "We’ll open the editor next."}
             </p>
           </div>
         </div>
