@@ -2667,8 +2667,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                     };
                   });
                   const remainingPreviewCount = Math.max(0, payload.lineItems.length - previewItems.length);
-                  const decisionCtaLabel =
-                    pendingDecisionCount > 1 ? "Resolve decision 1" : "Resolve decision";
+                  const decisionCtaLabel = "Go to decisions";
                   const foundText =
                     payload.lineItems.length > 0
                       ? `${payload.lineItems.length} line item${
@@ -2768,13 +2767,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                   const hasUnparsed = payload.unparsed.length > 0;
                   const shouldShowSuggestedEdits =
                     quickFixes.length > 0 &&
-                    (
-                      pendingDecisionCount > 0 ||
-                      hasLaborGaps ||
-                      hasMissingAmounts ||
-                      hasUnparsed ||
-                      Boolean(duplicateMergeTarget)
-                    );
+                    pendingDecisionCount === 0 &&
+                    (hasLaborGaps || hasMissingAmounts || hasUnparsed || Boolean(duplicateMergeTarget));
 
                   return (
                     <div key={message.id} className="flex justify-start">
@@ -2850,6 +2844,11 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                                 </button>
                               ) : null}
                             </p>
+                            {pendingDecisionCount > 0 ? (
+                              <p className="mt-1 text-xs text-amber-700">
+                                Some amounts stay hidden until you choose Add or Skip.
+                              </p>
+                            ) : null}
                           </div>
                           {previewItems.length > 0 ? (
                             <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
@@ -3113,7 +3112,17 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                         onClick={() => setShowDecisionWhy((prev) => !prev)}
                         disabled={isTyping}
                       >
-                        {showDecisionWhy ? "Hide why" : "Why am I seeing this?"}
+                        {showDecisionWhy ? (
+                          <>
+                            <span className="sm:hidden">Hide</span>
+                            <span className="hidden sm:inline">Hide why</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="sm:hidden">Why?</span>
+                            <span className="hidden sm:inline">Why am I seeing this?</span>
+                          </>
+                        )}
                       </button>
                     </div>
                     {showDecisionWhy ? (
@@ -3558,6 +3567,7 @@ function ImportInvoice() {
     "image/webp"
   ];
   const imageMimeTypes = ["image/png", "image/jpeg", "image/webp"];
+  const hasReviewedText = reviewedText.trim().length > 0;
 
   const formatBytes = (bytes) => {
     if (!Number.isFinite(bytes)) {
@@ -3873,14 +3883,25 @@ function ImportInvoice() {
                   ))}
                 </ul>
               ) : null}
-              <textarea
-                rows={6}
-                className="w-full resize-none rounded-xl border border-amber-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                placeholder="Extract text first, then review and edit if needed."
-                value={reviewedText}
-                onChange={(event) => setReviewedText(event.target.value)}
-                disabled={!reviewedText && !isExtracting}
-              />
+              {isExtracting ? (
+                <p className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-amber-800">
+                  Reading text from image...
+                </p>
+              ) : null}
+              {hasReviewedText ? (
+                <textarea
+                  rows={6}
+                  className="w-full resize-none rounded-xl border border-amber-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  placeholder="Review and edit extracted text if needed."
+                  value={reviewedText}
+                  onChange={(event) => setReviewedText(event.target.value)}
+                  disabled={isExtracting}
+                />
+              ) : (
+                <p className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-amber-800">
+                  Click Extract text, then review before building the draft.
+                </p>
+              )}
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -3928,7 +3949,7 @@ function ImportInvoice() {
                 type="button"
                 className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
                 onClick={handleBuildFromReviewedText}
-                disabled={!selectedFile || !reviewedText.trim() || isUploading || isExtracting}
+                disabled={!selectedFile || !hasReviewedText || isUploading || isExtracting}
               >
                 {isUploading ? "Building draft..." : "Build draft from reviewed text"}
               </button>

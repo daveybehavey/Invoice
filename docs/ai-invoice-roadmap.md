@@ -3,40 +3,46 @@
 ## Product North Star
 AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe editable draft.
 
-## Now (1–2 days, high impact)
+## Shipped (as of 2026-02-18)
 1. Post-generate AI edits
-   - Add an "Edit with AI" drawer inside the manual invoice editor.
-   - AI returns proposed changes + summary; user applies or discards.
+   - "Edit with AI" in manual editor with apply/discard guard.
 2. Review step clarity
-   - Review card shows only: Found, Decisions, Next step.
-   - Details live behind the drawer.
+   - Review snapshot + progressive details.
 3. Messy-input UX copy pass
-   - Run 3 messy prompts and tighten wording only (no logic changes).
-
-## Soon (low effort, high polish)
+   - Cleaner, shorter copy in intake + follow-up + decision blocks.
 4. One-tap edit chips
-   - Quick fixes like Change rate, Remove line item, Update client.
+   - Quick action chips (rate/hours/remove/update client/merge duplicates).
 5. Decision wording simplification
-   - "Include/Exclude" -> "Add/Skip".
+   - Add/Skip wording and clearer decision explanations.
 6. "What I understood" micro-summary
-   - One line after intake: "Captured 4 line items, 2 decisions."
-
-## Later (nice polish / advanced)
+   - Found / Decisions / Next step summary line.
 7. Undo last decision
-   - Allow quick rollback of the most recent decision action.
+   - Decision toast + undo rollback window.
 8. Saved rate preset (local)
-   - Store last used hourly rate and offer it next time.
-9. Decision grouping or pagination
-   - Show one decision at a time when many exist.
+   - Reuses last hourly rate in labor follow-up.
+9. Decision grouping/pagination
+   - One-decision focus with optional "See all decisions".
 10. Service period helper
-    - Suggest date range when multiple dates appear.
+   - Infers start/end range from multiple explicit dates.
 11. Merge duplicate items suggestion
-    - Detect similar parts and offer merge.
-12. Photo notes intake (OCR + user review)
-    - Let users upload handwritten or printed note images.
-    - Extract text, then require user review/edit before parsing.
-    - Show disclaimer that extraction may be imperfect.
-    - Keep existing money decision and confirmation gates unchanged.
+   - Detects duplicate parts and offers merge action.
+12. Photo notes intake (OCR + required review)
+   - Image OCR endpoint + required user text review before parsing.
+   - Existing money decision/confirmation gates unchanged.
+13. OCR and upload guardrails
+   - 8MB upload cap, image-type checks, OCR warning surfacing.
+
+## Next (current priorities)
+1. Real-user messy-flow QA pack
+   - Add a repeatable "messy script" regression set (API + UI).
+   - Capture friction notes and expected outputs.
+2. Mobile intake simplification (state-density pass)
+   - Keep decision-first focus on small screens.
+   - Continue hiding non-critical controls until needed.
+3. OCR confidence indicator
+   - Add explicit High/Medium/Low confidence label in review block.
+4. Draft polish pass
+   - Improve final line-item wording consistency (without changing amounts).
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.
