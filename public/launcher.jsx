@@ -683,6 +683,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     return {
       id: `review-${Date.now()}`,
       customerName: invoice.customerName ?? "",
+      servicePeriodStart: invoice.servicePeriodStart ?? "",
+      servicePeriodEnd: invoice.servicePeriodEnd ?? "",
       notes: invoice.notes ?? "",
       lineItems: orderedLineItems.map((item, index) => ({
         id: item.id ?? `review-line-${index}`,
@@ -2810,7 +2812,23 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                                 {payload.customerName}
                               </p>
                             ) : null}
-                            <p className={payload.customerName ? "mt-1" : undefined}>
+                            {payload.servicePeriodStart || payload.servicePeriodEnd ? (
+                              <p className={payload.customerName ? "mt-1" : undefined}>
+                                <span className="font-semibold text-slate-900">Service period:</span>{" "}
+                                {payload.servicePeriodStart && payload.servicePeriodEnd
+                                  ? payload.servicePeriodStart === payload.servicePeriodEnd
+                                    ? payload.servicePeriodStart
+                                    : `${payload.servicePeriodStart} to ${payload.servicePeriodEnd}`
+                                  : payload.servicePeriodStart || payload.servicePeriodEnd}
+                              </p>
+                            ) : null}
+                            <p
+                              className={
+                                payload.customerName || payload.servicePeriodStart || payload.servicePeriodEnd
+                                  ? "mt-1"
+                                  : undefined
+                              }
+                            >
                               <span className="font-semibold text-slate-900">Found:</span>{" "}
                               {foundText}
                             </p>

@@ -200,6 +200,69 @@ test("extracts customer name from parenthetical name + address text", async () =
   assert.equal(response.body.invoice.customerName, "Mike Johnson");
 });
 
+test("infers service period range from multiple explicit work-session dates", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          date: "Feb 2",
+          tasks: [{ description: "Faucet repair", hours: 2, rate: 80, amount: 160 }]
+        },
+        {
+          date: "Jan 28",
+          tasks: [{ description: "Inspection visit", amount: 0 }]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 28 inspection visit (no charge). Feb 2 faucet repair (2h @ $80/hr).",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  assert.equal(response.body.invoice.servicePeriodStart, "Jan 28");
+  assert.equal(response.body.invoice.servicePeriodEnd, "Feb 2");
+  assert.ok(
+    response.body.assumptions.some((assumption: string) =>
+      /service period set to jan 28 to feb 2/i.test(assumption)
+    )
+  );
+});
+
+test("keeps explicit service period when parser already provides a range", async () => {
+  useMockResponses([
+    {
+      servicePeriodStart: "Jan 1",
+      servicePeriodEnd: "Jan 31",
+      workSessions: [
+        {
+          date: "Jan 10",
+          tasks: [{ description: "Site visit", hours: 1, rate: 100, amount: 100 }]
+        },
+        {
+          date: "Jan 20",
+          tasks: [{ description: "Repair", hours: 2, rate: 100, amount: 200 }]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Multiple January visits with explicit service period Jan 1 to Jan 31.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  assert.equal(response.body.invoice.servicePeriodStart, "Jan 1");
+  assert.equal(response.body.invoice.servicePeriodEnd, "Jan 31");
+});
+
 test("returns unparsed lines when messy notes include unrelated items", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 

@@ -223,6 +223,7 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     ? invoiceWithCustomer
     : { ...invoiceWithCustomer, issueDate: undefined };
   const discountIntent = detectDiscountIntent(sourceText);
+  const servicePeriodAssumption = buildServicePeriodAssumption(sanitizedInvoice);
   const auditOutcome =
     parseMode === "fast"
       ? { audit: null, status: "skipped" as const }
@@ -240,6 +241,7 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   const assumptions = normalizeAssumptions(
     [
       ...(audit?.assumptions ?? []),
+      ...(servicePeriodAssumption ? [servicePeriodAssumption] : []),
       ...(sanitizedNotes.taxAmbiguityFound || (taxAmbiguity && taxDirective === "none")
         ? ["Tax assumed 0%."]
         : [])
@@ -320,6 +322,7 @@ export async function continueInvoiceAfterLaborPricing(
     ? invoiceWithCustomer
     : { ...invoiceWithCustomer, issueDate: undefined };
   const discountIntent = detectDiscountIntent(source);
+  const servicePeriodAssumption = buildServicePeriodAssumption(sanitizedInvoice);
   const parseMode: ParseMode = mode ?? "full";
   const auditOutcome =
     parseMode === "fast"
@@ -334,6 +337,7 @@ export async function continueInvoiceAfterLaborPricing(
   const assumptions = normalizeAssumptions(
     [
       ...(audit?.assumptions ?? []),
+      ...(servicePeriodAssumption ? [servicePeriodAssumption] : []),
       ...(sanitizedNotes.taxAmbiguityFound || (taxAmbiguity && taxDirective === "none")
         ? ["Tax assumed 0%."]
         : [])
@@ -876,39 +880,75 @@ function applyExplicitServicePeriod(
   invoice: StructuredInvoice,
   sourceText: string
 ): StructuredInvoice {
-  if (isExplicitDate(invoice.servicePeriodStart)) {
-    return invoice;
-  }
-  const explicitDates: string[] = [];
-  invoice.workSessions.forEach((session) => {
-    const label = extractExplicitDateLabel(session.date);
-    if (label) {
-      explicitDates.push(label);
-    }
-  });
+  void sourceText;
+  const explicitDates = collectExplicitSessionDateLabels(invoice);
   if (explicitDates.length === 0) {
     return invoice;
   }
-  const indexByLabel = (label: string) => {
-    const lower = label.toLowerCase();
-    for (let idx = 0; idx < MONTHS.length; idx += 1) {
-      const month = MONTHS[idx];
-      const match = lower.match(new RegExp(`\\b${month}\\s+(\\d{1,2})\\b`));
-      if (match) {
-        return idx * 32 + Number(match[1]);
-      }
-    }
-    return Number.MAX_SAFE_INTEGER;
-  };
+  const hasExplicitStart = isExplicitDate(invoice.servicePeriodStart);
+  const hasExplicitEnd = isExplicitDate(invoice.servicePeriodEnd);
+  if (hasExplicitStart && hasExplicitEnd) {
+    return invoice;
+  }
   const sorted = explicitDates
     .slice()
-    .sort((a, b) => indexByLabel(a) - indexByLabel(b));
+    .sort((a, b) => dateLabelSortIndex(a) - dateLabelSortIndex(b));
   const earliest = sorted[0];
+  const latest = sorted[sorted.length - 1];
+  const nextServicePeriodStart = hasExplicitStart ? invoice.servicePeriodStart : earliest;
+  const nextServicePeriodEnd = hasExplicitEnd
+    ? invoice.servicePeriodEnd
+    : invoice.servicePeriodEnd ?? (sorted.length > 1 ? latest : nextServicePeriodStart ?? earliest);
   return {
     ...invoice,
-    servicePeriodStart: earliest,
-    servicePeriodEnd: invoice.servicePeriodEnd ?? earliest
+    servicePeriodStart: nextServicePeriodStart,
+    servicePeriodEnd: nextServicePeriodEnd
   };
+}
+
+function collectExplicitSessionDateLabels(invoice: StructuredInvoice): string[] {
+  const labels = new Set<string>();
+  invoice.workSessions.forEach((session) => {
+    const label = extractExplicitDateLabel(session.date);
+    if (label) {
+      labels.add(label);
+    }
+  });
+  return Array.from(labels);
+}
+
+function dateLabelSortIndex(label: string): number {
+  const lower = label.toLowerCase();
+  for (let idx = 0; idx < MONTHS.length; idx += 1) {
+    const month = MONTHS[idx];
+    const match = lower.match(new RegExp(`\\b${month}\\s+(\\d{1,2})\\b`));
+    if (match) {
+      return idx * 32 + Number(match[1]);
+    }
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
+function buildServicePeriodAssumption(invoice: StructuredInvoice): string | null {
+  const explicitDates = collectExplicitSessionDateLabels(invoice);
+  if (explicitDates.length < 2) {
+    return null;
+  }
+  const sorted = explicitDates
+    .slice()
+    .sort((a, b) => dateLabelSortIndex(a) - dateLabelSortIndex(b));
+  const earliest = sorted[0];
+  const latest = sorted[sorted.length - 1];
+  const start = invoice.servicePeriodStart?.trim();
+  const end = invoice.servicePeriodEnd?.trim();
+  if (!start || !end || start === end) {
+    return null;
+  }
+  const normalize = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+  if (normalize(start) !== normalize(earliest) || normalize(end) !== normalize(latest)) {
+    return null;
+  }
+  return `Service period set to ${earliest} to ${latest}.`;
 }
 
 const CHUNK_THRESHOLD = 4000;
