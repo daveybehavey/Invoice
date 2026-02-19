@@ -33,6 +33,7 @@ import {
   saveInvoiceDocument,
   updateSavedInvoiceStatus
 } from "./services/savedInvoiceStore.js";
+import { getOcrMetricsSnapshot, trackOcrConfidenceMetric } from "./services/ocrMetricsStore.js";
 import { extractUploadedImageText, extractUploadedInvoiceText } from "./services/uploadTextExtractor.js";
 
 const app = express();
@@ -63,6 +64,15 @@ app.get("/invoices", (_req: Request, res: Response) => {
 
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
+});
+
+app.get("/api/telemetry/ocr-confidence", async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const snapshot = await getOcrMetricsSnapshot();
+    res.json(snapshot);
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post(
@@ -131,6 +141,11 @@ app.post("/api/invoices/extract-notes", imageUpload.single("invoiceFile"), async
       throw new Error("Upload an image file first.");
     }
     const extraction = await extractUploadedImageText(req.file);
+    await trackOcrConfidenceMetric({
+      confidence: extraction.confidence,
+      confidenceReasons: extraction.confidenceReasons,
+      warningCount: extraction.warnings.length
+    });
     res.json({
       sourceType: "image",
       extractedText: extraction.text,

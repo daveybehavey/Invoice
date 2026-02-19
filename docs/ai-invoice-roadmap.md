@@ -97,12 +97,16 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - `/api/invoices/extract-notes` now returns structured `confidenceReasons[]` reason codes.
    - Import flow emits `invoice:ocr-metrics` debug events with confidence + reason codes.
    - Safety gates are unchanged (low-confidence still requires explicit user confirmation).
+34. OCR confidence analytics sink
+   - Added server-side OCR telemetry store with confidence/reason aggregations and recent event history.
+   - Added `GET /api/telemetry/ocr-confidence` endpoint for internal diagnostics.
+   - `/api/invoices/extract-notes` now records OCR confidence metrics on every successful extraction.
 
 ## Next (current priorities)
-1. OCR confidence analytics sink (future)
-   - Persist `confidenceReasons` metrics to an analytics backend (currently debug-event only).
-2. Messy-input regression expansion
+1. Messy-input regression expansion
    - Add additional first-time-user messy scripts with capture + decision outcome snapshots.
+2. OCR metrics export bridge (future)
+   - Forward OCR telemetry snapshot data into external analytics tooling if needed.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.

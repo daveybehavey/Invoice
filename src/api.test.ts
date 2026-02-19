@@ -384,6 +384,42 @@ test("extract-notes adds review warning when OCR output is short but not low con
   );
 });
 
+test("OCR telemetry endpoint records confidence metrics from extract-notes", async () => {
+  setImageOcrRunnerForTests(async () => ({
+    extractedText: "Fix sink",
+    warnings: ["Handwriting in one line was unclear."]
+  }));
+
+  const beforeResponse = await request(app).get("/api/telemetry/ocr-confidence");
+  assert.equal(beforeResponse.status, 200);
+  const beforeTotal =
+    Number.isFinite(beforeResponse.body.totalEvents) && beforeResponse.body.totalEvents >= 0
+      ? beforeResponse.body.totalEvents
+      : 0;
+
+  const extractResponse = await request(app)
+    .post("/api/invoices/extract-notes")
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes.png",
+      contentType: "image/png"
+    });
+  assert.equal(extractResponse.status, 200);
+
+  const afterResponse = await request(app).get("/api/telemetry/ocr-confidence");
+  assert.equal(afterResponse.status, 200);
+  assert.ok(afterResponse.body.totalEvents >= beforeTotal + 1);
+  assert.ok(Array.isArray(afterResponse.body.recentEvents));
+  assert.ok(afterResponse.body.recentEvents.length > 0);
+  const latestEvent = afterResponse.body.recentEvents[afterResponse.body.recentEvents.length - 1];
+  assert.equal(latestEvent.confidence, "low");
+  assert.ok(Array.isArray(latestEvent.confidenceReasons));
+  assert.ok(latestEvent.confidenceReasons.includes("short_text"));
+  assert.ok(
+    latestEvent.confidenceReasons.includes("external_warning"),
+    "expected external_warning confidence reason"
+  );
+});
+
 test("extract-notes rejects non-image uploads", async () => {
   const response = await request(app)
     .post("/api/invoices/extract-notes")
