@@ -101,12 +101,19 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added server-side OCR telemetry store with confidence/reason aggregations and recent event history.
    - Added `GET /api/telemetry/ocr-confidence` endpoint for internal diagnostics.
    - `/api/invoices/extract-notes` now records OCR confidence metrics on every successful extraction.
+35. OCR metrics export bridge
+   - Added configurable export bridge (`POST /api/telemetry/ocr-confidence/export`) to forward OCR telemetry snapshots externally.
+   - Export now avoids duplicate sends by tracking the last exported snapshot timestamp.
+   - Optional autosend hook added via `OCR_METRICS_EXPORT_AUTOSEND=true` after OCR extraction.
+36. Messy-input regression expansion
+   - Added a deterministic messy-input regression matrix covering baseline, ambiguous billing, explicit resolution, labor follow-up, and minute-based labor conversion.
+   - Regression snapshots now assert capture state + decision outcomes in one place to prevent flow drift.
 
 ## Next (current priorities)
-1. Messy-input regression expansion
-   - Add additional first-time-user messy scripts with capture + decision outcome snapshots.
-2. OCR metrics export bridge (future)
-   - Forward OCR telemetry snapshot data into external analytics tooling if needed.
+1. OCR export destinations (future)
+   - Add provider adapters (e.g. GA4/Segment/warehouse webhook) on top of the generic bridge payload.
+2. Intake analytics dashboard (future)
+   - Surface friction + OCR telemetry in a small internal diagnostics view.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.

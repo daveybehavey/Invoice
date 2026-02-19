@@ -8,6 +8,7 @@ import request from "supertest";
 
 process.env.NODE_ENV = "test";
 process.env.INVOICE_STORE_FILE = path.join(os.tmpdir(), `invoice-test-store-${randomUUID()}.json`);
+process.env.OCR_METRICS_STORE_FILE = path.join(os.tmpdir(), `invoice-ocr-metrics-${randomUUID()}.json`);
 
 const [{ app }, { setImageOcrRunnerForTests, setJsonTaskRunnerForTests }] = await Promise.all([
   import("./server.js"),
@@ -18,21 +19,32 @@ const storeFilePath = process.env.INVOICE_STORE_FILE;
 if (!storeFilePath) {
   throw new Error("INVOICE_STORE_FILE is required for tests.");
 }
+const ocrMetricsStoreFilePath = process.env.OCR_METRICS_STORE_FILE;
+if (!ocrMetricsStoreFilePath) {
+  throw new Error("OCR_METRICS_STORE_FILE is required for tests.");
+}
+const nativeFetch = globalThis.fetch;
 
 beforeEach(async () => {
   await fs.mkdir(path.dirname(storeFilePath), { recursive: true });
   await fs.writeFile(storeFilePath, '{\n  "invoices": []\n}\n', "utf8");
+  await fs.mkdir(path.dirname(ocrMetricsStoreFilePath), { recursive: true });
+  await fs.rm(ocrMetricsStoreFilePath, { force: true });
+  delete process.env.OCR_METRICS_EXPORT_URL;
+  delete process.env.OCR_METRICS_EXPORT_AUTOSEND;
 });
 
 afterEach(() => {
   setJsonTaskRunnerForTests(null);
   setImageOcrRunnerForTests(null);
+  (globalThis as { fetch?: typeof fetch }).fetch = nativeFetch;
 });
 
 after(async () => {
   setJsonTaskRunnerForTests(null);
   setImageOcrRunnerForTests(null);
   await fs.rm(storeFilePath, { force: true });
+  await fs.rm(ocrMetricsStoreFilePath, { force: true });
 });
 
 test("asks one labor pricing follow-up and does not finalize with $0 labor", async () => {
@@ -418,6 +430,96 @@ test("OCR telemetry endpoint records confidence metrics from extract-notes", asy
     latestEvent.confidenceReasons.includes("external_warning"),
     "expected external_warning confidence reason"
   );
+});
+
+test("OCR telemetry export endpoint reports not configured by default", async () => {
+  const response = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
+  assert.equal(response.status, 200);
+  assert.equal(response.body.configured, false);
+  assert.equal(response.body.attempted, false);
+  assert.equal(response.body.exported, false);
+  assert.equal(response.body.reason, "not_configured");
+});
+
+test("OCR telemetry export endpoint posts snapshot when configured", async () => {
+  setImageOcrRunnerForTests(async () => ({
+    extractedText: "Jan 30 repair labor 2h at $80/hr",
+    warnings: ["Handwriting in one line was unclear."]
+  }));
+  process.env.OCR_METRICS_EXPORT_URL = "https://example.test/ocr-metrics";
+  const fetchCalls: Array<{ url: string; options: { method?: string; body?: string } }> = [];
+  (globalThis as { fetch?: typeof fetch }).fetch = (async (
+    url: string | URL | Request,
+    options?: RequestInit
+  ) => {
+    fetchCalls.push({
+      url: String(url),
+      options: { method: options?.method, body: String(options?.body ?? "") }
+    });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const extractResponse = await request(app)
+    .post("/api/invoices/extract-notes")
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes.png",
+      contentType: "image/png"
+    });
+  assert.equal(extractResponse.status, 200);
+
+  const exportResponse = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
+  assert.equal(exportResponse.status, 200);
+  assert.equal(exportResponse.body.configured, true);
+  assert.equal(exportResponse.body.attempted, true);
+  assert.equal(exportResponse.body.exported, true);
+  assert.equal(exportResponse.body.reason, "exported");
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.url, "https://example.test/ocr-metrics");
+  assert.equal(fetchCalls[0]?.options.method, "POST");
+
+  const payload = JSON.parse(fetchCalls[0]?.options.body ?? "{}");
+  assert.equal(typeof payload.sentAt, "string");
+  assert.ok(payload.snapshot);
+  assert.ok(payload.snapshot.totalEvents >= 1);
+});
+
+test("OCR telemetry export endpoint skips when no new metrics exist", async () => {
+  setImageOcrRunnerForTests(async () => ({
+    extractedText: "Fix sink",
+    warnings: []
+  }));
+  process.env.OCR_METRICS_EXPORT_URL = "https://example.test/ocr-metrics";
+  let fetchCount = 0;
+  (globalThis as { fetch?: typeof fetch }).fetch = (async () => {
+    fetchCount += 1;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const extractResponse = await request(app)
+    .post("/api/invoices/extract-notes")
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes.png",
+      contentType: "image/png"
+    });
+  assert.equal(extractResponse.status, 200);
+
+  const firstExport = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
+  assert.equal(firstExport.status, 200);
+  assert.equal(firstExport.body.exported, true);
+  assert.equal(fetchCount, 1);
+
+  const secondExport = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
+  assert.equal(secondExport.status, 200);
+  assert.equal(secondExport.body.attempted, false);
+  assert.equal(secondExport.body.exported, false);
+  assert.equal(secondExport.body.reason, "no_new_metrics");
+  assert.equal(fetchCount, 1);
 });
 
 test("extract-notes rejects non-image uploads", async () => {

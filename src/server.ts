@@ -34,6 +34,10 @@ import {
   updateSavedInvoiceStatus
 } from "./services/savedInvoiceStore.js";
 import { getOcrMetricsSnapshot, trackOcrConfidenceMetric } from "./services/ocrMetricsStore.js";
+import {
+  exportOcrMetricsSnapshot,
+  isOcrMetricsExportConfigured
+} from "./services/ocrMetricsExporter.js";
 import { extractUploadedImageText, extractUploadedInvoiceText } from "./services/uploadTextExtractor.js";
 
 const app = express();
@@ -70,6 +74,19 @@ app.get("/api/telemetry/ocr-confidence", async (_req: Request, res: Response, ne
   try {
     const snapshot = await getOcrMetricsSnapshot();
     res.json(snapshot);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/telemetry/ocr-confidence/export", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const force = Boolean(req.body?.force);
+    const result = await exportOcrMetricsSnapshot({ force });
+    res.json({
+      ...result,
+      configured: isOcrMetricsExportConfigured()
+    });
   } catch (error) {
     next(error);
   }
@@ -146,6 +163,11 @@ app.post("/api/invoices/extract-notes", imageUpload.single("invoiceFile"), async
       confidenceReasons: extraction.confidenceReasons,
       warningCount: extraction.warnings.length
     });
+    if (process.env.OCR_METRICS_EXPORT_AUTOSEND === "true") {
+      void exportOcrMetricsSnapshot().catch((error) => {
+        console.error("OCR metrics export failed", error);
+      });
+    }
     res.json({
       sourceType: "image",
       extractedText: extraction.text,

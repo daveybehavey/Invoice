@@ -8,6 +8,7 @@ import request from "supertest";
 
 process.env.NODE_ENV = "test";
 process.env.INVOICE_STORE_FILE = path.join(os.tmpdir(), `invoice-messy-flow-store-${randomUUID()}.json`);
+process.env.OCR_METRICS_STORE_FILE = path.join(os.tmpdir(), `invoice-messy-ocr-${randomUUID()}.json`);
 
 const [{ app }, { setJsonTaskRunnerForTests }] = await Promise.all([
   import("./server.js"),
@@ -18,10 +19,16 @@ const storeFilePath = process.env.INVOICE_STORE_FILE;
 if (!storeFilePath) {
   throw new Error("INVOICE_STORE_FILE is required for tests.");
 }
+const ocrMetricsStoreFilePath = process.env.OCR_METRICS_STORE_FILE;
+if (!ocrMetricsStoreFilePath) {
+  throw new Error("OCR_METRICS_STORE_FILE is required for tests.");
+}
 
 beforeEach(async () => {
   await fs.mkdir(path.dirname(storeFilePath), { recursive: true });
   await fs.writeFile(storeFilePath, '{\n  "invoices": []\n}\n', "utf8");
+  await fs.mkdir(path.dirname(ocrMetricsStoreFilePath), { recursive: true });
+  await fs.rm(ocrMetricsStoreFilePath, { force: true });
 });
 
 afterEach(() => {
@@ -31,6 +38,7 @@ afterEach(() => {
 after(async () => {
   setJsonTaskRunnerForTests(null);
   await fs.rm(storeFilePath, { force: true });
+  await fs.rm(ocrMetricsStoreFilePath, { force: true });
 });
 
 test("messy control script produces a ready draft with no open decisions", async () => {
@@ -139,6 +147,230 @@ test("messy script clears decisions when user explicitly resolves them", async (
   assert.equal((response.body.openDecisions ?? []).length, 0);
   assert.equal(response.body.invoice.taxRate ?? 0, 0);
 });
+
+test("messy regression matrix keeps capture + decision outcomes stable", async () => {
+  const cases: Array<{
+    name: string;
+    messyInput: string;
+    responses: unknown[];
+    expected: ReturnType<typeof buildMessySnapshot>;
+  }> = [
+    {
+      name: "multi-line baseline with explicit pricing",
+      messyInput: [
+        "Jan 5 replaced shutoff valve 1 hour at $100/hr.",
+        "Jan 6 pipe adjustment 2 hours at $80/hr.",
+        "Parts: washer $5.",
+        "Bill Jordan Lee.",
+        "No tax."
+      ].join(" "),
+      responses: [
+        {
+          customerName: "Jordan Lee",
+          workSessions: [
+            {
+              date: "Jan 5",
+              tasks: [{ description: "Replaced shutoff valve", hours: 1, rate: 100, amount: 100 }]
+            },
+            {
+              date: "Jan 6",
+              tasks: [{ description: "Pipe adjustment", hours: 2, rate: 80, amount: 160 }]
+            }
+          ],
+          materials: [{ description: "Washer", quantity: 1, unitCost: 5, amount: 5 }]
+        },
+        { assumptions: ["Tax assumed 0%."], decisions: [], unparsedLines: [] }
+      ],
+      expected: {
+        needsFollowUp: false,
+        followUpType: null,
+        followUpLaborCount: 0,
+        openDecisionPrompts: [],
+        customerName: "Jordan Lee",
+        servicePeriodStart: "Jan 5",
+        servicePeriodEnd: "Jan 6",
+        lineItemCount: 3,
+        subtotal: 265,
+        total: 265,
+        taxRate: null
+      }
+    },
+    {
+      name: "ambiguous cabinet billing remains open",
+      messyInput: [
+        "Jan 28 inspection visit, no charge, maybe 30 mins.",
+        "Jan 30 faucet repair, about 2 hours at $80/hr.",
+        "Parts: cartridge $18.75, washer kit $6, parking $4.50.",
+        "Feb 2 cabinet door adjustment maybe 20 mins, up to you if bill.",
+        "Logo tweak flat $250.",
+        "I sometimes add 5% tax, sometimes not."
+      ].join(" "),
+      responses: [
+        messyStructuredDraft(),
+        {
+          assumptions: ["Tax not applied until confirmed."],
+          decisions: [
+            {
+              kind: "billing",
+              prompt: "Bill cabinet door adjustment?",
+              sourceSnippet: "Didn't really think about charging for that - up to you."
+            }
+          ],
+          unparsedLines: []
+        }
+      ],
+      expected: {
+        needsFollowUp: false,
+        followUpType: null,
+        followUpLaborCount: 0,
+        openDecisionPrompts: [
+          "bill cabinet door adjustment?",
+          'bill this item? "parts: cartridge $18.75, washer kit $6, parking $4.50. feb 2 cabinet door adjustment maybe 20 mins, up to you if bill"'
+        ],
+        customerName: "Mike Johnson",
+        servicePeriodStart: "Jan 28",
+        servicePeriodEnd: "Feb 2",
+        lineItemCount: 7,
+        subtotal: 439.25,
+        total: 439.25,
+        taxRate: null
+      }
+    },
+    {
+      name: "explicit resolution clears open decisions",
+      messyInput: [
+        "Jan 28 inspection visit, no charge, maybe 30 mins.",
+        "Jan 30 faucet repair, about 2 hours at $80/hr.",
+        "Parts: cartridge $18.75, washer kit $6, parking $4.50.",
+        "Feb 2 cabinet door adjustment maybe 20 mins, up to you if bill.",
+        "Logo tweak flat $250.",
+        "I sometimes add 5% tax, sometimes not.",
+        "Don't bill the cabinet door.",
+        "No tax."
+      ].join(" "),
+      responses: [
+        messyStructuredDraft(),
+        {
+          assumptions: ["Tax not applied until confirmed."],
+          decisions: [
+            {
+              kind: "billing",
+              prompt: "Bill cabinet door adjustment?",
+              sourceSnippet: "Didn't really think about charging for that - up to you."
+            }
+          ],
+          unparsedLines: []
+        }
+      ],
+      expected: {
+        needsFollowUp: false,
+        followUpType: null,
+        followUpLaborCount: 0,
+        openDecisionPrompts: [],
+        customerName: "Mike Johnson",
+        servicePeriodStart: "Jan 28",
+        servicePeriodEnd: "Feb 2",
+        lineItemCount: 7,
+        subtotal: 465.65,
+        total: 465.65,
+        taxRate: null
+      }
+    },
+    {
+      name: "labor follow-up required when pricing absent",
+      messyInput: "Did two labor jobs this week. One was a leak inspection and one was a faucet fix.",
+      responses: [
+        {
+          customerName: "Taylor Quinn",
+          workSessions: [
+            {
+              date: "This week",
+              tasks: [{ description: "Leak inspection" }, { description: "Faucet fix" }]
+            }
+          ],
+          materials: []
+        }
+      ],
+      expected: {
+        needsFollowUp: true,
+        followUpType: "labor_pricing",
+        followUpLaborCount: 2,
+        openDecisionPrompts: [],
+        customerName: null,
+        servicePeriodStart: null,
+        servicePeriodEnd: null,
+        lineItemCount: null,
+        subtotal: null,
+        total: null,
+        taxRate: null
+      }
+    },
+    {
+      name: "minute-based labor converts to priced labor line",
+      messyInput: "Feb 2 adjusted cabinet door for 20 minutes at $80/hr.",
+      responses: [
+        {
+          customerName: "Morgan Vale",
+          workSessions: [
+            {
+              date: "Feb 2",
+              tasks: [{ description: "Adjusted cabinet door" }]
+            }
+          ],
+          materials: []
+        },
+        { assumptions: [], decisions: [], unparsedLines: [] }
+      ],
+      expected: {
+        needsFollowUp: false,
+        followUpType: null,
+        followUpLaborCount: 0,
+        openDecisionPrompts: [],
+        customerName: "Morgan Vale",
+        servicePeriodStart: "Feb 2",
+        servicePeriodEnd: "Feb 2",
+        lineItemCount: 1,
+        subtotal: 26.4,
+        total: 26.4,
+        taxRate: null
+      }
+    }
+  ];
+
+  for (const testCase of cases) {
+    useMockResponses(testCase.responses);
+    const response = await request(app).post("/api/invoices/from-input").send({
+      messyInput: testCase.messyInput
+    });
+    assert.equal(response.status, 200, `status for case: ${testCase.name}`);
+    const snapshot = buildMessySnapshot(response.body);
+    assert.deepEqual(snapshot, testCase.expected, `snapshot mismatch for case: ${testCase.name}`);
+  }
+});
+
+function buildMessySnapshot(body: any) {
+  const invoice = body?.invoice;
+  const followUp = body?.followUp;
+  const openDecisionPrompts = Array.isArray(body?.openDecisions)
+    ? body.openDecisions
+        .map((decision: { prompt?: string }) => String(decision?.prompt ?? "").trim().toLowerCase())
+        .filter(Boolean)
+        .sort()
+    : [];
+  return {
+    needsFollowUp: Boolean(body?.needsFollowUp),
+    followUpType: typeof followUp?.type === "string" ? followUp.type : null,
+    followUpLaborCount: Array.isArray(followUp?.laborItems) ? followUp.laborItems.length : 0,
+    openDecisionPrompts,
+    customerName: typeof invoice?.customerName === "string" ? invoice.customerName : null,
+    servicePeriodStart: typeof invoice?.servicePeriodStart === "string" ? invoice.servicePeriodStart : null,
+    servicePeriodEnd: typeof invoice?.servicePeriodEnd === "string" ? invoice.servicePeriodEnd : null,
+    lineItemCount: Array.isArray(invoice?.lineItems) ? invoice.lineItems.length : null,
+    subtotal: Number.isFinite(invoice?.subtotal) ? invoice.subtotal : null,
+    total: Number.isFinite(invoice?.total) ? invoice.total : null,
+    taxRate: Number.isFinite(invoice?.taxRate) ? invoice.taxRate : null
+  };
+}
 
 function useMockResponses(responses: unknown[]): void {
   const queue = [...responses];

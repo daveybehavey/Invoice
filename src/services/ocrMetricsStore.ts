@@ -28,7 +28,20 @@ const OcrMetricsSnapshotSchema = z.object({
     .default({ high: 0, medium: 0, low: 0 }),
   byReason: z.record(z.string(), z.number().int().nonnegative()).default({}),
   recentEvents: z.array(OcrMetricsEventSchema).default([]),
-  updatedAt: z.string().default("")
+  updatedAt: z.string().default(""),
+  exportState: z
+    .object({
+      lastAttemptAt: z.string().default(""),
+      lastSuccessAt: z.string().default(""),
+      lastExportedUpdatedAt: z.string().default(""),
+      lastResult: z.string().default("never")
+    })
+    .default({
+      lastAttemptAt: "",
+      lastSuccessAt: "",
+      lastExportedUpdatedAt: "",
+      lastResult: "never"
+    })
 });
 
 type OcrMetricsSnapshot = z.infer<typeof OcrMetricsSnapshotSchema>;
@@ -74,6 +87,25 @@ export async function getOcrMetricsSnapshot(): Promise<OcrMetricsSnapshot> {
   return readSnapshot();
 }
 
+export async function updateOcrMetricsExportState(input: {
+  lastAttemptAt?: string;
+  lastSuccessAt?: string;
+  lastExportedUpdatedAt?: string;
+  lastResult?: string;
+}): Promise<void> {
+  await withMutationLock(async () => {
+    const snapshot = await readSnapshot();
+    snapshot.exportState = {
+      lastAttemptAt: input.lastAttemptAt ?? snapshot.exportState.lastAttemptAt ?? "",
+      lastSuccessAt: input.lastSuccessAt ?? snapshot.exportState.lastSuccessAt ?? "",
+      lastExportedUpdatedAt:
+        input.lastExportedUpdatedAt ?? snapshot.exportState.lastExportedUpdatedAt ?? "",
+      lastResult: input.lastResult ?? snapshot.exportState.lastResult ?? "never"
+    };
+    await writeSnapshot(snapshot);
+  });
+}
+
 async function withMutationLock<T>(mutation: () => Promise<T>): Promise<T> {
   const runMutation = mutationQueue.then(mutation, mutation);
   mutationQueue = runMutation.then(
@@ -111,7 +143,13 @@ async function ensureStoreExists(): Promise<void> {
           byConfidence: { high: 0, medium: 0, low: 0 },
           byReason: {},
           recentEvents: [],
-          updatedAt: ""
+          updatedAt: "",
+          exportState: {
+            lastAttemptAt: "",
+            lastSuccessAt: "",
+            lastExportedUpdatedAt: "",
+            lastResult: "never"
+          }
         },
         null,
         2

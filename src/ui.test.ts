@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { after, afterEach, before, test } from "node:test";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
@@ -6,6 +10,7 @@ import type { Server } from "node:http";
 import { chromium, type Browser, type Page } from "playwright";
 
 process.env.NODE_ENV = "test";
+process.env.OCR_METRICS_STORE_FILE = path.join(os.tmpdir(), `invoice-ui-ocr-${randomUUID()}.json`);
 
 const [{ app }, { setImageOcrRunnerForTests, setJsonTaskRunnerForTests }] = await Promise.all([
   import("./server.js"),
@@ -15,6 +20,7 @@ const [{ app }, { setImageOcrRunnerForTests, setJsonTaskRunnerForTests }] = awai
 let server: Server;
 let browser: Browser;
 let baseUrl = "";
+const ocrMetricsStoreFilePath = process.env.OCR_METRICS_STORE_FILE;
 
 before(async () => {
   server = app.listen(0);
@@ -42,6 +48,9 @@ after(async () => {
       resolve();
     });
   });
+  if (ocrMetricsStoreFilePath) {
+    await fs.rm(ocrMetricsStoreFilePath, { force: true });
+  }
 });
 
 test("decision CTA switches and undo restores unresolved decision state", async () => {
