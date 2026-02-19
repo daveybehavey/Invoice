@@ -885,35 +885,49 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     }, 9000);
   };
 
-  const buildDecisionAckMessage = (action, resolvedCount) => {
+  const buildDecisionAckMessage = (action, resolvedCount, remainingDecisions = null) => {
+    const progressText =
+      Number.isFinite(remainingDecisions) && remainingDecisions >= 0
+        ? remainingDecisions === 0
+          ? "All decisions resolved - ready to generate."
+          : `${remainingDecisions} decision${remainingDecisions > 1 ? "s" : ""} left.`
+        : "";
     if (!resolvedCount || resolvedCount <= 0) {
       return null;
     }
     if (!action) {
-      return `Decision updated — ${resolvedCount} item${resolvedCount > 1 ? "s" : ""} resolved.`;
+      return progressText
+        ? `Decision updated. ${progressText}`
+        : `Decision updated - ${resolvedCount} item${resolvedCount > 1 ? "s" : ""} resolved.`;
     }
     if (action.type === "bulk_include") {
-      return `Got it — I’ll include all pending items. (${resolvedCount} resolved)`;
+      return progressText
+        ? `Included all pending items. ${progressText}`
+        : `Included all pending items. ${resolvedCount} resolved.`;
     }
     if (action.type === "bulk_exclude") {
-      return `Got it — I won’t include any pending items. (${resolvedCount} resolved)`;
+      return progressText
+        ? `Skipped all pending items. ${progressText}`
+        : `Skipped all pending items. ${resolvedCount} resolved.`;
     }
     if (action.kind === "tax") {
       if (action.type === "tax_apply") {
-        return "Got it — I’ll note tax should be applied.";
+        return progressText ? `Tax will be applied. ${progressText}` : "Tax will be applied.";
       }
       if (action.type === "tax_skip") {
-        return "Got it — keeping tax at 0%.";
+        return progressText ? `Keeping tax at 0%. ${progressText}` : "Keeping tax at 0%.";
       }
     }
     const snippet = action.snippet ? shortenSnippet(action.snippet, 36) : "that item";
     if (action.type === "include") {
-      return `Got it — I’ll include ${snippet}.`;
+      return progressText ? `Added ${snippet}. ${progressText}` : `Added ${snippet}.`;
     }
     if (action.type === "exclude") {
-      return `Got it — I won’t include ${snippet}.`;
+      return progressText ? `Skipped ${snippet}. ${progressText}` : `Skipped ${snippet}.`;
     }
-    return `Decision updated — ${resolvedCount} item${resolvedCount > 1 ? "s" : ""} resolved.`;
+    return progressText
+      ? `Decision updated. ${progressText}`
+      : `Decision updated - ${resolvedCount} item${resolvedCount > 1 ? "s" : ""} resolved.`;
   };
 
   const captureDecisionUndoSnapshot = () => ({
@@ -1990,7 +2004,11 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       decisionActionRef.current = null;
       const decisionUndoSnapshot = pendingDecisionUndoRef.current;
       pendingDecisionUndoRef.current = null;
-      const decisionAck = buildDecisionAckMessage(decisionAction, resolvedCount);
+      const decisionAck = buildDecisionAckMessage(
+        decisionAction,
+        resolvedCount,
+        nextOpenDecisions.length
+      );
       const canUndoDecision = Boolean(decisionAction && resolvedCount > 0 && decisionUndoSnapshot);
       if (canUndoDecision) {
         startDecisionUndoWindow(decisionUndoSnapshot, decisionAck);
@@ -2226,7 +2244,11 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       decisionActionRef.current = null;
       const decisionUndoSnapshot = pendingDecisionUndoRef.current;
       pendingDecisionUndoRef.current = null;
-      const decisionAck = buildDecisionAckMessage(decisionAction, resolvedCount);
+      const decisionAck = buildDecisionAckMessage(
+        decisionAction,
+        resolvedCount,
+        nextOpenDecisions.length
+      );
       const canUndoDecision = Boolean(decisionAction && resolvedCount > 0 && decisionUndoSnapshot);
       if (canUndoDecision) {
         startDecisionUndoWindow(decisionUndoSnapshot, decisionAck);
@@ -3942,6 +3964,12 @@ const applyDecisionActionToInvoice = (invoice, action) => {
 function ImportInvoice() {
   const navigate = useNavigate();
   const MAX_UPLOAD_SIZE_BYTES = 8 * 1024 * 1024;
+  const ocrQualityTips = [
+    "Use bright, even lighting with minimal shadows.",
+    "Crop tightly to the notes so text fills most of the image.",
+    "Keep the camera straight (avoid angled or skewed photos).",
+    "Make sure handwriting/text is sharp before extracting."
+  ];
   const [selectedFile, setSelectedFile] = useState(null);
   const [notes, setNotes] = useState("");
   const [reviewedText, setReviewedText] = useState("");
@@ -4292,6 +4320,18 @@ function ImportInvoice() {
               <p className="text-xs text-amber-800">
                 OCR can miss or alter words. Check this text before building the invoice.
               </p>
+              {!hasReviewedText ? (
+                <div className="rounded-xl border border-amber-200 bg-white px-3 py-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                    Better OCR tips
+                  </p>
+                  <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-amber-800">
+                    {ocrQualityTips.map((tip) => (
+                      <li key={tip}>{tip}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               {ocrConfidence ? (
                 <p className="text-xs text-amber-900">
                   OCR confidence:{" "}

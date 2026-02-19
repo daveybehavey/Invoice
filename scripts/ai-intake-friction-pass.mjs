@@ -264,7 +264,11 @@ async function run() {
     );
 
     await page.getByRole("button", { name: "Skip" }).first().click();
-    await page.getByText("Ready to generate.", { exact: false }).waitFor({ timeout: DEFAULT_TIMEOUT });
+    await page
+      .locator("p.text-xs.text-slate-500")
+      .filter({ hasText: "Ready to generate." })
+      .first()
+      .waitFor({ timeout: DEFAULT_TIMEOUT });
 
     const generateButton = page.getByRole("button", { name: "Generate Invoice" }).last();
     await generateButton.waitFor({ state: "visible", timeout: DEFAULT_TIMEOUT });

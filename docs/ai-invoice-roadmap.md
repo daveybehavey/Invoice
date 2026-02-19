@@ -75,14 +75,20 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - On mobile, details toggles now sit inline under each card summary instead of clustering in top-right headers.
    - Desktop keeps header controls; mobile uses explicit labels ("Show review details", "Show context details").
    - Reduces duplicate "Show details" ambiguity while preserving progressive disclosure.
+27. Optional OCR image quality hinting
+   - Added pre-extract image tips (lighting, crop, angle, sharpness) directly in photo-import flow.
+   - Guidance appears before OCR extraction so users can improve first-pass results.
+28. Decision outcome copy polish
+   - Decision acknowledgements now include clearer outcomes ("Added"/"Skipped") plus remaining decision progress.
+   - Completion acknowledgements now explicitly signal when all decisions are resolved and generate is ready.
 
 ## Next (current priorities)
 1. OCR quality iteration (later)
    - Consider optional re-extract guidance and richer warning reasons for borderline OCR output.
-2. Decision outcome copy polish
-   - Tighten post-click confirmation text so users instantly understand what changed in totals.
-3. Optional: OCR image quality hinting
-   - Add lightweight pre-extract tips (lighting, crop, angle) before upload for better first-pass OCR.
+2. OCR warning reason specificity
+   - Map OCR warnings to plain-language actions (e.g., blur -> retake closer, skew -> recapture straight).
+3. Intake completion micro-state polish
+   - Keep decision/summary confirmation text compact and consistent across one-tap actions and chat replies.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.
