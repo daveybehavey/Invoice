@@ -87,14 +87,22 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
 30. OCR warning reason specificity
    - OCR warning text now maps to plain-language "Recommended fixes" in the import UI.
    - Users get actionable guidance (crop tighter, improve lighting, capture straight-on, manual correction).
+31. Intake completion micro-state polish
+   - Decision/summary completion copy now uses consistent short phrasing across chat replies, decision toasts, and review "Next" status.
+   - Decision follow-up copy tightened to a single directive ("Choose Add or Skip") with less repetition.
+32. OCR warning copy refinement
+   - Shortened OCR warning + action text for tighter mobile fit while keeping the same confidence safety gates.
+   - Recommended fix bullets now use concise, action-first wording.
+33. OCR confidence reason codes (debug/analytics-ready)
+   - `/api/invoices/extract-notes` now returns structured `confidenceReasons[]` reason codes.
+   - Import flow emits `invoice:ocr-metrics` debug events with confidence + reason codes.
+   - Safety gates are unchanged (low-confidence still requires explicit user confirmation).
 
 ## Next (current priorities)
-1. Intake completion micro-state polish
-   - Keep decision/summary confirmation text compact and consistent across one-tap actions and chat replies.
-2. OCR warning copy refinement
-   - Tighten wording for warning/action text length on small mobile screens.
-3. Optional OCR confidence metrics (future)
-   - Add structured OCR reason codes for analytics/debug tooling (without changing user safety gates).
+1. OCR confidence analytics sink (future)
+   - Persist `confidenceReasons` metrics to an analytics backend (currently debug-event only).
+2. Messy-input regression expansion
+   - Add additional first-time-user messy scripts with capture + decision outcome snapshots.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.

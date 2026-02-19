@@ -16,7 +16,16 @@ export type ImageOcrExtraction = {
   text: string;
   warnings: string[];
   confidence: "high" | "medium" | "low";
+  confidenceReasons: OcrConfidenceReason[];
 };
+
+export type OcrConfidenceReason =
+  | "short_text"
+  | "very_low_word_count"
+  | "replacement_characters"
+  | "low_word_count"
+  | "single_line_capture"
+  | "external_warning";
 
 export async function extractUploadedInvoiceText(file: UploadedFile): Promise<string> {
   if (!file.buffer.length) {
@@ -64,38 +73,46 @@ export async function extractUploadedImageText(file: UploadedFile): Promise<Imag
   const externalWarnings = (ocrResult.warnings ?? []).filter(
     (warning): warning is string => typeof warning === "string" && warning.trim().length > 0
   );
-  const lowConfidenceSignals: string[] = [];
+  const confidenceReasons = new Set<OcrConfidenceReason>();
   const lineCount = text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean).length;
   if (text.length < 30) {
-    warnings.add("Very little text was detected. Please review carefully.");
-    lowConfidenceSignals.push("short_text");
+    warnings.add("Very little text detected. Review carefully.");
+    confidenceReasons.add("short_text");
   }
   const wordCount = text.split(/\s+/).filter(Boolean).length;
   if (wordCount < 6) {
-    warnings.add("Low OCR confidence: only a small amount of readable text was found.");
-    lowConfidenceSignals.push("very_low_word_count");
+    warnings.add("Low OCR confidence: only a small amount of text was readable.");
+    confidenceReasons.add("very_low_word_count");
   }
   if (/[�]/.test(text)) {
-    warnings.add("Some characters could not be read clearly.");
-    lowConfidenceSignals.push("replacement_characters");
+    warnings.add("Some characters were unreadable.");
+    confidenceReasons.add("replacement_characters");
   }
-  if (lowConfidenceSignals.length === 0 && wordCount >= 6 && wordCount < 20) {
-    warnings.add("Only a modest amount of text was detected. Verify key fields carefully.");
+  const hasLowSignals =
+    confidenceReasons.has("short_text") ||
+    confidenceReasons.has("very_low_word_count") ||
+    confidenceReasons.has("replacement_characters");
+  if (!hasLowSignals && wordCount >= 6 && wordCount < 20) {
+    warnings.add("Only a modest amount of text was detected. Verify key fields.");
+    confidenceReasons.add("low_word_count");
   }
-  if (lowConfidenceSignals.length === 0 && lineCount === 1 && wordCount >= 8) {
-    warnings.add("OCR found one text line. Check that line breaks were not missed.");
+  if (!hasLowSignals && lineCount === 1 && wordCount >= 8) {
+    warnings.add("OCR found one text line. Check for missed line breaks.");
+    confidenceReasons.add("single_line_capture");
   }
   externalWarnings.forEach((warning) => {
     warnings.add(warning.trim());
+    confidenceReasons.add("external_warning");
   });
   const confidence: ImageOcrExtraction["confidence"] =
-    lowConfidenceSignals.length > 0 ? "low" : externalWarnings.length > 0 || wordCount < 20 ? "medium" : "high";
+    hasLowSignals ? "low" : externalWarnings.length > 0 || wordCount < 20 ? "medium" : "high";
   return {
     text,
     warnings: Array.from(warnings),
-    confidence
+    confidence,
+    confidenceReasons: Array.from(confidenceReasons)
   };
 }

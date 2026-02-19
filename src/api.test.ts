@@ -321,6 +321,11 @@ test("extract-notes returns OCR text and warnings for image uploads", async () =
   assert.ok(Array.isArray(response.body.warnings));
   assert.ok(response.body.warnings.length >= 1);
   assert.equal(response.body.confidence, "medium");
+  assert.ok(Array.isArray(response.body.confidenceReasons));
+  assert.ok(
+    response.body.confidenceReasons.includes("external_warning"),
+    "expected external_warning confidence reason"
+  );
 });
 
 test("extract-notes returns low OCR confidence for tiny extracted text", async () => {
@@ -344,6 +349,11 @@ test("extract-notes returns low OCR confidence for tiny extracted text", async (
   assert.ok(
     warnings.some((warning: string) => /low ocr confidence|very little text/i.test(warning))
   );
+  assert.ok(Array.isArray(response.body.confidenceReasons));
+  assert.ok(
+    response.body.confidenceReasons.includes("short_text") ||
+      response.body.confidenceReasons.includes("very_low_word_count")
+  );
 });
 
 test("extract-notes adds review warning when OCR output is short but not low confidence", async () => {
@@ -366,6 +376,11 @@ test("extract-notes adds review warning when OCR output is short but not low con
   assert.ok(Array.isArray(warnings));
   assert.ok(
     warnings.some((warning: string) => /modest amount of text|verify key fields/i.test(warning))
+  );
+  assert.ok(Array.isArray(response.body.confidenceReasons));
+  assert.ok(
+    response.body.confidenceReasons.includes("low_word_count"),
+    "expected low_word_count confidence reason"
   );
 });
 

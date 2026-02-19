@@ -39,7 +39,7 @@ const HELPER_TEXT_BY_REASON: Record<IntakeLockReason, string> = {
   ready: "Ready to generate.",
   labor_hours_missing: "Add missing hours to continue.",
   labor_pricing_missing: "Add labor pricing to continue.",
-  open_decisions: "Resolve open decisions to continue.",
+  open_decisions: "Choose Add or Skip to continue.",
   review_required: "Review the draft, then generate.",
   missing_input: "Paste notes to start."
 };

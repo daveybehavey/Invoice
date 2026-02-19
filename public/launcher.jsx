@@ -338,7 +338,7 @@ const evaluateIntakeReadiness = ({
     ready: "Ready to generate.",
     labor_hours_missing: "Add missing hours to continue.",
     labor_pricing_missing: "Add labor pricing to continue.",
-    open_decisions: "Resolve open decisions to continue.",
+    open_decisions: "Choose Add or Skip to continue.",
     review_required: "Review the draft, then generate.",
     missing_input: "Paste notes to start."
   };
@@ -723,28 +723,26 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     }
     const summaryLines = [];
     const itemCount = invoice.lineItems.length;
-    summaryLines.push(`I captured ${itemCount} line item${itemCount > 1 ? "s" : ""}.`);
+    summaryLines.push(`Captured ${itemCount} line item${itemCount > 1 ? "s" : ""}.`);
     if (decisions.length > 0) {
       summaryLines.push(
-        `I still need your decision on ${decisions.length} item${
-          decisions.length > 1 ? "s" : ""
-        }.`
+        `${decisions.length} decision${decisions.length > 1 ? "s" : ""} need${
+          decisions.length > 1 ? "" : "s"
+        } your call.`
       );
     }
     if (unparsedCount > 0) {
       summaryLines.push(
-        `${unparsedCount} note${unparsedCount > 1 ? "s" : ""} still need${
+        `${unparsedCount} note${unparsedCount > 1 ? "s" : ""} need${
           unparsedCount > 1 ? "" : "s"
         } review.`
       );
     }
     summaryLines.push("Check the draft snapshot below.");
     if (decisions.length > 0) {
-      return `${summaryLines.join(
-        " "
-      )}\n\nDraft is almost ready. Resolve the decisions below, then generate.`;
+      return `${summaryLines.join(" ")}\n\nNext: choose Add or Skip in Decisions.`;
     }
-    return `${summaryLines.join(" ")}\n\nDraft is ready. Generate when you are ready.`;
+    return `${summaryLines.join(" ")}\n\nReady to generate.`;
   };
 
   const buildReviewPayload = (invoice, decisions = [], unparsed = []) => {
@@ -781,7 +779,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
 
   const buildDecisionFollowUp = (decisions) => {
     const lines = decisions.map((decision) => `- ${decision.prompt}`);
-    return `These decisions are still open:\n${lines.join("\n")}\n\nChoose Add or Skip for each one.`;
+    return `Open decisions:\n${lines.join("\n")}\n\nNext: choose Add or Skip.`;
   };
 
   const buildDraftFromInvoice = (invoice, taxOverride) => {
@@ -889,7 +887,7 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     const progressText =
       Number.isFinite(remainingDecisions) && remainingDecisions >= 0
         ? remainingDecisions === 0
-          ? "All decisions resolved - ready to generate."
+          ? "Ready to generate."
           : `${remainingDecisions} decision${remainingDecisions > 1 ? "s" : ""} left.`
         : "";
     if (!resolvedCount || resolvedCount <= 0) {
@@ -897,8 +895,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     }
     if (!action) {
       return progressText
-        ? `Decision updated. ${progressText}`
-        : `Decision updated - ${resolvedCount} item${resolvedCount > 1 ? "s" : ""} resolved.`;
+        ? `Updated. ${progressText}`
+        : `Updated ${resolvedCount} item${resolvedCount > 1 ? "s" : ""}.`;
     }
     if (action.type === "bulk_include") {
       return progressText
@@ -926,8 +924,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
       return progressText ? `Skipped ${snippet}. ${progressText}` : `Skipped ${snippet}.`;
     }
     return progressText
-      ? `Decision updated. ${progressText}`
-      : `Decision updated - ${resolvedCount} item${resolvedCount > 1 ? "s" : ""} resolved.`;
+      ? `Updated. ${progressText}`
+      : `Updated ${resolvedCount} item${resolvedCount > 1 ? "s" : ""}.`;
   };
 
   const captureDecisionUndoSnapshot = () => ({
@@ -1212,7 +1210,6 @@ const applyDecisionActionToInvoice = (invoice, action) => {
     : needsLaborPricing
       ? "Suggested rates"
       : "Quick replies";
-  const normalizedInput = inputValue.trim().toLowerCase();
   const canSendWhileTyping = false;
   const canGenerateInvoice = intakeReadiness.canGenerate;
   const ctaDisabled = !canGenerateInvoice;
@@ -2995,8 +2992,8 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                       : "No decisions pending.";
                   const nextStepText =
                     pendingDecisionCount > 0
-                      ? "Use the Decisions card to choose Add or Skip."
-                      : "Generate invoice when ready.";
+                      ? "Choose Add or Skip in Decisions."
+                      : "Ready to generate.";
                   if (primaryLaborRate) {
                     quickFixes.push({
                       id: "fix-rate",
@@ -3988,25 +3985,25 @@ function ImportInvoice() {
           normalized
         )
       ) {
-        pushAction("Retake closer or crop tighter so text fills most of the image.");
+        pushAction("Crop tighter so text fills most of the image.");
       }
       if (/hard to read|unclear|could not be read|blurry|blur|faint/.test(normalized)) {
-        pushAction("Use brighter, even lighting and hold steady to reduce blur.");
+        pushAction("Use brighter, even light and hold steady.");
       }
       if (/angle|angled|skew|tilt|perspective/.test(normalized)) {
-        pushAction("Capture straight-on (not angled) so OCR can read each line.");
+        pushAction("Capture straight-on (avoid angle/skew).");
       }
       if (/shadow|glare|reflection/.test(normalized)) {
-        pushAction("Reduce glare/shadows by changing light position or camera angle.");
+        pushAction("Reduce glare/shadows by shifting light or angle.");
       }
       if (/handwriting/.test(normalized)) {
-        pushAction("If handwriting is unclear, correct those lines manually before building.");
+        pushAction("Fix unclear handwriting manually before build.");
       }
     });
     if (confidence === "low") {
-      pushAction("Double-check client name, dates, hours, rates, and totals before building.");
+      pushAction("Verify client, dates, hours, rates, and totals.");
     } else if (confidence === "medium" && actions.length === 0) {
-      pushAction("Review key money fields before building the draft.");
+      pushAction("Review key money fields before build.");
     }
     return actions;
   };
@@ -4015,6 +4012,7 @@ function ImportInvoice() {
   const [reviewedText, setReviewedText] = useState("");
   const [ocrWarnings, setOcrWarnings] = useState([]);
   const [ocrConfidence, setOcrConfidence] = useState(null);
+  const [ocrConfidenceReasons, setOcrConfidenceReasons] = useState([]);
   const [lowConfidenceConfirmed, setLowConfidenceConfirmed] = useState(false);
   const [error, setError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
@@ -4037,6 +4035,7 @@ function ImportInvoice() {
   const hasReviewedText = reviewedText.trim().length > 0;
   const requiresLowConfidenceConfirm = hasReviewedText && ocrConfidence === "low";
   const ocrActionHints = mapOcrWarningsToActions(ocrWarnings, ocrConfidence);
+  const ocrDebugEnabled = isReadinessDebugEnabled();
 
   const formatBytes = (bytes) => {
     if (!Number.isFinite(bytes)) {
@@ -4093,6 +4092,7 @@ function ImportInvoice() {
     setReviewedText("");
     setOcrWarnings([]);
     setOcrConfidence(null);
+    setOcrConfidenceReasons([]);
     setLowConfidenceConfirmed(false);
     setSelectedFile(file);
   };
@@ -4107,6 +4107,7 @@ function ImportInvoice() {
     setReviewedText("");
     setOcrWarnings([]);
     setOcrConfidence(null);
+    setOcrConfidenceReasons([]);
     setLowConfidenceConfirmed(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -4163,6 +4164,7 @@ function ImportInvoice() {
     setError("");
     setOcrWarnings([]);
     setOcrConfidence(null);
+    setOcrConfidenceReasons([]);
     setLowConfidenceConfirmed(false);
     try {
       const formData = new FormData();
@@ -4183,10 +4185,25 @@ function ImportInvoice() {
         payload?.confidence === "high" || payload?.confidence === "medium" || payload?.confidence === "low"
           ? payload.confidence
           : null;
+      const nextConfidenceReasons = Array.isArray(payload?.confidenceReasons)
+        ? payload.confidenceReasons.filter((reason) => typeof reason === "string" && reason.trim().length > 0)
+        : [];
       setReviewedText(extractedText);
       setOcrWarnings(Array.isArray(payload?.warnings) ? payload.warnings : []);
       setOcrConfidence(nextConfidence);
+      setOcrConfidenceReasons(nextConfidenceReasons);
       setLowConfidenceConfirmed(false);
+      if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+        window.dispatchEvent(
+          new CustomEvent("invoice:ocr-metrics", {
+            detail: {
+              confidence: nextConfidence,
+              confidenceReasons: nextConfidenceReasons,
+              warningCount: Array.isArray(payload?.warnings) ? payload.warnings.length : 0
+            }
+          })
+        );
+      }
     } catch (uploadError) {
       console.error("Image text extraction failed", uploadError);
       setError(uploadError?.message || "Could not extract text from image.");
@@ -4387,6 +4404,11 @@ function ImportInvoice() {
                   >
                     {ocrConfidence === "high" ? "High" : ocrConfidence === "medium" ? "Medium" : "Low"}
                   </span>
+                </p>
+              ) : null}
+              {ocrDebugEnabled && ocrConfidenceReasons.length > 0 ? (
+                <p className="text-xs text-amber-700">
+                  Confidence reasons: {ocrConfidenceReasons.join(", ")}
                 </p>
               ) : null}
               {ocrWarnings.length > 0 ? (
