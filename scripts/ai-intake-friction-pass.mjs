@@ -213,12 +213,12 @@ async function run() {
       recorder.addIssue(
         "major",
         "Secondary review controls are visible by default on mobile.",
-        "Quick actions should stay behind Show details."
+        "Quick actions should stay behind the details toggle."
       );
     }
 
     const detailButtons = await page
-      .getByRole("button", { name: /show details|hide details/i })
+      .getByRole("button", { name: /show (review|context )?details|hide (review|context )?details/i })
       .count();
     recorder.addCheck(
       "at most one details toggle visible in decision state",
@@ -275,9 +275,18 @@ async function run() {
       "Generate should unlock once no open decisions remain."
     );
 
-    const reviewDetailsToggle = page.getByRole("button", { name: /show details|hide details/i }).first();
-    if (await reviewDetailsToggle.isVisible().catch(() => false)) {
-      await reviewDetailsToggle.click();
+    const reviewDetailsToggle = page.getByRole("button", {
+      name: /show review details|hide review details/i
+    });
+    if (await reviewDetailsToggle.first().isVisible().catch(() => false)) {
+      await reviewDetailsToggle.first().click();
+    } else {
+      const fallbackDetailsToggle = page
+        .getByRole("button", { name: /show (review|context )?details|hide (review|context )?details/i })
+        .first();
+      if (await fallbackDetailsToggle.isVisible().catch(() => false)) {
+        await fallbackDetailsToggle.click();
+      }
     }
     const quickActionButtons = page
       .locator("button:visible")

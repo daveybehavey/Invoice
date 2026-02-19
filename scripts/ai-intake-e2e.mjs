@@ -60,7 +60,9 @@ async function sendMessage(page, text) {
 }
 
 async function ensureAssumptionsExpanded(page) {
-  const toggle = page.getByRole("button", { name: "Show details" });
+  const toggle = page.getByRole("button", {
+    name: /Show details|Show review details|Show context details/i
+  });
   if (await toggle.isVisible().catch(() => false)) {
     await toggle.click();
   }

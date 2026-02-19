@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-02-18T22:59:52.504Z",
+  "timestamp": "2026-02-18T23:14:42.587Z",
   "baseUrl": "http://localhost:3000",
   "checks": [
     {
@@ -15,7 +15,7 @@
     {
       "name": "at most one details toggle visible in decision state",
       "pass": true,
-      "details": "visible toggles: 1"
+      "details": "visible toggles: 0"
     },
     {
       "name": "single primary action with open decisions",

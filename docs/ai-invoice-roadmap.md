@@ -71,14 +71,18 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - One-decision mode now emphasizes a single next action ("Choose Add or Skip").
    - Decision card shows clear progress (Decision X of Y) and highlights Add/Skip actions.
    - Tax quick-choice controls are hidden while billing decisions are still open.
+26. Review details placement polish
+   - On mobile, details toggles now sit inline under each card summary instead of clustering in top-right headers.
+   - Desktop keeps header controls; mobile uses explicit labels ("Show review details", "Show context details").
+   - Reduces duplicate "Show details" ambiguity while preserving progressive disclosure.
 
 ## Next (current priorities)
-1. Review details placement polish
-   - Reduce top-right control density by clarifying where "Show details" lives on mobile vs desktop.
-2. OCR quality iteration (later)
+1. OCR quality iteration (later)
    - Consider optional re-extract guidance and richer warning reasons for borderline OCR output.
-3. Decision outcome copy polish
+2. Decision outcome copy polish
    - Tighten post-click confirmation text so users instantly understand what changed in totals.
+3. Optional: OCR image quality hinting
+   - Add lightweight pre-extract tips (lighting, crop, angle) before upload for better first-pass OCR.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.

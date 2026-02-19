@@ -1206,6 +1206,11 @@ const applyDecisionActionToInvoice = (invoice, action) => {
   const hasDecisionPrimaryPath = intakeReadiness.lockReason === "open_decisions";
   const primaryCtaLabel = hasDecisionPrimaryPath ? "Resolve decisions" : "Generate Invoice";
   const primaryCtaDisabled = hasDecisionPrimaryPath ? false : ctaDisabled;
+  const reviewDetailsToggleLabel = reviewCardCollapsed ? "Show review details" : "Hide review details";
+  const showContextDetailsToggle = hasReviewCard && hasVisibleDetails;
+  const contextDetailsToggleLabel = assumptionsCollapsed
+    ? "Show context details"
+    : "Hide context details";
   const decisionIncludeButtonClass =
     "rounded-full border border-amber-600 bg-amber-600 px-3 py-1 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:border-amber-300 disabled:bg-amber-300";
   const decisionExcludeButtonClass =
@@ -3086,14 +3091,14 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                             >
                               Edit with AI
                             </button>
-                            {hasReviewSecondaryContent ? (
+                            {hasReviewSecondaryContent && !isCompactViewport ? (
                               <button
                                 type="button"
                                 className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
                                 onClick={() => setReviewCardCollapsed((prev) => !prev)}
                                 disabled={isTyping}
                               >
-                                {reviewCardCollapsed ? "Show details" : "Hide details"}
+                                {reviewDetailsToggleLabel}
                               </button>
                             ) : null}
                           </div>
@@ -3152,6 +3157,18 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                                 {capturedPreviewHiddenCount > 0
                                   ? ` (+${capturedPreviewHiddenCount} more)`
                                   : ""}
+                              </p>
+                            ) : null}
+                            {hasReviewSecondaryContent && isCompactViewport ? (
+                              <p className="mt-2">
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                                  onClick={() => setReviewCardCollapsed((prev) => !prev)}
+                                  disabled={isTyping}
+                                >
+                                  {reviewDetailsToggleLabel}
+                                </button>
                               </p>
                             ) : null}
                             {pendingDecisionCount > 0 ? (
@@ -3365,19 +3382,30 @@ const applyDecisionActionToInvoice = (invoice, action) => {
                           </span>
                         ) : null}
                       </div>
-                      {hasReviewCard && hasVisibleDetails ? (
+                      {showContextDetailsToggle && !isCompactViewport ? (
                         <button
                           type="button"
                           className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
                           onClick={() => setAssumptionsCollapsed((prev) => !prev)}
                         >
-                          {assumptionsCollapsed ? "Show details" : "Hide details"}
+                          {contextDetailsToggleLabel}
                         </button>
                       ) : null}
                     </div>
                     {summaryTimeLabel ? (
                       <p className="mt-1 text-xs text-slate-500">
                         Summary updated {summaryTimeLabel}
+                      </p>
+                    ) : null}
+                    {showContextDetailsToggle && isCompactViewport ? (
+                      <p className="mt-2">
+                        <button
+                          type="button"
+                          className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                          onClick={() => setAssumptionsCollapsed((prev) => !prev)}
+                        >
+                          {contextDetailsToggleLabel}
+                        </button>
                       </p>
                     ) : null}
                     {openDecisionCount > 0 && showConfirmDetails ? (
