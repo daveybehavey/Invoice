@@ -81,14 +81,20 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
 28. Decision outcome copy polish
    - Decision acknowledgements now include clearer outcomes ("Added"/"Skipped") plus remaining decision progress.
    - Completion acknowledgements now explicitly signal when all decisions are resolved and generate is ready.
+29. OCR quality iteration
+   - Added richer OCR warnings for borderline captures (modest text volume, possible missed line breaks).
+   - Keeps confidence gating unchanged while improving user visibility into extraction quality.
+30. OCR warning reason specificity
+   - OCR warning text now maps to plain-language "Recommended fixes" in the import UI.
+   - Users get actionable guidance (crop tighter, improve lighting, capture straight-on, manual correction).
 
 ## Next (current priorities)
-1. OCR quality iteration (later)
-   - Consider optional re-extract guidance and richer warning reasons for borderline OCR output.
-2. OCR warning reason specificity
-   - Map OCR warnings to plain-language actions (e.g., blur -> retake closer, skew -> recapture straight).
-3. Intake completion micro-state polish
+1. Intake completion micro-state polish
    - Keep decision/summary confirmation text compact and consistent across one-tap actions and chat replies.
+2. OCR warning copy refinement
+   - Tighten wording for warning/action text length on small mobile screens.
+3. Optional OCR confidence metrics (future)
+   - Add structured OCR reason codes for analytics/debug tooling (without changing user safety gates).
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.

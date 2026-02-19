@@ -65,6 +65,10 @@ export async function extractUploadedImageText(file: UploadedFile): Promise<Imag
     (warning): warning is string => typeof warning === "string" && warning.trim().length > 0
   );
   const lowConfidenceSignals: string[] = [];
+  const lineCount = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean).length;
   if (text.length < 30) {
     warnings.add("Very little text was detected. Please review carefully.");
     lowConfidenceSignals.push("short_text");
@@ -77,6 +81,12 @@ export async function extractUploadedImageText(file: UploadedFile): Promise<Imag
   if (/[�]/.test(text)) {
     warnings.add("Some characters could not be read clearly.");
     lowConfidenceSignals.push("replacement_characters");
+  }
+  if (lowConfidenceSignals.length === 0 && wordCount >= 6 && wordCount < 20) {
+    warnings.add("Only a modest amount of text was detected. Verify key fields carefully.");
+  }
+  if (lowConfidenceSignals.length === 0 && lineCount === 1 && wordCount >= 8) {
+    warnings.add("OCR found one text line. Check that line breaks were not missed.");
   }
   externalWarnings.forEach((warning) => {
     warnings.add(warning.trim());

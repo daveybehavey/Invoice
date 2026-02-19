@@ -346,6 +346,29 @@ test("extract-notes returns low OCR confidence for tiny extracted text", async (
   );
 });
 
+test("extract-notes adds review warning when OCR output is short but not low confidence", async () => {
+  setImageOcrRunnerForTests(async () => ({
+    extractedText: "Jan 30 repair labor 2h at $80/hr",
+    warnings: []
+  }));
+
+  const response = await request(app)
+    .post("/api/invoices/extract-notes")
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes.png",
+      contentType: "image/png"
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.sourceType, "image");
+  assert.equal(response.body.confidence, "medium");
+  const warnings = response.body.warnings ?? [];
+  assert.ok(Array.isArray(warnings));
+  assert.ok(
+    warnings.some((warning: string) => /modest amount of text|verify key fields/i.test(warning))
+  );
+});
+
 test("extract-notes rejects non-image uploads", async () => {
   const response = await request(app)
     .post("/api/invoices/extract-notes")

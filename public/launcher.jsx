@@ -3970,6 +3970,46 @@ function ImportInvoice() {
     "Keep the camera straight (avoid angled or skewed photos).",
     "Make sure handwriting/text is sharp before extracting."
   ];
+  const mapOcrWarningsToActions = (warnings, confidence) => {
+    const warningList = Array.isArray(warnings) ? warnings : [];
+    const actions = [];
+    const seen = new Set();
+    const pushAction = (text) => {
+      if (!text || seen.has(text)) {
+        return;
+      }
+      seen.add(text);
+      actions.push(text);
+    };
+    warningList.forEach((warning) => {
+      const normalized = String(warning).toLowerCase();
+      if (
+        /very little text|small amount of readable text|modest amount of text|one text line|line breaks/.test(
+          normalized
+        )
+      ) {
+        pushAction("Retake closer or crop tighter so text fills most of the image.");
+      }
+      if (/hard to read|unclear|could not be read|blurry|blur|faint/.test(normalized)) {
+        pushAction("Use brighter, even lighting and hold steady to reduce blur.");
+      }
+      if (/angle|angled|skew|tilt|perspective/.test(normalized)) {
+        pushAction("Capture straight-on (not angled) so OCR can read each line.");
+      }
+      if (/shadow|glare|reflection/.test(normalized)) {
+        pushAction("Reduce glare/shadows by changing light position or camera angle.");
+      }
+      if (/handwriting/.test(normalized)) {
+        pushAction("If handwriting is unclear, correct those lines manually before building.");
+      }
+    });
+    if (confidence === "low") {
+      pushAction("Double-check client name, dates, hours, rates, and totals before building.");
+    } else if (confidence === "medium" && actions.length === 0) {
+      pushAction("Review key money fields before building the draft.");
+    }
+    return actions;
+  };
   const [selectedFile, setSelectedFile] = useState(null);
   const [notes, setNotes] = useState("");
   const [reviewedText, setReviewedText] = useState("");
@@ -3996,6 +4036,7 @@ function ImportInvoice() {
   const imageMimeTypes = ["image/png", "image/jpeg", "image/webp"];
   const hasReviewedText = reviewedText.trim().length > 0;
   const requiresLowConfidenceConfirm = hasReviewedText && ocrConfidence === "low";
+  const ocrActionHints = mapOcrWarningsToActions(ocrWarnings, ocrConfidence);
 
   const formatBytes = (bytes) => {
     if (!Number.isFinite(bytes)) {
@@ -4355,6 +4396,18 @@ function ImportInvoice() {
                   ))}
                 </ul>
               ) : null}
+              {ocrActionHints.length > 0 ? (
+                <div className="rounded-xl border border-amber-200 bg-white px-3 py-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                    Recommended fixes
+                  </p>
+                  <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-amber-800">
+                    {ocrActionHints.map((hint) => (
+                      <li key={hint}>{hint}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               {isExtracting ? (
                 <p className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-amber-800">
                   Reading text from image...
@@ -4455,14 +4508,14 @@ function ImportInvoice() {
                 {isUploading ? "Importing..." : "Build draft"}
               </button>
             )}
-            <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-500">
               {isExtracting
                 ? "Extracting text from image..."
                   : isUploading
                     ? "Building your draft..."
                   : selectedFile && isImageFile(selectedFile)
                     ? requiresLowConfidenceConfirm
-                      ? "Low confidence OCR: review and confirm before building."
+                      ? "Low confidence OCR: review text, re-extract if needed, then confirm."
                       : "Extract text, review it, then build."
                     : "We’ll open the editor next."}
               </p>
