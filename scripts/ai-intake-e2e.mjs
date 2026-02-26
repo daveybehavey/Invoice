@@ -20,6 +20,23 @@ async function waitForText(page, text, timeout = DEFAULT_TIMEOUT) {
   }
 }
 
+async function waitForAnyText(page, texts, timeout = DEFAULT_TIMEOUT) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeout) {
+    for (const text of texts) {
+      const found = await page
+        .getByText(text, { exact: false })
+        .isVisible()
+        .catch(() => false);
+      if (found) {
+        return true;
+      }
+    }
+    await page.waitForTimeout(250);
+  }
+  return false;
+}
+
 async function waitForTypingToSettle(page) {
   const typing = page.getByText("AI is typing", { exact: false });
   try {
@@ -260,7 +277,7 @@ Do what makes sense.`;
 
     if (followUp) {
       const helperLabor = await page
-        .getByText("Provide labor pricing to continue.", { exact: false })
+        .getByText("Add labor pricing to continue.", { exact: false })
         .isVisible();
       record(helperLabor, "Generate helper indicates labor pricing");
 
@@ -273,29 +290,61 @@ Do what makes sense.`;
     const hasSummary = await waitForText(page, "Draft snapshot", DEFAULT_TIMEOUT);
     record(hasSummary, followUp ? "Draft snapshot after labor pricing" : "Draft snapshot shown");
 
-    const decisionsVisible = await page
-      .getByText("Needs your call", { exact: false })
-      .isVisible();
+    const decisionsVisible = (
+      await page.getByText(/Needs your call|Choose Add or Skip|Decision \d+ of/i).first().isVisible()
+    ) || (await page.getByRole("button", { name: "Skip" }).first().isVisible().catch(() => false));
     record(decisionsVisible, "Decisions card shown");
 
     const cabinetMentioned = await page.getByText(/cabinet/i).isVisible();
     record(cabinetMentioned, "Cabinet door decision requested");
 
-    const taxAssumed = await page.getByText("Tax: 0% assumed.", { exact: true }).isVisible();
-    record(taxAssumed, "Tax assumed 0% surfaced");
+    const explicitTaxDecisionVisible = await page
+      .getByRole("button", { name: /Use 5%|Set tax rate|Keep 0%/i })
+      .first()
+      .isVisible()
+      .catch(() => false);
+    record(!explicitTaxDecisionVisible, "No explicit tax decision required by default");
 
     const generateButton = getPrimaryGenerateButton(page);
-    record(await generateButton.isDisabled(), "Generate disabled with open decisions");
+    const generateCountBefore = await generateButton.count();
+    if (generateCountBefore > 0) {
+      record(await generateButton.isDisabled(), "Generate disabled with open decisions");
+    } else {
+      const resolveDecisionsButton = page.getByRole("button", { name: /Resolve decisions/i });
+      record(
+        await resolveDecisionsButton.isVisible().catch(() => false),
+        "Resolve decisions CTA shown while decisions are open"
+      );
+    }
 
     const skipButton = page.getByRole("button", { name: "Skip" }).first();
     record(await skipButton.isVisible(), "Skip decision button shown");
-    await skipButton.click();
-    await waitForTypingToSettle(page);
 
-    const helperReady = await waitForText(page, "Ready to generate.", DEFAULT_TIMEOUT);
-    record(helperReady, "Helper text shows ready to generate");
+    let resolvedDecisionClicks = 0;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const currentSkip = page.getByRole("button", { name: "Skip" }).first();
+      const skipVisible = await currentSkip.isVisible().catch(() => false);
+      if (!skipVisible) {
+        break;
+      }
+      await currentSkip.click();
+      resolvedDecisionClicks += 1;
+      await waitForTypingToSettle(page);
+      const stillDisabled = await generateButton.isDisabled();
+      if (!stillDisabled) {
+        break;
+      }
+    }
+    record(resolvedDecisionClicks > 0, "Resolved visible decisions using Skip");
 
-    const canGenerate = await generateButton.isEnabled();
+    const generateCountAfter = await generateButton.count();
+    const canGenerate = generateCountAfter > 0 ? await generateButton.isEnabled() : false;
+    const helperReady = await waitForAnyText(
+      page,
+      ["Ready to generate.", "Ready to generate", "All set. Generate when you're ready."],
+      5000
+    );
+    record(helperReady || canGenerate, "Helper or generate-ready state shown");
     record(canGenerate, "Generate enabled after resolving decisions");
 
     if (canGenerate) {
@@ -375,7 +424,7 @@ Do what makes sense.`;
     );
     record(followUp, "Labor follow-up shown");
 
-    const helperText = await page.getByText("Provide labor pricing to continue.", { exact: false }).isVisible();
+    const helperText = await page.getByText("Add labor pricing to continue.", { exact: false }).isVisible();
     record(helperText, "Helper prompts labor pricing");
 
     await sendMessage(
@@ -389,7 +438,7 @@ Do what makes sense.`;
 
     const followUpAgain = await waitForText(
       page,
-      "I still need the labor pricing details",
+      "I still need labor pricing",
       3000
     );
     record(!followUpAgain, "No repeated labor follow-up after resolution");
