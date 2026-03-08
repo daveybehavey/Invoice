@@ -1795,14 +1795,14 @@ function AIIntake() {
       </main>
 
       {decisionToast ? (
-        <div className="fixed bottom-24 left-0 right-0 z-40 flex justify-center px-4">
+        <div className="pointer-events-none fixed left-0 right-0 top-20 z-40 flex justify-center px-4 md:bottom-24 md:top-auto">
           <div className="max-w-3xl flex-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <span>{decisionToast}</span>
               {decisionUndoState ? (
                 <button
                   type="button"
-                  className="rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-400 hover:text-emerald-900"
+                  className="pointer-events-auto rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-400 hover:text-emerald-900"
                   onClick={handleUndoDecision}
                 >
                   Undo

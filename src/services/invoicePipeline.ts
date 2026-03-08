@@ -578,9 +578,14 @@ export async function rewordFullInvoice(invoice: FinishedInvoice, tone?: string)
     "Return JSON with shape: {\"lineItems\":[{\"id\":\"...\",\"description\":\"...\"}],\"notes\":\"optional\"}.",
     `Wording source JSON: ${JSON.stringify(wordingSource)}`
   ].join("\n");
+  const wordingTokenBudget = Math.min(
+    2200,
+    Math.max(700, invoice.lineItems.length * 180 + Math.ceil((invoice.notes ?? "").trim().length / 4))
+  );
 
   const modelResponse = await runJsonTask<RewordFullInvoiceResponse>(taskPrompt, {
-    taskType: "wording"
+    taskType: "wording",
+    maxCompletionTokens: wordingTokenBudget
   });
   const descriptionById = new Map(modelResponse.lineItems.map((lineItem) => [lineItem.id, lineItem.description]));
 

@@ -128,6 +128,60 @@ test("decision CTA switches and undo restores unresolved decision state", async 
   }
 });
 
+test("decision undo toast does not block billie chips on mobile", async () => {
+  useMockResponses([structuredDecisionDraft(), decisionAudit()]);
+
+  const context = await browser.newContext({
+    viewport: { width: 375, height: 667 },
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 2
+  });
+  const page = await context.newPage();
+  try {
+    let rewordRequestCount = 0;
+    await page.route("**/api/invoices/reword-full", async (route) => {
+      rewordRequestCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(safeBillieDecisionSkipEditResponse())
+      });
+    });
+    await page.route("**/api/invoices/edit", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 30 fixed faucet 2h at $80/hr. Cabinet door adjustment maybe charge.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+
+    await page.getByRole("button", { name: "Skip" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Skip" }).click();
+
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Undo" }).waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Refine wording" }).click();
+
+    await page
+      .locator("form.fixed")
+      .getByText("✓ Numbers unchanged")
+      .waitFor({ state: "visible" });
+
+    assert.equal(rewordRequestCount, 1);
+    assert.equal(await page.getByRole("button", { name: "Undo", exact: true }).isVisible(), true);
+  } finally {
+    await context.close();
+  }
+});
+
 test("labor follow-up shows last used hourly rate quick reply", async () => {
   useMockResponses([
     structuredLaborFollowUpDraft(),
@@ -707,6 +761,31 @@ function safeBillieEditResponse() {
         }
       ],
       notes: "Thank you for your business."
+    }
+  };
+}
+
+function safeBillieDecisionSkipEditResponse() {
+  return {
+    invoice: {
+      currency: "USD",
+      lineItems: [
+        {
+          type: "labor",
+          description: "Kitchen faucet repair service",
+          quantity: 2,
+          unitPrice: 80,
+          amount: 160
+        },
+        {
+          type: "labor",
+          description: "Cabinet door alignment service",
+          quantity: 0.33,
+          unitPrice: 0,
+          amount: 0
+        }
+      ],
+      notes: ""
     }
   };
 }

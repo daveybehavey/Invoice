@@ -2,12 +2,14 @@ import OpenAI from "openai";
 import { parseJsonFromModel } from "../lib/json.js";
 import { loadSystemPrompt } from "../prompt/systemPrompt.js";
 
-type JsonTaskRunner = <T>(userTaskPrompt: string) => Promise<T>;
+type JsonTaskRunner = <T>(userTaskPrompt: string, options?: JsonTaskOptions) => Promise<T>;
 type ImageOcrRunner = (input: ImageOcrTaskInput) => Promise<ImageOcrTaskResult>;
 type JsonTaskType = "default" | "wording";
 type JsonTaskOptions = {
   taskType?: JsonTaskType;
   model?: string;
+  maxCompletionTokens?: number;
+  disableStructuredJsonResponse?: boolean;
 };
 type JsonTaskConfig = {
   model: string;
@@ -64,8 +66,11 @@ export function resolveJsonTaskConfig(options: JsonTaskOptions = {}): JsonTaskCo
     return {
       model,
       systemPrompt: WORDING_SYSTEM_PROMPT,
-      maxCompletionTokens: 400,
-      responseFormat: { type: "json_object" }
+      maxCompletionTokens:
+        Number.isFinite(options.maxCompletionTokens) && Number(options.maxCompletionTokens) > 0
+          ? Math.floor(Number(options.maxCompletionTokens))
+          : 400,
+      responseFormat: options.disableStructuredJsonResponse ? undefined : { type: "json_object" }
     };
   }
 
@@ -94,20 +99,20 @@ export async function runJsonTask<T>(
   options: JsonTaskOptions = {}
 ): Promise<T> {
   if (jsonTaskRunnerForTests) {
-    return jsonTaskRunnerForTests<T>(userTaskPrompt);
+    return jsonTaskRunnerForTests<T>(userTaskPrompt, options);
   }
 
   const config = resolveJsonTaskConfig(options);
 
-  const runOnce = async (prompt: string): Promise<T> => {
+  const runOnce = async (prompt: string, taskConfig: JsonTaskConfig): Promise<T> => {
     const completion = await getClient().chat.completions.create({
-      model: config.model,
-      max_completion_tokens: config.maxCompletionTokens,
-      response_format: config.responseFormat,
+      model: taskConfig.model,
+      max_completion_tokens: taskConfig.maxCompletionTokens,
+      response_format: taskConfig.responseFormat,
       messages: [
         {
           role: "system",
-          content: config.systemPrompt
+          content: taskConfig.systemPrompt
         },
         {
           role: "user",
@@ -125,10 +130,28 @@ export async function runJsonTask<T>(
   };
 
   try {
-    return await runOnce(userTaskPrompt);
+    return await runOnce(userTaskPrompt, config);
   } catch (error) {
-    const retryPrompt = `${userTaskPrompt}\n\nYou must reply with a single JSON object. Do not include any extra text.`;
-    return await runOnce(retryPrompt);
+    const retryOptions: JsonTaskOptions =
+      options.taskType === "wording"
+        ? {
+            ...options,
+            disableStructuredJsonResponse: true,
+            maxCompletionTokens: Math.min(
+              2200,
+              Math.max(
+                900,
+                Math.ceil((config.maxCompletionTokens ?? 600) * 1.75)
+              )
+            )
+          }
+        : options;
+    const retryConfig = resolveJsonTaskConfig(retryOptions);
+    const retryPrompt =
+      options.taskType === "wording"
+        ? `${userTaskPrompt}\n\nReturn a single raw JSON object with double-quoted keys and string values where needed. Do not wrap the JSON in markdown.`
+        : `${userTaskPrompt}\n\nYou must reply with a single JSON object. Do not include any extra text.`;
+    return await runOnce(retryPrompt, retryConfig);
   }
 }
 

@@ -53,6 +53,22 @@ test("resolveJsonTaskConfig uses compact wording settings for wording tasks", ()
   assert.doesNotMatch(config.systemPrompt, /AI Invoice Translator & Generator/i);
 });
 
+test("resolveJsonTaskConfig can relax wording response format for retries", () => {
+  process.env.OPENAI_MODEL = "gpt-main";
+  delete process.env.OPENAI_WORDING_MODEL;
+
+  const config = resolveJsonTaskConfig({
+    taskType: "wording",
+    maxCompletionTokens: 900,
+    disableStructuredJsonResponse: true
+  });
+
+  assert.equal(config.model, "gpt-main");
+  assert.equal(config.maxCompletionTokens, 900);
+  assert.equal(config.responseFormat, undefined);
+  assert.match(config.systemPrompt, /rewrite invoice wording only/i);
+});
+
 test("resolveJsonTaskConfig keeps the full system prompt for default tasks", () => {
   process.env.OPENAI_MODEL = "gpt-main";
 
