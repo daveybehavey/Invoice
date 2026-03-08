@@ -1,16 +1,19 @@
 import { runJsonTask } from "../ai/openaiClient.js";
 import { normalizeInvoice } from "../lib/invoiceMath.js";
 import {
+  DecisionAction,
   FinishedInvoice,
   FinishedInvoiceSchema,
   InvoiceAuditSchema,
   InvoiceEditResponseSchema,
   LaborPricingChoice,
   Material,
+  OpenDecision,
   StructuredInvoice,
   StructuredInvoiceSchema,
   Task
 } from "../models/invoice.js";
+import { evaluateInvoiceOutputQuality, OutputQualityGate } from "./outputQualityGate.js";
 
 type CreateInvoiceInput = {
   messyInput?: string;
@@ -34,6 +37,7 @@ type CreateInvoiceReadyResult = {
   openDecisions: OpenDecision[];
   assumptions: string[];
   unparsedLines: string[];
+  qualityGate: OutputQualityGate;
   auditStatus?: AuditStatus;
 };
 
@@ -66,6 +70,7 @@ type CreateInvoiceDiscountFollowUpResult = {
   openDecisions: OpenDecision[];
   assumptions: string[];
   unparsedLines: string[];
+  qualityGate: OutputQualityGate;
   auditStatus?: AuditStatus;
   followUp: {
     type: "discount";
@@ -78,14 +83,6 @@ export type CreateInvoiceResult =
   | CreateInvoiceReadyResult
   | CreateInvoiceLaborFollowUpResult
   | CreateInvoiceDiscountFollowUpResult;
-
-type OpenDecision = {
-  id: string;
-  kind: "tax" | "billing";
-  prompt: string;
-  sourceSnippet?: string;
-  keywords?: string[];
-};
 
 type InvoiceAudit = {
   assumptions: string[];
@@ -264,19 +261,28 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   const invoiceWithHolds = applyDecisionPricingHolds(invoiceWithIssueDate, cleanedDecisions);
   const cleanedInvoice = filterInvoiceNotes(invoiceWithHolds, sourceText, cleanedDecisions);
   const cleanedAssumptions = filterAssumptionsAgainstDecisions(assumptions, cleanedDecisions);
+  const outputQuality = evaluateInvoiceOutputQuality({
+    structuredInvoice: sanitizedInvoice,
+    invoice: cleanedInvoice
+  });
 
   if (discountIntent.kind === "apply") {
+    const discountedInvoice = applyDiscountToInvoice(
+      cleanedInvoice,
+      discountIntent.amount,
+      discountIntent.reason
+    );
     return {
       kind: "invoice_ready",
       structuredInvoice: sanitizedInvoice,
-      invoice: applyDiscountToInvoice(
-        cleanedInvoice,
-        discountIntent.amount,
-        discountIntent.reason
-      ),
+      invoice: discountedInvoice,
       openDecisions: cleanedDecisions,
       assumptions: cleanedAssumptions,
       unparsedLines: cleanedUnparsed,
+      qualityGate: evaluateInvoiceOutputQuality({
+        structuredInvoice: sanitizedInvoice,
+        invoice: discountedInvoice
+      }),
       auditStatus: auditOutcome.status
     };
   }
@@ -288,6 +294,7 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     openDecisions: cleanedDecisions,
     assumptions: cleanedAssumptions,
     unparsedLines: cleanedUnparsed,
+    qualityGate: outputQuality,
     auditStatus: auditOutcome.status
   };
 }
@@ -364,19 +371,28 @@ export async function continueInvoiceAfterLaborPricing(
     cleanedDecisions
   );
   const cleanedAssumptions = filterAssumptionsAgainstDecisions(assumptions, cleanedDecisions);
+  const outputQuality = evaluateInvoiceOutputQuality({
+    structuredInvoice: sanitizedInvoice,
+    invoice: cleanedInvoice
+  });
 
   if (discountIntent.kind === "apply") {
+    const discountedInvoice = applyDiscountToInvoice(
+      cleanedInvoice,
+      discountIntent.amount,
+      discountIntent.reason
+    );
     return {
       kind: "invoice_ready",
       structuredInvoice: sanitizedInvoice,
-      invoice: applyDiscountToInvoice(
-        cleanedInvoice,
-        discountIntent.amount,
-        discountIntent.reason
-      ),
+      invoice: discountedInvoice,
       openDecisions: cleanedDecisions,
       assumptions: cleanedAssumptions,
       unparsedLines: cleanedUnparsed,
+      qualityGate: evaluateInvoiceOutputQuality({
+        structuredInvoice: sanitizedInvoice,
+        invoice: discountedInvoice
+      }),
       auditStatus: auditOutcome.status
     };
   }
@@ -388,7 +404,98 @@ export async function continueInvoiceAfterLaborPricing(
     openDecisions: cleanedDecisions,
     assumptions: cleanedAssumptions,
     unparsedLines: cleanedUnparsed,
+    qualityGate: outputQuality,
     auditStatus: auditOutcome.status
+  };
+}
+
+type ApplyDecisionInput = {
+  structuredInvoice: StructuredInvoice;
+  openDecisions: OpenDecision[];
+  assumptions?: string[];
+  unparsedLines?: string[];
+  decisionAction: DecisionAction;
+  pendingTaxRate?: string;
+};
+
+type ApplyDecisionResult = {
+  structuredInvoice: StructuredInvoice;
+  invoice: FinishedInvoice;
+  openDecisions: OpenDecision[];
+  assumptions: string[];
+  unparsedLines: string[];
+  qualityGate: OutputQualityGate;
+  pendingTaxRate?: string;
+};
+
+export async function applyDecisionActionToDraft(
+  input: ApplyDecisionInput
+): Promise<ApplyDecisionResult> {
+  const sanitizedInvoice = StructuredInvoiceSchema.parse(input.structuredInvoice);
+  const currentOpenDecisions = normalizeOpenDecisions(input.openDecisions ?? []);
+  const decisionAction = input.decisionAction;
+  const selectedDecisions = selectTargetDecisions(currentOpenDecisions, decisionAction);
+  const selectedDecisionIds = new Set(selectedDecisions.map((decision) => decision.id));
+  const excludeSelected =
+    decisionAction.type === "exclude" || decisionAction.type === "bulk_exclude";
+  const selectedTaxDecisions = selectedDecisions.filter((decision) => decision.kind === "tax");
+  const taxApplySelected =
+    (decisionAction.type === "tax_apply" || decisionAction.type === "bulk_include") &&
+    selectedTaxDecisions.length > 0;
+  const taxSkipSelected =
+    (decisionAction.type === "tax_skip" || decisionAction.type === "bulk_exclude") &&
+    selectedTaxDecisions.length > 0;
+
+  let nextStructuredInvoice = cloneStructuredInvoice(sanitizedInvoice);
+  if (excludeSelected) {
+    selectedDecisions
+      .filter((decision) => decision.kind === "billing")
+      .forEach((decision) => {
+        nextStructuredInvoice = applyBillingExclusionToStructuredInvoice(nextStructuredInvoice, decision);
+      });
+  }
+
+  const remainingOpenDecisions = currentOpenDecisions.filter(
+    (decision) => !selectedDecisionIds.has(decision.id)
+  );
+
+  const baseInvoice = await generateFinishedInvoice(nextStructuredInvoice);
+  const heldInvoice = applyDecisionPricingHolds(baseInvoice, remainingOpenDecisions);
+  const qualityGate = evaluateInvoiceOutputQuality({
+    structuredInvoice: nextStructuredInvoice,
+    invoice: heldInvoice
+  });
+
+  let nextPendingTaxRate = sanitizeTaxRate(input.pendingTaxRate);
+  if (taxSkipSelected) {
+    nextPendingTaxRate = undefined;
+  }
+  if (taxApplySelected) {
+    const detectedTaxRate = selectedTaxDecisions
+      .map((decision) => extractTaxRateFromDecision(decision))
+      .find((value): value is string => Boolean(value));
+    if (detectedTaxRate) {
+      nextPendingTaxRate = detectedTaxRate;
+    }
+  }
+
+  const assumptions = normalizeAssumptions(
+    filterAssumptionsAfterDecisionAction(
+      input.assumptions ?? [],
+      remainingOpenDecisions,
+      taxApplySelected,
+      taxSkipSelected
+    )
+  );
+
+  return {
+    structuredInvoice: nextStructuredInvoice,
+    invoice: heldInvoice,
+    openDecisions: remainingOpenDecisions,
+    assumptions,
+    unparsedLines: Array.isArray(input.unparsedLines) ? input.unparsedLines : [],
+    qualityGate,
+    pendingTaxRate: nextPendingTaxRate
   };
 }
 
@@ -1373,7 +1480,9 @@ function detectOpenDecisionsFromText(sourceText: string, lastUserMessage?: strin
   }
 
   if (!resolutionCandidates.length) {
-    return Array.from(decisions.values()).map((entry) => entry.decision);
+    return dedupeOverlappingBillingDecisions(
+      Array.from(decisions.values()).map((entry) => entry.decision)
+    );
   }
 
   const unresolved: OpenDecision[] = [];
@@ -1403,7 +1512,7 @@ function detectOpenDecisionsFromText(sourceText: string, lastUserMessage?: strin
     }
   });
 
-  return unresolved;
+  return dedupeOverlappingBillingDecisions(unresolved);
 }
 
 function decisionsFromAudit(
@@ -1414,7 +1523,7 @@ function decisionsFromAudit(
     kind: decision.kind,
     prompt: decision.prompt,
     sourceSnippet: decision.sourceSnippet,
-    keywords: extractKeywords(decision.sourceSnippet ?? decision.prompt)
+    keywords: extractKeywords([decision.prompt, decision.sourceSnippet ?? ""].join(" "))
   }));
 }
 
@@ -1459,31 +1568,334 @@ function filterResolvedDecisions(
 function mergeDecisions(primary: OpenDecision[], secondary: OpenDecision[]): OpenDecision[] {
   const merged = new Map<string, OpenDecision>();
   primary.forEach((decision) => merged.set(decision.id, decision));
-
-  const getKeywords = (decision: OpenDecision) =>
-    new Set(decision.keywords ?? extractKeywords(decision.sourceSnippet ?? decision.prompt));
-
   secondary.forEach((decision) => {
     if (merged.has(decision.id)) {
       return;
     }
-    const secondaryKeywords = getKeywords(decision);
-    const hasOverlap = Array.from(merged.values()).some((existing) => {
-      const existingKeywords = getKeywords(existing);
-      let overlapCount = 0;
-      secondaryKeywords.forEach((keyword) => {
-        if (existingKeywords.has(keyword)) {
-          overlapCount += 1;
-        }
-      });
-      return overlapCount >= 2;
-    });
-    if (!hasOverlap) {
-      merged.set(decision.id, decision);
+    merged.set(decision.id, decision);
+  });
+
+  return dedupeOverlappingBillingDecisions(Array.from(merged.values()));
+}
+
+function normalizeOpenDecisions(decisions: OpenDecision[]): OpenDecision[] {
+  return decisions.map((decision) => ({
+    ...decision,
+    id: decision.id || `decision-${hashString(decision.prompt)}`,
+    keywords:
+      Array.isArray(decision.keywords) && decision.keywords.length > 0
+        ? decision.keywords
+        : extractKeywords([decision.prompt, decision.sourceSnippet ?? ""].join(" "))
+  }));
+}
+
+function cloneStructuredInvoice(structuredInvoice: StructuredInvoice): StructuredInvoice {
+  return {
+    ...structuredInvoice,
+    workSessions: structuredInvoice.workSessions.map((session) => ({
+      ...session,
+      tasks: session.tasks.map((task) => ({ ...task }))
+    })),
+    materials: structuredInvoice.materials.map((material) => ({ ...material }))
+  };
+}
+
+function selectTargetDecisions(
+  openDecisions: OpenDecision[],
+  decisionAction: DecisionAction
+): OpenDecision[] {
+  if (!openDecisions.length) {
+    return [];
+  }
+  if (decisionAction.type === "bulk_include" || decisionAction.type === "bulk_exclude") {
+    return openDecisions;
+  }
+
+  const expectedKind =
+    decisionAction.type === "tax_apply" || decisionAction.type === "tax_skip"
+      ? "tax"
+      : decisionAction.kind;
+  const candidateDecisions =
+    expectedKind === "tax" || expectedKind === "billing"
+      ? openDecisions.filter((decision) => decision.kind === expectedKind)
+      : openDecisions;
+  if (!candidateDecisions.length) {
+    return [];
+  }
+
+  if (decisionAction.id) {
+    const byId =
+      candidateDecisions.find((decision) => decision.id === decisionAction.id) ??
+      openDecisions.find((decision) => decision.id === decisionAction.id);
+    if (byId) {
+      return [byId];
+    }
+  }
+
+  if (decisionAction.snippet) {
+    const bySnippet = findDecisionBySnippet(candidateDecisions, decisionAction.snippet);
+    if (bySnippet) {
+      return [bySnippet];
+    }
+  }
+
+  return [candidateDecisions[0]];
+}
+
+function findDecisionBySnippet(
+  decisions: OpenDecision[],
+  snippet: string
+): OpenDecision | undefined {
+  const normalizedSnippet = normalizeDecisionText(snippet);
+  if (!normalizedSnippet) {
+    return undefined;
+  }
+  const snippetKeywords = new Set(expandKeywordVariants(extractKeywords(normalizedSnippet)));
+  let bestDecision: OpenDecision | undefined;
+  let bestScore = -1;
+
+  decisions.forEach((decision) => {
+    let score = 0;
+    const decisionKeywords = buildDecisionContextKeywords(decision);
+    const overlap = countKeywordOverlap(decisionKeywords, snippetKeywords);
+    score += overlap * 3;
+
+    const normalizedPrompt = normalizeDecisionText(decision.prompt ?? "");
+    const normalizedSource = normalizeDecisionText(decision.sourceSnippet ?? "");
+    if (normalizedPrompt.includes(normalizedSnippet) || normalizedSnippet.includes(normalizedPrompt)) {
+      score += 4;
+    }
+    if (normalizedSource.includes(normalizedSnippet) || normalizedSnippet.includes(normalizedSource)) {
+      score += 4;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestDecision = decision;
     }
   });
 
-  return Array.from(merged.values());
+  return bestScore > 0 ? bestDecision : undefined;
+}
+
+function applyBillingExclusionToStructuredInvoice(
+  structuredInvoice: StructuredInvoice,
+  decision: OpenDecision
+): StructuredInvoice {
+  const decisionKeywords = buildDecisionContextKeywords(decision);
+  if (!decisionKeywords.size) {
+    return structuredInvoice;
+  }
+  const overlapThreshold = decisionKeywords.size <= 2 ? 1 : 2;
+  const shouldExclude = (description: string) => {
+    const itemKeywords = new Set(expandKeywordVariants(extractKeywords(description)));
+    if (!itemKeywords.size) {
+      return false;
+    }
+    const overlap = countKeywordOverlap(decisionKeywords, itemKeywords);
+    return overlap >= overlapThreshold;
+  };
+
+  let hasChanges = false;
+  const nextWorkSessions = structuredInvoice.workSessions.map((session) => ({
+    ...session,
+    tasks: session.tasks.map((task) => {
+      if (!shouldExclude(task.description)) {
+        return task;
+      }
+      hasChanges = true;
+      return {
+        ...task,
+        rate: typeof task.rate === "number" ? 0 : task.rate,
+        amount: 0
+      };
+    })
+  }));
+  const nextMaterials = structuredInvoice.materials.map((material) => {
+    if (!shouldExclude(material.description)) {
+      return material;
+    }
+    hasChanges = true;
+    return {
+      ...material,
+      unitCost: typeof material.unitCost === "number" ? 0 : material.unitCost,
+      amount: 0
+    };
+  });
+
+  if (!hasChanges) {
+    return structuredInvoice;
+  }
+
+  return {
+    ...structuredInvoice,
+    workSessions: nextWorkSessions,
+    materials: nextMaterials
+  };
+}
+
+function sanitizeTaxRate(taxRate?: string): string | undefined {
+  if (!taxRate) {
+    return undefined;
+  }
+  const parsed = Number.parseFloat(taxRate);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    return undefined;
+  }
+  return String(roundToCents(parsed));
+}
+
+function extractTaxRateFromDecision(decision: OpenDecision): string | undefined {
+  const text = [decision.prompt, decision.sourceSnippet ?? ""].join(" ");
+  const match = text.match(/(\d+(?:\.\d+)?)\s*%/);
+  if (!match) {
+    return undefined;
+  }
+  const parsed = Number.parseFloat(match[1]);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    return undefined;
+  }
+  return String(roundToCents(parsed));
+}
+
+function filterAssumptionsAfterDecisionAction(
+  assumptions: string[],
+  openDecisions: OpenDecision[],
+  taxApplySelected: boolean,
+  taxSkipSelected: boolean
+): string[] {
+  const filtered = filterAssumptionsAgainstDecisions(assumptions, openDecisions).filter(
+    (assumption) => assumption.trim().length > 0
+  );
+  if (taxApplySelected) {
+    return filtered.filter((assumption) => !/tax assumed 0%/i.test(assumption));
+  }
+  if (taxSkipSelected) {
+    const hasTaxAssumption = filtered.some((assumption) => /tax assumed 0%/i.test(assumption));
+    if (!hasTaxAssumption) {
+      return [...filtered, "Tax assumed 0%."];
+    }
+  }
+  return filtered;
+}
+
+const GENERIC_DECISION_TERMS = new Set([
+  "bill",
+  "billing",
+  "charge",
+  "charged",
+  "invoice",
+  "item",
+  "confirm",
+  "apply",
+  "add",
+  "include",
+  "added",
+  "needs",
+  "needed",
+  "decision",
+  "should"
+]);
+
+function buildDecisionContextKeywords(decision: OpenDecision): Set<string> {
+  const baseKeywords = decision.keywords ?? [];
+  const promptKeywords = extractKeywords(decision.prompt ?? "");
+  const snippetKeywords = extractKeywords(decision.sourceSnippet ?? "");
+  const combined = expandKeywordVariants([...baseKeywords, ...promptKeywords, ...snippetKeywords]);
+  return new Set(
+    combined.filter((keyword) => keyword.length >= 4 && !GENERIC_DECISION_TERMS.has(keyword))
+  );
+}
+
+function countKeywordOverlap(primary: Set<string>, secondary: Set<string>): number {
+  let overlap = 0;
+  primary.forEach((keyword) => {
+    if (secondary.has(keyword)) {
+      overlap += 1;
+    }
+  });
+  return overlap;
+}
+
+function isGenericBillingDecision(decision: OpenDecision): boolean {
+  if (decision.kind !== "billing") {
+    return false;
+  }
+  const normalizedPrompt = normalizeDecisionText(decision.prompt ?? "");
+  return normalizedPrompt.startsWith("bill this item") || normalizedPrompt.startsWith("confirm ");
+}
+
+function dedupeOverlappingBillingDecisions(decisions: OpenDecision[]): OpenDecision[] {
+  if (decisions.length <= 1) {
+    return decisions;
+  }
+
+  const deduped: OpenDecision[] = [];
+  const seenPrompts = new Set<string>();
+
+  decisions.forEach((decision) => {
+    const normalizedPromptText = normalizeDecisionText(decision.prompt ?? "");
+    const promptKey = `${decision.kind}:${normalizedPromptText}`;
+    if (seenPrompts.has(promptKey)) {
+      return;
+    }
+
+    if (decision.kind !== "billing") {
+      deduped.push(decision);
+      seenPrompts.add(promptKey);
+      return;
+    }
+
+    const candidateKeywords = buildDecisionContextKeywords(decision);
+    const candidateIsGeneric = isGenericBillingDecision(decision);
+    let merged = false;
+
+    for (let index = 0; index < deduped.length; index += 1) {
+      const existing = deduped[index];
+      if (existing.kind !== "billing") {
+        continue;
+      }
+      const existingNormalizedPrompt = normalizeDecisionText(existing.prompt ?? "");
+      const existingKeywords = buildDecisionContextKeywords(existing);
+      const overlapCount = countKeywordOverlap(candidateKeywords, existingKeywords);
+      if (overlapCount < 2) {
+        continue;
+      }
+
+      const existingIsGeneric = isGenericBillingDecision(existing);
+      const promptsOverlap =
+        normalizedPromptText.includes(existingNormalizedPrompt) ||
+        existingNormalizedPrompt.includes(normalizedPromptText);
+      if (!candidateIsGeneric && !existingIsGeneric && !promptsOverlap) {
+        continue;
+      }
+      if (candidateIsGeneric && !existingIsGeneric) {
+        merged = true;
+        break;
+      }
+      if (!candidateIsGeneric && existingIsGeneric) {
+        deduped[index] = decision;
+        seenPrompts.add(promptKey);
+        merged = true;
+        break;
+      }
+
+      const candidateScore = candidateKeywords.size + (candidateIsGeneric ? 0 : 2);
+      const existingScore = existingKeywords.size + (existingIsGeneric ? 0 : 2);
+      if (candidateScore > existingScore) {
+        deduped[index] = decision;
+        seenPrompts.add(promptKey);
+      }
+      merged = true;
+      break;
+    }
+
+    if (!merged) {
+      deduped.push(decision);
+      seenPrompts.add(promptKey);
+    }
+  });
+
+  return deduped;
 }
 
 function extractAmbiguousBillingDecisions(sourceText: string): OpenDecision[] {

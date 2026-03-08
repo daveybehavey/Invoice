@@ -9,6 +9,7 @@ test("returns paste state when no invoice is captured yet", () => {
     followUp: null,
     finishedInvoice: null,
     openDecisionCount: 0,
+    qualityBlockerCount: 0,
     pendingLaborRate: null
   });
 
@@ -24,6 +25,7 @@ test("returns labor_hours_missing when follow-up is open and rate is already kno
     followUp: { type: "labor_pricing" },
     finishedInvoice: { lineItems: [] },
     openDecisionCount: 0,
+    qualityBlockerCount: 0,
     pendingLaborRate: 95
   });
 
@@ -41,6 +43,7 @@ test("blocks generation while open decisions remain", () => {
     followUp: null,
     finishedInvoice: { lineItems: [{ id: "line-1" }] },
     openDecisionCount: 2,
+    qualityBlockerCount: 0,
     pendingLaborRate: null
   });
 
@@ -56,6 +59,7 @@ test("marks summary state as confirmable when invoice is complete and has no ope
     followUp: null,
     finishedInvoice: { lineItems: [{ id: "line-1" }] },
     openDecisionCount: 0,
+    qualityBlockerCount: 0,
     pendingLaborRate: null
   });
 
@@ -72,6 +76,7 @@ test("keeps ready_to_generate when invoice is complete and already confirmed", (
     followUp: null,
     finishedInvoice: { lineItems: [{ id: "line-1" }] },
     openDecisionCount: 0,
+    qualityBlockerCount: 0,
     pendingLaborRate: null
   });
 
@@ -87,10 +92,27 @@ test("does not stay in follow-up when phase says awaiting but followUp data is c
     followUp: null,
     finishedInvoice: { lineItems: [{ id: "line-1" }] },
     openDecisionCount: 0,
+    qualityBlockerCount: 0,
     pendingLaborRate: null
   });
 
   assert.equal(readiness.needsFollowUp, false);
   assert.equal(readiness.canGenerate, true);
   assert.equal(readiness.targetPhase, "ready_to_summarize");
+});
+
+test("blocks generation when output quality blockers exist", () => {
+  const readiness = evaluateIntakeReadiness({
+    intakePhase: "ready_to_summarize",
+    followUp: null,
+    finishedInvoice: { lineItems: [{ id: "line-1" }] },
+    openDecisionCount: 0,
+    qualityBlockerCount: 2,
+    pendingLaborRate: null
+  });
+
+  assert.equal(readiness.canGenerate, false);
+  assert.equal(readiness.lockReason, "output_quality_review");
+  assert.equal(readiness.wizardStep, "review");
+  assert.equal(readiness.qualityBlockerCount, 2);
 });

@@ -24,7 +24,32 @@ type SavedInvoiceCollection = z.infer<typeof SavedInvoiceCollectionSchema>;
 
 let mutationQueue: Promise<void> = Promise.resolve();
 
+export function getSavedInvoiceStoreFilePath(): string {
+  return storeFilePath;
+}
+
+export async function getSavedInvoiceStoreSummary(): Promise<{
+  filePath: string;
+  invoiceCount: number;
+  ownerCount: number;
+  deletedCount: number;
+}> {
+  const collection = await readCollection();
+  const owners = new Set(collection.invoices.map((invoice) => invoice.ownerId));
+  const deletedCount = collection.invoices.reduce(
+    (count, invoice) => (invoice.status === "deleted" ? count + 1 : count),
+    0
+  );
+  return {
+    filePath: storeFilePath,
+    invoiceCount: collection.invoices.length,
+    ownerCount: owners.size,
+    deletedCount
+  };
+}
+
 export async function saveInvoiceDocument(input: {
+  ownerId: string;
   invoiceId?: string;
   sourceType: SavedInvoice["sourceType"];
   invoiceData: SavedInvoice["invoiceData"];
@@ -34,7 +59,9 @@ export async function saveInvoiceDocument(input: {
     const now = new Date().toISOString();
 
     if (input.invoiceId) {
-      const invoiceIndex = collection.invoices.findIndex((invoice) => invoice.invoiceId === input.invoiceId);
+      const invoiceIndex = collection.invoices.findIndex(
+        (invoice) => invoice.invoiceId === input.invoiceId && invoice.ownerId === input.ownerId
+      );
       if (invoiceIndex === -1) {
         throw new Error(`Invoice "${input.invoiceId}" was not found.`);
       }
@@ -54,6 +81,7 @@ export async function saveInvoiceDocument(input: {
 
     const newInvoice = SavedInvoiceSchema.parse({
       invoiceId: randomUUID(),
+      ownerId: input.ownerId,
       createdAt: now,
       updatedAt: now,
       status: "draft",
@@ -67,11 +95,14 @@ export async function saveInvoiceDocument(input: {
   });
 }
 
-export async function listSavedInvoiceMetadata(includeDeleted = false): Promise<InvoiceListItem[]> {
+export async function listSavedInvoiceMetadata(
+  includeDeleted = false,
+  ownerId = "local-default"
+): Promise<InvoiceListItem[]> {
   const collection = await readCollection();
   const visibleInvoices = includeDeleted
-    ? collection.invoices
-    : collection.invoices.filter((invoice) => invoice.status !== "deleted");
+    ? collection.invoices.filter((invoice) => invoice.ownerId === ownerId)
+    : collection.invoices.filter((invoice) => invoice.ownerId === ownerId && invoice.status !== "deleted");
   return visibleInvoices
     .map((invoice) =>
       InvoiceListItemSchema.parse({
@@ -88,9 +119,12 @@ export async function listSavedInvoiceMetadata(includeDeleted = false): Promise<
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export async function getSavedInvoiceById(invoiceId: string): Promise<SavedInvoice> {
+export async function getSavedInvoiceById(
+  invoiceId: string,
+  ownerId = "local-default"
+): Promise<SavedInvoice> {
   const collection = await readCollection();
-  const invoice = collection.invoices.find((item) => item.invoiceId === invoiceId);
+  const invoice = collection.invoices.find((item) => item.invoiceId === invoiceId && item.ownerId === ownerId);
   if (!invoice) {
     throw new Error(`Invoice "${invoiceId}" was not found.`);
   }
@@ -98,10 +132,13 @@ export async function getSavedInvoiceById(invoiceId: string): Promise<SavedInvoi
   return invoice;
 }
 
-export async function duplicateSavedInvoice(invoiceId: string): Promise<SavedInvoice> {
+export async function duplicateSavedInvoice(
+  invoiceId: string,
+  ownerId = "local-default"
+): Promise<SavedInvoice> {
   return withMutationLock(async () => {
     const collection = await readCollection();
-    const invoice = collection.invoices.find((item) => item.invoiceId === invoiceId);
+    const invoice = collection.invoices.find((item) => item.invoiceId === invoiceId && item.ownerId === ownerId);
     if (!invoice) {
       throw new Error(`Invoice "${invoiceId}" was not found.`);
     }
@@ -109,6 +146,7 @@ export async function duplicateSavedInvoice(invoiceId: string): Promise<SavedInv
     const now = new Date().toISOString();
     const duplicatedInvoice = SavedInvoiceSchema.parse({
       invoiceId: randomUUID(),
+      ownerId,
       createdAt: now,
       updatedAt: now,
       status: "draft",
@@ -122,10 +160,16 @@ export async function duplicateSavedInvoice(invoiceId: string): Promise<SavedInv
   });
 }
 
-export async function updateSavedInvoiceStatus(invoiceId: string, status: SavedInvoiceStatus): Promise<SavedInvoice> {
+export async function updateSavedInvoiceStatus(
+  invoiceId: string,
+  status: SavedInvoiceStatus,
+  ownerId = "local-default"
+): Promise<SavedInvoice> {
   return withMutationLock(async () => {
     const collection = await readCollection();
-    const invoiceIndex = collection.invoices.findIndex((item) => item.invoiceId === invoiceId);
+    const invoiceIndex = collection.invoices.findIndex(
+      (item) => item.invoiceId === invoiceId && item.ownerId === ownerId
+    );
     if (invoiceIndex === -1) {
       throw new Error(`Invoice "${invoiceId}" was not found.`);
     }
@@ -151,10 +195,15 @@ export async function updateSavedInvoiceStatus(invoiceId: string, status: SavedI
   });
 }
 
-export async function restoreSavedInvoice(invoiceId: string): Promise<SavedInvoice> {
+export async function restoreSavedInvoice(
+  invoiceId: string,
+  ownerId = "local-default"
+): Promise<SavedInvoice> {
   return withMutationLock(async () => {
     const collection = await readCollection();
-    const invoiceIndex = collection.invoices.findIndex((item) => item.invoiceId === invoiceId);
+    const invoiceIndex = collection.invoices.findIndex(
+      (item) => item.invoiceId === invoiceId && item.ownerId === ownerId
+    );
     if (invoiceIndex === -1) {
       throw new Error(`Invoice "${invoiceId}" was not found.`);
     }
@@ -177,10 +226,12 @@ export async function restoreSavedInvoice(invoiceId: string): Promise<SavedInvoi
   });
 }
 
-export async function deleteSavedInvoice(invoiceId: string): Promise<void> {
+export async function deleteSavedInvoice(invoiceId: string, ownerId = "local-default"): Promise<void> {
   return withMutationLock(async () => {
     const collection = await readCollection();
-    const invoiceIndex = collection.invoices.findIndex((item) => item.invoiceId === invoiceId);
+    const invoiceIndex = collection.invoices.findIndex(
+      (item) => item.invoiceId === invoiceId && item.ownerId === ownerId
+    );
     if (invoiceIndex === -1) {
       throw new Error(`Invoice "${invoiceId}" was not found.`);
     }

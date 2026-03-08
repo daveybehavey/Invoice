@@ -186,6 +186,8 @@ test("messy regression matrix keeps capture + decision outcomes stable", async (
         followUpType: null,
         followUpLaborCount: 0,
         openDecisionPrompts: [],
+        qualityStatus: "pass",
+        qualityBlockerCount: 0,
         customerName: "Jordan Lee",
         servicePeriodStart: "Jan 5",
         servicePeriodEnd: "Jan 6",
@@ -223,10 +225,9 @@ test("messy regression matrix keeps capture + decision outcomes stable", async (
         needsFollowUp: false,
         followUpType: null,
         followUpLaborCount: 0,
-        openDecisionPrompts: [
-          "bill cabinet door adjustment?",
-          'bill this item? "parts: cartridge $18.75, washer kit $6, parking $4.50. feb 2 cabinet door adjustment maybe 20 mins, up to you if bill"'
-        ],
+        openDecisionPrompts: ["bill cabinet door adjustment?"],
+        qualityStatus: "pass",
+        qualityBlockerCount: 0,
         customerName: "Mike Johnson",
         servicePeriodStart: "Jan 28",
         servicePeriodEnd: "Feb 2",
@@ -267,6 +268,8 @@ test("messy regression matrix keeps capture + decision outcomes stable", async (
         followUpType: null,
         followUpLaborCount: 0,
         openDecisionPrompts: [],
+        qualityStatus: "pass",
+        qualityBlockerCount: 0,
         customerName: "Mike Johnson",
         servicePeriodStart: "Jan 28",
         servicePeriodEnd: "Feb 2",
@@ -296,6 +299,8 @@ test("messy regression matrix keeps capture + decision outcomes stable", async (
         followUpType: "labor_pricing",
         followUpLaborCount: 2,
         openDecisionPrompts: [],
+        qualityStatus: null,
+        qualityBlockerCount: 0,
         customerName: null,
         servicePeriodStart: null,
         servicePeriodEnd: null,
@@ -326,12 +331,178 @@ test("messy regression matrix keeps capture + decision outcomes stable", async (
         followUpType: null,
         followUpLaborCount: 0,
         openDecisionPrompts: [],
+        qualityStatus: "pass",
+        qualityBlockerCount: 0,
         customerName: "Morgan Vale",
         servicePeriodStart: "Feb 2",
         servicePeriodEnd: "Feb 2",
         lineItemCount: 1,
         subtotal: 26.4,
         total: 26.4,
+        taxRate: null
+      }
+    },
+    {
+      name: "informal labor wording stays pass with quality warning",
+      messyInput: "Jan 12 fixed random thing stuff 1h at $90/hr.",
+      responses: [
+        {
+          customerName: "Casey Lane",
+          workSessions: [
+            {
+              date: "Jan 12",
+              tasks: [{ description: "fixed random thing stuff", hours: 1, rate: 90, amount: 90 }]
+            }
+          ],
+          materials: []
+        },
+        { assumptions: [], decisions: [], unparsedLines: [] }
+      ],
+      expected: {
+        needsFollowUp: false,
+        followUpType: null,
+        followUpLaborCount: 0,
+        openDecisionPrompts: [],
+        qualityStatus: "pass",
+        qualityBlockerCount: 0,
+        customerName: "Casey Lane",
+        servicePeriodStart: "Jan 12",
+        servicePeriodEnd: "Jan 12",
+        lineItemCount: 1,
+        subtotal: 90,
+        total: 90,
+        taxRate: null
+      }
+    },
+    {
+      name: "materials-only capture remains send-ready",
+      messyInput: "Bought PVC glue $8.50 and two couplings $6 total for Mike.",
+      responses: [
+        {
+          customerName: "Mike",
+          workSessions: [],
+          materials: [
+            { description: "PVC glue", quantity: 1, unitCost: 8.5, amount: 8.5 },
+            { description: "Couplings", quantity: 2, unitCost: 3, amount: 6 }
+          ]
+        },
+        { assumptions: ["Tax assumed 0%."], decisions: [], unparsedLines: [] }
+      ],
+      expected: {
+        needsFollowUp: false,
+        followUpType: null,
+        followUpLaborCount: 0,
+        openDecisionPrompts: [],
+        qualityStatus: "pass",
+        qualityBlockerCount: 0,
+        customerName: "Mike",
+        servicePeriodStart: null,
+        servicePeriodEnd: null,
+        lineItemCount: 2,
+        subtotal: 14.5,
+        total: 14.5,
+        taxRate: null
+      }
+    },
+    {
+      name: "multi-day labor stays pass with explicit service range",
+      messyInput: "Jan 2 first visit 1h @ $100/hr, Jan 4 second visit 2h @ $100/hr.",
+      responses: [
+        {
+          customerName: "Dana Holt",
+          servicePeriodStart: "Jan 2",
+          servicePeriodEnd: "Jan 4",
+          workSessions: [
+            {
+              date: "Jan 2",
+              tasks: [{ description: "First visit", hours: 1, rate: 100, amount: 100 }]
+            },
+            {
+              date: "Jan 4",
+              tasks: [{ description: "Second visit", hours: 2, rate: 100, amount: 200 }]
+            }
+          ],
+          materials: []
+        },
+        { assumptions: [], decisions: [], unparsedLines: [] }
+      ],
+      expected: {
+        needsFollowUp: false,
+        followUpType: null,
+        followUpLaborCount: 0,
+        openDecisionPrompts: [],
+        qualityStatus: "pass",
+        qualityBlockerCount: 0,
+        customerName: "Dana Holt",
+        servicePeriodStart: "Jan 2",
+        servicePeriodEnd: "Jan 4",
+        lineItemCount: 2,
+        subtotal: 300,
+        total: 300,
+        taxRate: null
+      }
+    },
+    {
+      name: "explicit no-charge labor remains pass with zero totals line",
+      messyInput: "Jan 18 inspected leak 30 minutes no charge.",
+      responses: [
+        {
+          customerName: "Nora Kim",
+          workSessions: [
+            {
+              date: "Jan 18",
+              tasks: [{ description: "Leak inspection", hours: 0.5, amount: 0 }]
+            }
+          ],
+          materials: []
+        },
+        { assumptions: [], decisions: [], unparsedLines: [] }
+      ],
+      expected: {
+        needsFollowUp: false,
+        followUpType: null,
+        followUpLaborCount: 0,
+        openDecisionPrompts: [],
+        qualityStatus: "pass",
+        qualityBlockerCount: 0,
+        customerName: "Nora Kim",
+        servicePeriodStart: "Jan 18",
+        servicePeriodEnd: "Jan 18",
+        lineItemCount: 1,
+        subtotal: 0,
+        total: 0,
+        taxRate: null
+      }
+    },
+    {
+      name: "logo design flat fee remains pass with clean wording",
+      messyInput: "Website logo tweak flat $250 for Acme Bakery.",
+      responses: [
+        {
+          customerName: "Acme Bakery",
+          workSessions: [
+            {
+              date: "Feb 1",
+              tasks: [{ description: "logo tweak", amount: 250 }]
+            }
+          ],
+          materials: []
+        },
+        { assumptions: [], decisions: [], unparsedLines: [] }
+      ],
+      expected: {
+        needsFollowUp: false,
+        followUpType: null,
+        followUpLaborCount: 0,
+        openDecisionPrompts: [],
+        qualityStatus: "pass",
+        qualityBlockerCount: 0,
+        customerName: "Acme Bakery",
+        servicePeriodStart: "Feb 1",
+        servicePeriodEnd: "Feb 1",
+        lineItemCount: 1,
+        subtotal: 250,
+        total: 250,
         taxRate: null
       }
     }
@@ -362,6 +533,10 @@ function buildMessySnapshot(body: any) {
     followUpType: typeof followUp?.type === "string" ? followUp.type : null,
     followUpLaborCount: Array.isArray(followUp?.laborItems) ? followUp.laborItems.length : 0,
     openDecisionPrompts,
+    qualityStatus: typeof body?.qualityGate?.status === "string" ? body.qualityGate.status : null,
+    qualityBlockerCount: Number.isFinite(body?.qualityGate?.blockerCount)
+      ? body.qualityGate.blockerCount
+      : 0,
     customerName: typeof invoice?.customerName === "string" ? invoice.customerName : null,
     servicePeriodStart: typeof invoice?.servicePeriodStart === "string" ? invoice.servicePeriodStart : null,
     servicePeriodEnd: typeof invoice?.servicePeriodEnd === "string" ? invoice.servicePeriodEnd : null,

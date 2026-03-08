@@ -7,8 +7,19 @@ import { after, afterEach, beforeEach, test } from "node:test";
 import request from "supertest";
 
 process.env.NODE_ENV = "test";
+process.env.INVOICE_STORE_BACKEND = "file";
 process.env.INVOICE_STORE_FILE = path.join(os.tmpdir(), `invoice-test-store-${randomUUID()}.json`);
+process.env.INVOICE_STORE_POSTGRES_URL = "";
+process.env.INVOICE_STORE_REQUIRE_POSTGRES = "false";
 process.env.OCR_METRICS_STORE_FILE = path.join(os.tmpdir(), `invoice-ocr-metrics-${randomUUID()}.json`);
+process.env.FLOW_FRICTION_REPORT_FILE = path.join(
+  os.tmpdir(),
+  `invoice-flow-friction-${randomUUID()}.json`
+);
+process.env.FLOW_FRICTION_HISTORY_FILE = path.join(
+  os.tmpdir(),
+  `invoice-flow-friction-history-${randomUUID()}.json`
+);
 
 const [{ app }, { setImageOcrRunnerForTests, setJsonTaskRunnerForTests }] = await Promise.all([
   import("./server.js"),
@@ -23,6 +34,14 @@ const ocrMetricsStoreFilePath = process.env.OCR_METRICS_STORE_FILE;
 if (!ocrMetricsStoreFilePath) {
   throw new Error("OCR_METRICS_STORE_FILE is required for tests.");
 }
+const flowFrictionReportFilePath = process.env.FLOW_FRICTION_REPORT_FILE;
+if (!flowFrictionReportFilePath) {
+  throw new Error("FLOW_FRICTION_REPORT_FILE is required for tests.");
+}
+const flowFrictionHistoryFilePath = process.env.FLOW_FRICTION_HISTORY_FILE;
+if (!flowFrictionHistoryFilePath) {
+  throw new Error("FLOW_FRICTION_HISTORY_FILE is required for tests.");
+}
 const nativeFetch = globalThis.fetch;
 
 beforeEach(async () => {
@@ -30,7 +49,17 @@ beforeEach(async () => {
   await fs.writeFile(storeFilePath, '{\n  "invoices": []\n}\n', "utf8");
   await fs.mkdir(path.dirname(ocrMetricsStoreFilePath), { recursive: true });
   await fs.rm(ocrMetricsStoreFilePath, { force: true });
+  await fs.mkdir(path.dirname(flowFrictionReportFilePath), { recursive: true });
+  await fs.rm(flowFrictionReportFilePath, { force: true });
+  await fs.mkdir(path.dirname(flowFrictionHistoryFilePath), { recursive: true });
+  await fs.rm(flowFrictionHistoryFilePath, { force: true });
+  delete process.env.OCR_METRICS_EXPORT_PROVIDER;
   delete process.env.OCR_METRICS_EXPORT_URL;
+  delete process.env.OCR_METRICS_GA4_MEASUREMENT_ID;
+  delete process.env.OCR_METRICS_GA4_API_SECRET;
+  delete process.env.OCR_METRICS_GA4_ENDPOINT;
+  delete process.env.OCR_METRICS_SEGMENT_WRITE_KEY;
+  delete process.env.OCR_METRICS_SEGMENT_ENDPOINT;
   delete process.env.OCR_METRICS_EXPORT_AUTOSEND;
 });
 
@@ -45,6 +74,8 @@ after(async () => {
   setImageOcrRunnerForTests(null);
   await fs.rm(storeFilePath, { force: true });
   await fs.rm(ocrMetricsStoreFilePath, { force: true });
+  await fs.rm(flowFrictionReportFilePath, { force: true });
+  await fs.rm(flowFrictionHistoryFilePath, { force: true });
 });
 
 test("asks one labor pricing follow-up and does not finalize with $0 labor", async () => {
@@ -432,6 +463,104 @@ test("OCR telemetry endpoint records confidence metrics from extract-notes", asy
   );
 });
 
+test("system persistence endpoint reports active invoice backend", async () => {
+  const response = await request(app).get("/api/system/persistence");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.invoiceStoreBackend, "file");
+  assert.equal(response.body.configuredBackend, "file");
+  assert.equal(response.body.configuredMode, "file");
+  assert.equal(response.body.postgresUrlConfigured, false);
+  assert.equal(response.body.nodeEnv, "test");
+  assert.equal(response.body.postgresRequired, false);
+  assert.equal(response.body.migrationRequired, false);
+  assert.equal(response.body.migrationReady, true);
+  assert.equal(response.body.migrationWarning, null);
+  assert.equal(response.body.productionReady, true);
+  assert.equal(response.body.warning, null);
+  assert.equal(response.body.authRequired, false);
+  assert.equal(typeof response.body.authSessionSecretConfigured, "boolean");
+  assert.equal(response.body.authPolicyReady, true);
+  assert.equal(response.body.authWarning, null);
+  assert.equal(response.body.defaultOwnerId, "local-default");
+});
+
+test("system persistence migration endpoint reports file-store summary", async () => {
+  const response = await request(app).get("/api/system/persistence/migration");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.invoiceStoreBackend, "file");
+  assert.equal(response.body.configuredMode, "file");
+  assert.equal(response.body.authRequired, false);
+  assert.equal(typeof response.body.authSessionSecretConfigured, "boolean");
+  assert.equal(response.body.authPolicyReady, true);
+  assert.equal(response.body.authWarning, null);
+  assert.equal(response.body.migrationRequired, false);
+  assert.equal(response.body.migrationReady, true);
+  assert.equal(response.body.migrationWarning, null);
+  assert.equal(typeof response.body.fileStore?.filePath, "string");
+  assert.equal(typeof response.body.fileStore?.invoiceCount, "number");
+  assert.equal(typeof response.body.fileStore?.ownerCount, "number");
+  assert.equal(typeof response.body.fileStore?.deletedCount, "number");
+  assert.equal(response.body.migrationStatus?.backlogDetected, false);
+  assert.equal(response.body.migrationStatus?.severity, "none");
+  assert.equal(
+    response.body.migrationStatus?.message,
+    "No legacy file-store invoices detected."
+  );
+  assert.equal(
+    response.body.migrationCommand,
+    "npm run migrate:invoices:postgres -- --dry-run"
+  );
+});
+
+test("invoice library enforces auth when INVOICE_REQUIRE_AUTH is true", async () => {
+  process.env.INVOICE_REQUIRE_AUTH = "true";
+  try {
+    const response = await request(app).get("/api/invoices");
+    assert.equal(response.status, 401);
+    assert.equal(response.body.error, "Authentication required.");
+  } finally {
+    delete process.env.INVOICE_REQUIRE_AUTH;
+  }
+});
+
+test("invoice library allows authenticated requests when auth is required", async () => {
+  process.env.INVOICE_REQUIRE_AUTH = "true";
+  try {
+    const signInResponse = await request(app).post("/api/auth/session").send({ email: "owner@test.dev" });
+    assert.equal(signInResponse.status, 200);
+    const token = signInResponse.body.token;
+    assert.equal(typeof token, "string");
+    assert.ok(token.length > 0);
+
+    useMockResponses([structuredWithLaborPricing()]);
+    const generated = await request(app).post("/api/invoices/from-input").send({
+      messyInput: "Jan 10 repaired sink leak 2h @ 95/hr and pipe tape $7"
+    });
+    assert.equal(generated.status, 200);
+
+    const saveResponse = await request(app)
+      .post("/api/invoices/save")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: generated.body.structuredInvoice,
+          finishedInvoice: generated.body.invoice
+        }
+      });
+    assert.equal(saveResponse.status, 200);
+    const savedInvoiceId = saveResponse.body.invoice.invoiceId as string;
+
+    const listResponse = await request(app).get("/api/invoices").set("authorization", `Bearer ${token}`);
+    assert.equal(listResponse.status, 200);
+    assert.ok(Array.isArray(listResponse.body.invoices));
+    assert.ok(listResponse.body.invoices.some((invoice: { invoiceId?: string }) => invoice.invoiceId === savedInvoiceId));
+  } finally {
+    delete process.env.INVOICE_REQUIRE_AUTH;
+  }
+});
+
 test("OCR telemetry export endpoint reports not configured by default", async () => {
   const response = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
   assert.equal(response.status, 200);
@@ -486,6 +615,122 @@ test("OCR telemetry export endpoint posts snapshot when configured", async () =>
   assert.ok(payload.snapshot.totalEvents >= 1);
 });
 
+test("OCR telemetry export endpoint supports GA4 provider payload", async () => {
+  setImageOcrRunnerForTests(async () => ({
+    extractedText: "Jan 30 repair labor 2h at $80/hr",
+    warnings: ["One line was unclear."]
+  }));
+  process.env.OCR_METRICS_EXPORT_PROVIDER = "ga4";
+  process.env.OCR_METRICS_GA4_MEASUREMENT_ID = "G-TEST123";
+  process.env.OCR_METRICS_GA4_API_SECRET = "secret-key";
+  process.env.OCR_METRICS_GA4_ENDPOINT = "https://ga4.example.test/mp/collect";
+
+  const fetchCalls: Array<{
+    url: string;
+    options: { method?: string; body?: string; headers?: RequestInit["headers"] };
+  }> = [];
+  (globalThis as { fetch?: typeof fetch }).fetch = (async (
+    url: string | URL | Request,
+    options?: RequestInit
+  ) => {
+    fetchCalls.push({
+      url: String(url),
+      options: {
+        method: options?.method,
+        body: String(options?.body ?? ""),
+        headers: options?.headers
+      }
+    });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const extractResponse = await request(app)
+    .post("/api/invoices/extract-notes")
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes.png",
+      contentType: "image/png"
+    });
+  assert.equal(extractResponse.status, 200);
+
+  const exportResponse = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
+  assert.equal(exportResponse.status, 200);
+  assert.equal(exportResponse.body.configured, true);
+  assert.equal(exportResponse.body.provider, "ga4");
+  assert.equal(exportResponse.body.reason, "exported");
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(
+    fetchCalls[0]?.url,
+    "https://ga4.example.test/mp/collect?measurement_id=G-TEST123&api_secret=secret-key"
+  );
+
+  const payload = JSON.parse(fetchCalls[0]?.options.body ?? "{}");
+  assert.equal(payload.client_id, "invoice-launcher-system");
+  assert.equal(Array.isArray(payload.events), true);
+  assert.equal(payload.events[0]?.name, "ocr_confidence_snapshot");
+  assert.equal(typeof payload.events[0]?.params?.total_events, "number");
+});
+
+test("OCR telemetry export endpoint supports Segment provider payload", async () => {
+  setImageOcrRunnerForTests(async () => ({
+    extractedText: "Fix sink",
+    warnings: []
+  }));
+  process.env.OCR_METRICS_EXPORT_PROVIDER = "segment";
+  process.env.OCR_METRICS_SEGMENT_WRITE_KEY = "segment-write-key";
+  process.env.OCR_METRICS_SEGMENT_ENDPOINT = "https://segment.example.test/track";
+
+  const fetchCalls: Array<{
+    url: string;
+    options: { method?: string; body?: string; headers?: RequestInit["headers"] };
+  }> = [];
+  (globalThis as { fetch?: typeof fetch }).fetch = (async (
+    url: string | URL | Request,
+    options?: RequestInit
+  ) => {
+    fetchCalls.push({
+      url: String(url),
+      options: {
+        method: options?.method,
+        body: String(options?.body ?? ""),
+        headers: options?.headers
+      }
+    });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const extractResponse = await request(app)
+    .post("/api/invoices/extract-notes")
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes.png",
+      contentType: "image/png"
+    });
+  assert.equal(extractResponse.status, 200);
+
+  const exportResponse = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
+  assert.equal(exportResponse.status, 200);
+  assert.equal(exportResponse.body.configured, true);
+  assert.equal(exportResponse.body.provider, "segment");
+  assert.equal(exportResponse.body.reason, "exported");
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.url, "https://segment.example.test/track");
+
+  const headers = fetchCalls[0]?.options.headers as Record<string, string> | undefined;
+  assert.equal(typeof headers?.authorization, "string");
+  assert.equal(headers?.authorization.startsWith("Basic "), true);
+
+  const payload = JSON.parse(fetchCalls[0]?.options.body ?? "{}");
+  assert.equal(payload.type, "track");
+  assert.equal(payload.event, "OCR Confidence Snapshot Exported");
+  assert.equal(payload.userId, "invoice-launcher-system");
+  assert.equal(typeof payload.properties?.totalEvents, "number");
+});
+
 test("OCR telemetry export endpoint skips when no new metrics exist", async () => {
   setImageOcrRunnerForTests(async () => ({
     extractedText: "Fix sink",
@@ -520,6 +765,109 @@ test("OCR telemetry export endpoint skips when no new metrics exist", async () =
   assert.equal(secondExport.body.exported, false);
   assert.equal(secondExport.body.reason, "no_new_metrics");
   assert.equal(fetchCount, 1);
+});
+
+test("flow friction telemetry endpoint reports unavailable when no snapshot exists", async () => {
+  const response = await request(app).get("/api/telemetry/flow-friction");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.available, false);
+  assert.equal(response.body.reason, "missing_report");
+  assert.equal(response.body.summary.totalChecks, 0);
+});
+
+test("flow friction telemetry endpoint returns summary when snapshot exists", async () => {
+  await fs.writeFile(
+    flowFrictionReportFilePath,
+    JSON.stringify(
+      {
+        timestamp: "2026-02-20T15:30:00.000Z",
+        baseUrl: "http://localhost:3000",
+        checks: [
+          { name: "single primary action on paste", pass: true, details: "Build invoice only" },
+          { name: "generate hidden when open decisions", pass: false, details: "Generate button visible" }
+        ],
+        issues: ["Generate button visible while decisions are open."]
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+
+  const response = await request(app).get("/api/telemetry/flow-friction");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.available, true);
+  assert.equal(response.body.summary.totalChecks, 2);
+  assert.equal(response.body.summary.passedChecks, 1);
+  assert.equal(response.body.summary.failedChecks, 1);
+  assert.equal(response.body.summary.issueCount, 1);
+  assert.equal(response.body.checks[1].name, "generate hidden when open decisions");
+});
+
+test("intake trends endpoint returns empty baseline when no telemetry exists", async () => {
+  const response = await request(app).get("/api/telemetry/intake-trends");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.ocr.last24h.total, 0);
+  assert.equal(response.body.ocr.last7d.total, 0);
+  assert.equal(response.body.friction.historyAvailable, false);
+  assert.equal(response.body.friction.last24h.runs, 0);
+});
+
+test("intake trends endpoint summarizes OCR and friction windows", async () => {
+  const now = new Date();
+  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+  const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  const eightDaysAgo = new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000).toISOString();
+
+  await fs.writeFile(
+    flowFrictionHistoryFilePath,
+    JSON.stringify(
+      [
+        { timestamp: oneHourAgo, totalChecks: 8, failedChecks: 1, issueCount: 1 },
+        { timestamp: twoDaysAgo, totalChecks: 8, failedChecks: 2, issueCount: 1 },
+        { timestamp: eightDaysAgo, totalChecks: 8, failedChecks: 4, issueCount: 2 }
+      ],
+      null,
+      2
+    ),
+    "utf8"
+  );
+
+  setImageOcrRunnerForTests(async () => ({
+    extractedText: "tiny",
+    warnings: ["Low readability"]
+  }));
+  const lowResponse = await request(app)
+    .post("/api/invoices/extract-notes")
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes-low.png",
+      contentType: "image/png"
+    });
+  assert.equal(lowResponse.status, 200);
+
+  setImageOcrRunnerForTests(async () => ({
+    extractedText: "Jan 30 faucet repair 2h at $80/hr with parts",
+    warnings: []
+  }));
+  const highResponse = await request(app)
+    .post("/api/invoices/extract-notes")
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes-high.png",
+      contentType: "image/png"
+    });
+  assert.equal(highResponse.status, 200);
+
+  const response = await request(app).get("/api/telemetry/intake-trends");
+  assert.equal(response.status, 200);
+  assert.ok(response.body.ocr.last24h.total >= 2);
+  assert.ok(response.body.ocr.last7d.total >= response.body.ocr.last24h.total);
+  assert.equal(response.body.friction.historyAvailable, true);
+  assert.equal(response.body.friction.last24h.runs, 1);
+  assert.equal(response.body.friction.last24h.totalChecks, 8);
+  assert.equal(response.body.friction.last24h.failedChecks, 1);
+  assert.equal(response.body.friction.last7d.runs, 2);
+  assert.equal(response.body.friction.last7d.totalChecks, 16);
+  assert.equal(response.body.friction.last7d.failedChecks, 3);
 });
 
 test("extract-notes rejects non-image uploads", async () => {
@@ -588,6 +936,58 @@ test("creates decisions for ambiguous billable items even when audit is empty", 
     /cabinet/i.test(decision.prompt)
   );
   assert.ok(hasCabinetDecision);
+});
+
+test("deduplicates overlapping billing decisions from audit + heuristic extraction", async () => {
+  useMockResponses([
+    {
+      customerName: "Mike Johnson",
+      workSessions: [
+        {
+          date: "Jan 30",
+          tasks: [{ description: "Faucet repair", hours: 2, rate: 80, amount: 160 }]
+        },
+        {
+          date: "Feb 2",
+          tasks: [{ description: "Cabinet door adjustment", hours: 0.33, rate: 80, amount: 26.4 }]
+        }
+      ],
+      materials: [
+        { description: "cartridge", quantity: 1, unitCost: 18.75, amount: 18.75 },
+        { description: "washer kit", quantity: 1, unitCost: 6, amount: 6 },
+        { description: "parking", quantity: 1, unitCost: 4.5, amount: 4.5 }
+      ]
+    },
+    {
+      assumptions: ["Tax not applied until confirmed."],
+      decisions: [
+        {
+          kind: "billing",
+          prompt: "Bill cabinet door adjustment?",
+          sourceSnippet: "Didn't really think about charging for that - up to you."
+        }
+      ],
+      unparsedLines: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: [
+      "Jan 30 faucet repair, about 2 hours at $80/hr.",
+      "Parts: cartridge $18.75, washer kit $6, parking $4.50.",
+      "Feb 2 cabinet door adjustment maybe 20 mins, up to you if bill.",
+      "I sometimes add 5% tax, sometimes not."
+    ].join(" ")
+  });
+
+  assert.equal(response.status, 200);
+  const billingDecisions = (response.body.openDecisions ?? []).filter(
+    (decision: { kind: string }) => decision.kind === "billing"
+  );
+  const cabinetPrompts = billingDecisions.filter((decision: { prompt: string }) =>
+    /cabinet/i.test(decision.prompt)
+  );
+  assert.equal(cabinetPrompts.length, 1);
 });
 
 test("keeps decisions resolved when explicit resolution exists in source transcript", async () => {
@@ -1240,6 +1640,79 @@ test("reword-line keeps quantities, rates, and amounts unchanged", async () => {
   assert.equal(response.body.invoice.total, 120);
 });
 
+test("export-pdf returns a downloadable pdf document", async () => {
+  const response = await request(app)
+    .post("/api/invoices/export-pdf")
+    .buffer(true)
+    .parse((res, callback) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      res.on("end", () => callback(null, Buffer.concat(chunks)));
+    })
+    .send({
+      invoice: {
+        invoiceNumber: "INV-1001",
+        issueDate: "2026-02-27",
+        customerName: "Mike Johnson",
+        currency: "USD",
+        lineItems: [
+          {
+            id: "line-1",
+            type: "labor",
+            description: "Faucet repair",
+            quantity: 2,
+            unitPrice: 80,
+            amount: 160
+          },
+          {
+            id: "line-2",
+            type: "material",
+            description: "Washer",
+            quantity: 1,
+            unitPrice: 5,
+            amount: 5
+          }
+        ],
+        subtotal: 165,
+        total: 165,
+        balanceDue: 165,
+        notes: "Thanks for your business."
+      },
+      fromDetails: "Acme Plumbing\n123 Main St",
+      billToDetails: "Mike Johnson\n1423 Pine St",
+      accentColor: "#0f9d6e",
+      stylePreset: "default",
+      logoUrl:
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMBgBxVSnoAAAAASUVORK5CYII="
+    });
+
+  assert.equal(response.status, 200);
+  assert.match(String(response.headers["content-type"]), /^application\/pdf/);
+  assert.match(
+    String(response.headers["content-disposition"]),
+    /attachment;\s*filename="Invoice-INV-1001\.pdf"/
+  );
+  assert.ok(Buffer.isBuffer(response.body));
+  assert.ok(response.body.byteLength > 200);
+  assert.match(response.body.toString("utf8", 0, 8), /^%PDF-1\./);
+});
+
+test("export-pdf rejects invoices with no line items", async () => {
+  const response = await request(app).post("/api/invoices/export-pdf").send({
+    invoice: {
+      invoiceNumber: "INV-1002",
+      currency: "USD",
+      lineItems: [],
+      subtotal: 0,
+      total: 0,
+      balanceDue: 0
+    }
+  });
+
+  assert.equal(response.status, 400);
+  assert.match(String(response.body.error || ""), /Array must contain at least 1 element/);
+});
+
 test("save remains explicit-only", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 
@@ -1357,6 +1830,301 @@ test("soft delete hides invoice and restore brings it back", async () => {
   const listAfterRestore = await request(app).get("/api/invoices");
   assert.equal(listAfterRestore.status, 200);
   assert.equal(listAfterRestore.body.invoices.length, 1);
+});
+
+test("invoice library is scoped by owner id", async () => {
+  useMockResponses([structuredWithLaborPricing()]);
+
+  const generatedA = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7"
+  });
+  assert.equal(generatedA.status, 200);
+  const saveA = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", "owner-a")
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: generatedA.body.structuredInvoice,
+        finishedInvoice: generatedA.body.invoice
+      }
+    });
+  assert.equal(saveA.status, 200);
+  const ownerAId = saveA.body.invoice.invoiceId;
+
+  useMockResponses([structuredWithLaborPricing()]);
+  const generatedB = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 11 unclogged drain 1h @ 90/hr"
+  });
+  assert.equal(generatedB.status, 200);
+  const saveB = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", "owner-b")
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: generatedB.body.structuredInvoice,
+        finishedInvoice: generatedB.body.invoice
+      }
+    });
+  assert.equal(saveB.status, 200);
+  const ownerBId = saveB.body.invoice.invoiceId;
+
+  const listA = await request(app).get("/api/invoices").set("x-invoice-user-id", "owner-a");
+  assert.equal(listA.status, 200);
+  assert.equal(listA.body.invoices.length, 1);
+  assert.equal(listA.body.invoices[0].invoiceId, ownerAId);
+
+  const listB = await request(app).get("/api/invoices").set("x-invoice-user-id", "owner-b");
+  assert.equal(listB.status, 200);
+  assert.equal(listB.body.invoices.length, 1);
+  assert.equal(listB.body.invoices[0].invoiceId, ownerBId);
+
+  const crossOwnerRead = await request(app)
+    .get(`/api/invoices/${ownerAId}`)
+    .set("x-invoice-user-id", "owner-b");
+  assert.equal(crossOwnerRead.status, 400);
+  assert.match(crossOwnerRead.body.error, /not found/i);
+});
+
+test("auth session endpoint returns token + normalized user session", async () => {
+  const response = await request(app).post("/api/auth/session").send({ email: "  TEST@Example.com  " });
+
+  assert.equal(response.status, 200);
+  assert.equal(typeof response.body.token, "string");
+  assert.equal(response.body.session.email, "test@example.com");
+  assert.match(response.body.session.userId, /^usr_[a-f0-9]{24}$/);
+  assert.equal(typeof response.body.session.expiresAt, "string");
+});
+
+test("authenticated owner id takes precedence over spoofed owner header", async () => {
+  const sessionResponse = await request(app).post("/api/auth/session").send({ email: "alice@example.com" });
+  assert.equal(sessionResponse.status, 200);
+  const aliceToken = sessionResponse.body.token as string;
+
+  useMockResponses([structuredWithLaborPricing()]);
+  const generated = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7"
+  });
+  assert.equal(generated.status, 200);
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("authorization", `Bearer ${aliceToken}`)
+    .set("x-invoice-user-id", "spoofed-owner-id")
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: generated.body.structuredInvoice,
+        finishedInvoice: generated.body.invoice
+      }
+    });
+
+  assert.equal(saveResponse.status, 200);
+  const savedInvoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const spoofedList = await request(app).get("/api/invoices").set("x-invoice-user-id", "spoofed-owner-id");
+  assert.equal(spoofedList.status, 200);
+  assert.equal(spoofedList.body.invoices.length, 0);
+
+  const authedList = await request(app).get("/api/invoices").set("authorization", `Bearer ${aliceToken}`);
+  assert.equal(authedList.status, 200);
+  assert.equal(authedList.body.invoices.length, 1);
+  assert.equal(authedList.body.invoices[0].invoiceId, savedInvoiceId);
+});
+
+test("from-input response includes output quality gate metadata", async () => {
+  useMockResponses([
+    structuredWithLaborPricing(),
+    { assumptions: [], decisions: [], unparsedLines: [] }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(typeof response.body.qualityGate, "object");
+  assert.equal(response.body.qualityGate.status, "pass");
+  assert.equal(response.body.qualityGate.blockerCount, 0);
+  assert.ok(Array.isArray(response.body.qualityGate.blockers));
+});
+
+test("from-input quality gate warns on non-client-facing line wording without blocking generate", async () => {
+  useMockResponses([
+    {
+      customerName: "Mike",
+      workSessions: [
+        {
+          date: "Jan 10",
+          tasks: [{ description: "fixed thing stuff", hours: 1, rate: 95, amount: 95 }]
+        }
+      ],
+      materials: []
+    },
+    { assumptions: [], decisions: [], unparsedLines: [] }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Jan 10 fixed thing stuff 1h @ 95/hr"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.qualityGate.status, "pass");
+  assert.equal(response.body.qualityGate.blockerCount, 0);
+  assert.ok(
+    (response.body.qualityGate.warnings ?? []).some(
+      (warning: { code?: string }) => warning.code === "description_clarity"
+    )
+  );
+});
+
+test("apply-decision resolves billing skip without re-running AI parse", async () => {
+  setJsonTaskRunnerForTests(async () => {
+    throw new Error("apply-decision should not call runJsonTask");
+  });
+
+  const response = await request(app).post("/api/invoices/apply-decision").send({
+    structuredInvoice: {
+      customerName: "Mike Johnson",
+      workSessions: [
+        {
+          date: "Feb 2",
+          tasks: [
+            { description: "Faucet repair", hours: 2, rate: 80, amount: 160 },
+            { description: "Cabinet door adjustment", hours: 0.33, rate: 80, amount: 26.4 }
+          ]
+        }
+      ],
+      materials: [{ description: "Parking", quantity: 1, unitCost: 4.5, amount: 4.5 }]
+    },
+    openDecisions: [
+      {
+        id: "decision-cabinet",
+        kind: "billing",
+        prompt: 'Bill this item? "Cabinet door adjustment"',
+        sourceSnippet: "Cabinet door adjustment up to you"
+      },
+      {
+        id: "decision-tax",
+        kind: "tax",
+        prompt: "Apply 5% tax?",
+        sourceSnippet: "I sometimes add 5% tax."
+      }
+    ],
+    assumptions: ["Tax assumed 0%."],
+    unparsedLines: [],
+    decisionAction: {
+      id: "decision-cabinet",
+      type: "exclude",
+      kind: "billing",
+      snippet: "Cabinet door adjustment"
+    },
+    pendingTaxRate: null
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.openDecisions.length, 1);
+  assert.equal(response.body.openDecisions[0].id, "decision-tax");
+  const cabinetLine = response.body.invoice.lineItems.find((line: { description: string }) =>
+    /cabinet/i.test(line.description)
+  );
+  assert.ok(cabinetLine);
+  assert.equal(cabinetLine.unitPrice, 0);
+  assert.equal(cabinetLine.amount, 0);
+});
+
+test("apply-decision resolves tax decision and returns pending tax rate deterministically", async () => {
+  setJsonTaskRunnerForTests(async () => {
+    throw new Error("apply-decision should not call runJsonTask");
+  });
+
+  const response = await request(app).post("/api/invoices/apply-decision").send({
+    structuredInvoice: {
+      customerName: "Mike Johnson",
+      workSessions: [
+        {
+          date: "Feb 2",
+          tasks: [{ description: "Faucet repair", hours: 2, rate: 80, amount: 160 }]
+        }
+      ],
+      materials: []
+    },
+    openDecisions: [
+      {
+        id: "decision-tax",
+        kind: "tax",
+        prompt: "Apply 5% tax?",
+        sourceSnippet: "I sometimes add 5% tax."
+      }
+    ],
+    assumptions: ["Tax assumed 0%."],
+    unparsedLines: [],
+    decisionAction: {
+      id: "decision-tax",
+      type: "tax_apply",
+      kind: "tax",
+      snippet: "Apply tax"
+    },
+    pendingTaxRate: null
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.openDecisions.length, 0);
+  assert.equal(response.body.pendingTaxRate, "5");
+  const assumptions = response.body.assumptions ?? [];
+  assert.ok(!assumptions.some((assumption: string) => /tax assumed 0%/i.test(assumption)));
+});
+
+test("apply-decision includes timing payload only when debugTiming is enabled", async () => {
+  setJsonTaskRunnerForTests(async () => {
+    throw new Error("apply-decision should not call runJsonTask");
+  });
+
+  const baseRequest = {
+    structuredInvoice: {
+      customerName: "Mike Johnson",
+      workSessions: [
+        {
+          date: "Feb 2",
+          tasks: [{ description: "Faucet repair", hours: 2, rate: 80, amount: 160 }]
+        }
+      ],
+      materials: []
+    },
+    openDecisions: [
+      {
+        id: "decision-tax",
+        kind: "tax",
+        prompt: "Apply 5% tax?",
+        sourceSnippet: "I sometimes add 5% tax."
+      }
+    ],
+    assumptions: ["Tax assumed 0%."],
+    unparsedLines: [],
+    decisionAction: {
+      id: "decision-tax",
+      type: "tax_skip",
+      kind: "tax",
+      snippet: "No tax"
+    },
+    pendingTaxRate: null
+  };
+
+  const withoutDebug = await request(app).post("/api/invoices/apply-decision").send(baseRequest);
+  assert.equal(withoutDebug.status, 200);
+  assert.equal(withoutDebug.body._timing, undefined);
+
+  const withDebug = await request(app)
+    .post("/api/invoices/apply-decision")
+    .send({ ...baseRequest, debugTiming: true });
+  assert.equal(withDebug.status, 200);
+  assert.equal(typeof withDebug.body._timing?.serverApplyMs, "number");
+  assert.equal(typeof withDebug.body._timing?.serverTotalMs, "number");
+  assert.ok(withDebug.body._timing.serverTotalMs >= withDebug.body._timing.serverApplyMs);
 });
 
 function useMockResponses(responses: unknown[]): void {

@@ -4,11 +4,18 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:frontend": "node scripts/build-frontend.mjs",
+    "predev": "npm run build:frontend",
     "dev": "tsx watch src/server.ts",
+    "prestart": "npm run build:frontend",
     "start": "tsx src/server.ts",
+    "prebuild": "npm run build:frontend",
     "build": "tsc --noEmit",
+    "pretest": "npm run build:frontend",
     "test": "tsx --test --test-concurrency=1 src/*.test.ts src/**/*.test.ts",
-    "test:friction": "node scripts/ai-intake-friction-pass.mjs"
+    "test:friction": "node scripts/ai-intake-friction-pass.mjs",
+    "check:persistence": "tsx scripts/check-persistence-readiness.ts",
+    "migrate:invoices:postgres": "node -r dotenv/config scripts/migrate-saved-invoices-to-postgres.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -16,7 +23,9 @@
     "express": "^4.21.2",
     "multer": "^1.4.5-lts.2",
     "openai": "^4.82.0",
+    "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",
+    "pg": "^8.18.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -25,9 +34,12 @@
     "@types/multer": "^1.4.12",
     "@types/node": "^22.13.0",
     "@types/pdf-parse": "^1.1.4",
+    "@types/pg": "^8.16.0",
     "@types/supertest": "^6.0.3",
+    "esbuild": "^0.27.3",
     "playwright": "^1.58.2",
     "supertest": "^7.0.0",
+    "tailwindcss": "^3.4.17",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

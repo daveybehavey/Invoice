@@ -94,6 +94,14 @@ export const InvoiceDecisionSchema = z.object({
   sourceSnippet: OptionalString
 });
 
+export const OpenDecisionSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(["tax", "billing"]),
+  prompt: z.string().min(1),
+  sourceSnippet: OptionalString,
+  keywords: z.array(z.string().min(1)).optional()
+});
+
 export const InvoiceAuditSchema = z.object({
   assumptions: z.array(z.string()).default([]),
   decisions: z.array(InvoiceDecisionSchema).default([]),
@@ -169,6 +177,32 @@ export const InvoiceAuditRequestSchema = z.object({
   lastUserMessage: OptionalString
 });
 
+export const DecisionActionSchema = z.object({
+  type: z.enum(["include", "exclude", "tax_apply", "tax_skip", "bulk_include", "bulk_exclude"]),
+  id: OptionalString,
+  kind: z.enum(["tax", "billing"]).optional(),
+  snippet: OptionalString
+});
+
+export const ApplyDecisionRequestSchema = z.object({
+  structuredInvoice: StructuredInvoiceSchema,
+  openDecisions: z.array(OpenDecisionSchema),
+  assumptions: z.array(z.string()).default([]),
+  unparsedLines: z.array(z.string()).default([]),
+  decisionAction: DecisionActionSchema,
+  pendingTaxRate: OptionalString,
+  debugTiming: z.boolean().optional()
+});
+
+export const InvoicePdfExportRequestSchema = z.object({
+  invoice: FinishedInvoiceSchema,
+  fromDetails: OptionalString,
+  billToDetails: OptionalString,
+  accentColor: OptionalString,
+  stylePreset: OptionalString,
+  logoUrl: OptionalString
+});
+
 export const SavedInvoiceStatusSchema = z.enum(["draft", "sent", "paid", "deleted"]);
 export const SavedInvoiceSourceTypeSchema = z.enum(["text_input", "upload"]);
 
@@ -179,6 +213,7 @@ export const SavedInvoiceDataSchema = z.object({
 
 export const SavedInvoiceSchema = z.object({
   invoiceId: z.string().uuid(),
+  ownerId: z.string().min(1).default("local-default"),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   status: SavedInvoiceStatusSchema,
@@ -220,3 +255,5 @@ export type SavedInvoiceStatus = z.infer<typeof SavedInvoiceStatusSchema>;
 export type SavedInvoiceSourceType = z.infer<typeof SavedInvoiceSourceTypeSchema>;
 export type SavedInvoiceData = z.infer<typeof SavedInvoiceDataSchema>;
 export type InvoiceListItem = z.infer<typeof InvoiceListItemSchema>;
+export type OpenDecision = z.infer<typeof OpenDecisionSchema>;
+export type DecisionAction = z.infer<typeof DecisionActionSchema>;
