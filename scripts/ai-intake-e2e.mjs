@@ -38,7 +38,7 @@ async function waitForAnyText(page, texts, timeout = DEFAULT_TIMEOUT) {
 }
 
 async function waitForTypingToSettle(page) {
-  const typing = page.getByText("AI is typing", { exact: false });
+  const typing = page.getByText(/(AI|Billie) is typing/i, { exact: false });
   try {
     await typing.waitFor({ state: "visible", timeout: 3000 });
     await typing.waitFor({ state: "hidden", timeout: DEFAULT_TIMEOUT });
@@ -56,7 +56,7 @@ function getPrimaryGenerateButton(page) {
 async function sendMessage(page, text) {
   const visibleInput = page.locator("textarea#ai-intake-input:visible");
   if ((await visibleInput.count()) === 0) {
-    const editWithAIButton = page.getByRole("button", { name: "Edit with AI" });
+    const editWithAIButton = page.getByRole("button", { name: /Edit with (AI|Billie)/i });
     const editByChatButton = page.getByRole("button", { name: "Edit by chat" });
     if (await editWithAIButton.isVisible().catch(() => false)) {
       await editWithAIButton.click();
@@ -417,14 +417,22 @@ Do what makes sense.`;
     );
     await waitForTypingToSettle(page);
 
-    const followUp = await waitForText(
+    const followUp = await waitForAnyText(
       page,
-      "I see labor work, but some labor pricing is missing",
+      [
+        "I see labor work, but some labor pricing is missing",
+        "Please choose how labor should be billed",
+        "Add labor pricing to continue."
+      ],
       DEFAULT_TIMEOUT
     );
     record(followUp, "Labor follow-up shown");
 
-    const helperText = await page.getByText("Add labor pricing to continue.", { exact: false }).isVisible();
+    const helperText = await waitForAnyText(
+      page,
+      ["Add labor pricing to continue.", "Please choose how labor should be billed."],
+      8000
+    );
     record(helperText, "Helper prompts labor pricing");
 
     await sendMessage(

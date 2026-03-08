@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="NoteBill">
+  <rect width="512" height="512" rx="96" fill="#0b1324" />
+  <rect x="52" y="52" width="408" height="408" rx="84" fill="#0f9d6e" />
+  <path
+    d="M150 366V146h34l120 160V146h34v220h-34L184 206v160z"
+    fill="#ffffff"
+  />
+  <path d="M332 318h94v16h-94zm0 36h94v16h-94z" fill="#ffffff" />
+</svg>

@@ -1,0 +1,1992 @@
+(() => {
+  const { useNavigate } = ReactRouterDOM;
+  const { useEffect, useRef, useState } = React;
+  const requestIdentity = window.InvoiceRequestIdentity;
+  if (!requestIdentity) {
+    throw new Error(
+      "Missing /utils/requestIdentity.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
+  const formatUtils = window.InvoiceFormatUtils;
+  if (!formatUtils) {
+    throw new Error(
+      "Missing /utils/formatters.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
+  const intakeHelperUtils = window.InvoiceIntakeHelpers;
+  if (!intakeHelperUtils) {
+    throw new Error(
+      "Missing /utils/intakeHelpers.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
+  const intakeReadinessUtils = window.InvoiceIntakeReadiness;
+  if (!intakeReadinessUtils) {
+    throw new Error(
+      "Missing /features/intake/readiness.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
+  const intakeRuntimeUtils = window.InvoiceIntakeRuntime;
+  if (!intakeRuntimeUtils) {
+    throw new Error(
+      "Missing /features/intake/runtime.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
+  const intakeOrchestrationUtils = window.InvoiceIntakeOrchestration;
+  if (!intakeOrchestrationUtils) {
+    throw new Error(
+      "Missing /features/intake/orchestration.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
+  const intakeActionUtils = window.InvoiceIntakeActions;
+  if (!intakeActionUtils) {
+    throw new Error(
+      "Missing /features/intake/actions.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
+  const intakeControllerUtils = window.InvoiceIntakeController;
+  if (!intakeControllerUtils) {
+    throw new Error(
+      "Missing /features/intake/controller.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
+  const intakeReviewModelUtils = window.InvoiceIntakeReviewModel;
+  if (!intakeReviewModelUtils) {
+    throw new Error(
+      "Missing /features/intake/reviewModel.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
+  const intakeReviewComponents = window.InvoiceIntakeReview;
+  if (!intakeReviewComponents) {
+    throw new Error(
+      "Missing /features/intake/reviewCard.jsx load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
+  const intakeDecisionComponents = window.InvoiceIntakeDecision;
+  if (!intakeDecisionComponents) {
+    throw new Error(
+      "Missing /features/intake/decisionPanel.jsx load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
+  const {
+    formatRateToken,
+    cloneJson,
+    formatMoney,
+    formatLaborDuration,
+    formatDisplayDescription
+  } = formatUtils;
+
+  const { extractKeywords } = intakeHelperUtils;
+
+  const {
+    isReadinessDebugEnabled,
+    logReadinessEvent,
+    evaluateIntakeReadiness,
+    evaluateResponseReadiness,
+    buildDraftFromFinishedInvoice
+  } = intakeReadinessUtils;
+
+  const { getSlowResponseDelay, shouldUseFastMode, shouldRunDeepAudit, createIntakeRuntime } =
+    intakeRuntimeUtils;
+  const { createIntakeOrchestrator } = intakeOrchestrationUtils;
+  const { createIntakeActionHandlers } = intakeActionUtils;
+
+  const {
+    applyDecisionActionToInvoice,
+    orderLineItemsForTranscript,
+    extractTaxRateFromText,
+    isExplicitNoTax,
+    mergeUniqueList,
+    mergeDecisionLists,
+    buildTranscript,
+    buildSummaryText,
+    buildReviewPayload,
+    buildDecisionFollowUp,
+    buildDraftFromInvoice,
+    buildDecisionActions,
+    buildDecisionAckMessage
+  } = intakeControllerUtils;
+
+  const { buildDecisionKeywordSets, getLineItemStatus, buildReviewSnapshotModel } =
+    intakeReviewModelUtils;
+  const { ReviewSnapshotCard } = intakeReviewComponents;
+  const { IntakeDecisionPanel } = intakeDecisionComponents;
+
+  const businessProfileUtils = window.InvoiceBusinessProfile;
+  if (!businessProfileUtils) {
+    throw new Error(
+      "Missing /utils/businessProfile.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
+  const { applyBusinessProfileToDraft } = businessProfileUtils;
+
+  const initialIntakeMessages = [
+    {
+      id: "msg-1",
+      role: "ai",
+      text: "Paste your notes in any format. I will structure them into an invoice draft."
+    }
+  ];
+
+  const readDraftFromStorage = (key) => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    try {
+      const stored = window.localStorage.getItem(key);
+      return stored ? JSON.parse(stored) : null;
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  const readStoredLaborRate = (storageKey = "invoiceLastLaborRate") => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    const stored = Number.parseFloat(window.localStorage.getItem(storageKey) || "");
+    return Number.isFinite(stored) && stored > 0 ? stored : null;
+  };
+
+  const storeLaborRate = (rate, storageKey = "invoiceLastLaborRate") => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (Number.isFinite(rate) && rate > 0) {
+      window.localStorage.setItem(storageKey, String(rate));
+    }
+  };
+
+function AIIntake() {
+  const navigate = useNavigate();
+  const legacyDraftStorageKey = "invoiceDraft";
+  const draftStorageKey =
+    requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? legacyDraftStorageKey;
+  const legacyImportSeedStorageKey = "invoiceImportSeed";
+  const importSeedStorageKey =
+    requestIdentity.getScopedStorageKey?.("invoiceImportSeed") ?? legacyImportSeedStorageKey;
+  const legacyLaborRateStorageKey = "invoiceLastLaborRate";
+  const laborRateStorageKey =
+    requestIdentity.getScopedStorageKey?.("invoiceLastLaborRate") ?? legacyLaborRateStorageKey;
+  const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
+  const [messages, setMessages] = useState(initialIntakeMessages);
+  const [inputValue, setInputValue] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const [intakePhase, setIntakePhase] = useState("collecting");
+  const [followUp, setFollowUp] = useState(null);
+  const [structuredInvoice, setStructuredInvoice] = useState(null);
+  const [finishedInvoice, setFinishedInvoice] = useState(null);
+  const [laborPricingNote, setLaborPricingNote] = useState("");
+  const [pendingLaborRate, setPendingLaborRate] = useState(null);
+  const [pendingTaxRate, setPendingTaxRate] = useState(null);
+  const [openDecisions, setOpenDecisions] = useState([]);
+  const [assumptions, setAssumptions] = useState([]);
+  const [unparsedLines, setUnparsedLines] = useState([]);
+  const [outputQuality, setOutputQuality] = useState(null);
+  const [auditStatus, setAuditStatus] = useState(null);
+  const [auditSummary, setAuditSummary] = useState("");
+  const [auditSummaryAt, setAuditSummaryAt] = useState(null);
+  const [summaryUpdatedAt, setSummaryUpdatedAt] = useState(null);
+  const [reviewCardCollapsed, setReviewCardCollapsed] = useState(true);
+  const [showChatInput, setShowChatInput] = useState(false);
+  const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(true);
+  const [decisionToast, setDecisionToast] = useState(null);
+  const [billieStatus, setBillieStatus] = useState(null);
+  const [billieUndoState, setBillieUndoState] = useState(null);
+  const [recentlyChangedLines, setRecentlyChangedLines] = useState({
+    ids: [],
+    descriptions: []
+  });
+  const [showAllDecisions, setShowAllDecisions] = useState(false);
+  const [decisionFocusIndex, setDecisionFocusIndex] = useState(0);
+  const [showDecisionWhy, setShowDecisionWhy] = useState(false);
+  const [optimisticDecisionState, setOptimisticDecisionState] = useState(null);
+  const [savedLaborRate, setSavedLaborRate] = useState(() => {
+    const scopedRate = readStoredLaborRate(laborRateStorageKey);
+    if (scopedRate !== null) {
+      return scopedRate;
+    }
+    if (laborRateStorageKey !== legacyLaborRateStorageKey) {
+      return readStoredLaborRate(legacyLaborRateStorageKey);
+    }
+    return null;
+  });
+  const [decisionUndoState, setDecisionUndoState] = useState(null);
+  const [isCompactViewport, setIsCompactViewport] = useState(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return false;
+    }
+    return window.matchMedia("(max-width: 767px)").matches;
+  });
+
+  useEffect(() => {
+    let active = true;
+    requestIdentity
+      .refreshSession()
+      .then((session) => {
+        if (!active) {
+          return;
+        }
+        setAuthSession(session);
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+        setAuthSession(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const readinessDebugEnabled = isReadinessDebugEnabled();
+  const [readinessPanelOpen, setReadinessPanelOpen] = useState(readinessDebugEnabled);
+  const [readinessDebugEvents, setReadinessDebugEvents] = useState([]);
+  const requestIdRef = useRef(0);
+  const openDecisionSignatureRef = useRef("");
+  const lastDecisionResolutionRef = useRef("");
+  const decisionActionRef = useRef(null);
+  const lastSummaryMetaRef = useRef({ at: null, requestId: null });
+  const readinessSignatureRef = useRef("");
+  const intakePhaseRef = useRef(intakePhase);
+  const summaryLockRef = useRef(false);
+  const listEndRef = useRef(null);
+  const decisionsRef = useRef(null);
+  const lastDecisionCountRef = useRef(0);
+  const unparsedRef = useRef(null);
+  const slowResponseTimeoutRef = useRef(null);
+  const timeoutMessageIdRef = useRef(null);
+  const abortControllerRef = useRef(null);
+  const lastMessagesRef = useRef([]);
+  const lastTranscriptRef = useRef("");
+  const lastUserMessageRef = useRef("");
+  const lastIntakeModeRef = useRef("full");
+  const importSeedRef = useRef(false);
+  const hasAutoCollapsedRef = useRef(false);
+  const auditRequestIdRef = useRef(0);
+  const openDecisionsRef = useRef([]);
+  const assumptionsRef = useRef([]);
+  const unparsedLinesRef = useRef([]);
+  const decisionToastTimeoutRef = useRef(null);
+  const decisionUndoTimeoutRef = useRef(null);
+  const billieStatusTimeoutRef = useRef(null);
+  const billieHighlightTimeoutRef = useRef(null);
+  const pendingDecisionUndoRef = useRef(null);
+  const intakeComplete = intakePhase === "ready_to_generate";
+  const confirmationKeywords = [];
+  const rejectionKeywords = ["no", "not correct", "wrong", "incorrect", "needs change"];
+  const hasReviewCard = messages.some((message) => message.kind === "review");
+  const reviewMessageId = hasReviewCard
+    ? [...messages].reverse().find((message) => message.kind === "review")?.id ?? null
+    : null;
+  const visibleMessages = hasReviewCard
+    ? messages.filter(
+        (message) => message.kind === "timeout" || message.id === reviewMessageId
+      )
+    : messages.filter((message) => message.kind === "timeout");
+  const {
+    clearSlowResponseTimer,
+    dismissTimeoutMessage,
+    appendTimeoutMessage,
+    shouldIgnorePostSummaryResponse,
+    abortOngoingRequest
+  } = createIntakeRuntime({
+    slowResponseTimeoutRef,
+    timeoutMessageIdRef,
+    abortControllerRef,
+    requestIdRef,
+    lastSummaryMetaRef,
+    intakePhaseRef,
+    setMessages,
+    setIsTyping
+  });
+
+  const appendAiMessage = (text) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        role: "ai",
+        text
+      }
+    ]);
+  };
+
+  const showDecisionToast = (text, options = {}) => {
+    if (!text) {
+      return;
+    }
+    const durationMs =
+      Number.isFinite(options.durationMs) && options.durationMs > 0 ? options.durationMs : 3500;
+    setDecisionToast(text);
+    if (decisionToastTimeoutRef.current) {
+      window.clearTimeout(decisionToastTimeoutRef.current);
+    }
+    decisionToastTimeoutRef.current = window.setTimeout(() => {
+      setDecisionToast(null);
+      decisionToastTimeoutRef.current = null;
+    }, durationMs);
+  };
+
+  const showBillieStatus = (status, options = {}) => {
+    if (billieStatusTimeoutRef.current) {
+      window.clearTimeout(billieStatusTimeoutRef.current);
+      billieStatusTimeoutRef.current = null;
+    }
+    if (!status || !status.text) {
+      setBillieStatus(null);
+      return;
+    }
+    const isSticky = Boolean(options.sticky);
+    const durationMs =
+      Number.isFinite(options.durationMs) && options.durationMs > 0 ? options.durationMs : 8000;
+    setBillieStatus(status);
+    if (isSticky) {
+      return;
+    }
+    billieStatusTimeoutRef.current = window.setTimeout(() => {
+      setBillieStatus(null);
+      billieStatusTimeoutRef.current = null;
+    }, durationMs);
+  };
+
+  const setTransientBillieHighlights = (patch) => {
+    const ids = Array.isArray(patch?.changedLineItemIds)
+      ? patch.changedLineItemIds.filter((id) => typeof id === "string" && id.trim())
+      : [];
+    const descriptions = Array.isArray(patch?.changedLineItemDescriptions)
+      ? patch.changedLineItemDescriptions
+          .map((value) => (typeof value === "string" ? value.trim().toLowerCase() : ""))
+          .filter(Boolean)
+      : [];
+    setRecentlyChangedLines({ ids, descriptions });
+    if (billieHighlightTimeoutRef.current) {
+      window.clearTimeout(billieHighlightTimeoutRef.current);
+    }
+    billieHighlightTimeoutRef.current = window.setTimeout(() => {
+      setRecentlyChangedLines({ ids: [], descriptions: [] });
+      billieHighlightTimeoutRef.current = null;
+    }, 1600);
+  };
+
+  const clearDecisionUndoState = () => {
+    setDecisionUndoState(null);
+    if (decisionUndoTimeoutRef.current) {
+      window.clearTimeout(decisionUndoTimeoutRef.current);
+      decisionUndoTimeoutRef.current = null;
+    }
+  };
+
+  const startDecisionUndoWindow = (snapshot, message) => {
+    if (!snapshot) {
+      clearDecisionUndoState();
+      return;
+    }
+    setDecisionUndoState({
+      ...snapshot,
+      message: message || "Decision updated."
+    });
+    if (decisionUndoTimeoutRef.current) {
+      window.clearTimeout(decisionUndoTimeoutRef.current);
+    }
+    decisionUndoTimeoutRef.current = window.setTimeout(() => {
+      setDecisionUndoState(null);
+      decisionUndoTimeoutRef.current = null;
+    }, 9000);
+  };
+
+  const captureDecisionUndoSnapshot = () => ({
+    intakePhase,
+    finishedInvoice: cloneJson(finishedInvoice),
+    structuredInvoice: cloneJson(structuredInvoice),
+    openDecisions: cloneJson(openDecisions),
+    assumptions: cloneJson(assumptions),
+    unparsedLines: cloneJson(unparsedLines),
+    outputQuality: cloneJson(outputQuality),
+    pendingTaxRate
+  });
+
+  const handleDecisionAction = (action, message) => {
+    const currentValue = inputValue.replace(/\s+$/, "");
+    if (currentValue.trim()) {
+      const prefix = currentValue.endsWith("\n") ? currentValue : `${currentValue}\n`;
+      focusInputWithValue(`${prefix}${message}`);
+      return;
+    }
+    const hiddenDecisionIds =
+      action?.type === "bulk_include" || action?.type === "bulk_exclude"
+        ? decisionItems.map((item) => String(item.id))
+        : action?.id
+          ? [String(action.id)]
+          : [];
+    setOptimisticDecisionState({
+      pending: true,
+      hiddenDecisionIds,
+      label: "Billie: Applying decision..."
+    });
+    showBillieStatus({ kind: "info", text: "Applying decision..." }, { durationMs: 5000 });
+    pendingDecisionUndoRef.current = captureDecisionUndoSnapshot();
+    decisionActionRef.current = action;
+    const accepted = submitUserMessage(message, { clickTimeMs: window.performance.now() });
+    if (!accepted) {
+      setOptimisticDecisionState(null);
+      showBillieStatus(null);
+      decisionActionRef.current = null;
+      pendingDecisionUndoRef.current = null;
+    }
+  };
+
+  const handleDecisionRequestComplete = (result) => {
+    setOptimisticDecisionState(null);
+    if (result?.status === "error") {
+      showBillieStatus({ kind: "warning", text: "Couldn't apply decision. Restored." }, { durationMs: 5000 });
+      return;
+    }
+    if (result?.status === "success") {
+      showBillieStatus(null);
+    }
+  };
+
+  const handleUndoDecision = () => {
+    if (!decisionUndoState) {
+      return;
+    }
+    const restoredInvoice = decisionUndoState.finishedInvoice ?? null;
+    const restoredDecisions = Array.isArray(decisionUndoState.openDecisions)
+      ? decisionUndoState.openDecisions
+      : [];
+    const restoredUnparsed = Array.isArray(decisionUndoState.unparsedLines)
+      ? decisionUndoState.unparsedLines
+      : [];
+    setFinishedInvoice(restoredInvoice);
+    setStructuredInvoice(decisionUndoState.structuredInvoice ?? null);
+    setOpenDecisions(restoredDecisions);
+    setAssumptions(Array.isArray(decisionUndoState.assumptions) ? decisionUndoState.assumptions : []);
+    setUnparsedLines(restoredUnparsed);
+    setOutputQuality(decisionUndoState.outputQuality ?? null);
+    setPendingTaxRate(decisionUndoState.pendingTaxRate ?? null);
+    setFollowUp(null);
+    setIntakePhase(decisionUndoState.intakePhase ?? "ready_to_summarize");
+    openDecisionSignatureRef.current = restoredDecisions.map((decision) => decision.prompt).sort().join("|");
+    if (restoredInvoice) {
+      appendSummaryMessage(
+        buildSummaryText(
+          restoredInvoice,
+          restoredDecisions,
+          restoredUnparsed.length,
+          decisionUndoState.outputQuality?.blockerCount ?? 0
+        ),
+        buildReviewPayload(
+          restoredInvoice,
+          restoredDecisions,
+          restoredUnparsed,
+          lastTranscriptRef.current,
+          decisionUndoState.outputQuality ?? null
+        )
+      );
+    }
+    clearDecisionUndoState();
+    showDecisionToast("Undid last decision.");
+  };
+
+  const handleBilliePatchApplied = ({
+    patch,
+    previousInvoice,
+    requestStartedAt,
+    responseAt
+  }) => {
+    if (!previousInvoice || !patch?.hasChanges) {
+      return;
+    }
+    const applyStartedAt = Date.now();
+    setBillieUndoState({
+      previousInvoice: cloneJson(previousInvoice),
+      changedLineItemIds: Array.isArray(patch.changedLineItemIds)
+        ? [...patch.changedLineItemIds]
+        : [],
+      changedLineItemDescriptions: Array.isArray(patch.changedLineItemDescriptions)
+        ? [...patch.changedLineItemDescriptions]
+        : []
+    });
+    setTransientBillieHighlights(patch);
+    showBillieStatus(
+      {
+        kind: patch.numbersUnchanged ? "safe" : "warning",
+        text: patch.numbersUnchanged ? "Numbers unchanged" : "Review changes"
+      },
+      { durationMs: 9000 }
+    );
+    const applyDurationMs = Date.now() - applyStartedAt;
+    if (applyDurationMs > 300) {
+      console.warn("[billie:patch:slow-apply]", {
+        applyDurationMs,
+        requestStartedAt,
+        responseAt
+      });
+    }
+  };
+
+  const handleBilliePatchRejected = ({ patch }) => {
+    const hasMoneyViolation = Array.isArray(patch?.violations)
+      ? patch.violations.some((violation) => violation.type === "money")
+      : false;
+    showBillieStatus(
+      {
+        kind: hasMoneyViolation ? "warning" : "info",
+        text: hasMoneyViolation ? "Money decision required" : "No changes applied"
+      },
+      { durationMs: 9000 }
+    );
+  };
+
+  const handleUndoBilliePatch = () => {
+    if (!billieUndoState?.previousInvoice) {
+      return;
+    }
+    const restoredInvoice = cloneJson(billieUndoState.previousInvoice);
+    const restoredDecisions = Array.isArray(openDecisionsRef.current)
+      ? openDecisionsRef.current
+      : [];
+    const restoredUnparsed = Array.isArray(unparsedLinesRef.current) ? unparsedLinesRef.current : [];
+    const restoredQuality = outputQuality ?? null;
+    setFinishedInvoice(restoredInvoice);
+    setTransientBillieHighlights({
+      changedLineItemIds: billieUndoState.changedLineItemIds ?? [],
+      changedLineItemDescriptions: billieUndoState.changedLineItemDescriptions ?? []
+    });
+    appendSummaryMessage(
+      buildSummaryText(
+        restoredInvoice,
+        restoredDecisions,
+        restoredUnparsed.length,
+        restoredQuality?.blockerCount ?? 0
+      ),
+      buildReviewPayload(
+        restoredInvoice,
+        restoredDecisions,
+        restoredUnparsed,
+        lastTranscriptRef.current,
+        restoredQuality
+      )
+    );
+    setBillieUndoState(null);
+    showBillieStatus({ kind: "info", text: "Undid last Billie change" }, { durationMs: 5000 });
+  };
+
+  const handleBillieEditLifecycle = ({ phase, outcome }) => {
+    if (phase === "start") {
+      showBillieStatus({ kind: "working", text: "Billie: Refining wording" }, { sticky: true });
+      return;
+    }
+    if (phase !== "complete") {
+      return;
+    }
+    if (outcome === "no_change") {
+      showBillieStatus({ kind: "info", text: "No wording changes needed" }, { durationMs: 4000 });
+      return;
+    }
+    if (outcome === "error") {
+      showBillieStatus({ kind: "warning", text: "Refine failed. Draft unchanged." }, { durationMs: 5000 });
+      return;
+    }
+    if (outcome === "ignored") {
+      showBillieStatus(null);
+    }
+  };
+
+  const appendSummaryMessage = (text, reviewPayload) => {
+    setSummaryUpdatedAt(new Date());
+    lastSummaryMetaRef.current = {
+      at: Date.now(),
+      requestId: requestIdRef.current
+    };
+    console.log("[summary:append]", lastSummaryMetaRef.current);
+    setIsTyping(false);
+    setReviewCardCollapsed(true);
+    setAssumptionsCollapsed(true);
+    setShowChatInput(true);
+    setMessages((prev) => {
+      const next = [...prev];
+      if (reviewPayload) {
+        next.push({
+          id: reviewPayload.id ?? `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          role: "ai",
+          kind: "review",
+          payload: reviewPayload
+        });
+      }
+      next.push({
+        id: `msg-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        role: "ai",
+        text
+      });
+      return next;
+    });
+  };
+
+  const decisionItems = openDecisions.map((decision, index) => ({
+    id: decision.id ?? `decision-${index}`,
+    text: `Decision needed: ${decision.prompt}`,
+    prompt: decision.prompt,
+    kind: decision.kind,
+    context: decision.sourceSnippet ?? ""
+  }));
+  const decisionApplyPending = Boolean(optimisticDecisionState?.pending);
+  const optimisticHiddenDecisionIds = new Set(
+    (optimisticDecisionState?.hiddenDecisionIds ?? []).map((value) => String(value))
+  );
+  const visibleDecisionSource = decisionApplyPending
+    ? decisionItems.filter((item) => !optimisticHiddenDecisionIds.has(String(item.id)))
+    : decisionItems;
+  const optimisticHiddenCount = Math.max(0, decisionItems.length - visibleDecisionSource.length);
+
+  const assumptionItems = (() => {
+    if (finishedInvoice) {
+      const orderedLineItems = orderLineItemsForTranscript(
+        finishedInvoice.lineItems ?? [],
+        lastTranscriptRef.current
+      );
+      const items = orderedLineItems.map((lineItem, index) => ({
+        id: `assumption-line-${lineItem.id ?? index}`,
+        text: `${formatDisplayDescription(lineItem.description)}${
+          Number.isFinite(lineItem.amount) ? ` — ${formatMoney(lineItem.amount)}` : ""
+        }`
+      }));
+      const qualityBlockers = Array.isArray(outputQuality?.blockers) ? outputQuality.blockers : [];
+      qualityBlockers.forEach((blocker, index) => {
+        items.unshift({
+          id: `assumption-quality-${blocker.code ?? index}-${index}`,
+          text: blocker.message ?? "Review item needs attention."
+        });
+      });
+      if (pendingTaxRate) {
+        items.unshift({
+          id: "assumption-tax-rate",
+          text: `Tax rate set to ${pendingTaxRate}% (draft).`
+        });
+      }
+      if (finishedInvoice.notes) {
+        items.push({ id: "assumption-notes", text: `Notes: ${finishedInvoice.notes}` });
+      }
+      if (finishedInvoice.customerName) {
+        items.unshift({ id: "assumption-client", text: `Client: ${finishedInvoice.customerName}` });
+      }
+      return items;
+    }
+    if (laborPricingNote) {
+      return [{ id: "labor-note", text: laborPricingNote }];
+    }
+    if (followUp?.type === "labor_pricing") {
+      const itemCount = followUp.laborItems?.length ?? 0;
+      return [
+        {
+          id: "pricing-needed",
+          text: itemCount
+            ? `Labor pricing needed for ${itemCount} item${itemCount > 1 ? "s" : ""}.`
+            : "Labor pricing needed."
+        }
+      ];
+    }
+    return [];
+  })();
+
+  const filteredAssumptions = pendingTaxRate
+    ? assumptions.filter((item) => !item.toLowerCase().includes("tax assumed"))
+    : assumptions;
+  const auditAssumptionItems = [
+    ...(pendingTaxRate && !finishedInvoice
+      ? [{ id: "assumption-tax-rate", text: `Tax rate set to ${pendingTaxRate}% (draft).` }]
+      : []),
+    ...filteredAssumptions.map((item, index) => ({
+      id: `assumption-audit-${index}`,
+      text: item
+    }))
+  ];
+
+  const unparsedItems = unparsedLines.map((item, index) => ({
+    id: `unparsed-${index}`,
+    text: item
+  }));
+
+  const hasAssumptions =
+    assumptionItems.length > 0 || auditAssumptionItems.length > 0 || unparsedItems.length > 0;
+  const hasDecisions = decisionItems.length > 0;
+  const hasVisibleDecisions = visibleDecisionSource.length > 0;
+  const intakeReadiness = evaluateIntakeReadiness({
+    intakePhase,
+    followUp,
+    finishedInvoice,
+    openDecisionCount: openDecisions.length,
+    qualityBlockerCount: outputQuality?.blockerCount ?? 0,
+    pendingLaborRate
+  });
+  const openDecisionCount = intakeReadiness.openDecisionCount;
+  const readinessSnapshot = {
+    intakePhase,
+    targetPhase: intakeReadiness.targetPhase,
+    lockReason: intakeReadiness.lockReason,
+    canGenerate: intakeReadiness.canGenerate,
+    needsFollowUp: intakeReadiness.needsFollowUp,
+    openDecisionCount: intakeReadiness.openDecisionCount,
+    qualityBlockerCount: intakeReadiness.qualityBlockerCount,
+    hasFinishedInvoice: intakeReadiness.hasFinishedInvoice,
+    needsSummaryConfirmation: intakeReadiness.needsSummaryConfirmation
+  };
+  const readinessSignature = JSON.stringify(readinessSnapshot);
+  const taxAssumptionPresent = assumptions.some((item) =>
+    item.toLowerCase().includes("tax assumed")
+  );
+  const suggestedTaxRate = extractTaxRateFromText(lastTranscriptRef.current);
+  const hasNonTaxAssumptions = assumptions.some(
+    (item) => !item.toLowerCase().includes("tax assumed")
+  );
+  const hasExplicitTaxDraft = Boolean(pendingTaxRate && !finishedInvoice);
+  const hasQualityBlockers = (outputQuality?.blockerCount ?? 0) > 0;
+  const hasVisibleAssumptions = hasNonTaxAssumptions || unparsedItems.length > 0 || hasExplicitTaxDraft;
+  const hasVisibleDetails =
+    hasVisibleAssumptions ||
+    hasQualityBlockers ||
+    auditStatus === "timed_out" ||
+    auditStatus === "failed";
+  const needsLaborPricing = intakeReadiness.needsFollowUp;
+  const needsLaborHoursOnly = intakeReadiness.needsLaborHoursOnly;
+  const showConfirmDetails =
+    openDecisionCount > 0 || hasVisibleDetails || hasDecisions || needsLaborPricing || hasQualityBlockers;
+  const showAssumptionsCard = hasReviewCard || showConfirmDetails;
+  const showAssumptionDetails = !hasReviewCard || !assumptionsCollapsed;
+  const showReviewSecondary = isCompactViewport ? !reviewCardCollapsed : true;
+  const showReviewExpandedSections = !reviewCardCollapsed;
+  const readinessDebugSnapshot = {
+    ...readinessSnapshot,
+    showAssumptionsCard,
+    showAssumptionDetails,
+    showReviewSecondary,
+    showReviewExpandedSections,
+    showChatInput,
+    summaryLocked: summaryLockRef.current,
+    requestId: requestIdRef.current,
+    followUpType: followUp?.type ?? null,
+    pendingLaborRate,
+    pendingTaxRate
+  };
+  const readinessDebugFields = [
+    ["phase", readinessDebugSnapshot.intakePhase],
+    ["target", readinessDebugSnapshot.targetPhase],
+    ["lock", readinessDebugSnapshot.lockReason],
+    ["step", intakeReadiness.wizardStep],
+    ["canGenerate", readinessDebugSnapshot.canGenerate ? "true" : "false"],
+    ["needsFollowUp", readinessDebugSnapshot.needsFollowUp ? "true" : "false"],
+    ["openDecisions", String(readinessDebugSnapshot.openDecisionCount)],
+    ["qualityBlockers", String(readinessDebugSnapshot.qualityBlockerCount ?? 0)],
+    ["needsConfirm", readinessDebugSnapshot.needsSummaryConfirmation ? "true" : "false"],
+    ["showChatInput", readinessDebugSnapshot.showChatInput ? "true" : "false"],
+    ["summaryLocked", readinessDebugSnapshot.summaryLocked ? "true" : "false"]
+  ];
+
+  const summaryTimeLabel = summaryUpdatedAt
+    ? summaryUpdatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : "";
+  const auditSummaryTimeLabel = auditSummaryAt
+    ? new Date(auditSummaryAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : "";
+  const summarySnapshot = (() => {
+    if (!finishedInvoice || !finishedInvoice.lineItems?.length) {
+      return "";
+    }
+    const parts = [`Captured ${finishedInvoice.lineItems.length} line item${finishedInvoice.lineItems.length > 1 ? "s" : ""}`];
+    if (openDecisionCount > 0) {
+      parts.push(`${openDecisionCount} decision${openDecisionCount > 1 ? "s" : ""} pending`);
+    }
+    if (unparsedItems.length > 0) {
+      parts.push(`${unparsedItems.length} not captured`);
+    }
+    return parts.join(" • ");
+  })();
+  const wizardStep = intakeReadiness.wizardStep;
+  const wizardSteps = [
+    { id: "paste", label: "Paste" },
+    { id: "review", label: "Review" },
+    { id: "decisions", label: "Decisions" },
+    { id: "confirm", label: "Generate" }
+  ];
+  const wizardStepIndex = wizardSteps.findIndex((step) => step.id === wizardStep);
+  const scrollToSection = (ref) => {
+    if (!ref?.current) {
+      return;
+    }
+    ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const needsSummaryConfirmation = intakeReadiness.needsSummaryConfirmation;
+  const showQuickDecisions =
+    decisionApplyPending ||
+    (intakeReadiness.lockReason === "open_decisions" &&
+      (hasVisibleDecisions || taxAssumptionPresent || pendingTaxRate));
+  const hasMoreDecisions = visibleDecisionSource.length > 1;
+  const clampedDecisionIndex = Math.min(
+    decisionFocusIndex,
+    Math.max(0, visibleDecisionSource.length - 1)
+  );
+  const focusedDecisionItem = visibleDecisionSource[clampedDecisionIndex];
+  const visibleDecisionItems = showAllDecisions
+    ? visibleDecisionSource
+    : focusedDecisionItem
+      ? [focusedDecisionItem]
+      : [];
+  const decisionProgressLabel = hasMoreDecisions
+    ? `${clampedDecisionIndex + 1} of ${visibleDecisionSource.length}`
+    : "1 of 1";
+  const displayOpenDecisionCount = decisionApplyPending
+    ? Math.max(0, openDecisionCount - optimisticHiddenCount)
+    : openDecisionCount;
+  const quickDecisionHeading = decisionApplyPending
+    ? "Applying decision"
+    : displayOpenDecisionCount > 0
+      ? "Choose Add or Skip"
+      : "Tax choice";
+  const quickReplyLabel = needsLaborHoursOnly
+    ? "Suggested hours"
+    : needsLaborPricing
+      ? "Suggested rates"
+      : "Quick replies";
+  const billieWorkspaceVisible = hasReviewCard && intakePhase !== "awaiting_follow_up";
+  const billieActionChips = billieWorkspaceVisible
+    ? [
+        {
+          id: "billie-refine",
+          label: "Refine wording",
+          value: "Refine wording for clarity and professionalism. Keep all numbers and line items unchanged."
+        },
+        {
+          id: "billie-simpler",
+          label: "Make simpler",
+          value: "Rewrite descriptions in simpler plain language. Keep all numbers and line items unchanged."
+        },
+        {
+          id: "billie-formal",
+          label: "More formal",
+          value: "Make the invoice language more formal and client-ready. Keep all numbers and line items unchanged."
+        },
+        {
+          id: "billie-stronger",
+          label: "Make stronger",
+          value: "Use stronger, confident action verbs for each line item. Keep all numbers and line items unchanged."
+        }
+      ]
+    : [];
+  const canSendWhileTyping = false;
+  const canGenerateInvoice = intakeReadiness.canGenerate;
+  const ctaDisabled = !canGenerateInvoice;
+  const ctaHelper = intakeReadiness.helperText;
+  const hasDecisionPrimaryPath = intakeReadiness.lockReason === "open_decisions";
+  const primaryCtaLabel = hasDecisionPrimaryPath ? "Resolve decisions" : "Generate Invoice";
+  const primaryCtaDisabled = hasDecisionPrimaryPath ? false : ctaDisabled;
+  const reviewDetailsToggleLabel = reviewCardCollapsed ? "Show review details" : "Hide review details";
+  const showContextDetailsToggle = hasReviewCard && hasVisibleDetails;
+  const contextDetailsToggleLabel = assumptionsCollapsed
+    ? "Show context details"
+    : "Hide context details";
+  const decisionIncludeButtonClass =
+    "rounded-full border border-amber-600 bg-amber-600 px-3 py-1 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:border-amber-300 disabled:bg-amber-300";
+  const decisionExcludeButtonClass =
+    "rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300";
+
+  const handlePrimaryCta = () => {
+    if (hasDecisionPrimaryPath) {
+      scrollToSection(decisionsRef);
+      return;
+    }
+    handleGenerateInvoice();
+  };
+
+  const focusInputWithValue = (value) => {
+    const nextValue = value ?? "";
+    setInputValue(nextValue);
+    if (hasReviewCard) {
+      setShowChatInput(true);
+    }
+    setTimeout(() => {
+      const inputs = Array.from(document.querySelectorAll("textarea#ai-intake-input"));
+      const input =
+        inputs.find((candidate) => {
+          const element = candidate;
+          if (!(element instanceof HTMLElement)) {
+            return false;
+          }
+          const style = window.getComputedStyle(element);
+          return style.display !== "none" && style.visibility !== "hidden" && element.offsetParent !== null;
+        }) ?? inputs[0];
+      if (input) {
+        input.focus();
+        if (typeof input.setSelectionRange === "function") {
+          const length = input.value.length;
+          input.setSelectionRange(length, length);
+        }
+      }
+    }, 0);
+  };
+
+  const retryWithShortPass = () => {
+    if (!timeoutMessageIdRef.current) {
+      return;
+    }
+    dismissTimeoutMessage(timeoutMessageIdRef.current);
+    abortOngoingRequest();
+    if (!lastMessagesRef.current.length) {
+      return;
+    }
+    runIntakeRequest(lastMessagesRef.current, lastUserMessageRef.current, {
+      mode: "fast",
+      forceShortPass: true
+    });
+  };
+
+  const handleTimeoutKeepWorking = (messageId) => {
+    dismissTimeoutMessage(messageId);
+  };
+
+  const handleTimeoutCancel = (messageId) => {
+    dismissTimeoutMessage(messageId);
+    abortOngoingRequest();
+    setIntakePhase("collecting");
+    appendAiMessage("Canceled. You can shorten the notes and try again.");
+  };
+  const { runDeepAudit, runIntakeRequest, runDecisionActionRequest, runLaborPricingRequest } =
+    createIntakeOrchestrator({
+      slowResponseTimeoutRef,
+      requestIdRef,
+      auditRequestIdRef,
+      timeoutMessageIdRef,
+      abortControllerRef,
+      lastMessagesRef,
+      lastTranscriptRef,
+      lastUserMessageRef,
+      lastIntakeModeRef,
+      openDecisionSignatureRef,
+      lastSummaryMetaRef,
+      intakePhaseRef,
+      summaryLockRef,
+      openDecisionsRef,
+      assumptionsRef,
+      unparsedLinesRef,
+      decisionActionRef,
+      pendingDecisionUndoRef,
+      lastDecisionResolutionRef,
+      setIsTyping,
+      setAuditStatus,
+      setAuditSummary,
+      setAuditSummaryAt,
+      setOpenDecisions,
+      setAssumptions,
+      setUnparsedLines,
+      setOutputQuality,
+      setPendingLaborRate,
+      setPendingTaxRate,
+      setLaborPricingNote,
+      setFollowUp,
+      setStructuredInvoice,
+      setFinishedInvoice,
+      setIntakePhase,
+      appendAiMessage,
+      appendSummaryMessage,
+      showDecisionToast,
+      startDecisionUndoWindow,
+      clearDecisionUndoState,
+      evaluateResponseReadiness,
+      logReadinessEvent,
+      shouldUseFastMode,
+      shouldRunDeepAudit,
+      getSlowResponseDelay,
+      clearSlowResponseTimer,
+      dismissTimeoutMessage,
+      appendTimeoutMessage,
+      shouldIgnorePostSummaryResponse,
+      abortOngoingRequest,
+      onDecisionRequestComplete: handleDecisionRequestComplete,
+      mergeDecisionLists,
+      mergeUniqueList,
+      buildDecisionAckMessage,
+      applyDecisionActionToInvoice,
+      buildDecisionFollowUp,
+      buildSummaryText,
+      buildReviewPayload,
+      buildTranscript,
+      structuredInvoice
+    });
+
+  const handleManualDeepAudit = () => {
+    const transcript = lastTranscriptRef.current ?? "";
+    if (!structuredInvoice || !transcript.trim()) {
+      return;
+    }
+    runDeepAudit({
+      structuredInvoice,
+      sourceText: transcript,
+      decisionSignature: openDecisionSignatureRef.current ?? "",
+      summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null
+    });
+  };
+
+  const quickReplies = (() => {
+    if (intakePhase === "awaiting_follow_up" && followUp?.type === "labor_pricing") {
+      const laborItems = followUp?.laborItems ?? [];
+      const missingCount = laborItems.filter((item) => typeof item.hours !== "number").length;
+      const targetCount = missingCount > 0 ? missingCount : laborItems.length;
+      const formatLabel = (hoursList) => `Use ${hoursList.map((hour) => `${hour}h`).join(", ")}`;
+      const formatValue = (hoursList) =>
+        `${hoursList
+          .map((hour) => `${hour} hour${hour === 1 ? "" : "s"}`)
+          .join(", ")}.`;
+      const buildHourSuggestions = (count) => {
+        if (count <= 0) {
+          return [];
+        }
+        if (count === 1) {
+          return [[1], [2], [3]];
+        }
+        if (count === 2) {
+          return [
+            [1, 1],
+            [2, 1],
+            [2, 2]
+          ];
+        }
+        if (count === 3) {
+          return [
+            [2, 1, 1],
+            [1, 1, 1],
+            [2, 2, 2]
+          ];
+        }
+        return [];
+      };
+
+      if (Number.isFinite(pendingLaborRate)) {
+        const suggestions = buildHourSuggestions(targetCount);
+        return suggestions.map((hoursList, index) => ({
+          id: `labor-hours-${index}`,
+          label: formatLabel(hoursList),
+          value: formatValue(hoursList)
+        }));
+      }
+
+      const commonRates = [85, 95, 120];
+      const savedRate =
+        Number.isFinite(savedLaborRate) && savedLaborRate > 0 ? Math.round(savedLaborRate * 100) / 100 : null;
+      const orderedRates = savedRate
+        ? [savedRate, ...commonRates.filter((rate) => Math.round(rate * 100) / 100 !== savedRate)]
+        : commonRates;
+      return orderedRates.slice(0, 4).map((rate, index) => ({
+        id: index === 0 && savedRate ? `labor-rate-saved-${rate}` : `labor-rate-${rate}`,
+        label:
+          index === 0 && savedRate
+            ? `Use last ($${formatRateToken(rate)}/hr)`
+            : `Use $${formatRateToken(rate)}/hr`,
+        value: `Hourly $${formatRateToken(rate)}/hr.`
+      }));
+    }
+    return [];
+  })();
+
+  const handleGenerateInvoice = () => {
+    if (!finishedInvoice) {
+      return;
+    }
+    try {
+      const draft = applyBusinessProfileToDraft(
+        buildDraftFromInvoice(finishedInvoice, pendingTaxRate ?? "0", lastTranscriptRef.current)
+      );
+      window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+      navigate("/manual");
+    } catch (error) {
+      console.error("Failed to seed draft", error);
+      appendAiMessage("Something went wrong while creating the draft.");
+    }
+  };
+
+  const handleResetIntake = () => {
+    requestIdRef.current += 1;
+    setMessages(initialIntakeMessages);
+    setInputValue("");
+    setIsTyping(false);
+    setIntakePhase("collecting");
+    setFollowUp(null);
+    setStructuredInvoice(null);
+    setFinishedInvoice(null);
+    setLaborPricingNote("");
+    setPendingLaborRate(null);
+    setPendingTaxRate(null);
+    setOpenDecisions([]);
+    setAssumptions([]);
+    setUnparsedLines([]);
+    setOutputQuality(null);
+    setAuditStatus(null);
+    setAuditSummary("");
+    setAuditSummaryAt(null);
+    setSummaryUpdatedAt(null);
+    setReviewCardCollapsed(true);
+    setShowChatInput(false);
+    setAssumptionsCollapsed(true);
+    setShowAllDecisions(false);
+    setDecisionFocusIndex(0);
+    setShowDecisionWhy(false);
+    setDecisionToast(null);
+    setDecisionUndoState(null);
+    setBillieStatus(null);
+    setBillieUndoState(null);
+    setRecentlyChangedLines({ ids: [], descriptions: [] });
+    openDecisionSignatureRef.current = "";
+    lastDecisionResolutionRef.current = "";
+    decisionActionRef.current = null;
+    pendingDecisionUndoRef.current = null;
+    if (decisionToastTimeoutRef.current) {
+      window.clearTimeout(decisionToastTimeoutRef.current);
+      decisionToastTimeoutRef.current = null;
+    }
+    if (decisionUndoTimeoutRef.current) {
+      window.clearTimeout(decisionUndoTimeoutRef.current);
+      decisionUndoTimeoutRef.current = null;
+    }
+    if (billieStatusTimeoutRef.current) {
+      window.clearTimeout(billieStatusTimeoutRef.current);
+      billieStatusTimeoutRef.current = null;
+    }
+    if (billieHighlightTimeoutRef.current) {
+      window.clearTimeout(billieHighlightTimeoutRef.current);
+      billieHighlightTimeoutRef.current = null;
+    }
+    auditRequestIdRef.current += 1;
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const mediaQuery = window.matchMedia("(max-width: 767px)");
+    const handleMediaChange = (event) => {
+      setIsCompactViewport(Boolean(event?.matches));
+    };
+    setIsCompactViewport(mediaQuery.matches);
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleMediaChange);
+      return () => mediaQuery.removeEventListener("change", handleMediaChange);
+    }
+    mediaQuery.addListener(handleMediaChange);
+    return () => mediaQuery.removeListener(handleMediaChange);
+  }, []);
+
+  useEffect(() => {
+    if (!readinessDebugEnabled) {
+      setReadinessPanelOpen(false);
+      setReadinessDebugEvents([]);
+      return;
+    }
+    setReadinessPanelOpen(true);
+  }, [readinessDebugEnabled]);
+
+  useEffect(() => {
+    if (!readinessDebugEnabled || typeof window === "undefined") {
+      return;
+    }
+    const handleReadinessEvent = (event) => {
+      const detail = event?.detail;
+      if (!detail?.event) {
+        return;
+      }
+      setReadinessDebugEvents((previous) => {
+        const nextEvent = {
+          event: detail.event,
+          payload: detail.payload ?? {},
+          timestamp: Number.isFinite(detail.timestamp) ? detail.timestamp : Date.now()
+        };
+        const tail = previous.slice(-11);
+        return [...tail, nextEvent];
+      });
+    };
+    window.addEventListener("invoice:readiness-debug", handleReadinessEvent);
+    return () => window.removeEventListener("invoice:readiness-debug", handleReadinessEvent);
+  }, [readinessDebugEnabled]);
+
+  useEffect(() => {
+    const previousCount = lastDecisionCountRef.current;
+    if (openDecisions.length > 0 && previousCount === 0) {
+      scrollToSection(decisionsRef);
+    }
+    lastDecisionCountRef.current = openDecisions.length;
+  }, [openDecisions.length]);
+
+  useEffect(() => {
+    listEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length, isTyping]);
+
+  useEffect(() => {
+    return () => {
+      if (decisionToastTimeoutRef.current) {
+        window.clearTimeout(decisionToastTimeoutRef.current);
+        decisionToastTimeoutRef.current = null;
+      }
+      if (decisionUndoTimeoutRef.current) {
+        window.clearTimeout(decisionUndoTimeoutRef.current);
+        decisionUndoTimeoutRef.current = null;
+      }
+      if (billieStatusTimeoutRef.current) {
+        window.clearTimeout(billieStatusTimeoutRef.current);
+        billieStatusTimeoutRef.current = null;
+      }
+      if (billieHighlightTimeoutRef.current) {
+        window.clearTimeout(billieHighlightTimeoutRef.current);
+        billieHighlightTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    intakePhaseRef.current = intakePhase;
+    summaryLockRef.current = intakePhase === "ready_to_generate";
+  }, [intakePhase]);
+
+  useEffect(() => {
+    if (!isReadinessDebugEnabled()) {
+      return;
+    }
+    if (readinessSignature === readinessSignatureRef.current) {
+      return;
+    }
+    readinessSignatureRef.current = readinessSignature;
+    console.log("[readiness:snapshot]", readinessSnapshot);
+  }, [readinessSignature]);
+
+  useEffect(() => {
+    if (importSeedRef.current) {
+      return;
+    }
+    const seedFromScoped = readDraftFromStorage(importSeedStorageKey);
+    const seedFromLegacy =
+      !seedFromScoped && importSeedStorageKey !== legacyImportSeedStorageKey
+        ? readDraftFromStorage(legacyImportSeedStorageKey)
+        : null;
+    const seed = seedFromScoped ?? seedFromLegacy;
+    if (!seed) {
+      return;
+    }
+    importSeedRef.current = true;
+    window.localStorage.removeItem(seedFromScoped ? importSeedStorageKey : legacyImportSeedStorageKey);
+
+    const payload = seed?.payload ?? {};
+    const nextOpenDecisions = Array.isArray(payload?.openDecisions) ? payload.openDecisions : [];
+    const nextAssumptions = Array.isArray(payload?.assumptions) ? payload.assumptions : [];
+    const nextUnparsedLines = Array.isArray(payload?.unparsedLines) ? payload.unparsedLines : [];
+    const fileName = typeof seed?.fileName === "string" ? seed.fileName.trim() : "";
+    const notes = typeof seed?.notes === "string" ? seed.notes.trim() : "";
+    const userText =
+      [fileName ? `Uploaded invoice: ${fileName}.` : "", notes].filter(Boolean).join(" ").trim() ||
+      "Uploaded an invoice to import.";
+    const seedTranscript =
+      typeof seed?.sourceText === "string" && seed.sourceText.trim()
+        ? seed.sourceText.trim()
+        : userText;
+    const nextSeedFollowUp = payload?.needsFollowUp ? payload.followUp ?? null : null;
+    const nextSeedInvoice = payload?.needsFollowUp ? null : payload?.invoice ?? null;
+    const nextSeedQuality = payload?.qualityGate ?? null;
+    const seedReadiness = evaluateResponseReadiness({
+      followUp: nextSeedFollowUp,
+      finishedInvoice: nextSeedInvoice,
+      openDecisionCount: nextOpenDecisions.length,
+      qualityBlockerCount: nextSeedQuality?.blockerCount ?? 0,
+      pendingLaborRate: null
+    });
+    logReadinessEvent("import_seed", {
+      payloadNeedsFollowUp: Boolean(payload?.needsFollowUp),
+      seedTargetPhase: seedReadiness.targetPhase,
+      seedLockReason: seedReadiness.lockReason,
+      seedCanGenerate: seedReadiness.canGenerate,
+      openDecisionCount: nextOpenDecisions.length,
+      qualityBlockerCount: nextSeedQuality?.blockerCount ?? 0,
+      hasInvoice: Boolean(nextSeedInvoice)
+    });
+    const seededMessages = [
+      initialIntakeMessages[0],
+      { id: `msg-${Date.now()}-user`, role: "user", text: userText }
+    ];
+
+    setMessages(seededMessages);
+    setInputValue("");
+    setIsTyping(false);
+    setAuditSummary("");
+    setAuditSummaryAt(null);
+    setSummaryUpdatedAt(null);
+    setOpenDecisions(nextOpenDecisions);
+    setAssumptions(nextAssumptions);
+    setUnparsedLines(nextUnparsedLines);
+    setOutputQuality(nextSeedQuality);
+    setAuditStatus(payload?.auditStatus ?? null);
+    setStructuredInvoice(payload?.structuredInvoice ?? null);
+    setPendingLaborRate(null);
+    setPendingTaxRate(null);
+
+    lastMessagesRef.current = seededMessages;
+    lastTranscriptRef.current = seedTranscript;
+    lastUserMessageRef.current = userText;
+    lastIntakeModeRef.current = "full";
+
+    if (payload?.needsFollowUp) {
+      setLaborPricingNote("");
+      setFollowUp(payload.followUp ?? null);
+      setFinishedInvoice(null);
+      setIntakePhase(seedReadiness.targetPhase);
+      return;
+    }
+
+    const nextInvoice = payload?.invoice ?? null;
+    if (!nextInvoice) {
+      appendAiMessage(
+        "I could not build a usable draft from that upload. Try another file, or paste the key details."
+      );
+      setIntakePhase(seedReadiness.targetPhase);
+      return;
+    }
+
+    setFollowUp(null);
+    setFinishedInvoice(nextInvoice);
+    const decisionSignature = nextOpenDecisions.map((decision) => decision.prompt).sort().join("|");
+    openDecisionSignatureRef.current = decisionSignature;
+    setIntakePhase(seedReadiness.targetPhase);
+    appendSummaryMessage(
+      buildSummaryText(
+        nextInvoice,
+        nextOpenDecisions,
+        nextUnparsedLines.length,
+        nextSeedQuality?.blockerCount ?? 0
+      ),
+      buildReviewPayload(
+        nextInvoice,
+        nextOpenDecisions,
+        nextUnparsedLines,
+        seedTranscript,
+        nextSeedQuality
+      )
+    );
+  }, [importSeedStorageKey, legacyImportSeedStorageKey]);
+
+  useEffect(() => {
+    if (hasReviewCard && !hasAutoCollapsedRef.current) {
+      setAssumptionsCollapsed(true);
+      hasAutoCollapsedRef.current = true;
+    }
+  }, [hasReviewCard]);
+
+  useEffect(() => {
+    openDecisionsRef.current = openDecisions;
+  }, [openDecisions]);
+
+  useEffect(() => {
+    setShowAllDecisions(false);
+    setDecisionFocusIndex(0);
+    setShowDecisionWhy(false);
+  }, [openDecisions.length]);
+
+  useEffect(() => {
+    assumptionsRef.current = assumptions;
+  }, [assumptions]);
+
+  useEffect(() => {
+    unparsedLinesRef.current = unparsedLines;
+  }, [unparsedLines]);
+
+  const { submitUserMessage } = createIntakeActionHandlers({
+    requestIdRef,
+    lastDecisionResolutionRef,
+    lastTranscriptRef,
+    setMessages,
+    setInputValue,
+    setPendingTaxRate,
+    setPendingLaborRate,
+    setLaborPricingNote,
+    setSavedLaborRate,
+    setFinishedInvoice,
+    setIntakePhase,
+    setIsTyping,
+    appendAiMessage,
+    appendSummaryMessage,
+    runIntakeRequest,
+    runDecisionActionRequest,
+    runLaborPricingRequest,
+    evaluateIntakeReadiness,
+    logReadinessEvent,
+    buildSummaryText,
+    buildReviewPayload,
+    buildTranscript,
+    extractTaxRateFromText,
+    isExplicitNoTax,
+    storeLaborRate: (rate) => storeLaborRate(rate, laborRateStorageKey),
+    onBilliePatchApplied: handleBilliePatchApplied,
+    onBilliePatchRejected: handleBilliePatchRejected,
+    onBillieEditLifecycle: handleBillieEditLifecycle,
+    rejectionKeywords,
+    getDecisionAction: () => decisionActionRef.current,
+    getState: () => ({
+      structuredInvoice,
+      finishedInvoice,
+      openDecisions,
+      assumptions,
+      unparsedLines,
+      outputQuality,
+      pendingLaborRate,
+      pendingTaxRate,
+      messages,
+      isTyping,
+      intakePhase,
+      intakeReadiness,
+      hasReviewCard,
+      showChatInput: showChatInput || billieWorkspaceVisible,
+      followUp
+    })
+  });
+
+  const handleSend = (event) => {
+    event.preventDefault();
+    submitUserMessage(inputValue);
+  };
+
+  return (
+    <div className="flex min-h-screen flex-col bg-slate-50">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-4">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="text-sm font-semibold text-emerald-700"
+              onClick={() => navigate("/")}
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              className="text-sm font-semibold text-slate-600 hover:text-slate-900"
+              onClick={handleResetIntake}
+            >
+              New intake
+            </button>
+          </div>
+          <div className="text-right">
+            <p className="text-sm font-semibold text-slate-900">Billie at NoteBill</p>
+            <p className="text-xs text-slate-500">Draft in progress</p>
+            <button
+              type="button"
+              className="mt-1 text-xs font-medium text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
+              onClick={() => navigate("/")}
+            >
+              {authSession?.email ? `Account: ${authSession.email}` : "Account: local mode"}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="flex flex-1 flex-col">
+        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-28">
+          <div className="flex-1 overflow-y-auto pb-4 pt-6">
+            <div className="space-y-6">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Intake steps
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                  {wizardSteps.map((step, index) => {
+                    const status =
+                      index < wizardStepIndex ? "complete" : index === wizardStepIndex ? "active" : "upcoming";
+                    const badgeClass =
+                      status === "complete"
+                        ? "bg-emerald-600 text-white"
+                        : status === "active"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-slate-100 text-slate-500";
+                    return (
+                      <div key={step.id} className="flex items-center gap-2">
+                        <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${badgeClass}`}>
+                          {index + 1}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-700">{step.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {wizardStep === "paste" ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <p className="text-sm font-semibold text-slate-900">Paste your notes</p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Paste messy notes as-is: dates, hours, rates, parts, and unsure items.
+                  </p>
+                  <textarea
+                    id="ai-intake-input"
+                    rows={6}
+                    className="mt-4 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    placeholder="Example: Jan 10 fixed sink, 2h at $90/hr. Parts: washer $5. Not sure if cabinet adjustment should be billed."
+                    value={inputValue}
+                    onChange={(event) => setInputValue(event.target.value)}
+                  />
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                      onClick={() => submitUserMessage(inputValue)}
+                      disabled={!inputValue.trim() || isTyping}
+                    >
+                      Build invoice
+                    </button>
+                    {isTyping ? <p className="text-xs text-slate-500">Reading your notes…</p> : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {intakePhase === "awaiting_follow_up" && followUp ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                  <p className="text-sm font-semibold text-amber-900">Pricing needed</p>
+                  <p className="mt-1 text-sm text-amber-900">{followUp.message}</p>
+                  {quickReplies.length > 0 ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {quickReplies.map((reply) => (
+                        <button
+                          key={reply.id}
+                          type="button"
+                          className="rounded-full border border-amber-200 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-400"
+                          onClick={() => submitUserMessage(reply.value)}
+                          disabled={isTyping}
+                        >
+                          {reply.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <textarea
+                      id="ai-intake-input"
+                      rows={2}
+                      className="flex-1 resize-none rounded-xl border border-amber-200 px-4 py-2 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      placeholder="Reply with a rate and hours or a flat amount…"
+                      value={inputValue}
+                      onChange={(event) => setInputValue(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                      onClick={() => submitUserMessage(inputValue)}
+                      disabled={!inputValue.trim() || isTyping}
+                    >
+                      Send
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {visibleMessages.map((message) => {
+                if (message.kind === "timeout" && message.payload) {
+                  const isLaborTimeout = message.payload.context === "labor";
+                  const canRetryShort =
+                    message.payload.context === "intake" && message.payload.mode !== "fast";
+                  return (
+                    <div key={message.id} className="flex justify-start">
+                      <div className="w-full rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm shadow-sm">
+                        <p className="text-sm font-semibold text-amber-900">
+                          {isLaborTimeout ? "Still checking labor pricing..." : "Still working..."}
+                        </p>
+                        <p className="mt-1 text-sm text-amber-800">
+                          {canRetryShort
+                            ? "Do you want me to keep going, or run a faster pass?"
+                            : "Do you want me to keep going, or cancel?"}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900"
+                            onClick={() => handleTimeoutKeepWorking(message.id)}
+                            disabled={isTyping}
+                          >
+                            Keep working
+                          </button>
+                          {canRetryShort ? (
+                            <button
+                              type="button"
+                              className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900"
+                              onClick={retryWithShortPass}
+                              disabled={isTyping}
+                            >
+                              Retry faster
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900"
+                            onClick={() => handleTimeoutCancel(message.id)}
+                            disabled={isTyping}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (message.kind === "review" && message.payload) {
+                  const payload = message.payload;
+                  const decisionKeywordSets = buildDecisionKeywordSets(
+                    payload.decisions ?? [],
+                    extractKeywords
+                  );
+                  const {
+                    sections,
+                    quickFixes,
+                    pendingDecisionCount,
+                    foundText,
+                    decisionsText,
+                    nextStepText,
+                    decisionCtaLabel,
+                    capturedPreviewSummary,
+                    capturedPreviewHiddenCount,
+                    previewItems,
+                    remainingPreviewCount,
+                    hasMissingAmounts,
+                    hasLaborGaps,
+                    hasUnparsed,
+                    hasReviewSecondaryContent
+                  } = buildReviewSnapshotModel({
+                    payload,
+                    formatMoney,
+                    formatLaborDuration,
+                    formatDisplayDescription
+                  });
+                  const getLineItemStatusForReview = (lineItem, decisionKeywords) =>
+                    getLineItemStatus(lineItem, decisionKeywords, extractKeywords);
+
+                  return (
+                    <ReviewSnapshotCard
+                      key={message.id}
+                      messageId={message.id}
+                      showAssumptionsCard={showAssumptionsCard}
+                      isTyping={isTyping}
+                      isCompactViewport={isCompactViewport}
+                      reviewDetailsToggleLabel={reviewDetailsToggleLabel}
+                      hasReviewSecondaryContent={hasReviewSecondaryContent}
+                      showReviewSecondary={showReviewSecondary}
+                      showReviewExpandedSections={showReviewExpandedSections}
+                      payload={payload}
+                      sections={sections}
+                      quickFixes={quickFixes}
+                      pendingDecisionCount={pendingDecisionCount}
+                      foundText={foundText}
+                      decisionsText={decisionsText}
+                      nextStepText={nextStepText}
+                      decisionCtaLabel={decisionCtaLabel}
+                      capturedPreviewSummary={capturedPreviewSummary}
+                      capturedPreviewHiddenCount={capturedPreviewHiddenCount}
+                      previewItems={previewItems}
+                      remainingPreviewCount={remainingPreviewCount}
+                      hasMissingAmounts={hasMissingAmounts}
+                      hasLaborGaps={hasLaborGaps}
+                      hasUnparsed={hasUnparsed}
+                      auditStatus={auditStatus}
+                      auditSummary={auditSummary}
+                      decisionKeywordSets={decisionKeywordSets}
+                      focusInputWithValue={focusInputWithValue}
+                      setReviewCardCollapsed={setReviewCardCollapsed}
+                      scrollToSection={scrollToSection}
+                      decisionsRef={decisionsRef}
+                      getLineItemStatus={getLineItemStatusForReview}
+                      formatMoney={formatMoney}
+                      formatLaborDuration={formatLaborDuration}
+                      recentlyChangedLineIds={recentlyChangedLines.ids}
+                      recentlyChangedDescriptions={recentlyChangedLines.descriptions}
+                      billieStatus={billieStatus}
+                      submitUserMessage={submitUserMessage}
+                    />
+                  );
+                }
+
+                return (
+                  <div
+                    key={message.id}
+                    className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
+                        message.role === "user"
+                          ? "bg-emerald-600 text-white"
+                          : "bg-white text-slate-800"
+                      }`}
+                    >
+                      {message.text}
+                    </div>
+                  </div>
+                );
+              })}
+              {isTyping && billieStatus?.kind !== "working" ? (
+                <div className="flex justify-start">
+                  <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">
+                    <span>Billie is typing</span>
+                    <span className="ml-1 inline-flex w-4 justify-start" aria-hidden="true">
+                      <span className="typing-dot">.</span>
+                      <span className="typing-dot">.</span>
+                      <span className="typing-dot">.</span>
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+              <div ref={listEndRef} />
+            </div>
+          </div>
+          <IntakeDecisionPanel
+            showAssumptionsCard={showAssumptionsCard}
+            hasReviewCard={hasReviewCard}
+            openDecisionCount={displayOpenDecisionCount}
+            canGenerateInvoice={canGenerateInvoice}
+            showContextDetailsToggle={showContextDetailsToggle}
+            isCompactViewport={isCompactViewport}
+            setAssumptionsCollapsed={setAssumptionsCollapsed}
+            contextDetailsToggleLabel={contextDetailsToggleLabel}
+            summaryTimeLabel={summaryTimeLabel}
+            showConfirmDetails={showConfirmDetails}
+            showQuickDecisions={showQuickDecisions}
+            hasVisibleDetails={hasVisibleDetails}
+            hasDecisions={hasDecisions}
+            decisionsRef={decisionsRef}
+            quickDecisionHeading={quickDecisionHeading}
+            decisionProgressLabel={decisionProgressLabel}
+            showDecisionWhy={showDecisionWhy}
+            setShowDecisionWhy={setShowDecisionWhy}
+            isTyping={isTyping}
+            decisionApplyPending={decisionApplyPending}
+            decisionApplyLabel={optimisticDecisionState?.label ?? "Billie: Applying decision..."}
+            visibleDecisionItems={visibleDecisionItems}
+            buildDecisionActions={buildDecisionActions}
+            decisionIncludeButtonClass={decisionIncludeButtonClass}
+            decisionExcludeButtonClass={decisionExcludeButtonClass}
+            handleDecisionAction={handleDecisionAction}
+            hasMoreDecisions={hasMoreDecisions}
+            showAllDecisions={showAllDecisions}
+            clampedDecisionIndex={clampedDecisionIndex}
+            decisionItems={visibleDecisionSource}
+            setDecisionFocusIndex={setDecisionFocusIndex}
+            setShowAllDecisions={setShowAllDecisions}
+            taxAssumptionPresent={taxAssumptionPresent}
+            pendingTaxRate={pendingTaxRate}
+            setPendingTaxRate={setPendingTaxRate}
+            appendAiMessage={appendAiMessage}
+            suggestedTaxRate={suggestedTaxRate}
+            focusInputWithValue={focusInputWithValue}
+            showAssumptionDetails={showAssumptionDetails}
+            unparsedRef={unparsedRef}
+            auditStatus={auditStatus}
+            auditSummary={auditSummary}
+            auditSummaryTimeLabel={auditSummaryTimeLabel}
+            handleManualDeepAudit={handleManualDeepAudit}
+            structuredInvoice={structuredInvoice}
+            unparsedItems={unparsedItems}
+            submitUserMessage={submitUserMessage}
+            assumptionItems={assumptionItems}
+            auditAssumptionItems={auditAssumptionItems}
+            primaryCtaDisabled={primaryCtaDisabled}
+            handlePrimaryCta={handlePrimaryCta}
+            primaryCtaLabel={primaryCtaLabel}
+            ctaHelper={ctaHelper}
+          />
+        </div>
+      </main>
+
+      {decisionToast ? (
+        <div className="fixed bottom-24 left-0 right-0 z-40 flex justify-center px-4">
+          <div className="max-w-3xl flex-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <span>{decisionToast}</span>
+              {decisionUndoState ? (
+                <button
+                  type="button"
+                  className="rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-400 hover:text-emerald-900"
+                  onClick={handleUndoDecision}
+                >
+                  Undo
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {readinessDebugEnabled ? (
+        <aside className="fixed bottom-24 right-3 z-40 w-[min(92vw,24rem)] rounded-xl border border-slate-300 bg-white/95 text-xs shadow-lg backdrop-blur-sm">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-2 rounded-t-xl border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700"
+            onClick={() => setReadinessPanelOpen((prev) => !prev)}
+          >
+            <span>Readiness debug</span>
+            <span className="text-[11px] text-slate-500">
+              {readinessPanelOpen ? "Hide" : "Show"}
+            </span>
+          </button>
+          {readinessPanelOpen ? (
+            <div className="space-y-3 px-3 py-2">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                {readinessDebugFields.map(([label, value]) => (
+                  <React.Fragment key={label}>
+                    <span className="text-slate-500">{label}</span>
+                    <span className="font-mono text-[11px] text-slate-700">{String(value)}</span>
+                  </React.Fragment>
+                ))}
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                <p className="font-semibold text-slate-600">latest snapshot</p>
+                <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] text-slate-600">
+                  {JSON.stringify(readinessDebugSnapshot, null, 2)}
+                </pre>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                <p className="font-semibold text-slate-600">
+                  events ({readinessDebugEvents.length})
+                </p>
+                <div className="mt-1 max-h-36 space-y-1 overflow-auto">
+                  {readinessDebugEvents.length === 0 ? (
+                    <p className="text-[10px] text-slate-500">No readiness events yet.</p>
+                  ) : (
+                    readinessDebugEvents
+                      .slice()
+                      .reverse()
+                      .map((entry, index) => (
+                        <div
+                          key={`${entry.timestamp}-${entry.event}-${index}`}
+                          className="rounded border border-slate-200 bg-white px-2 py-1"
+                        >
+                          <p className="font-mono text-[10px] text-slate-700">
+                            {entry.event} @{" "}
+                            {new Date(entry.timestamp).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit"
+                            })}
+                          </p>
+                          <pre className="mt-0.5 whitespace-pre-wrap break-words font-mono text-[10px] text-slate-500">
+                            {JSON.stringify(entry.payload)}
+                          </pre>
+                        </div>
+                      ))
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </aside>
+      ) : null}
+
+      {(showChatInput || billieWorkspaceVisible) && intakePhase !== "awaiting_follow_up" ? (
+        <form
+          onSubmit={handleSend}
+          className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white"
+        >
+          <div className="mx-auto max-w-3xl space-y-2 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Billie workspace
+              </p>
+              <div className="flex items-center gap-2">
+                {billieStatus ? (
+                  <span
+                    className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                      billieStatus.kind === "safe"
+                        ? "bg-emerald-50 text-emerald-700"
+                        : billieStatus.kind === "warning"
+                          ? "bg-amber-100 text-amber-800"
+                          : billieStatus.kind === "working"
+                            ? "bg-sky-50 text-sky-700"
+                            : "bg-slate-100 text-slate-600"
+                    }`}
+                  >
+                    {billieStatus.kind === "safe"
+                      ? `✓ ${billieStatus.text}`
+                      : billieStatus.kind === "warning"
+                        ? `⚠ ${billieStatus.text}`
+                        : billieStatus.kind === "working"
+                          ? (
+                            <>
+                              <span>{billieStatus.text}</span>
+                              <span className="ml-1 inline-flex w-4 justify-start" aria-hidden="true">
+                                <span className="typing-dot">.</span>
+                                <span className="typing-dot">.</span>
+                                <span className="typing-dot">.</span>
+                              </span>
+                            </>
+                          )
+                          : billieStatus.text}
+                  </span>
+                ) : null}
+                {billieUndoState ? (
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                    onClick={handleUndoBilliePatch}
+                  >
+                    Undo last Billie change
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {billieActionChips.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {billieActionChips.map((chip) => (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-400"
+                    onClick={() => submitUserMessage(chip.value)}
+                    disabled={isTyping}
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+              <label className="sr-only" htmlFor="ai-intake-input">
+                Message
+              </label>
+              <textarea
+                id="ai-intake-input"
+                rows={1}
+                className="max-h-32 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                placeholder={intakeComplete ? "Ask Billie to refine wording..." : "Ask Billie..."}
+                value={inputValue}
+                onChange={(event) => setInputValue(event.target.value)}
+              />
+              </div>
+              <button
+                type="submit"
+                className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                disabled={!inputValue.trim() || (isTyping && !canSendWhileTyping)}
+              >
+                Ask Billie
+              </button>
+            </div>
+          </div>
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
+  window.InvoiceIntakeFeature = {
+    AIIntake
+  };
+})();

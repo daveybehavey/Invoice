@@ -1,0 +1,1024 @@
+(() => {
+  const { useEffect, useRef, useState } = React;
+  const requestIdentity = window.InvoiceRequestIdentity;
+  const apiFetch = requestIdentity?.apiFetch ?? window.fetch.bind(window);
+
+  const formatUtils = window.InvoiceFormatUtils;
+  if (!formatUtils) {
+    throw new Error(
+      "Missing /utils/formatters.js load. Ensure it is loaded before /features/manual/inspectorPanel.jsx."
+    );
+  }
+
+  const brandThemeUtils = window.InvoiceBrandTheme;
+  if (!brandThemeUtils) {
+    throw new Error(
+      "Missing /utils/brandTheme.js load. Ensure it is loaded before /features/manual/inspectorPanel.jsx."
+    );
+  }
+
+  const styleCatalogUtils = window.InvoiceManualStyleCatalog;
+  if (!styleCatalogUtils) {
+    throw new Error(
+      "Missing /utils/manualStyleCatalog.js load. Ensure it is loaded before /features/manual/inspectorPanel.jsx."
+    );
+  }
+
+  const { polishLineItemDescription } = formatUtils;
+  const { DEFAULT_ACCENT_COLOR, buildAccentPalette } = brandThemeUtils;
+  const { STYLE_PRESETS, STYLE_OPTIONS, TEMPLATE_PREVIEWS } = styleCatalogUtils;
+
+function InspectorPanel({
+  activeTab,
+  onTabChange,
+  onClose,
+  showCloseButton,
+  hideInternalTabs,
+  logoUrl,
+  onLogoChange,
+  onLogoRemove,
+  stylePreset,
+  onStylePresetChange,
+  accentColor,
+  onAccentColorChange,
+  onPrint,
+  onDownloadPdf,
+  onSaveInvoice,
+  saveStatus,
+  saveError,
+  saveNeedsAuth,
+  onSaveAuthRetry,
+  onGoToLauncherSignIn,
+  savedInvoiceId,
+  previewData,
+  toneSource,
+  onPolishDescriptions,
+  buildRewriteInvoicePayload,
+  onApplyRewrite,
+  buildEditableInvoicePayload,
+  onApplyAiEdit
+}) {
+  const [toneAction, setToneAction] = useState(null);
+  const [selectedTone, setSelectedTone] = useState(null);
+  const [toneStatus, setToneStatus] = useState("");
+  const [toneLoading, setToneLoading] = useState(false);
+  const [toneError, setToneError] = useState("");
+  const [pendingRewrite, setPendingRewrite] = useState(null);
+  const toneRequestIdRef = useRef(0);
+  const [assistantInstruction, setAssistantInstruction] = useState("");
+  const [assistantStatus, setAssistantStatus] = useState("");
+  const [assistantError, setAssistantError] = useState("");
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantMessages, setAssistantMessages] = useState([]);
+  const [pendingAssistantEdit, setPendingAssistantEdit] = useState(null);
+  const [previewTemplateId, setPreviewTemplateId] = useState(null);
+  const previewCloseButtonRef = useRef(null);
+  const previewFocusReturnRef = useRef(null);
+  const assistantRequestIdRef = useRef(0);
+  const tabs = [
+    { id: "style", label: "Style", content: "Style controls coming soon" },
+    { id: "tone", label: "Tone", content: "Tone controls coming soon" },
+    { id: "assistant", label: "Edit with Billie", content: "Billie edits" },
+    { id: "export", label: "Export", content: "Export options coming soon" }
+  ];
+  const styleOptions = STYLE_OPTIONS;
+  const toneOptions = ["Formal", "Neutral", "Friendly"];
+  const accentSwatches = ["#0f9d6e", "#0f766e", "#1d4ed8", "#be123c", "#7c3aed", "#111827"];
+  const accent = buildAccentPalette(accentColor);
+  const accentButtonStyle = {
+    backgroundColor: accent.primary,
+    borderColor: accent.primary,
+    color: "#ffffff"
+  };
+  const accentGhostButtonStyle = {
+    backgroundColor: accent.soft,
+    borderColor: accent.border,
+    color: accent.text
+  };
+
+  useEffect(() => {
+    if (!previewTemplateId) {
+      return undefined;
+    }
+    previewFocusReturnRef.current = document.activeElement;
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setPreviewTemplateId(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    window.requestAnimationFrame(() => {
+      previewCloseButtonRef.current?.focus();
+    });
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      const previous = previewFocusReturnRef.current;
+      if (previous && typeof previous.focus === "function") {
+        previous.focus();
+      }
+    };
+  }, [previewTemplateId]);
+
+  const startRewrite = (tone) => {
+    setSelectedTone(tone);
+    const payloadResult = buildRewriteInvoicePayload();
+    if (payloadResult.error) {
+      setToneError(payloadResult.error);
+      setToneLoading(false);
+      setPendingRewrite(null);
+      return;
+    }
+    const { invoice } = payloadResult;
+    toneRequestIdRef.current += 1;
+    const requestId = toneRequestIdRef.current;
+    setToneLoading(true);
+    setToneError("");
+    setPendingRewrite(null);
+    setToneStatus("");
+    apiFetch("/api/invoices/reword-full", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invoice, tone })
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Rewrite failed");
+        }
+        return response.json();
+      })
+      .then((payload) => {
+        if (requestId !== toneRequestIdRef.current) {
+          return;
+        }
+        const rewrittenInvoice = payload?.invoice;
+        setPendingRewrite({
+          lineItems: rewrittenInvoice?.lineItems ?? [],
+          notes: rewrittenInvoice?.notes ?? ""
+        });
+        setToneLoading(false);
+      })
+      .catch((error) => {
+        if (requestId !== toneRequestIdRef.current) {
+          return;
+        }
+        setToneError("Rewrite failed. Try again.");
+        setToneLoading(false);
+      });
+  };
+
+  const submitAssistantEdit = () => {
+    const instruction = assistantInstruction.trim();
+    if (!instruction) {
+      setAssistantError("Add an instruction for Billie.");
+      return;
+    }
+    if (pendingAssistantEdit) {
+      setAssistantError("Apply or discard the pending changes first.");
+      return;
+    }
+    const payloadResult = buildEditableInvoicePayload?.();
+    if (!payloadResult || payloadResult.error) {
+      setAssistantError(payloadResult?.error ?? "Add at least one line item before editing.");
+      return;
+    }
+    const { invoice } = payloadResult;
+    assistantRequestIdRef.current += 1;
+    const requestId = assistantRequestIdRef.current;
+    setAssistantLoading(true);
+    setAssistantError("");
+    setAssistantStatus("");
+    setAssistantMessages((prev) => [...prev, { role: "user", text: instruction }]);
+    apiFetch("/api/invoices/edit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invoice, instruction })
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Edit failed");
+        }
+        return response.json();
+      })
+      .then((payload) => {
+        if (requestId !== assistantRequestIdRef.current) {
+          return;
+        }
+        if (payload?.followUp) {
+          setAssistantStatus(payload.followUp);
+          setAssistantMessages((prev) => [...prev, { role: "ai", text: payload.followUp }]);
+          setAssistantLoading(false);
+          setAssistantInstruction("");
+          return;
+        }
+        if (payload?.invoice) {
+          const summary = buildEditSummary(invoice, payload.invoice);
+          setPendingAssistantEdit({ invoice: payload.invoice, summary });
+          setAssistantMessages((prev) => [
+            ...prev,
+            {
+              role: "ai",
+              text: "I drafted updates. Review and apply when ready."
+            }
+          ]);
+          setAssistantInstruction("");
+        } else {
+          setAssistantError("No updates returned. Try again.");
+        }
+        setAssistantLoading(false);
+      })
+      .catch(() => {
+        if (requestId !== assistantRequestIdRef.current) {
+          return;
+        }
+        setAssistantError("Edit failed. Try again.");
+        setAssistantLoading(false);
+      });
+  };
+
+  const buildEditSummary = (before, after) => {
+    if (!before || !after) {
+      return ["Review the suggested changes before applying."];
+    }
+    const summary = [];
+    if (before.customerName !== after.customerName) {
+      summary.push("Client updated");
+    }
+    if (before.issueDate !== after.issueDate) {
+      summary.push("Invoice date updated");
+    }
+    if (before.invoiceNumber !== after.invoiceNumber) {
+      summary.push("Invoice number updated");
+    }
+    if ((before.notes ?? "") !== (after.notes ?? "")) {
+      summary.push("Notes updated");
+    }
+    const beforeLines = Array.isArray(before.lineItems) ? before.lineItems : [];
+    const afterLines = Array.isArray(after.lineItems) ? after.lineItems : [];
+    if (beforeLines.length !== afterLines.length) {
+      summary.push(`Line items: ${beforeLines.length} → ${afterLines.length}`);
+    }
+    const changes = [];
+    afterLines.forEach((line) => {
+      const match =
+        beforeLines.find((item) => item.id && line.id && item.id === line.id) ??
+        beforeLines.find((item) => item.description === line.description);
+      if (!match) {
+        changes.push(`Added: ${line.description}`);
+        return;
+      }
+      if (
+        match.description !== line.description ||
+        match.quantity !== line.quantity ||
+        match.unitPrice !== line.unitPrice
+      ) {
+        changes.push(`Updated: ${line.description || match.description}`);
+      }
+    });
+    const trimmedChanges = changes.filter(Boolean).slice(0, 3);
+    if (trimmedChanges.length > 0) {
+      summary.push(...trimmedChanges);
+    }
+    if (summary.length === 0) {
+      summary.push("Minor wording updates");
+    }
+    return summary;
+  };
+
+  const handleApplyPendingEdit = () => {
+    if (!pendingAssistantEdit) {
+      return;
+    }
+    onApplyAiEdit?.(pendingAssistantEdit.invoice);
+    setAssistantMessages((prev) => [...prev, { role: "ai", text: "Changes applied." }]);
+    setPendingAssistantEdit(null);
+  };
+
+  const handleDiscardPendingEdit = () => {
+    if (!pendingAssistantEdit) {
+      return;
+    }
+    setAssistantMessages((prev) => [...prev, { role: "ai", text: "Okay — discarded that draft." }]);
+    setPendingAssistantEdit(null);
+  };
+
+  const buildPreview = (items, previewNotes) => {
+    const descriptionLines = items
+      .filter((item) => item.description && item.description.trim())
+      .map((item, index) => `${index + 1}. ${item.description.trim()}`)
+      .join("\n");
+    if (toneAction === "descriptions") {
+      return descriptionLines || "No descriptions yet.";
+    }
+    const notesText = previewNotes?.trim() ? previewNotes.trim() : "No notes yet.";
+    return `Descriptions:\n${descriptionLines || "No descriptions yet."}\n\nNotes:\n${notesText}`;
+  };
+
+  const activeContent = tabs.find((tab) => tab.id === activeTab)?.content ?? "";
+  const beforePreview = buildPreview(toneSource?.lineItems ?? [], toneSource?.notes ?? "");
+  const afterPreview = pendingRewrite
+    ? buildPreview(pendingRewrite.lineItems ?? [], pendingRewrite.notes ?? "")
+    : toneLoading
+      ? "Generating preview..."
+      : selectedTone
+        ? "Select a tone to see a preview."
+        : "Select a tone to see a preview.";
+  const templateCatalog = STYLE_PRESETS;
+  const templatePreviews = TEMPLATE_PREVIEWS;
+  const previewTemplate = previewTemplateId ? templateCatalog[previewTemplateId] : null;
+  const previewIsSelected = previewTemplateId && stylePreset === previewTemplateId;
+  const previewPreset = previewTemplate ?? templateCatalog.default;
+  const previewLineItems = Array.isArray(previewData?.lineItems) ? previewData.lineItems : [];
+  const parsedLineItems = previewLineItems
+    .filter(
+      (item) =>
+        item &&
+        (item.description?.trim() || `${item.qty ?? ""}`.trim() || `${item.rate ?? ""}`.trim())
+    )
+    .map((item) => {
+      const quantity = Number.parseFloat(`${item.qty ?? ""}`);
+      const rate = Number.parseFloat(`${item.rate ?? ""}`);
+      const hasQuantity = Number.isFinite(quantity);
+      const hasRate = Number.isFinite(rate);
+      return {
+        id: item.id,
+        description: polishLineItemDescription(item.description?.trim()) || "Untitled line item",
+        qty: hasQuantity ? quantity : null,
+        rate: hasRate ? rate : null,
+        amount: hasQuantity && hasRate ? quantity * rate : null
+      };
+    });
+  const previewItems =
+    parsedLineItems.length > 0
+      ? parsedLineItems
+      : [
+          {
+            id: "preview-placeholder",
+            description: "Add line items to see them here.",
+            qty: null,
+            rate: null,
+            amount: null,
+            placeholder: true
+          }
+        ];
+  const formatPreviewMoney = (value) =>
+    Number.isFinite(value) ? `$${value.toFixed(2)}` : "—";
+  const previewSubtotal = Number.isFinite(previewData?.subtotal)
+    ? previewData.subtotal
+    : parsedLineItems.reduce((sum, item) => sum + (item.amount ?? 0), 0);
+  const previewTaxRate = Number.parseFloat(`${previewData?.taxRate ?? ""}`);
+  const previewTaxAmount = Number.isFinite(previewData?.taxAmount)
+    ? previewData.taxAmount
+    : Number.isFinite(previewTaxRate)
+      ? previewSubtotal * (previewTaxRate / 100)
+      : 0;
+  const previewTotal = Number.isFinite(previewData?.total)
+    ? previewData.total
+    : previewSubtotal + previewTaxAmount;
+  const previewInvoiceNumber =
+    previewData?.invoiceNumber?.trim() || (previewItems[0]?.placeholder ? "Invoice" : "Invoice");
+  const previewIssueDate = previewData?.invoiceDate?.trim() || "—";
+  const previewFromDetails = previewData?.fromDetails?.trim() || "Add your business details";
+  const previewBillToDetails = previewData?.billToDetails?.trim() || "Add client details";
+  const previewNotes = previewData?.notes?.trim() || "Add payment terms or a note.";
+  const previewAccent = buildAccentPalette(previewData?.accentColor ?? accentColor ?? DEFAULT_ACCENT_COLOR);
+
+  return (
+    <>
+      <div className="flex h-full min-h-0 flex-col border border-slate-200 bg-white shadow-sm md:rounded-2xl">
+        {!hideInternalTabs ? (
+          <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+            <div className="flex gap-2">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                    activeTab === tab.id ? "" : "text-slate-600"
+                  }`}
+                  style={activeTab === tab.id ? accentButtonStyle : undefined}
+                  onClick={() => onTabChange(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            {showCloseButton ? (
+              <button
+                type="button"
+                className="text-sm font-semibold text-slate-600"
+                onClick={onClose}
+              >
+                Close
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        <div className={`flex-1 overflow-y-auto px-4 py-5 text-sm text-slate-600 ${hideInternalTabs ? "pt-4" : ""}`}>
+          {activeTab === "style" ? (
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Templates</p>
+                <div className="mt-3 grid gap-3">
+                  {styleOptions.map((option) => {
+                    const preview = templatePreviews[option.id] ?? templatePreviews.default;
+                    const isSelected = stylePreset === option.id;
+                    return (
+                      <div
+                        key={option.id}
+                        role="button"
+                        tabIndex={0}
+                        className={`w-full cursor-pointer rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-200 ${
+                          isSelected
+                            ? "shadow-sm"
+                            : "border-slate-200 bg-white hover:border-slate-300"
+                        }`}
+                        style={isSelected ? { borderColor: accent.border, backgroundColor: accent.soft } : undefined}
+                        onClick={() => onStylePresetChange(option.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            onStylePresetChange(option.id);
+                          }
+                        }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-semibold text-slate-900">
+                            {option.label}
+                          </span>
+                          {isSelected ? (
+                            <span
+                              className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                              style={accentGhostButtonStyle}
+                            >
+                              Selected
+                            </span>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          className="mt-2 text-xs font-semibold"
+                          style={{ color: accent.text }}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setPreviewTemplateId(option.id);
+                          }}
+                        >
+                          Preview
+                        </button>
+                        <div className="mt-3 space-y-2">
+                          <div className={`h-2 w-20 rounded-sm ${preview.title}`} />
+                          <div className={`h-px ${preview.rule}`} />
+                          <div className="space-y-1">
+                            <div className={`h-2 w-full rounded-sm ${preview.row}`} />
+                            <div className={`h-2 w-5/6 rounded-sm ${preview.row}`} />
+                            <div className={`h-2 w-4/6 rounded-sm ${preview.row}`} />
+                          </div>
+                          <div className="mt-2 flex items-center justify-between">
+                            <div className={`h-2 w-14 rounded-sm ${preview.totals}`} />
+                            <div className={`h-2 w-12 rounded-sm ${preview.totalStrong}`} />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-slate-900">Accent color</p>
+                <p className="text-xs text-slate-500">Applies to highlights, buttons, and totals.</p>
+                <div className="flex flex-wrap gap-2">
+                  {accentSwatches.map((swatch) => (
+                    <button
+                      key={swatch}
+                      type="button"
+                      className={`h-8 w-8 rounded-full border ${
+                        accentColor === swatch ? "border-slate-900" : "border-slate-200"
+                      }`}
+                      style={{ backgroundColor: swatch }}
+                      onClick={() => onAccentColorChange?.(swatch)}
+                      aria-label={`Set accent color ${swatch}`}
+                    />
+                  ))}
+                </div>
+                <label className="flex items-center gap-2 text-xs text-slate-600">
+                  Custom
+                  <input
+                    type="color"
+                    className="h-8 w-10 rounded border border-slate-200 bg-white p-1"
+                    value={accentColor ?? "#0f9d6e"}
+                    onChange={(event) => onAccentColorChange?.(event.target.value)}
+                  />
+                  <span className="font-mono text-[11px] text-slate-500">{accentColor ?? "#0f9d6e"}</span>
+                </label>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Logo</p>
+                <p className="mt-1 text-xs text-slate-500">PNG, JPG, or SVG</p>
+              </div>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/svg+xml"
+                className="block w-full text-sm text-slate-600"
+                onChange={onLogoChange}
+              />
+              {logoUrl ? (
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <img
+                      src={logoUrl}
+                      alt="Logo preview"
+                      className="h-16 w-auto object-contain"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="text-sm font-semibold text-slate-600"
+                    onClick={onLogoRemove}
+                  >
+                    Remove logo
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : activeTab === "tone" ? (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              Rewrite wording only. Amounts are never changed.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                onClick={() => {
+                  setToneAction("descriptions");
+                  setSelectedTone(null);
+                  setToneStatus("");
+                  setToneError("");
+                  setPendingRewrite(null);
+                }}
+              >
+                Rewrite descriptions
+              </button>
+              <button
+                type="button"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                onClick={() => {
+                  setToneAction("full");
+                  setSelectedTone(null);
+                  setToneStatus("");
+                  setToneError("");
+                  setPendingRewrite(null);
+                }}
+              >
+                Rewrite entire invoice text
+              </button>
+              <button
+                type="button"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                onClick={() => {
+                  const changedCount = Number(onPolishDescriptions?.() ?? 0);
+                  setToneStatus(
+                    changedCount > 0
+                      ? `Polished ${changedCount} line item${changedCount > 1 ? "s" : ""}.`
+                      : "No wording updates needed."
+                  );
+                  setToneError("");
+                }}
+              >
+                Quick clean descriptions
+              </button>
+            </div>
+
+            {toneAction ? (
+              <div className="space-y-3 rounded-lg border border-slate-200 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Select tone
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {toneOptions.map((tone) => (
+                    <button
+                      key={tone}
+                      type="button"
+                      className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                        selectedTone === tone ? "" : "border border-slate-200 text-slate-600"
+                      }`}
+                      style={selectedTone === tone ? accentButtonStyle : undefined}
+                      onClick={() => startRewrite(tone)}
+                    >
+                      {tone}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {toneAction ? (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Before</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{beforePreview}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">After</p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{afterPreview}</p>
+                </div>
+                <button
+                  type="button"
+                  className="w-full rounded-lg px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                  style={accentButtonStyle}
+                  disabled={!selectedTone || toneLoading || !pendingRewrite}
+                  onClick={() => {
+                    onApplyRewrite({
+                      lineItems: pendingRewrite?.lineItems ?? [],
+                      notes: pendingRewrite?.notes ?? "",
+                      mode: toneAction
+                    });
+                    setToneStatus("Changes applied.");
+                  }}
+                >
+                  Apply changes
+                </button>
+                {toneLoading ? <p className="text-xs text-slate-500">Rewriting...</p> : null}
+                {toneError ? <p className="text-xs text-rose-600">{toneError}</p> : null}
+                {toneStatus ? <p className="text-xs text-slate-500">{toneStatus}</p> : null}
+              </div>
+            ) : null}
+          </div>
+        ) : activeTab === "assistant" ? (
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Edit with Billie</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Ask for changes without retyping. Billie will only adjust what you request.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Conversation
+              </p>
+              <div className="max-h-40 space-y-2 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 p-3">
+                {assistantMessages.length > 0 ? (
+                  assistantMessages.map((message, index) => (
+                    <div
+                      key={`${message.role}-${index}`}
+                      className={`rounded-lg px-3 py-2 text-xs ${
+                        message.role === "user" ? "" : "bg-white text-slate-600"
+                      }`}
+                      style={message.role === "user" ? accentGhostButtonStyle : undefined}
+                    >
+                      <p className="font-semibold uppercase tracking-wide text-[10px]">
+                        {message.role === "user" ? "You" : "Billie"}
+                      </p>
+                      <p className="mt-1 whitespace-pre-wrap text-xs">{message.text}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    Ask for changes like “Rename the logo line item to Brand refresh” or “Remove the
+                    parking fee.”
+                  </p>
+                )}
+              </div>
+            </div>
+            <textarea
+              rows={4}
+              className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              placeholder="Example: Change the labor rate to $80/hr and remove the parking line."
+              value={assistantInstruction}
+              onChange={(event) => setAssistantInstruction(event.target.value)}
+              disabled={assistantLoading}
+            />
+            {pendingAssistantEdit ? (
+              <div
+                className="space-y-3 rounded-lg border p-3"
+                style={{ borderColor: accent.border, backgroundColor: accent.soft }}
+              >
+                <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: accent.text }}>
+                  Pending changes
+                </p>
+                <ul className="space-y-1 text-xs" style={{ color: accent.text }}>
+                  {pendingAssistantEdit.summary.map((item, index) => (
+                    <li key={`summary-${index}`}>{item}</li>
+                  ))}
+                </ul>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                    style={accentButtonStyle}
+                    onClick={handleApplyPendingEdit}
+                    disabled={assistantLoading}
+                  >
+                    Apply changes
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg border bg-white px-3 py-2 text-xs font-semibold"
+                    style={{ borderColor: accent.border, color: accent.text }}
+                    onClick={handleDiscardPendingEdit}
+                    disabled={assistantLoading}
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="w-full rounded-lg px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+              style={accentButtonStyle}
+              onClick={submitAssistantEdit}
+              disabled={assistantLoading || !!pendingAssistantEdit}
+            >
+              Draft edit
+            </button>
+            {assistantLoading ? <p className="text-xs text-slate-500">Applying changes...</p> : null}
+            {assistantError ? <p className="text-xs text-rose-600">{assistantError}</p> : null}
+            {assistantStatus ? <p className="text-xs text-slate-500">{assistantStatus}</p> : null}
+          </div>
+        ) : activeTab === "export" ? (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-slate-900">Save to library</p>
+                {saveStatus ? (
+                  <span className="text-xs font-semibold" style={{ color: accent.text }}>
+                    {saveStatus}
+                  </span>
+                ) : null}
+              </div>
+              <p className="text-xs text-slate-500">
+                Store this invoice so you can reopen or duplicate it later.
+              </p>
+              <button
+                type="button"
+                className="w-full rounded-lg px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                style={accentButtonStyle}
+                onClick={onSaveInvoice}
+                disabled={Boolean(saveStatus && saveStatus !== "Saved")}
+              >
+                {savedInvoiceId ? "Update saved invoice" : "Save invoice"}
+              </button>
+              {saveError ? <p className="text-xs text-rose-600">{saveError}</p> : null}
+              {saveNeedsAuth ? (
+                <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                  <p className="text-xs text-slate-600">Sign in, then retry save.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
+                      onClick={onGoToLauncherSignIn}
+                    >
+                      Go to launcher sign-in
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-lg border px-2 py-1 text-xs font-semibold"
+                      style={accentGhostButtonStyle}
+                      onClick={onSaveAuthRetry}
+                    >
+                      I signed in, retry
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-slate-900">Download PDF</p>
+              <p className="text-xs text-slate-500">Save a PDF copy of the current invoice.</p>
+              <button
+                type="button"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                onClick={onDownloadPdf}
+              >
+                Download PDF
+              </button>
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-slate-900">Print</p>
+              <p className="text-xs text-slate-500">Open the print dialog for this invoice.</p>
+              <button
+                type="button"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                onClick={onPrint}
+              >
+                Print
+              </button>
+            </div>
+          </div>
+        ) : (
+          activeContent
+        )}
+      </div>
+    </div>
+    {previewTemplate ? (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Template preview"
+        onClick={() => setPreviewTemplateId(null)}
+      >
+        <div
+          className="w-full max-w-3xl overflow-hidden rounded-2xl bg-white shadow-2xl"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-400">
+                Template preview
+              </p>
+              <p className="text-lg font-semibold text-slate-900">{previewTemplate.label}</p>
+            </div>
+            <button
+              type="button"
+              className="text-sm font-semibold text-slate-500"
+              onClick={() => setPreviewTemplateId(null)}
+              ref={previewCloseButtonRef}
+            >
+              Close
+            </button>
+          </div>
+          <div className="px-6 py-5">
+            <div
+              className={`rounded-2xl border p-6 ${previewPreset.shellClass} ${previewPreset.textClass}`}
+            >
+              <div className={previewPreset.sectionGap}>
+                <div className={`flex items-center justify-between ${previewPreset.metaClass}`}>
+                  <span>Invoice Document</span>
+                  <span>Preview</span>
+                </div>
+
+                <header className="space-y-5">
+                  {previewData?.logoUrl ? (
+                    <div className="flex items-center">
+                      <img
+                        src={previewData.logoUrl}
+                        alt="Company logo"
+                        className="h-10 w-auto max-w-[160px] object-contain"
+                      />
+                    </div>
+                  ) : null}
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h1 className={previewPreset.titleClass}>INVOICE</h1>
+                      <p
+                        className="mt-2 text-xs font-semibold uppercase tracking-[0.2em]"
+                        style={{ color: previewAccent.text }}
+                      >
+                        NoteBill draft
+                      </p>
+                    </div>
+                    <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-xs">
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                          Invoice #
+                        </span>
+                        <span className="font-semibold text-slate-900">
+                          {previewInvoiceNumber}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                          Date
+                        </span>
+                        <span className="font-semibold text-slate-900">{previewIssueDate}</span>
+                      </div>
+                    </div>
+                  </div>
+                </header>
+
+                <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <p className={`${previewPreset.textClass} ${previewPreset.labelClass}`}>From</p>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                      <p className="whitespace-pre-line">{previewFromDetails}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <p className={`${previewPreset.textClass} ${previewPreset.labelClass}`}>
+                      Bill To
+                    </p>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                      <p className="whitespace-pre-line">{previewBillToDetails}</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-3">
+                  <div className="overflow-x-auto">
+                    <table className={`min-w-full text-left ${previewPreset.textClass}`}>
+                      <thead className={previewPreset.tableHeadClass}>
+                        <tr>
+                          <th className="border-b border-slate-200 pb-2 pr-3">Description</th>
+                          <th className="border-b border-slate-200 pb-2 pr-3">Qty</th>
+                          <th className="border-b border-slate-200 pb-2 pr-3">Rate</th>
+                          <th className="border-b border-slate-200 pb-2 text-right">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {previewItems.map((item) => (
+                          <tr key={item.id} className="odd:bg-slate-50/70">
+                            <td className="py-3 pr-3 align-top">
+                              <p className="font-semibold text-slate-800">{item.description}</p>
+                              {item.placeholder ? (
+                                <p className="mt-1 text-xs text-slate-400">
+                                  Start by adding a line item in the editor.
+                                </p>
+                              ) : null}
+                            </td>
+                            <td className="py-3 pr-3 align-top text-sm text-slate-600">
+                              {Number.isFinite(item.qty) ? item.qty : "—"}
+                            </td>
+                            <td className="py-3 pr-3 align-top text-sm text-slate-600">
+                              {Number.isFinite(item.rate) ? formatPreviewMoney(item.rate) : "—"}
+                            </td>
+                            <td className="py-3 text-right align-top text-sm text-slate-600">
+                              {Number.isFinite(item.amount) ? (
+                                formatPreviewMoney(item.amount)
+                              ) : item.placeholder ? (
+                                "—"
+                              ) : (
+                                <span className="text-xs font-semibold text-amber-600">
+                                  Needs value
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section className="flex justify-end">
+                  <div
+                    className={`w-full max-w-xs space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-4 ${previewPreset.textClass}`}
+                  >
+                    <div className={`flex justify-between ${previewPreset.totalsMutedClass}`}>
+                      <span>Subtotal</span>
+                      <span>{formatPreviewMoney(previewSubtotal)}</span>
+                    </div>
+                    <div className={`flex justify-between ${previewPreset.totalsMutedClass}`}>
+                      <span>Tax</span>
+                      <span>{formatPreviewMoney(previewTaxAmount)}</span>
+                    </div>
+                    <div className={`flex justify-between font-semibold ${previewPreset.totalsStrongClass}`}>
+                      <span>Total</span>
+                      <span style={{ color: previewAccent.text }}>{formatPreviewMoney(previewTotal)}</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="space-y-2">
+                  <p className={`${previewPreset.textClass} ${previewPreset.labelClass}`}>
+                    Notes / Terms
+                  </p>
+                  <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                    <p className="whitespace-pre-line">{previewNotes}</p>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
+            <p className="text-xs text-slate-500">
+              {previewIsSelected ? "Currently selected template." : "Preview only."}
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600"
+                onClick={() => setPreviewTemplateId(null)}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="rounded-lg px-3 py-2 text-sm font-semibold text-white"
+                style={{
+                  backgroundColor: previewAccent.primary,
+                  borderColor: previewAccent.primary
+                }}
+                onClick={() => {
+                  if (previewTemplateId) {
+                    onStylePresetChange(previewTemplateId);
+                  }
+                  setPreviewTemplateId(null);
+                }}
+              >
+                Use this template
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    ) : null}
+    </>
+  );
+}
+
+  window.InvoiceManualInspector = {
+    InspectorPanel
+  };
+})();

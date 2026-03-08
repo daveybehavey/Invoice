@@ -5,6 +5,10 @@ import { chromium, devices } from "playwright";
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
 const OUTPUT_PATH =
   process.env.FRICTION_OUTPUT ?? path.join(process.cwd(), "docs", "flow-friction-latest.json");
+const HISTORY_OUTPUT_PATH =
+  process.env.FRICTION_HISTORY_OUTPUT ??
+  process.env.FLOW_FRICTION_HISTORY_FILE ??
+  path.join(process.cwd(), "data", "flow-friction-history.json");
 const DEFAULT_TIMEOUT = 15000;
 
 const fixtureWithDecision = {
@@ -43,7 +47,45 @@ const fixtureWithDecision = {
     subtotal: 205.15,
     total: 205.15
   },
-  structuredInvoice: null,
+  structuredInvoice: {
+    customerName: "Mike Johnson",
+    issueDate: "2024-01-30",
+    servicePeriodStart: "2024-01-28",
+    servicePeriodEnd: "2024-02-02",
+    workSessions: [
+      {
+        date: "2024-01-30",
+        tasks: [
+          {
+            description: "Faucet repair labor",
+            hours: 2,
+            rate: 80,
+            amount: 160
+          }
+        ]
+      },
+      {
+        date: "2024-02-02",
+        tasks: [
+          {
+            description: "Cabinet door adjustment",
+            hours: 0.33,
+            rate: 80,
+            amount: 26.4
+          }
+        ]
+      }
+    ],
+    materials: [
+      {
+        description: "Faucet cartridge",
+        quantity: 1,
+        unitCost: 18.75,
+        amount: 18.75
+      }
+    ],
+    notes: "Thanks for your business."
+  },
   openDecisions: [
     {
       id: "decision-cabinet",
@@ -77,6 +119,12 @@ const fixtureResolved = {
   unparsedLines: ["parking receipt had smudged text"]
 };
 
+const resolvedQualityGate = {
+  blockers: [],
+  warnings: [],
+  canGenerate: true
+};
+
 function createRecorder() {
   const issues = [];
   const checks = [];
@@ -102,11 +150,36 @@ function containsAny(text, terms) {
   return terms.some((term) => normalized.includes(term.toLowerCase()));
 }
 
+async function appendHistorySnapshot(report) {
+  await fs.mkdir(path.dirname(HISTORY_OUTPUT_PATH), { recursive: true });
+  let history = [];
+  try {
+    const raw = await fs.readFile(HISTORY_OUTPUT_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      history = parsed;
+    }
+  } catch {}
+
+  const totalChecks = report.checks.length;
+  const failedChecks = report.checks.filter((check) => !check.pass).length;
+  const nextEntry = {
+    timestamp: report.timestamp,
+    totalChecks,
+    failedChecks,
+    issueCount: report.issues.length
+  };
+
+  const nextHistory = [...history, nextEntry].slice(-400);
+  await fs.writeFile(HISTORY_OUTPUT_PATH, `${JSON.stringify(nextHistory, null, 2)}\n`, "utf8");
+}
+
 async function getVisiblePrimaryButtons(page) {
-  const labels = await page
-    .locator("button.bg-emerald-600:visible")
-    .allTextContents();
-  return labels.map((label) => label.trim()).filter(Boolean);
+  const labels = await page.locator("button.bg-emerald-600:visible").allTextContents();
+  const allowedLabels = new Set(["Build invoice", "Resolve decisions", "Generate Invoice"]);
+  return labels
+    .map((label) => label.trim())
+    .filter((label) => allowedLabels.has(label));
 }
 
 async function stubIntakeApis(page) {
@@ -134,6 +207,18 @@ async function stubIntakeApis(page) {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(fixtureWithDecision)
+    });
+  });
+
+  await page.route("**/api/invoices/apply-decision", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...fixtureResolved,
+        qualityGate: resolvedQualityGate,
+        pendingTaxRate: null
+      })
     });
   });
 
@@ -264,11 +349,29 @@ async function run() {
     );
 
     await page.getByRole("button", { name: "Skip" }).first().click();
-    await page
-      .locator("p.text-xs.text-slate-500")
-      .filter({ hasText: "Ready to generate." })
-      .first()
-      .waitFor({ timeout: DEFAULT_TIMEOUT });
+    await page.waitForFunction(
+      () => {
+        const generateButtons = Array.from(document.querySelectorAll("button")).filter((button) => {
+          if (!(button instanceof HTMLButtonElement)) {
+            return false;
+          }
+          const text = (button.textContent ?? "").trim();
+          if (text !== "Generate Invoice" || button.disabled) {
+            return false;
+          }
+          const style = window.getComputedStyle(button);
+          return style.display !== "none" && style.visibility !== "hidden";
+        });
+        if (generateButtons.length > 0) {
+          return true;
+        }
+        return Array.from(document.querySelectorAll("p, span, div")).some((node) => {
+          const text = (node.textContent ?? "").trim();
+          return /ready to generate\.|all set\. generate when you['’]re ready\./i.test(text);
+        });
+      },
+      { timeout: DEFAULT_TIMEOUT }
+    );
 
     const generateButton = page.getByRole("button", { name: "Generate Invoice" }).last();
     await generateButton.waitFor({ state: "visible", timeout: DEFAULT_TIMEOUT });
@@ -329,6 +432,7 @@ async function run() {
     };
 
     await fs.writeFile(OUTPUT_PATH, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+    await appendHistorySnapshot(report);
 
     console.log("Flow friction pass complete.");
     console.log(`Checks: ${report.checks.length}`);
@@ -339,6 +443,7 @@ async function run() {
       });
     }
     console.log(`Saved report: ${OUTPUT_PATH}`);
+    console.log(`Updated history: ${HISTORY_OUTPUT_PATH}`);
 
     const hasMajorIssue = report.issues.some((issue) => issue.severity === "major");
     if (hasMajorIssue) {

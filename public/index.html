@@ -3,57 +3,21 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Invoice Launcher</title>
+    <title>NoteBill</title>
+    <meta name="theme-color" content="#0f9d6e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="NoteBill" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/notebill-192.png" />
+    <link rel="apple-touch-icon" href="/icons/notebill-192.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700&family=Sora:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-      .typing-dot {
-        animation: typingPulse 1.2s infinite;
-        display: inline-block;
-        opacity: 0.2;
-      }
-      .typing-dot:nth-child(2) {
-        animation-delay: 0.2s;
-      }
-      .typing-dot:nth-child(3) {
-        animation-delay: 0.4s;
-      }
-      @keyframes typingPulse {
-        0%,
-        80%,
-        100% {
-          opacity: 0.2;
-        }
-        40% {
-          opacity: 1;
-        }
-      }
-      @media print {
-        @page {
-          margin: 16mm;
-        }
-        body {
-          background: #fff !important;
-        }
-        .no-print {
-          display: none !important;
-        }
-        .printable-invoice {
-          box-shadow: none !important;
-          border: none !important;
-          opacity: 1 !important;
-          pointer-events: auto !important;
-          margin: 0 auto !important;
-          max-width: 900px !important;
-          width: 100% !important;
-        }
-      }
-    </style>
+    <link rel="stylesheet" href="/dist/app.css" />
   </head>
   <body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
@@ -65,7 +29,30 @@
       crossorigin
       src="https://unpkg.com/react-router-dom@6.30.3/dist/umd/react-router-dom.development.js"
     ></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script type="text/babel" src="/launcher.jsx"></script>
+    <script src="/utils/formatters.js"></script>
+    <script src="/utils/intakeHelpers.js"></script>
+    <script src="/utils/requestIdentity.js"></script>
+    <script src="/utils/brandTheme.js"></script>
+    <script src="/utils/manualStyleCatalog.js"></script>
+    <script src="/utils/businessProfile.js"></script>
+    <script src="/utils/logoImage.js"></script>
+    <script src="/utils/registerServiceWorker.js"></script>
+    <script src="/features/intake/readiness.js"></script>
+    <script src="/features/intake/controller.js"></script>
+    <script src="/features/intake/runtime.js"></script>
+    <script src="/features/intake/orchestration.js"></script>
+    <script src="/features/intake/actions.js"></script>
+    <script src="/features/intake/reviewModel.js"></script>
+    <script src="/dist/ui/primitives.js"></script>
+    <script src="/dist/features/import/importInvoice.js"></script>
+    <script src="/dist/features/library/invoiceLibrary.js"></script>
+    <script src="/dist/features/diagnostics/intakeDiagnostics.js"></script>
+    <script src="/dist/features/settings/businessIdentity.js"></script>
+    <script src="/dist/features/manual/inspectorPanel.js"></script>
+    <script src="/dist/features/manual/manualInvoiceCanvas.js"></script>
+    <script src="/dist/features/intake/reviewCard.js"></script>
+    <script src="/dist/features/intake/decisionPanel.js"></script>
+    <script src="/dist/features/intake/aiIntake.js"></script>
+    <script src="/dist/launcher.js"></script>
   </body>
 </html>
