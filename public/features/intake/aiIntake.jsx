@@ -229,6 +229,7 @@ function AIIntake() {
     }
     return window.matchMedia("(max-width: 767px)").matches;
   });
+  const [billieChipTrayExpanded, setBillieChipTrayExpanded] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -875,6 +876,15 @@ function AIIntake() {
         }
       ]
     : [];
+  useEffect(() => {
+    if (!isCompactViewport || !billieWorkspaceVisible) {
+      setBillieChipTrayExpanded(false);
+    }
+  }, [isCompactViewport, billieWorkspaceVisible]);
+  const visibleBillieActionChips =
+    isCompactViewport && !billieChipTrayExpanded ? billieActionChips.slice(0, 3) : billieActionChips;
+  const hasHiddenBillieActionChips =
+    isCompactViewport && billieActionChips.length > visibleBillieActionChips.length;
   const canSendWhileTyping = false;
   const canGenerateInvoice = intakeReadiness.canGenerate;
   const ctaDisabled = !canGenerateInvoice;
@@ -1884,11 +1894,14 @@ function AIIntake() {
           className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white"
         >
           <div className="mx-auto max-w-3xl space-y-2 px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Billie workspace
-              </p>
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Ask Billie
+                </p>
+                <p className="text-[11px] text-slate-500">Wording only. Numbers stay locked.</p>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 {billieStatus ? (
                   <span
                     className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
@@ -1932,7 +1945,7 @@ function AIIntake() {
             </div>
             {billieActionChips.length > 0 ? (
               <div className="flex flex-wrap gap-2">
-                {billieActionChips.map((chip) => (
+                {visibleBillieActionChips.map((chip) => (
                   <button
                     key={chip.id}
                     type="button"
@@ -1947,6 +1960,26 @@ function AIIntake() {
                     {chip.label}
                   </button>
                 ))}
+                {hasHiddenBillieActionChips ? (
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                    onClick={() => setBillieChipTrayExpanded(true)}
+                    disabled={isTyping}
+                  >
+                    More
+                  </button>
+                ) : null}
+                {isCompactViewport && billieChipTrayExpanded && billieActionChips.length > 3 ? (
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                    onClick={() => setBillieChipTrayExpanded(false)}
+                    disabled={isTyping}
+                  >
+                    Less
+                  </button>
+                ) : null}
               </div>
             ) : null}
             <div className="flex items-center gap-3">
@@ -1958,7 +1991,11 @@ function AIIntake() {
                 id="ai-intake-input"
                 rows={1}
                 className="max-h-32 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                placeholder={intakeComplete ? "Ask Billie to refine wording..." : "Ask Billie..."}
+                placeholder={
+                  intakeComplete
+                    ? "Ask Billie to polish wording. Numbers stay locked."
+                    : "Ask Billie about the draft..."
+                }
                 value={inputValue}
                 onChange={(event) => setInputValue(event.target.value)}
               />

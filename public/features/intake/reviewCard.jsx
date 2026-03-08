@@ -193,7 +193,7 @@
                 </div>
               </div>
             ) : null}
-            {billieStatus ? (
+            {billieStatus && !isCompactViewport ? (
               <div
                 className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
                   billieStatus.kind === "safe"

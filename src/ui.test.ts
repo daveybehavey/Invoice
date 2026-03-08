@@ -268,7 +268,7 @@ test("billie workspace shows action chips and allows safe wording undo", async (
     await page.getByRole("button", { name: "Build invoice" }).click();
 
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
-    await page.getByText("Billie workspace").waitFor({ state: "visible" });
+    await page.getByText("Wording only. Numbers stay locked.").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Refine wording" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Ask Billie" }).waitFor({ state: "visible" });
 
@@ -304,6 +304,37 @@ test("billie workspace shows action chips and allows safe wording undo", async (
         (node) => node.textContent?.trim() === "Faucet repair"
       )
     );
+  } finally {
+    await context.close();
+  }
+});
+
+test("billie workspace keeps secondary chips behind a mobile more toggle", async () => {
+  useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
+
+  const context = await browser.newContext({
+    viewport: { width: 375, height: 667 },
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 2
+  });
+  const page = await context.newPage();
+  try {
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Refine wording" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Make simpler" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "More formal" }).waitFor({ state: "visible" });
+    assert.equal(await page.getByRole("button", { name: "Make stronger" }).count(), 0);
+
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    await page.getByRole("button", { name: "Make stronger" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Less" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
