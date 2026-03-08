@@ -160,7 +160,6 @@
 
         setAuditStatus("completed");
       } catch (error) {
-        console.log("[audit:error]", error);
         setAuditStatus("failed");
       }
     };
@@ -229,7 +228,6 @@
           throw new Error(payload?.error || "Intake failed.");
         }
         if (requestId !== requestIdRef.current) {
-          console.log("[intake:stale]", { requestId, current: requestIdRef.current });
           return;
         }
         if (shouldIgnorePostSummaryResponse(requestStartedAt, requestId, "intake")) {
@@ -239,10 +237,6 @@
           dismissTimeoutMessage(timeoutMessageIdRef.current);
         }
         if (summaryLockRef.current) {
-          console.log("[intake:ignored:summary_lock]", {
-            requestId,
-            phase: intakePhaseRef.current
-          });
           return;
         }
         const nextOpenDecisions = Array.isArray(payload?.openDecisions) ? payload.openDecisions : [];
@@ -309,17 +303,6 @@
             showDecisionToast(decisionAck, { durationMs: canUndoDecision ? 9000 : 3500 });
           }
           appendAiMessage(followUpText);
-          const responseAt = Date.now();
-          const summaryAt = lastSummaryMetaRef.current?.at;
-          console.log("[intake:response]", {
-            requestId,
-            requestStartedAt,
-            responseAt,
-            summaryAt,
-            summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null,
-            completedAfterSummary: summaryAt ? responseAt > summaryAt : false,
-            needsFollowUp: true
-          });
           return;
         }
         setFollowUp(null);
@@ -362,21 +345,6 @@
             decisionSignature,
             summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null
           });
-          const responseAt = Date.now();
-          const summaryAt = lastSummaryMetaRef.current?.at;
-          console.log("[intake:response]", {
-            requestId,
-            requestStartedAt,
-            responseAt,
-            summaryAt,
-            summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null,
-            completedAfterSummary: summaryAt ? responseAt > summaryAt : false,
-            needsFollowUp: false,
-            openDecisions: nextOpenDecisions.map((decision) => ({
-              id: decision.id,
-              kind: decision.kind
-            }))
-          });
         } else {
           openDecisionSignatureRef.current = "";
           if (decisionAck) {
@@ -405,22 +373,9 @@
             decisionSignature: "",
             summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null
           });
-          const responseAt = Date.now();
-          const summaryAt = lastSummaryMetaRef.current?.at;
-          console.log("[intake:response]", {
-            requestId,
-            requestStartedAt,
-            responseAt,
-            summaryAt,
-            summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null,
-            completedAfterSummary: summaryAt ? responseAt > summaryAt : false,
-            needsFollowUp: false,
-            openDecisions: []
-          });
         }
       } catch (error) {
         if (requestId !== requestIdRef.current) {
-          console.log("[intake:error:stale]", { requestId, current: requestIdRef.current });
           return;
         }
         decisionActionRef.current = null;
@@ -428,16 +383,6 @@
         if (timeoutMessageIdRef.current) {
           dismissTimeoutMessage(timeoutMessageIdRef.current);
         }
-        const responseAt = Date.now();
-        const summaryAt = lastSummaryMetaRef.current?.at;
-        console.log("[intake:error]", {
-          requestId,
-          requestStartedAt,
-          responseAt,
-          summaryAt,
-          summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null,
-          completedAfterSummary: summaryAt ? responseAt > summaryAt : false
-        });
         appendAiMessage("Something went wrong. Please try again.");
       } finally {
         if (requestId === requestIdRef.current) {
@@ -528,7 +473,6 @@
           throw new Error(payload?.error || "Decision update failed.");
         }
         if (requestId !== requestIdRef.current) {
-          console.log("[decision:stale]", { requestId, current: requestIdRef.current });
           completeDecisionRequest("ignored", { reason: "stale_response" });
           return;
         }
@@ -537,10 +481,6 @@
           return;
         }
         if (summaryLockRef.current) {
-          console.log("[decision:ignored:summary_lock]", {
-            requestId,
-            phase: intakePhaseRef.current
-          });
           completeDecisionRequest("ignored", { reason: "summary_lock" });
           return;
         }
@@ -676,19 +616,11 @@
           logReadinessEvent("decision_timing", decisionTiming);
         }
 
-        console.log("[decision:response]", {
-          requestId,
-          requestStartedAt,
-          responseAt: Date.now(),
-          resolvedCount,
-          remainingDecisions: nextOpenDecisions.length
-        });
         completeDecisionRequest("success", {
           remainingDecisions: nextOpenDecisions.length
         });
       } catch (error) {
         if (requestId !== requestIdRef.current) {
-          console.log("[decision:error:stale]", { requestId, current: requestIdRef.current });
           completeDecisionRequest("ignored", { reason: "stale_error" });
           return;
         }
@@ -756,7 +688,6 @@
           throw new Error(payload?.error || "Labor pricing failed.");
         }
         if (requestId !== requestIdRef.current) {
-          console.log("[labor:stale]", { requestId, current: requestIdRef.current });
           return;
         }
         if (shouldIgnorePostSummaryResponse(requestStartedAt, requestId, "labor")) {
@@ -766,10 +697,6 @@
           dismissTimeoutMessage(timeoutMessageIdRef.current);
         }
         if (summaryLockRef.current) {
-          console.log("[labor:ignored:summary_lock]", {
-            requestId,
-            phase: intakePhaseRef.current
-          });
           return;
         }
         const nextOpenDecisions = Array.isArray(payload?.openDecisions) ? payload.openDecisions : [];
@@ -856,20 +783,6 @@
             decisionSignature,
             summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null
           });
-          const responseAt = Date.now();
-          const summaryAt = lastSummaryMetaRef.current?.at;
-          console.log("[labor:response]", {
-            requestId,
-            requestStartedAt,
-            responseAt,
-            summaryAt,
-            summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null,
-            completedAfterSummary: summaryAt ? responseAt > summaryAt : false,
-            openDecisions: nextOpenDecisions.map((decision) => ({
-              id: decision.id,
-              kind: decision.kind
-            }))
-          });
         } else {
           openDecisionSignatureRef.current = "";
           if (decisionAck) {
@@ -898,21 +811,9 @@
             decisionSignature: "",
             summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null
           });
-          const responseAt = Date.now();
-          const summaryAt = lastSummaryMetaRef.current?.at;
-          console.log("[labor:response]", {
-            requestId,
-            requestStartedAt,
-            responseAt,
-            summaryAt,
-            summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null,
-            completedAfterSummary: summaryAt ? responseAt > summaryAt : false,
-            openDecisions: []
-          });
         }
       } catch (error) {
         if (requestId !== requestIdRef.current) {
-          console.log("[labor:error:stale]", { requestId, current: requestIdRef.current });
           return;
         }
         decisionActionRef.current = null;
@@ -920,16 +821,6 @@
         if (timeoutMessageIdRef.current) {
           dismissTimeoutMessage(timeoutMessageIdRef.current);
         }
-        const responseAt = Date.now();
-        const summaryAt = lastSummaryMetaRef.current?.at;
-        console.log("[labor:error]", {
-          requestId,
-          requestStartedAt,
-          responseAt,
-          summaryAt,
-          summaryRequestId: lastSummaryMetaRef.current?.requestId ?? null,
-          completedAfterSummary: summaryAt ? responseAt > summaryAt : false
-        });
         appendAiMessage("I still need labor pricing details to finish this invoice.");
       } finally {
         if (requestId === requestIdRef.current) {

@@ -486,7 +486,6 @@
           throw new Error(payload?.error || "Edit failed.");
         }
         if (requestId !== requestIdRef.current) {
-          console.log("[edit:stale]", { requestId, current: requestIdRef.current });
           completeEditLifecycle("ignored");
           return;
         }
@@ -499,20 +498,12 @@
           latestState,
           completeEditLifecycle
         });
-        const responseAt = Date.now();
-        console.log("[edit:response]", {
-          requestId,
-          requestStartedAt,
-          responseAt
-        });
         completeEditLifecycle("success", { patch });
       } catch (error) {
         if (requestId !== requestIdRef.current) {
-          console.log("[edit:error:stale]", { requestId, current: requestIdRef.current });
           completeEditLifecycle("ignored");
           return;
         }
-        console.log("[edit:error]", { requestId, requestStartedAt, responseAt: Date.now() });
         appendAiMessage("Something went wrong while updating the draft. Please try again.");
         completeEditLifecycle("error", { errorMessage: error?.message ?? "Edit failed." });
       } finally {

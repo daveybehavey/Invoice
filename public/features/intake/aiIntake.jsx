@@ -501,16 +501,10 @@ function AIIntake() {
     showDecisionToast("Undid last decision.");
   };
 
-  const handleBilliePatchApplied = ({
-    patch,
-    previousInvoice,
-    requestStartedAt,
-    responseAt
-  }) => {
+  const handleBilliePatchApplied = ({ patch, previousInvoice }) => {
     if (!previousInvoice || !patch?.hasChanges) {
       return;
     }
-    const applyStartedAt = Date.now();
     setBillieUndoState({
       previousInvoice: cloneJson(previousInvoice),
       changedLineItemIds: Array.isArray(patch.changedLineItemIds)
@@ -528,14 +522,6 @@ function AIIntake() {
       },
       { durationMs: 9000 }
     );
-    const applyDurationMs = Date.now() - applyStartedAt;
-    if (applyDurationMs > 300) {
-      console.warn("[billie:patch:slow-apply]", {
-        applyDurationMs,
-        requestStartedAt,
-        responseAt
-      });
-    }
   };
 
   const handleBilliePatchRejected = ({ patch }) => {
@@ -612,7 +598,6 @@ function AIIntake() {
       at: Date.now(),
       requestId: requestIdRef.current
     };
-    console.log("[summary:append]", lastSummaryMetaRef.current);
     setIsTyping(false);
     setReviewCardCollapsed(true);
     setAssumptionsCollapsed(true);
@@ -1269,7 +1254,6 @@ function AIIntake() {
       return;
     }
     readinessSignatureRef.current = readinessSignature;
-    console.log("[readiness:snapshot]", readinessSnapshot);
   }, [readinessSignature]);
 
   useEffect(() => {

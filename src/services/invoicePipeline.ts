@@ -554,6 +554,13 @@ export async function changeLineWording(
 }
 
 export async function rewordFullInvoice(invoice: FinishedInvoice, tone?: string): Promise<FinishedInvoice> {
+  if (invoice.lineItems.length === 1 && !(invoice.notes ?? "").trim()) {
+    const [singleLineItem] = invoice.lineItems;
+    if (singleLineItem?.id) {
+      return changeLineWording(invoice, singleLineItem.id, tone);
+    }
+  }
+
   const wordingSource: WordingRewriteSource = {
     lineItems: invoice.lineItems.map((lineItem, index) => ({
       id: lineItem.id ?? `line-${index + 1}`,
@@ -707,7 +714,6 @@ async function auditInvoiceInterpretationWithTimeout(
 
   return await new Promise((resolve) => {
     const timeoutId = setTimeout(() => {
-      console.warn("[audit:timeout]", { timeoutMs });
       resolve({ audit: null, status: "timed_out" });
     }, timeoutMs);
 
@@ -2822,14 +2828,8 @@ function expandKeywordVariants(words: string[]): string[] {
   return Array.from(expanded);
 }
 
-function logDecisionUnresolved(decision: OpenDecision, reason: string, resolutionText?: string) {
-  console.log("[decision:unresolved]", {
-    id: decision.id,
-    kind: decision.kind,
-    prompt: decision.prompt,
-    reason,
-    resolutionText: resolutionText ?? ""
-  });
+function logDecisionUnresolved(_decision: OpenDecision, _reason: string, _resolutionText?: string) {
+  return;
 }
 
 type DecisionResolutionResult = {

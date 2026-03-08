@@ -76,16 +76,7 @@
       if (!summaryAt || !isSummaryPhase(phase)) {
         return false;
       }
-      if (requestStartedAt < summaryAt) {
-        console.log(`[${channel}:ignored:post_summary]`, {
-          requestId,
-          requestStartedAt,
-          summaryAt,
-          phase
-        });
-        return true;
-      }
-      return false;
+      return requestStartedAt < summaryAt;
     };
 
     const abortOngoingRequest = () => {
