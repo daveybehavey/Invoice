@@ -189,11 +189,22 @@ test("billie workspace shows action chips and allows safe wording undo", async (
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
-    await page.route("**/api/invoices/edit", async (route) => {
+    let rewordRequestCount = 0;
+    let editRequestCount = 0;
+    await page.route("**/api/invoices/reword-full", async (route) => {
+      rewordRequestCount += 1;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify(safeBillieEditResponse())
+      });
+    });
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
       });
     });
     await openIntake(page);
@@ -220,6 +231,8 @@ test("billie workspace shows action chips and allows safe wording undo", async (
       .locator("form.fixed")
       .getByText("✓ Numbers unchanged")
       .waitFor({ state: "visible" });
+    assert.equal(rewordRequestCount, 1);
+    assert.equal(editRequestCount, 0);
     await page.getByRole("button", { name: "Show review details" }).click();
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll("p.text-sm.font-semibold.text-slate-800")).some(

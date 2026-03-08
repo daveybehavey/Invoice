@@ -2,10 +2,13 @@ import OpenAI from "openai";
 import { parseJsonFromModel } from "../lib/json.js";
 import { loadSystemPrompt } from "../prompt/systemPrompt.js";
 
-const DEFAULT_MODEL = process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
-const DEFAULT_VISION_MODEL = process.env.OPENAI_VISION_MODEL ?? "gpt-4.1-mini";
 type JsonTaskRunner = <T>(userTaskPrompt: string) => Promise<T>;
 type ImageOcrRunner = (input: ImageOcrTaskInput) => Promise<ImageOcrTaskResult>;
+type JsonTaskType = "default" | "wording";
+type JsonTaskOptions = {
+  taskType?: JsonTaskType;
+  model?: string;
+};
 type ImageOcrTaskInput = {
   mimeType: string;
   base64Data: string;
@@ -18,6 +21,27 @@ type ImageOcrTaskResult = {
 let openAIClient: OpenAI | null = null;
 let jsonTaskRunnerForTests: JsonTaskRunner | null = null;
 let imageOcrRunnerForTests: ImageOcrRunner | null = null;
+
+function getDefaultModel(): string {
+  return process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
+}
+
+function getDefaultVisionModel(): string {
+  return process.env.OPENAI_VISION_MODEL ?? "gpt-4.1-mini";
+}
+
+export function resolveJsonTaskModel(options: JsonTaskOptions = {}): string {
+  if (typeof options.model === "string" && options.model.trim().length > 0) {
+    return options.model.trim();
+  }
+  if (options.taskType === "wording") {
+    const wordingModel = process.env.OPENAI_WORDING_MODEL?.trim();
+    if (wordingModel) {
+      return wordingModel;
+    }
+  }
+  return getDefaultModel();
+}
 
 function getClient(): OpenAI {
   if (openAIClient) {
@@ -33,14 +57,19 @@ function getClient(): OpenAI {
   return openAIClient;
 }
 
-export async function runJsonTask<T>(userTaskPrompt: string): Promise<T> {
+export async function runJsonTask<T>(
+  userTaskPrompt: string,
+  options: JsonTaskOptions = {}
+): Promise<T> {
   if (jsonTaskRunnerForTests) {
     return jsonTaskRunnerForTests<T>(userTaskPrompt);
   }
 
+  const model = resolveJsonTaskModel(options);
+
   const runOnce = async (prompt: string): Promise<T> => {
     const completion = await getClient().chat.completions.create({
-      model: DEFAULT_MODEL,
+      model,
       messages: [
         {
           role: "system",
@@ -75,7 +104,7 @@ export async function runImageOcrTask(input: ImageOcrTaskInput): Promise<ImageOc
   }
   const dataUrl = `data:${input.mimeType};base64,${input.base64Data}`;
   const completion = await getClient().chat.completions.create({
-    model: DEFAULT_VISION_MODEL,
+    model: getDefaultVisionModel(),
     messages: [
       {
         role: "system",

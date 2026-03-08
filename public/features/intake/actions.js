@@ -350,6 +350,98 @@
     getDecisionAction,
     getState
   }) => {
+    const applyBilliePayload = ({
+      initialInvoice,
+      payload,
+      requestId,
+      requestStartedAt,
+      latestState,
+      completeEditLifecycle
+    }) => {
+      const candidateInvoice = payload?.invoice ?? initialInvoice;
+      const mergedLineItems = Array.isArray(candidateInvoice?.lineItems)
+        ? candidateInvoice.lineItems.map((lineItem, index) => ({
+            ...(initialInvoice?.lineItems?.[index] ?? {}),
+            ...lineItem
+          }))
+        : initialInvoice?.lineItems;
+      const nextInvoice = {
+        ...initialInvoice,
+        ...candidateInvoice,
+        lineItems: mergedLineItems
+      };
+      const patch = buildBilliePatch(initialInvoice, nextInvoice);
+      if (patch.violations.length > 0) {
+        const moneyViolation = patch.violations.find((violation) => violation.type === "money");
+        if (moneyViolation) {
+          appendAiMessage("Money decision required. I did not change numbers. Use Decisions or manual fields.");
+        } else {
+          appendAiMessage("No changes applied. Billie can only adjust wording in this mode.");
+        }
+        onBilliePatchRejected?.({
+          patch,
+          requestId,
+          requestStartedAt,
+          responseAt: Date.now()
+        });
+        completeEditLifecycle("rejected", { patch });
+        if (payload?.followUp) {
+          appendAiMessage(payload.followUp);
+        }
+        return;
+      }
+      if (!patch.hasChanges) {
+        appendAiMessage("No new wording changes detected.");
+        completeEditLifecycle("no_change");
+        return;
+      }
+      onBilliePatchApplied?.({
+        patch,
+        previousInvoice: initialInvoice,
+        nextInvoice,
+        requestId,
+        requestStartedAt,
+        responseAt: Date.now()
+      });
+      setFinishedInvoice(nextInvoice);
+      appendSummaryMessage(
+        buildSummaryText(
+          nextInvoice,
+          latestState.openDecisions,
+          latestState.unparsedLines.length,
+          latestState.outputQuality?.blockerCount ?? 0
+        ),
+        buildReviewPayload(
+          nextInvoice,
+          latestState.openDecisions,
+          latestState.unparsedLines,
+          lastTranscriptRef.current,
+          latestState.outputQuality ?? null
+        )
+      );
+      if (payload?.followUp) {
+        appendAiMessage(payload.followUp);
+      }
+      const editReadiness = evaluateIntakeReadiness({
+        intakePhase: "ready_to_generate",
+        followUp: null,
+        finishedInvoice: nextInvoice,
+        openDecisionCount: latestState.openDecisions.length,
+        qualityBlockerCount: latestState.outputQuality?.blockerCount ?? 0,
+        pendingLaborRate: latestState.pendingLaborRate
+      });
+      logReadinessEvent("edit_response", {
+        requestId,
+        editTargetPhase: editReadiness.targetPhase,
+        editLockReason: editReadiness.lockReason,
+        editCanGenerate: editReadiness.canGenerate,
+        openDecisionCount: latestState.openDecisions.length,
+        hasInvoice: Boolean(nextInvoice)
+      });
+      setIntakePhase(editReadiness.targetPhase);
+      completeEditLifecycle("success", { patch });
+    };
+
     const runInvoiceEditRequest = async (instruction) => {
       const state = getState();
       if (!state.finishedInvoice) {
@@ -399,87 +491,14 @@
           return;
         }
         const latestState = getState();
-        const candidateInvoice = payload?.invoice ?? state.finishedInvoice;
-        const mergedLineItems = Array.isArray(candidateInvoice?.lineItems)
-          ? candidateInvoice.lineItems.map((lineItem, index) => ({
-              ...(state.finishedInvoice?.lineItems?.[index] ?? {}),
-              ...lineItem
-            }))
-          : state.finishedInvoice?.lineItems;
-        const nextInvoice = {
-          ...state.finishedInvoice,
-          ...candidateInvoice,
-          lineItems: mergedLineItems
-        };
-        const patch = buildBilliePatch(state.finishedInvoice, nextInvoice);
-        if (patch.violations.length > 0) {
-          const moneyViolation = patch.violations.find((violation) => violation.type === "money");
-          if (moneyViolation) {
-            appendAiMessage("Money decision required. I did not change numbers. Use Decisions or manual fields.");
-          } else {
-            appendAiMessage("No changes applied. Billie can only adjust wording in this mode.");
-          }
-          onBilliePatchRejected?.({
-            patch,
-            requestId,
-            requestStartedAt,
-            responseAt: Date.now()
-          });
-          completeEditLifecycle("rejected", { patch });
-          if (payload?.followUp) {
-            appendAiMessage(payload.followUp);
-          }
-          return;
-        }
-        if (!patch.hasChanges) {
-          appendAiMessage("No new wording changes detected.");
-          completeEditLifecycle("no_change");
-          return;
-        }
-        onBilliePatchApplied?.({
-          patch,
-          previousInvoice: state.finishedInvoice,
-          nextInvoice,
+        applyBilliePayload({
+          initialInvoice: state.finishedInvoice,
+          payload,
           requestId,
           requestStartedAt,
-          responseAt: Date.now()
+          latestState,
+          completeEditLifecycle
         });
-        setFinishedInvoice(nextInvoice);
-        appendSummaryMessage(
-          buildSummaryText(
-            nextInvoice,
-            latestState.openDecisions,
-            latestState.unparsedLines.length,
-            latestState.outputQuality?.blockerCount ?? 0
-          ),
-          buildReviewPayload(
-            nextInvoice,
-            latestState.openDecisions,
-            latestState.unparsedLines,
-            lastTranscriptRef.current,
-            latestState.outputQuality ?? null
-          )
-        );
-        if (payload?.followUp) {
-          appendAiMessage(payload.followUp);
-        }
-        const editReadiness = evaluateIntakeReadiness({
-          intakePhase: "ready_to_generate",
-          followUp: null,
-          finishedInvoice: nextInvoice,
-          openDecisionCount: latestState.openDecisions.length,
-          qualityBlockerCount: latestState.outputQuality?.blockerCount ?? 0,
-          pendingLaborRate: latestState.pendingLaborRate
-        });
-        logReadinessEvent("edit_response", {
-          requestId,
-          editTargetPhase: editReadiness.targetPhase,
-          editLockReason: editReadiness.lockReason,
-          editCanGenerate: editReadiness.canGenerate,
-          openDecisionCount: latestState.openDecisions.length,
-          hasInvoice: Boolean(nextInvoice)
-        });
-        setIntakePhase(editReadiness.targetPhase);
         const responseAt = Date.now();
         console.log("[edit:response]", {
           requestId,
@@ -496,6 +515,75 @@
         console.log("[edit:error]", { requestId, requestStartedAt, responseAt: Date.now() });
         appendAiMessage("Something went wrong while updating the draft. Please try again.");
         completeEditLifecycle("error", { errorMessage: error?.message ?? "Edit failed." });
+      } finally {
+        if (requestId === requestIdRef.current) {
+          setIsTyping(false);
+        }
+      }
+    };
+
+    const runInvoiceWordingRequest = async (tone, instruction) => {
+      const state = getState();
+      if (!state.finishedInvoice) {
+        appendAiMessage("Generate a draft first, then I can apply edits.");
+        return;
+      }
+      requestIdRef.current += 1;
+      const requestId = requestIdRef.current;
+      const requestStartedAt = Date.now();
+      let editLifecycleCompleted = false;
+      const completeEditLifecycle = (outcome, extra = {}) => {
+        if (editLifecycleCompleted) {
+          return;
+        }
+        editLifecycleCompleted = true;
+        onBillieEditLifecycle?.({
+          phase: "complete",
+          outcome,
+          requestId,
+          requestStartedAt,
+          ...extra
+        });
+      };
+      onBillieEditLifecycle?.({
+        phase: "start",
+        requestId,
+        requestStartedAt,
+        instruction
+      });
+      setIsTyping(true);
+      try {
+        const response = await apiFetch("/api/invoices/reword-full", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            invoice: state.finishedInvoice,
+            tone
+          })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload?.error || "Wording refine failed.");
+        }
+        if (requestId !== requestIdRef.current) {
+          completeEditLifecycle("ignored");
+          return;
+        }
+        applyBilliePayload({
+          initialInvoice: state.finishedInvoice,
+          payload,
+          requestId,
+          requestStartedAt,
+          latestState: getState(),
+          completeEditLifecycle
+        });
+      } catch (error) {
+        if (requestId !== requestIdRef.current) {
+          completeEditLifecycle("ignored");
+          return;
+        }
+        appendAiMessage("Something went wrong while refining wording. Please try again.");
+        completeEditLifecycle("error", { errorMessage: error?.message ?? "Wording refine failed." });
       } finally {
         if (requestId === requestIdRef.current) {
           setIsTyping(false);
@@ -543,12 +631,16 @@
         (state.intakePhase === "ready_to_generate" || state.hasReviewCard);
       if (shouldEditDraft) {
         logReadinessEvent("submit_route", {
-          route: "edit_draft",
+          route: options.billieRefineTone ? "reword_full" : "edit_draft",
           messageLength: trimmed.length,
           intakePhase: state.intakePhase,
           lockReason: state.intakeReadiness.lockReason
         });
-        runInvoiceEditRequest(trimmed);
+        if (options.billieRefineTone) {
+          runInvoiceWordingRequest(options.billieRefineTone, trimmed);
+        } else {
+          runInvoiceEditRequest(trimmed);
+        }
         return true;
       }
 

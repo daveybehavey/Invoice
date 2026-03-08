@@ -106,6 +106,14 @@ type RewordFullInvoiceResponse = {
   notes?: string;
 };
 
+type WordingRewriteSource = {
+  lineItems: Array<{
+    id: string;
+    description: string;
+  }>;
+  notes?: string;
+};
+
 const MONTHS = [
   "jan",
   "feb",
@@ -526,7 +534,9 @@ export async function changeLineWording(
     `Original line description: ${JSON.stringify(targetLineItem.description)}`
   ].join("\n");
 
-  const modelResponse = await runJsonTask<RewordSingleLineResponse>(taskPrompt);
+  const modelResponse = await runJsonTask<RewordSingleLineResponse>(taskPrompt, {
+    taskType: "wording"
+  });
 
   const updatedInvoice: FinishedInvoice = {
     ...invoice,
@@ -544,23 +554,35 @@ export async function changeLineWording(
 }
 
 export async function rewordFullInvoice(invoice: FinishedInvoice, tone?: string): Promise<FinishedInvoice> {
+  const wordingSource: WordingRewriteSource = {
+    lineItems: invoice.lineItems.map((lineItem, index) => ({
+      id: lineItem.id ?? `line-${index + 1}`,
+      description: lineItem.description
+    })),
+    notes: invoice.notes
+  };
   const taskPrompt = [
-    "Reword all invoice line item descriptions.",
-    "Keep the same meaning and professionalism for each line.",
-    "Do not change amounts, quantities, rates, dates, or IDs.",
+    "Rewrite invoice wording only.",
+    "Rewrite line item descriptions and notes so they are clean, client-facing, and concise.",
+    "Keep the same meaning for every line.",
+    "Do not change amounts, quantities, rates, dates, IDs, or totals.",
+    "Do not add, remove, or reorder line items.",
     `Tone preference: ${tone ?? "neutral professional"}.`,
     "Return JSON with shape: {\"lineItems\":[{\"id\":\"...\",\"description\":\"...\"}],\"notes\":\"optional\"}.",
-    `Invoice JSON: ${JSON.stringify(invoice)}`
+    `Wording source JSON: ${JSON.stringify(wordingSource)}`
   ].join("\n");
 
-  const modelResponse = await runJsonTask<RewordFullInvoiceResponse>(taskPrompt);
+  const modelResponse = await runJsonTask<RewordFullInvoiceResponse>(taskPrompt, {
+    taskType: "wording"
+  });
   const descriptionById = new Map(modelResponse.lineItems.map((lineItem) => [lineItem.id, lineItem.description]));
 
   const updatedInvoice: FinishedInvoice = {
     ...invoice,
-    lineItems: invoice.lineItems.map((lineItem) => ({
+    lineItems: invoice.lineItems.map((lineItem, index) => ({
       ...lineItem,
-      description: descriptionById.get(lineItem.id ?? "") ?? lineItem.description
+      description:
+        descriptionById.get(lineItem.id ?? wordingSource.lineItems[index]?.id ?? "") ?? lineItem.description
     })),
     notes: modelResponse.notes ?? invoice.notes
   };

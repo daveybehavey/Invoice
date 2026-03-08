@@ -867,22 +867,26 @@ function AIIntake() {
         {
           id: "billie-refine",
           label: "Refine wording",
-          value: "Refine wording for clarity and professionalism. Keep all numbers and line items unchanged."
+          value: "Refine wording for clarity and professionalism. Keep all numbers and line items unchanged.",
+          tone: "Professional"
         },
         {
           id: "billie-simpler",
           label: "Make simpler",
-          value: "Rewrite descriptions in simpler plain language. Keep all numbers and line items unchanged."
+          value: "Rewrite descriptions in simpler plain language. Keep all numbers and line items unchanged.",
+          tone: "Simpler"
         },
         {
           id: "billie-formal",
           label: "More formal",
-          value: "Make the invoice language more formal and client-ready. Keep all numbers and line items unchanged."
+          value: "Make the invoice language more formal and client-ready. Keep all numbers and line items unchanged.",
+          tone: "More formal"
         },
         {
           id: "billie-stronger",
           label: "Make stronger",
-          value: "Use stronger, confident action verbs for each line item. Keep all numbers and line items unchanged."
+          value: "Use stronger, confident action verbs for each line item. Keep all numbers and line items unchanged.",
+          tone: "Stronger"
         }
       ]
     : [];
@@ -1949,7 +1953,11 @@ function AIIntake() {
                     key={chip.id}
                     type="button"
                     className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-400"
-                    onClick={() => submitUserMessage(chip.value)}
+                    onClick={() =>
+                      submitUserMessage(chip.value, {
+                        billieRefineTone: chip.tone
+                      })
+                    }
                     disabled={isTyping}
                   >
                     {chip.label}
