@@ -9,6 +9,14 @@ type JsonTaskOptions = {
   taskType?: JsonTaskType;
   model?: string;
 };
+type JsonTaskConfig = {
+  model: string;
+  systemPrompt: string;
+  maxCompletionTokens?: number;
+  responseFormat?:
+    | OpenAI.Chat.Completions.ChatCompletionCreateParams["response_format"]
+    | undefined;
+};
 type ImageOcrTaskInput = {
   mimeType: string;
   base64Data: string;
@@ -21,6 +29,13 @@ type ImageOcrTaskResult = {
 let openAIClient: OpenAI | null = null;
 let jsonTaskRunnerForTests: JsonTaskRunner | null = null;
 let imageOcrRunnerForTests: ImageOcrRunner | null = null;
+
+const WORDING_SYSTEM_PROMPT = [
+  "You rewrite invoice wording only.",
+  "Preserve every number, date, id, quantity, rate, amount, total, and line-item order exactly.",
+  "Do not add, remove, merge, split, or reorder line items.",
+  "Return valid JSON only."
+].join(" ");
 
 function getDefaultModel(): string {
   return process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
@@ -41,6 +56,23 @@ export function resolveJsonTaskModel(options: JsonTaskOptions = {}): string {
     }
   }
   return getDefaultModel();
+}
+
+export function resolveJsonTaskConfig(options: JsonTaskOptions = {}): JsonTaskConfig {
+  const model = resolveJsonTaskModel(options);
+  if (options.taskType === "wording") {
+    return {
+      model,
+      systemPrompt: WORDING_SYSTEM_PROMPT,
+      maxCompletionTokens: 400,
+      responseFormat: { type: "json_object" }
+    };
+  }
+
+  return {
+    model,
+    systemPrompt: loadSystemPrompt()
+  };
 }
 
 function getClient(): OpenAI {
@@ -65,15 +97,17 @@ export async function runJsonTask<T>(
     return jsonTaskRunnerForTests<T>(userTaskPrompt);
   }
 
-  const model = resolveJsonTaskModel(options);
+  const config = resolveJsonTaskConfig(options);
 
   const runOnce = async (prompt: string): Promise<T> => {
     const completion = await getClient().chat.completions.create({
-      model,
+      model: config.model,
+      max_completion_tokens: config.maxCompletionTokens,
+      response_format: config.responseFormat,
       messages: [
         {
           role: "system",
-          content: loadSystemPrompt()
+          content: config.systemPrompt
         },
         {
           role: "user",
