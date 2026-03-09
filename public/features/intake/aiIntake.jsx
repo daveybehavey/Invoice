@@ -572,9 +572,15 @@ function AIIntake() {
     showBillieStatus({ kind: "info", text: "Undid last Billie change" }, { durationMs: 5000 });
   };
 
-  const handleBillieEditLifecycle = ({ phase, outcome }) => {
+  const handleBillieEditLifecycle = ({ phase, outcome, targetType }) => {
     if (phase === "start") {
-      showBillieStatus({ kind: "working", text: "Billie: Refining wording" }, { sticky: true });
+      const targetText =
+        targetType === "line_item"
+          ? "Billie: Refining selected line"
+          : targetType === "notes"
+            ? "Billie: Refining notes"
+            : "Billie: Refining wording";
+      showBillieStatus({ kind: "working", text: targetText }, { sticky: true });
       return;
     }
     if (phase !== "complete") {
@@ -1403,7 +1409,7 @@ function AIIntake() {
     unparsedLinesRef.current = unparsedLines;
   }, [unparsedLines]);
 
-  const { submitUserMessage } = createIntakeActionHandlers({
+  const { submitUserMessage, refineBillieLineItem, refineBillieNotes } = createIntakeActionHandlers({
     requestIdRef,
     lastDecisionResolutionRef,
     lastTranscriptRef,
@@ -1710,6 +1716,8 @@ function AIIntake() {
                       recentlyChangedDescriptions={recentlyChangedLines.descriptions}
                       billieStatus={billieStatus}
                       submitUserMessage={submitUserMessage}
+                      onBillieLineRefine={refineBillieLineItem}
+                      onBillieNotesRefine={refineBillieNotes}
                     />
                   );
                 }

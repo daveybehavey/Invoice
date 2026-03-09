@@ -553,6 +553,37 @@ export async function changeLineWording(
   return normalizeInvoice(FinishedInvoiceSchema.parse(updatedInvoice));
 }
 
+export async function changeNotesWording(
+  invoice: FinishedInvoice,
+  tone?: string
+): Promise<FinishedInvoice> {
+  const currentNotes = (invoice.notes ?? "").trim();
+  if (!currentNotes) {
+    return normalizeInvoice(FinishedInvoiceSchema.parse(invoice));
+  }
+
+  const taskPrompt = [
+    "Rewrite invoice notes only.",
+    "Keep the same meaning and professionalism.",
+    "Do not change line items, quantities, rates, dates, or totals.",
+    `Tone preference: ${tone ?? "neutral professional"}.`,
+    "Return JSON with shape: {\"notes\":\"...\"}.",
+    `Original invoice notes: ${JSON.stringify(currentNotes)}`
+  ].join("\n");
+
+  const modelResponse = await runJsonTask<{ notes: string }>(taskPrompt, {
+    taskType: "wording",
+    maxCompletionTokens: Math.min(500, Math.max(180, Math.ceil(currentNotes.length / 3)))
+  });
+
+  const updatedInvoice: FinishedInvoice = {
+    ...invoice,
+    notes: modelResponse.notes
+  };
+
+  return normalizeInvoice(FinishedInvoiceSchema.parse(updatedInvoice));
+}
+
 export async function rewordFullInvoice(invoice: FinishedInvoice, tone?: string): Promise<FinishedInvoice> {
   if (invoice.lineItems.length === 1 && !(invoice.notes ?? "").trim()) {
     const [singleLineItem] = invoice.lineItems;

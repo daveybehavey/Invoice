@@ -513,7 +513,13 @@
       }
     };
 
-    const runInvoiceWordingRequest = async (tone, instruction) => {
+    const runScopedWordingRequest = async ({
+      instruction,
+      tone,
+      routePath,
+      buildRequestBody,
+      targetType = "full_invoice"
+    }) => {
       const state = getState();
       if (!state.finishedInvoice) {
         appendAiMessage("Generate a draft first, then I can apply edits.");
@@ -540,17 +546,15 @@
         phase: "start",
         requestId,
         requestStartedAt,
-        instruction
+        instruction,
+        targetType
       });
       setIsTyping(true);
       try {
-        const response = await apiFetch("/api/invoices/reword-full", {
+        const response = await apiFetch(routePath, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            invoice: state.finishedInvoice,
-            tone
-          })
+          body: JSON.stringify(buildRequestBody(state.finishedInvoice))
         });
         const payload = await response.json();
         if (!response.ok) {
@@ -581,6 +585,43 @@
         }
       }
     };
+
+    const runInvoiceWordingRequest = async (tone, instruction) =>
+      runScopedWordingRequest({
+        instruction,
+        tone,
+        targetType: "full_invoice",
+        routePath: "/api/invoices/reword-full",
+        buildRequestBody: (invoice) => ({
+          invoice,
+          tone
+        })
+      });
+
+    const refineBillieLineItem = async (lineItemId, tone, lineDescription) =>
+      runScopedWordingRequest({
+        instruction: `Refine ${lineDescription || "selected line"} while keeping numbers locked.`,
+        tone,
+        targetType: "line_item",
+        routePath: "/api/invoices/reword-line",
+        buildRequestBody: (invoice) => ({
+          invoice,
+          lineItemId,
+          tone
+        })
+      });
+
+    const refineBillieNotes = async (tone) =>
+      runScopedWordingRequest({
+        instruction: "Refine notes only while keeping numbers locked.",
+        tone,
+        targetType: "notes",
+        routePath: "/api/invoices/reword-notes",
+        buildRequestBody: (invoice) => ({
+          invoice,
+          tone
+        })
+      });
 
     const submitUserMessage = (text, options = {}) => {
       const trimmed = text.trim();
@@ -757,6 +798,8 @@
     return {
       buildBilliePatch,
       runInvoiceEditRequest,
+      refineBillieLineItem,
+      refineBillieNotes,
       submitUserMessage
     };
   };

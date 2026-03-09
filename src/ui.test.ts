@@ -386,6 +386,162 @@ test("billie workspace blocks money-changing edits and keeps totals unchanged", 
   }
 });
 
+test("line-level billie refine rewrites only the selected line and keeps undo working", async () => {
+  useMockResponses([structuredDuplicateDraft(), emptyAudit()]);
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    let rewordLineRequestCount = 0;
+    await page.route("**/api/invoices/reword-line", async (route) => {
+      rewordLineRequestCount += 1;
+      const body = route.request().postDataJSON() as {
+        lineItemId: string;
+        invoice: { lineItems: Array<{ id?: string; description: string }> };
+      };
+      const nextInvoice = {
+        ...body.invoice,
+        lineItems: body.invoice.lineItems.map((lineItem: { id?: string; description: string }) =>
+          lineItem.id === body.lineItemId
+            ? {
+                ...lineItem,
+                description: "Kitchen faucet repair service"
+              }
+            : lineItem
+        )
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ invoice: nextInvoice })
+      });
+    });
+    await page.route("**/api/invoices/reword-notes", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected notes reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-full", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected full reword route call." })
+      });
+    });
+
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 10 faucet repair and washer replacement.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Show review details" }).click();
+    await page.getByRole("button", { name: "Billie for Faucet repair" }).click();
+    await page.getByRole("button", { name: "Refine Faucet repair" }).click();
+
+    await page
+      .locator("form.fixed")
+      .getByText("✓ Numbers unchanged")
+      .waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Show review details" }).click();
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll("p.text-sm.font-semibold.text-slate-800")).some(
+        (node) => node.textContent?.trim() === "Kitchen faucet repair service"
+      )
+    );
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll("p.text-sm.font-semibold.text-slate-800")).some(
+        (node) => node.textContent?.trim() === "Washer"
+      )
+    );
+    assert.equal(rewordLineRequestCount, 1);
+
+    await page.getByRole("button", { name: "Undo last Billie change" }).click();
+    await page
+      .locator("form.fixed")
+      .getByText("Undid last Billie change")
+      .waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Show review details" }).click();
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll("p.text-sm.font-semibold.text-slate-800")).some(
+        (node) => node.textContent?.trim() === "Faucet repair"
+      )
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("notes-only billie refine rewrites notes without changing line items", async () => {
+  useMockResponses([structuredInvoiceWithNotes(), emptyAudit()]);
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    let rewordNotesRequestCount = 0;
+    await page.route("**/api/invoices/reword-notes", async (route) => {
+      rewordNotesRequestCount += 1;
+      const body = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          invoice: {
+            ...body.invoice,
+            notes: "Payment due within 7 days. Thank you for your business."
+          }
+        })
+      });
+    });
+    await page.route("**/api/invoices/reword-line", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected line reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-full", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected full reword route call." })
+      });
+    });
+
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 10 faucet repair.\nNotes: pay in 7 days thanks.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Show review details" }).click();
+    await page.getByText("pay in 7 days thanks").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Billie for notes" }).click();
+    await page.getByRole("button", { name: "Refine notes" }).click();
+
+    await page
+      .locator("form.fixed")
+      .getByText("✓ Numbers unchanged")
+      .waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Show review details" }).click();
+    await page.getByText("Payment due within 7 days. Thank you for your business.").waitFor({
+      state: "visible"
+    });
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll("p.text-sm.font-semibold.text-slate-800")).some(
+        (node) => node.textContent?.trim() === "Faucet repair"
+      )
+    );
+    assert.equal(rewordNotesRequestCount, 1);
+  } finally {
+    await context.close();
+  }
+});
+
 test("importing image notes requires OCR review before building draft", async () => {
   setImageOcrRunnerForTests(async () => ({
     extractedText: "Jan 30 faucet repair, 2 hours at $80/hr.",
@@ -775,6 +931,20 @@ function structuredInvoiceForImport() {
       }
     ],
     materials: []
+  };
+}
+
+function structuredInvoiceWithNotes() {
+  return {
+    customerName: "Mike Johnson",
+    workSessions: [
+      {
+        date: "Jan 30",
+        tasks: [{ description: "Faucet repair", hours: 2, rate: 80, amount: 160 }]
+      }
+    ],
+    materials: [],
+    notes: "pay in 7 days thanks"
   };
 }
 

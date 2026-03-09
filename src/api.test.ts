@@ -1640,6 +1640,39 @@ test("reword-line keeps quantities, rates, and amounts unchanged", async () => {
   assert.equal(response.body.invoice.total, 120);
 });
 
+test("reword-notes keeps line items and totals unchanged", async () => {
+  useMockResponses([{ notes: "Payment due within 7 days. Thank you for your business." }]);
+
+  const response = await request(app).post("/api/invoices/reword-notes").send({
+    tone: "more formal",
+    invoice: {
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line_1",
+          type: "labor",
+          description: "Original labor description",
+          quantity: 2,
+          unitPrice: 60,
+          amount: 120
+        }
+      ],
+      notes: "pay in 7 days thanks",
+      subtotal: 120,
+      total: 120,
+      balanceDue: 120
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.invoice.notes, "Payment due within 7 days. Thank you for your business.");
+  assert.equal(response.body.invoice.lineItems[0].description, "Original labor description");
+  assert.equal(response.body.invoice.lineItems[0].quantity, 2);
+  assert.equal(response.body.invoice.lineItems[0].unitPrice, 60);
+  assert.equal(response.body.invoice.lineItems[0].amount, 120);
+  assert.equal(response.body.invoice.total, 120);
+});
+
 test("export-pdf returns a downloadable pdf document", async () => {
   const response = await request(app)
     .post("/api/invoices/export-pdf")

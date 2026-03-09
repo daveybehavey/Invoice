@@ -130,6 +130,11 @@ export const ChangeLineWordingRequestSchema = z.object({
   tone: OptionalString
 });
 
+export const ChangeNotesWordingRequestSchema = z.object({
+  invoice: FinishedInvoiceSchema,
+  tone: OptionalString
+});
+
 export const FullInvoiceRewordRequestSchema = z.object({
   invoice: FinishedInvoiceSchema,
   tone: OptionalString

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { setJsonTaskRunnerForTests } from "../ai/openaiClient.js";
-import { rewordFullInvoice } from "./invoicePipeline.js";
+import { changeNotesWording, rewordFullInvoice } from "./invoicePipeline.js";
+
+type CapturedTaskOptions = {
+  taskType?: string;
+  maxCompletionTokens?: number;
+};
 
 afterEach(() => {
   setJsonTaskRunnerForTests(null);
@@ -9,8 +14,8 @@ afterEach(() => {
 
 test("rewordFullInvoice uses the single-line wording path when only one line needs rewriting", async () => {
   let capturedPrompt = "";
-  let capturedOptions = null;
-  setJsonTaskRunnerForTests(async <T>(prompt: string, options): Promise<T> => {
+  let capturedOptions: CapturedTaskOptions | null = null;
+  setJsonTaskRunnerForTests(async <T>(prompt: string, options?: CapturedTaskOptions): Promise<T> => {
     capturedPrompt = prompt;
     capturedOptions = options ?? null;
     return { description: "Kitchen faucet repair service" } as T;
@@ -40,13 +45,13 @@ test("rewordFullInvoice uses the single-line wording path when only one line nee
   assert.equal(updated.lineItems[0]?.description, "Kitchen faucet repair service");
   assert.match(capturedPrompt, /Reword a single invoice line item\./);
   assert.doesNotMatch(capturedPrompt, /Rewrite invoice wording only\./);
-  assert.equal(capturedOptions?.maxCompletionTokens, undefined);
+  assert.equal((capturedOptions as CapturedTaskOptions | null)?.maxCompletionTokens, undefined);
 });
 
 test("rewordFullInvoice keeps the full rewrite path when notes are present", async () => {
   let capturedPrompt = "";
-  let capturedOptions = null;
-  setJsonTaskRunnerForTests(async <T>(prompt: string, options): Promise<T> => {
+  let capturedOptions: CapturedTaskOptions | null = null;
+  setJsonTaskRunnerForTests(async <T>(prompt: string, options?: CapturedTaskOptions): Promise<T> => {
     capturedPrompt = prompt;
     capturedOptions = options ?? null;
     return {
@@ -79,13 +84,13 @@ test("rewordFullInvoice keeps the full rewrite path when notes are present", asy
   assert.equal(updated.lineItems[0]?.description, "Kitchen faucet repair service");
   assert.equal(updated.notes, "Thank you for your business.");
   assert.match(capturedPrompt, /Rewrite invoice wording only\./);
-  assert.equal(capturedOptions?.taskType, "wording");
-  assert.ok((capturedOptions?.maxCompletionTokens ?? 0) >= 500);
+  assert.equal((capturedOptions as CapturedTaskOptions | null)?.taskType, "wording");
+  assert.ok(((capturedOptions as CapturedTaskOptions | null)?.maxCompletionTokens ?? 0) >= 500);
 });
 
 test("rewordFullInvoice raises wording token budget for larger multi-line drafts", async () => {
-  let capturedOptions = null;
-  setJsonTaskRunnerForTests(async <T>(_prompt: string, options): Promise<T> => {
+  let capturedOptions: CapturedTaskOptions | null = null;
+  setJsonTaskRunnerForTests(async <T>(_prompt: string, options?: CapturedTaskOptions): Promise<T> => {
     capturedOptions = options ?? null;
     return {
       lineItems: [
@@ -118,6 +123,47 @@ test("rewordFullInvoice raises wording token budget for larger multi-line drafts
     balanceDue: 189.25
   });
 
-  assert.equal(capturedOptions?.taskType, "wording");
-  assert.ok((capturedOptions?.maxCompletionTokens ?? 0) >= 1000);
+  assert.equal((capturedOptions as CapturedTaskOptions | null)?.taskType, "wording");
+  assert.ok(((capturedOptions as CapturedTaskOptions | null)?.maxCompletionTokens ?? 0) >= 1000);
+});
+
+test("changeNotesWording rewrites only notes and keeps line items untouched", async () => {
+  let capturedPrompt = "";
+  let capturedOptions: CapturedTaskOptions | null = null;
+  setJsonTaskRunnerForTests(async <T>(prompt: string, options?: CapturedTaskOptions): Promise<T> => {
+    capturedPrompt = prompt;
+    capturedOptions = options ?? null;
+    return {
+      notes: "Payment due within 7 days. Thank you for your business."
+    } as T;
+  });
+
+  const updated = await changeNotesWording(
+    {
+      invoiceNumber: "INV-4",
+      issueDate: "2026-03-07",
+      customerName: "Mike Johnson",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line-1",
+          type: "labor",
+          description: "Faucet repair",
+          quantity: 2,
+          unitPrice: 80,
+          amount: 160
+        }
+      ],
+      notes: "pay in 7 days thanks",
+      subtotal: 160,
+      total: 160,
+      balanceDue: 160
+    },
+    "More formal"
+  );
+
+  assert.equal(updated.notes, "Payment due within 7 days. Thank you for your business.");
+  assert.equal(updated.lineItems[0]?.description, "Faucet repair");
+  assert.match(capturedPrompt, /Rewrite invoice notes only\./);
+  assert.equal((capturedOptions as CapturedTaskOptions | null)?.taskType, "wording");
 });

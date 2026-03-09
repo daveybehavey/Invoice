@@ -36,8 +36,11 @@
     recentlyChangedLineIds,
     recentlyChangedDescriptions,
     billieStatus,
-    submitUserMessage
+    submitUserMessage,
+    onBillieLineRefine,
+    onBillieNotesRefine
   }) {
+    const [activeBillieTarget, setActiveBillieTarget] = React.useState(null);
     const normalizedDescriptions = Array.isArray(recentlyChangedDescriptions)
       ? recentlyChangedDescriptions
       : [];
@@ -46,6 +49,22 @@
     );
     const hasBillieHighlights = changedLineIdSet.size > 0 || normalizedDescriptions.length > 0;
     const billieIsWorking = billieStatus?.kind === "working";
+    const billieContextButtonClass =
+      "rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300";
+    const billieContextActionClass =
+      "rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300";
+    const billieToneActions = [
+      { id: "professional", label: "Refine", tone: "Professional" },
+      { id: "simpler", label: "Simpler", tone: "Simpler" },
+      { id: "formal", label: "Formal", tone: "More formal" },
+      { id: "stronger", label: "Stronger", tone: "Stronger" }
+    ];
+
+    React.useEffect(() => {
+      if (!showReviewExpandedSections || isTyping) {
+        setActiveBillieTarget(null);
+      }
+    }, [showReviewExpandedSections, isTyping]);
 
     return (
       <div key={messageId} className="flex justify-start">
@@ -263,27 +282,77 @@
                         const isRecentlyChanged =
                           changedLineIdSet.has(item.id ?? `line-${index}`) ||
                           normalizedDescriptions.includes(normalizedDescription);
+                        const targetId = item.id ?? `${section.id}-${index}`;
+                        const showBillieActions =
+                          activeBillieTarget?.type === "line_item" &&
+                          activeBillieTarget?.id === targetId;
                         return (
                           <div
                             key={`${section.id}-${item.id ?? "item"}-${index}`}
-                            className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 transition-colors ${
+                            className={`flex flex-wrap items-start justify-between gap-2 rounded-xl border px-3 py-2 transition-colors ${
                               isRecentlyChanged
                                 ? "border-emerald-200 bg-emerald-50/70"
                                 : "border-slate-100 bg-slate-50"
                             }`}
                           >
-                            <div className="space-y-1">
+                            <div className="min-w-0 flex-1 space-y-1">
                               <p className="text-sm font-semibold text-slate-800">{item.description}</p>
                               {meta ? <p className="text-xs text-slate-500">{meta}</p> : null}
                               {isRecentlyChanged ? (
                                 <p className="text-[11px] font-semibold text-emerald-700">Updated by Billie</p>
                               ) : null}
+                              {showBillieActions ? (
+                                <div className="flex flex-wrap gap-2 pt-1">
+                                  {billieToneActions.map((action) => (
+                                    <button
+                                      key={`${targetId}-${action.id}`}
+                                      type="button"
+                                      className={billieContextActionClass}
+                                      aria-label={
+                                        action.id === "professional"
+                                          ? `Refine ${item.description}`
+                                          : action.id === "simpler"
+                                            ? `Make ${item.description} simpler`
+                                            : action.id === "formal"
+                                              ? `Make ${item.description} more formal`
+                                              : `Make ${item.description} stronger`
+                                      }
+                                      onClick={() => {
+                                        setActiveBillieTarget(null);
+                                        onBillieLineRefine?.(item.id, action.tone, item.description);
+                                      }}
+                                      disabled={isTyping}
+                                    >
+                                      {action.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
                             </div>
-                            <span
-                              className={`rounded-full px-2 py-1 text-xs font-semibold ${status.badgeClass}`}
-                            >
-                              {status.label}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              {item.id ? (
+                                <button
+                                  type="button"
+                                  className={billieContextButtonClass}
+                                  aria-label={`Billie for ${item.description}`}
+                                  onClick={() =>
+                                    setActiveBillieTarget((current) =>
+                                      current?.type === "line_item" && current?.id === targetId
+                                        ? null
+                                        : { type: "line_item", id: targetId }
+                                    )
+                                  }
+                                  disabled={isTyping}
+                                >
+                                  Billie
+                                </button>
+                              ) : null}
+                              <span
+                                className={`rounded-full px-2 py-1 text-xs font-semibold ${status.badgeClass}`}
+                              >
+                                {status.label}
+                              </span>
+                            </div>
                           </div>
                         );
                       })}
@@ -304,8 +373,50 @@
 
           {showReviewExpandedSections && payload.notes ? (
             <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notes</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notes</p>
+                <button
+                  type="button"
+                  className={billieContextButtonClass}
+                  aria-label="Billie for notes"
+                  onClick={() =>
+                    setActiveBillieTarget((current) =>
+                      current?.type === "notes" ? null : { type: "notes" }
+                    )
+                  }
+                  disabled={isTyping}
+                >
+                  Billie
+                </button>
+              </div>
               <p className="mt-1 text-sm text-slate-700">{payload.notes}</p>
+              {activeBillieTarget?.type === "notes" ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {billieToneActions.map((action) => (
+                    <button
+                      key={`notes-${action.id}`}
+                      type="button"
+                      className={billieContextActionClass}
+                      aria-label={
+                        action.id === "professional"
+                          ? "Refine notes"
+                          : action.id === "simpler"
+                            ? "Make notes simpler"
+                            : action.id === "formal"
+                              ? "Make notes more formal"
+                              : "Make notes stronger"
+                      }
+                      onClick={() => {
+                        setActiveBillieTarget(null);
+                        onBillieNotesRefine?.(action.tone);
+                      }}
+                      disabled={isTyping}
+                    >
+                      {action.id === "professional" ? "Refine notes" : action.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
