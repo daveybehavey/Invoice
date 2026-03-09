@@ -829,6 +829,39 @@ test("saving a client remembers bill-to details and autofills later matching dra
   }
 });
 
+test("saving an invoice remembers line items and allows one-tap reinsertion later", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-line-item-library-owner");
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.getByPlaceholder("0").first().fill("1");
+    await page.getByPlaceholder("$0").first().fill("90");
+    await page.getByRole("button", { name: "Export" }).last().click();
+    await page.getByText("Save to library").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Save invoice" }).click();
+    await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
+
+    await page.evaluate(() => {
+      window.localStorage.removeItem("invoiceDraft::owner:ui-line-item-library-owner");
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: /Saved items/i }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /Saved items/i }).click();
+    await page.getByRole("button", { name: "Insert saved item Faucet repair" }).click();
+
+    await expectValueContains(page.getByPlaceholder("Description").first(), "Faucet repair");
+    assert.equal(await page.getByPlaceholder("0").first().inputValue(), "1");
+    assert.equal(await page.getByPlaceholder("$0").first().inputValue(), "90");
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor save shows sign-in guidance when auth is required", async () => {
   process.env.INVOICE_REQUIRE_AUTH = "true";
   const context = await browser.newContext();

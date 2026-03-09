@@ -49,6 +49,12 @@
       "Missing /utils/clientMemory.js load. Ensure it is loaded before /features/manual/manualInvoiceCanvas.jsx."
     );
   }
+  const lineItemLibraryUtils = window.InvoiceLineItemLibrary;
+  if (!lineItemLibraryUtils) {
+    throw new Error(
+      "Missing /utils/lineItemLibrary.js load. Ensure it is loaded before /features/manual/manualInvoiceCanvas.jsx."
+    );
+  }
 
   const logoImageUtils = window.InvoiceLogoImage;
   if (!logoImageUtils) {
@@ -63,6 +69,7 @@
   const { STYLE_PRESETS } = styleCatalogUtils;
   const { getBusinessProfile, applyBusinessProfileToDraft } = businessProfileUtils;
   const { rememberClientDetails } = clientMemoryUtils;
+  const { getLineItemLibrary, rememberLineItems } = lineItemLibraryUtils;
   const { readLogoFileForStorage } = logoImageUtils;
 
   const readDraftFromStorage = (key) => {
@@ -131,6 +138,8 @@ function ManualInvoiceCanvas() {
   const [saveNeedsAuth, setSaveNeedsAuth] = useState(false);
   const [saveAuthRequiredPolicy, setSaveAuthRequiredPolicy] = useState(false);
   const [savedInvoiceId, setSavedInvoiceId] = useState(() => initialDraft?.savedInvoiceId ?? "");
+  const [savedLineItemLibrary, setSavedLineItemLibrary] = useState(() => getLineItemLibrary());
+  const [showSavedLineItems, setShowSavedLineItems] = useState(false);
   const saveTimeoutRef = useRef(null);
   const clearStatusTimeoutRef = useRef(null);
   const draftStatusLabel = "Draft restored";
@@ -225,6 +234,38 @@ function ManualInvoiceCanvas() {
       ...prev,
       { id: `line-${Date.now()}`, description: "", qty: "", rate: "" }
     ]);
+  };
+
+  const setTimedDraftStatus = (message) => {
+    setDraftStatus(message);
+    if (clearStatusTimeoutRef.current) {
+      window.clearTimeout(clearStatusTimeoutRef.current);
+    }
+    clearStatusTimeoutRef.current = window.setTimeout(() => {
+      setDraftStatus("");
+    }, 1800);
+  };
+
+  const handleInsertSavedLineItem = (entry) => {
+    if (!entry?.description) {
+      return;
+    }
+    const nextLineItem = {
+      id: `line-${Date.now()}`,
+      description: entry.description,
+      qty: entry.qty ?? "",
+      rate: entry.rate ?? ""
+    };
+    setLineItems((prev) => {
+      const emptyIndex = prev.findIndex(
+        (item) => !item.description.trim() && item.qty === "" && item.rate === ""
+      );
+      if (emptyIndex === -1) {
+        return [...prev, nextLineItem];
+      }
+      return prev.map((item, index) => (index === emptyIndex ? nextLineItem : item));
+    });
+    setTimedDraftStatus(`Inserted saved item: ${entry.description}`);
   };
 
   const handleLogoChange = async (event) => {
@@ -552,6 +593,7 @@ function ManualInvoiceCanvas() {
         setSavedInvoiceId(nextId);
       }
       rememberClientDetails(billToDetails);
+      setSavedLineItemLibrary(rememberLineItems(editableResult.invoice.lineItems));
       setSaveNeedsAuth(false);
       setSaveStatus("Saved");
       window.setTimeout(() => setSaveStatus(""), 1500);
@@ -853,6 +895,40 @@ function ManualInvoiceCanvas() {
               >
                 + Add line item
               </button>
+              {savedLineItemLibrary.length > 0 ? (
+                <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                  <button
+                    type="button"
+                    className="text-sm font-semibold"
+                    style={{ color: accent.primary }}
+                    onClick={() => setShowSavedLineItems((value) => !value)}
+                  >
+                    {showSavedLineItems ? "Hide saved items" : `Saved items (${savedLineItemLibrary.length})`}
+                  </button>
+                  {showSavedLineItems ? (
+                    <div className="flex flex-wrap gap-2">
+                      {savedLineItemLibrary.slice(0, 8).map((entry) => (
+                        <button
+                          key={entry.lookupKey}
+                          type="button"
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300"
+                          onClick={() => handleInsertSavedLineItem(entry)}
+                          aria-label={`Insert saved item ${entry.description}`}
+                        >
+                          <span className="block">{entry.description}</span>
+                          {entry.qty || entry.rate ? (
+                            <span className="mt-1 block text-xs font-medium text-slate-500">
+                              {[entry.qty ? `Qty ${entry.qty}` : "", entry.rate ? `Rate $${entry.rate}` : ""]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </span>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </section>
 
             <section className="flex justify-end">
