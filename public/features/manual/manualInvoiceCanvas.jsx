@@ -43,6 +43,12 @@
       "Missing /utils/businessProfile.js load. Ensure it is loaded before /features/manual/manualInvoiceCanvas.jsx."
     );
   }
+  const clientMemoryUtils = window.InvoiceClientMemory;
+  if (!clientMemoryUtils) {
+    throw new Error(
+      "Missing /utils/clientMemory.js load. Ensure it is loaded before /features/manual/manualInvoiceCanvas.jsx."
+    );
+  }
 
   const logoImageUtils = window.InvoiceLogoImage;
   if (!logoImageUtils) {
@@ -56,6 +62,7 @@
   const { DEFAULT_ACCENT_COLOR, normalizeAccentColor, buildAccentPalette } = brandThemeUtils;
   const { STYLE_PRESETS } = styleCatalogUtils;
   const { getBusinessProfile, applyBusinessProfileToDraft } = businessProfileUtils;
+  const { rememberClientDetails } = clientMemoryUtils;
   const { readLogoFileForStorage } = logoImageUtils;
 
   const readDraftFromStorage = (key) => {
@@ -544,6 +551,7 @@ function ManualInvoiceCanvas() {
       if (nextId) {
         setSavedInvoiceId(nextId);
       }
+      rememberClientDetails(billToDetails);
       setSaveNeedsAuth(false);
       setSaveStatus("Saved");
       window.setTimeout(() => setSaveStatus(""), 1500);

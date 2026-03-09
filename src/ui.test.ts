@@ -799,6 +799,36 @@ test("invoice library invoice again opens a fresh draft with today's date and a 
   }
 });
 
+test("saving a client remembers bill-to details and autofills later matching drafts", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-client-memory-owner");
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("faucet repair");
+    await page.getByPlaceholder("Client Name").fill("Mike Johnson\n1423 Pine St");
+    await page.getByRole("button", { name: "Export" }).last().click();
+    await page.getByText("Save to library").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Save invoice" }).click();
+    await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
+
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Generate Invoice" }).click();
+
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Mike Johnson\n1423 Pine St");
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor save shows sign-in guidance when auth is required", async () => {
   process.env.INVOICE_REQUIRE_AUTH = "true";
   const context = await browser.newContext();

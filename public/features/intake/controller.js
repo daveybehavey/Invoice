@@ -11,8 +11,15 @@
       "Missing /utils/formatters.js load. Ensure it is loaded before /features/intake/controller.js."
     );
   }
+  const clientMemoryUtils = window.InvoiceClientMemory;
+  if (!clientMemoryUtils) {
+    throw new Error(
+      "Missing /utils/clientMemory.js load. Ensure it is loaded before /features/intake/controller.js."
+    );
+  }
 
   const { normalizeSnippet, extractKeywords } = intakeHelpers;
+  const { applyClientMemoryToDraft } = clientMemoryUtils;
   const {
     formatMoney,
     formatDisplayDescription,
@@ -247,7 +254,7 @@
         };
       }) ?? [];
 
-    return {
+    const draft = {
       invoiceNumber:
         typeof invoice?.invoiceNumber === "string" && invoice.invoiceNumber.trim()
           ? invoice.invoiceNumber
@@ -263,6 +270,7 @@
       logoUrl: null,
       stylePreset: "default"
     };
+    return applyClientMemoryToDraft(draft);
   };
 
   const extractDecisionSnippet = (prompt) => {

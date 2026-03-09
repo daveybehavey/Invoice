@@ -7,6 +7,13 @@
   }
 
   const { generateInvoiceNumber, polishLineItemDescription } = formatUtils;
+  const clientMemoryUtils = window.InvoiceClientMemory;
+  if (!clientMemoryUtils) {
+    throw new Error(
+      "Missing /utils/clientMemory.js load. Ensure it is loaded before /features/intake/readiness.js."
+    );
+  }
+  const { applyClientMemoryToDraft } = clientMemoryUtils;
 
   const isReadinessDebugEnabled = () => {
     if (typeof window === "undefined") {
@@ -182,7 +189,7 @@
         };
       }) ?? [];
 
-    return {
+    const draft = {
       invoiceNumber:
         typeof options.invoiceNumber === "string"
           ? options.invoiceNumber
@@ -208,6 +215,7 @@
       stylePreset: "default",
       savedInvoiceId: options.savedInvoiceId ?? ""
     };
+    return applyClientMemoryToDraft(draft);
   };
 
   window.InvoiceIntakeReadiness = {
