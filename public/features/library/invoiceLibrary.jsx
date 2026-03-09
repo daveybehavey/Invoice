@@ -245,7 +245,7 @@ function InvoiceLibrary() {
     };
   }, []);
 
-  const openSavedInvoice = async (invoiceId, endpoint, method = "GET") => {
+  const openSavedInvoice = async (invoiceId, endpoint, method = "GET", draftOptions = {}) => {
     setActionId(invoiceId);
     try {
       const payload = await requestJson(
@@ -261,7 +261,8 @@ function InvoiceLibrary() {
       }
       const draft = buildDraftFromFinishedInvoice(invoiceData.finishedInvoice, {
         taxRate: deriveTaxRate(invoiceData.finishedInvoice),
-        savedInvoiceId: savedInvoice?.invoiceId ?? ""
+        savedInvoiceId: savedInvoice?.invoiceId ?? "",
+        ...draftOptions
       });
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
       navigate("/manual");
@@ -273,8 +274,11 @@ function InvoiceLibrary() {
   };
 
   const handleOpen = (invoiceId) => openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`);
-  const handleDuplicate = (invoiceId) =>
-    openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}/duplicate`, "POST");
+  const handleInvoiceAgain = (invoiceId) =>
+    openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`, "GET", {
+      freshDraft: true,
+      savedInvoiceId: ""
+    });
 
   const handleRestore = async (ids) => {
     if (!ids.length) {
@@ -440,7 +444,7 @@ function InvoiceLibrary() {
             </button>
             <h1 className="mt-3 text-2xl font-semibold text-slate-900">Invoice Library</h1>
             <p className="mt-1 text-sm text-slate-600">
-              Reopen saved drafts, duplicates, and exports.
+              Reopen saved drafts, invoice again, and export.
             </p>
             <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs">
               <span className="font-semibold text-slate-500">Account:</span>
@@ -731,10 +735,10 @@ function InvoiceLibrary() {
                           <button
                             type="button"
                             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300"
-                            onClick={() => handleDuplicate(invoice.invoiceId)}
+                            onClick={() => handleInvoiceAgain(invoice.invoiceId)}
                             disabled={actionId === invoice.invoiceId}
                           >
-                            Duplicate
+                            Invoice again
                           </button>
                           <button
                             type="button"

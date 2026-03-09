@@ -157,6 +157,7 @@
 
   const buildDraftFromFinishedInvoice = (invoice, options = {}) => {
     const today = new Date().toISOString().slice(0, 10);
+    const useFreshDraft = options.freshDraft === true;
     const issueDate =
       typeof invoice?.issueDate === "string" && /^\d{4}-\d{2}-\d{2}/.test(invoice.issueDate)
         ? invoice.issueDate.slice(0, 10)
@@ -183,10 +184,19 @@
 
     return {
       invoiceNumber:
-        typeof invoice?.invoiceNumber === "string" && invoice.invoiceNumber.trim()
-          ? invoice.invoiceNumber
-          : generateInvoiceNumber(),
-      invoiceDate: issueDate || today,
+        typeof options.invoiceNumber === "string"
+          ? options.invoiceNumber
+          : useFreshDraft
+            ? generateInvoiceNumber()
+            : typeof invoice?.invoiceNumber === "string" && invoice.invoiceNumber.trim()
+              ? invoice.invoiceNumber
+              : generateInvoiceNumber(),
+      invoiceDate:
+        typeof options.invoiceDate === "string"
+          ? options.invoiceDate
+          : useFreshDraft
+            ? today
+            : issueDate || today,
       fromDetails: "",
       billToDetails: invoice?.customerName ?? "",
       notes: invoice?.notes ?? "",

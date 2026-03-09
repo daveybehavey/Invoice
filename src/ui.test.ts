@@ -726,7 +726,7 @@ test("invoice library shows sign-in-required panel when auth policy requires it"
   }
 });
 
-test("invoice library duplicate opens the copied draft in manual editor", async () => {
+test("invoice library invoice again opens a fresh draft with today's date and a new number", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {
     window.localStorage.setItem("invoiceOwnerId", "ui-test-owner");
@@ -783,12 +783,17 @@ test("invoice library duplicate opens the copied draft in manual editor", async 
 
   const page = await context.newPage();
   try {
+    const today = new Date().toISOString().slice(0, 10);
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     await page.getByRole("heading", { name: "Invoice Library" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Duplicate" }).first().click();
+    await page.getByRole("button", { name: "Invoice again" }).first().click();
 
     await page.waitForURL(/\/manual$/, { timeout: 15000 });
     await page.getByPlaceholder("Description").first().waitFor({ state: "visible" });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Mike Johnson");
+    assert.equal(await page.getByLabel("Date").inputValue(), today);
+    assert.notEqual(await page.getByLabel("Invoice #").inputValue(), "INV-1001");
+    await expectValueContains(page.getByPlaceholder("Description").first(), "Faucet repair");
   } finally {
     await context.close();
   }
