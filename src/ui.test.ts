@@ -446,6 +446,15 @@ test("line-level billie refine rewrites only the selected line and keeps undo wo
       .locator("form.fixed")
       .getByText("✓ Numbers unchanged")
       .waitFor({ state: "visible" });
+    const lineChangePreview = page.locator('[data-testid="billie-change-preview"]');
+    await lineChangePreview.waitFor({ state: "visible" });
+    await lineChangePreview.getByText(/^Last Billie change$/).waitFor({ state: "visible" });
+    await lineChangePreview.getByText(/^Before$/).waitFor({ state: "visible" });
+    await lineChangePreview.getByText(/^After$/).waitFor({ state: "visible" });
+    await lineChangePreview.getByText(/^Faucet repair$/).waitFor({ state: "visible" });
+    await lineChangePreview.getByText(/^Kitchen faucet repair service$/).waitFor({
+      state: "visible"
+    });
     await page.getByRole("button", { name: "Show review details" }).click();
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll("p.text-sm.font-semibold.text-slate-800")).some(
@@ -464,6 +473,7 @@ test("line-level billie refine rewrites only the selected line and keeps undo wo
       .locator("form.fixed")
       .getByText("Undid last Billie change")
       .waitFor({ state: "visible" });
+    assert.equal(await page.locator('[data-testid="billie-change-preview"]').count(), 0);
     await page.getByRole("button", { name: "Show review details" }).click();
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll("p.text-sm.font-semibold.text-slate-800")).some(
@@ -527,10 +537,18 @@ test("notes-only billie refine rewrites notes without changing line items", asyn
       .locator("form.fixed")
       .getByText("✓ Numbers unchanged")
       .waitFor({ state: "visible" });
+    const notesChangePreview = page.locator('[data-testid="billie-change-preview"]');
+    await notesChangePreview.waitFor({ state: "visible" });
+    await notesChangePreview.getByText(/^Last Billie change$/).waitFor({ state: "visible" });
+    await notesChangePreview.getByText("pay in 7 days thanks").waitFor({ state: "visible" });
+    await notesChangePreview
+      .getByText(/^Payment due within 7 days\. Thank you for your business\.$/)
+      .waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Show review details" }).click();
-    await page.getByText("Payment due within 7 days. Thank you for your business.").waitFor({
-      state: "visible"
-    });
+    await page
+      .getByRole("main")
+      .getByText(/^Payment due within 7 days\. Thank you for your business\.$/)
+      .waitFor({ state: "visible" });
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll("p.text-sm.font-semibold.text-slate-800")).some(
         (node) => node.textContent?.trim() === "Faucet repair"
@@ -800,6 +818,8 @@ test("invoice library invoice again opens a fresh draft with today's date and a 
 });
 
 test("saving a client remembers bill-to details and autofills later matching drafts", async () => {
+  useMockResponses([structuredDuplicateDraft(), emptyAudit()]);
+
   const context = await browser.newContext();
   await context.addInitScript(() => {
     window.localStorage.setItem("invoiceOwnerId", "ui-client-memory-owner");
@@ -1084,17 +1104,20 @@ function emptyAudit() {
   };
 }
 
-async function expectValueContains(locator: ReturnType<Page["getByPlaceholder"]>, expectedValue: string) {
+async function expectValueContains(
+  locator: ReturnType<Page["getByPlaceholder"]>,
+  expectedValue: string,
+  timeoutMs = 5000
+) {
   await locator.waitFor({ state: "visible" });
-  await locator.evaluate(
-    (element, expected) => {
-      if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
-        throw new Error("Element does not support value assertions.");
-      }
-      if (!element.value.includes(expected)) {
-        throw new Error(`Expected value to include \"${expected}\" but got \"${element.value}\".`);
-      }
-    },
-    expectedValue
-  );
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const currentValue = await locator.inputValue();
+    if (currentValue.includes(expectedValue)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const finalValue = await locator.inputValue();
+  throw new Error(`Expected value to include "${expectedValue}" but got "${finalValue}".`);
 }

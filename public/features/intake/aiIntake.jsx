@@ -168,6 +168,46 @@
     }
   };
 
+  const normalizePreviewText = (value) => (typeof value === "string" ? value.trim() : "");
+
+  const buildBillieChangePreview = (beforeInvoice, afterInvoice) => {
+    const entries = [];
+    const beforeLines = Array.isArray(beforeInvoice?.lineItems) ? beforeInvoice.lineItems : [];
+    const afterLines = Array.isArray(afterInvoice?.lineItems) ? afterInvoice.lineItems : [];
+
+    for (let index = 0; index < Math.max(beforeLines.length, afterLines.length); index += 1) {
+      const beforeLine = beforeLines[index];
+      const afterLine = afterLines[index];
+      if (!beforeLine || !afterLine) {
+        continue;
+      }
+      const beforeDescription = normalizePreviewText(beforeLine.description);
+      const afterDescription = normalizePreviewText(afterLine.description);
+      if (!beforeDescription || !afterDescription || beforeDescription === afterDescription) {
+        continue;
+      }
+      entries.push({
+        id: afterLine.id ?? beforeLine.id ?? `line-${index}`,
+        label: "Line item",
+        before: beforeDescription,
+        after: afterDescription
+      });
+    }
+
+    const beforeNotes = normalizePreviewText(beforeInvoice?.notes);
+    const afterNotes = normalizePreviewText(afterInvoice?.notes);
+    if (beforeNotes && afterNotes && beforeNotes !== afterNotes) {
+      entries.push({
+        id: "notes",
+        label: "Notes",
+        before: beforeNotes,
+        after: afterNotes
+      });
+    }
+
+    return entries.slice(0, 3);
+  };
+
 function AIIntake() {
   const navigate = useNavigate();
   const legacyDraftStorageKey = "invoiceDraft";
@@ -204,6 +244,7 @@ function AIIntake() {
   const [decisionToast, setDecisionToast] = useState(null);
   const [billieStatus, setBillieStatus] = useState(null);
   const [billieUndoState, setBillieUndoState] = useState(null);
+  const [billieChangePreview, setBillieChangePreview] = useState([]);
   const [recentlyChangedLines, setRecentlyChangedLines] = useState({
     ids: [],
     descriptions: []
@@ -502,7 +543,7 @@ function AIIntake() {
     showDecisionToast("Undid last decision.");
   };
 
-  const handleBilliePatchApplied = ({ patch, previousInvoice }) => {
+  const handleBilliePatchApplied = ({ patch, previousInvoice, nextInvoice }) => {
     if (!previousInvoice || !patch?.hasChanges) {
       return;
     }
@@ -515,6 +556,7 @@ function AIIntake() {
         ? [...patch.changedLineItemDescriptions]
         : []
     });
+    setBillieChangePreview(buildBillieChangePreview(previousInvoice, nextInvoice));
     setTransientBillieHighlights(patch);
     showBillieStatus(
       {
@@ -569,6 +611,7 @@ function AIIntake() {
       )
     );
     setBillieUndoState(null);
+    setBillieChangePreview([]);
     showBillieStatus({ kind: "info", text: "Undid last Billie change" }, { durationMs: 5000 });
   };
 
@@ -1151,6 +1194,7 @@ function AIIntake() {
     setDecisionUndoState(null);
     setBillieStatus(null);
     setBillieUndoState(null);
+    setBillieChangePreview([]);
     setRecentlyChangedLines({ ids: [], descriptions: [] });
     openDecisionSignatureRef.current = "";
     lastDecisionResolutionRef.current = "";
@@ -1988,6 +2032,37 @@ function AIIntake() {
                     Less
                   </button>
                 ) : null}
+              </div>
+            ) : null}
+            {billieChangePreview.length > 0 ? (
+              <div
+                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3"
+                data-testid="billie-change-preview"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Last Billie change
+                  </p>
+                </div>
+                <div className="mt-2 space-y-3">
+                  {billieChangePreview.map((entry) => (
+                    <div key={entry.id} className="space-y-2 rounded-lg bg-white px-3 py-2 shadow-sm">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                        {entry.label}
+                      </p>
+                      <div className="space-y-1">
+                        <div>
+                          <p className="text-[11px] font-semibold text-slate-500">Before</p>
+                          <p className="text-sm text-slate-700">{entry.before}</p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] font-semibold text-emerald-700">After</p>
+                          <p className="text-sm font-semibold text-slate-900">{entry.after}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
             <div className="flex items-center gap-3">
