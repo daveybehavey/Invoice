@@ -348,6 +348,7 @@ function InspectorPanel({
   };
 
   const runAssistantWordingRewrite = (instruction, wordingCommand) => {
+    const appendUserMessage = wordingCommand.appendUserMessage !== false;
     const payloadResult = buildRewriteInvoicePayload?.();
     if (!payloadResult || payloadResult.error) {
       setAssistantError(payloadResult?.error ?? "Add at least one line item before editing.");
@@ -371,7 +372,9 @@ function InspectorPanel({
     setAssistantLoading(true);
     setAssistantError("");
     setAssistantStatus(wordingCommand.loadingText);
-    setAssistantMessages((prev) => [...prev, { role: "user", text: instruction }]);
+    if (appendUserMessage) {
+      setAssistantMessages((prev) => [...prev, { role: "user", text: instruction }]);
+    }
 
     apiFetch(routePath, {
       method: "POST",
@@ -416,6 +419,38 @@ function InspectorPanel({
       });
   };
 
+  const applyAssistantStyleCommand = (styleCommand) => {
+    if (!styleCommand) {
+      return false;
+    }
+    let applied = false;
+    if (styleCommand.stylePreset) {
+      onStylePresetChange?.(styleCommand.stylePreset);
+      applied = true;
+    }
+    if (styleCommand.accentColor) {
+      onAccentColorChange?.(styleCommand.accentColor);
+      applied = true;
+    }
+    if (styleCommand.logoVisible !== null) {
+      onLogoVisibilityChange?.(styleCommand.logoVisible);
+      applied = true;
+    }
+    if (styleCommand.notesVisible !== null) {
+      onNotesVisibilityChange?.(styleCommand.notesVisible);
+      applied = true;
+    }
+    if (styleCommand.headerLayout) {
+      onHeaderLayoutChange?.(styleCommand.headerLayout);
+      applied = true;
+    }
+    if (styleCommand.spacingDensity) {
+      onSpacingDensityChange?.(styleCommand.spacingDensity);
+      applied = true;
+    }
+    return applied;
+  };
+
   const submitAssistantEdit = () => {
     const instruction = assistantInstruction.trim();
     if (!instruction) {
@@ -427,7 +462,27 @@ function InspectorPanel({
       return;
     }
     const styleCommand = resolveBillieStyleCommand(instruction, { logoUrl, logoVisible });
+    const wordingCommand = resolveBillieWordingCommand(instruction);
+    if (styleCommand && wordingCommand) {
+      const styleApplied = applyAssistantStyleCommand(styleCommand);
+      setAssistantError("");
+      setAssistantMessages((prev) => [
+        ...prev,
+        { role: "user", text: instruction },
+        ...(styleCommand.responseText ? [{ role: "ai", text: styleCommand.responseText }] : [])
+      ]);
+      setAssistantInstruction("");
+      if (styleApplied) {
+        setAssistantStatus(styleCommand.responseText);
+      }
+      runAssistantWordingRewrite(instruction, {
+        ...wordingCommand,
+        appendUserMessage: false
+      });
+      return;
+    }
     if (styleCommand) {
+      applyAssistantStyleCommand(styleCommand);
       setAssistantError("");
       setAssistantStatus("");
       setAssistantMessages((prev) => [
@@ -435,28 +490,9 @@ function InspectorPanel({
         { role: "user", text: instruction },
         { role: "ai", text: styleCommand.responseText }
       ]);
-      if (styleCommand.stylePreset) {
-        onStylePresetChange?.(styleCommand.stylePreset);
-      }
-      if (styleCommand.accentColor) {
-        onAccentColorChange?.(styleCommand.accentColor);
-      }
-      if (styleCommand.logoVisible !== null) {
-        onLogoVisibilityChange?.(styleCommand.logoVisible);
-      }
-      if (styleCommand.notesVisible !== null) {
-        onNotesVisibilityChange?.(styleCommand.notesVisible);
-      }
-      if (styleCommand.headerLayout) {
-        onHeaderLayoutChange?.(styleCommand.headerLayout);
-      }
-      if (styleCommand.spacingDensity) {
-        onSpacingDensityChange?.(styleCommand.spacingDensity);
-      }
       setAssistantInstruction("");
       return;
     }
-    const wordingCommand = resolveBillieWordingCommand(instruction);
     if (wordingCommand) {
       runAssistantWordingRewrite(instruction, wordingCommand);
       return;
