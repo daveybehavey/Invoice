@@ -8,6 +8,7 @@ import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { chromium, type Browser, type Page } from "playwright";
+import request from "supertest";
 
 process.env.NODE_ENV = "test";
 process.env.INVOICE_STORE_BACKEND = "file";
@@ -844,6 +845,67 @@ test("saving a client remembers bill-to details and autofills later matching dra
 
     await page.waitForURL(/\/manual$/, { timeout: 10000 });
     await expectValueContains(page.getByPlaceholder("Client Name"), "Mike Johnson\n1423 Pine St");
+  } finally {
+    await context.close();
+  }
+});
+
+test("intake review surfaces recent saved jobs for the matched client", async () => {
+  const seedResponse = await request(app).post("/api/invoices/save").send({
+    confirmSave: true,
+    sourceType: "text_input",
+    invoiceData: {
+      structuredInvoice: {
+        customerName: "Mike Johnson",
+        workSessions: [],
+        materials: [],
+        notes: "Collect a 50% deposit before ordering cedar shingles."
+      },
+      finishedInvoice: {
+        invoiceNumber: "INV-RECENT-1",
+        issueDate: "2026-03-01",
+        customerName: "Mike Johnson",
+        currency: "USD",
+        lineItems: [
+          {
+            id: "recent-line-1",
+            type: "labor",
+            description: "Detached garage cedar reroof",
+            quantity: 1,
+            unitPrice: 900,
+            amount: 900
+          }
+        ],
+        notes: "Collect a 50% deposit before ordering cedar shingles.",
+        subtotal: 900,
+        total: 900,
+        balanceDue: 900
+      }
+    }
+  });
+  assert.equal(seedResponse.status, 200);
+
+  useMockResponses([structuredDuplicateDraft(), emptyAudit()]);
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "local-default");
+  });
+  const page = await context.newPage();
+  try {
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /show review details/i }).click();
+
+    await page.getByText("Recent for Mike Johnson").waitFor({ state: "visible" });
+    await page.getByText("INV-RECENT-1").waitFor({ state: "visible" });
+    await page.getByText("Collect a 50% deposit before ordering cedar shingles.").waitFor({
+      state: "visible"
+    });
   } finally {
     await context.close();
   }

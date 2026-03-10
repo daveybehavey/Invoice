@@ -1922,6 +1922,65 @@ test("invoice library is scoped by owner id", async () => {
   assert.match(crossOwnerRead.body.error, /not found/i);
 });
 
+test("recent client context returns the latest matching invoices only", async () => {
+  const saveInvoice = async (
+    customerName: string,
+    invoiceNumber: string,
+    description: string,
+    notes: string
+  ) =>
+    request(app).post("/api/invoices/save").send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName,
+          workSessions: [],
+          materials: [],
+          notes
+        },
+        finishedInvoice: {
+          invoiceNumber,
+          issueDate: "2026-03-09",
+          customerName,
+          currency: "USD",
+          lineItems: [
+            {
+              id: `${invoiceNumber}-line-1`,
+              type: "labor",
+              description,
+              quantity: 1,
+              unitPrice: 100,
+              amount: 100
+            }
+          ],
+          notes,
+          subtotal: 100,
+          total: 100,
+          balanceDue: 100
+        }
+      }
+    });
+
+  assert.equal((await saveInvoice("Mike Johnson", "INV-1001", "Roof leak repair", "Use gray sealant.")).status, 200);
+  assert.equal((await saveInvoice("Jamie Client", "INV-2001", "Gutter cleanup", "Leaf guard note.")).status, 200);
+  assert.equal(
+    (await saveInvoice("Mike Johnson", "INV-1002", "Skylight reseal", "Collect deposit before material order.")).status,
+    200
+  );
+
+  const response = await request(app).get("/api/invoices/recent-context").query({
+    client: "mike johnson"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.matches.length, 2);
+  assert.equal(response.body.matches[0].invoiceNumber, "INV-1002");
+  assert.equal(response.body.matches[0].lineItemDescriptions[0], "Skylight reseal");
+  assert.equal(response.body.matches[0].notes, "Collect deposit before material order.");
+  assert.equal(response.body.matches[1].invoiceNumber, "INV-1001");
+});
+
 test("auth session endpoint returns token + normalized user session", async () => {
   const response = await request(app).post("/api/auth/session").send({ email: "  TEST@Example.com  " });
 

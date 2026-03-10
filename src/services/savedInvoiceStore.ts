@@ -5,6 +5,8 @@ import { z } from "zod";
 import {
   InvoiceListItem,
   InvoiceListItemSchema,
+  RecentClientContextItem,
+  RecentClientContextItemSchema,
   SavedInvoice,
   SavedInvoiceSchema,
   SavedInvoiceStatus
@@ -117,6 +119,41 @@ export async function listSavedInvoiceMetadata(
       })
     )
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export async function listRecentClientContext(
+  clientName: string,
+  limit = 2,
+  ownerId = "local-default"
+): Promise<RecentClientContextItem[]> {
+  const normalizedClientName = normalizeClientName(clientName);
+  if (!normalizedClientName) {
+    return [];
+  }
+  const collection = await readCollection();
+  return collection.invoices
+    .filter((invoice) => invoice.ownerId === ownerId && invoice.status !== "deleted")
+    .filter(
+      (invoice) =>
+        normalizeClientName(invoice.invoiceData.finishedInvoice.customerName) === normalizedClientName
+    )
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, Math.max(1, Math.min(limit, 5)))
+    .map((invoice) =>
+      RecentClientContextItemSchema.parse({
+        invoiceId: invoice.invoiceId,
+        invoiceNumber: invoice.invoiceData.finishedInvoice.invoiceNumber,
+        updatedAt: invoice.updatedAt,
+        servicePeriodStart: invoice.invoiceData.finishedInvoice.servicePeriodStart,
+        servicePeriodEnd: invoice.invoiceData.finishedInvoice.servicePeriodEnd,
+        total: invoice.invoiceData.finishedInvoice.total,
+        notes: invoice.invoiceData.finishedInvoice.notes,
+        lineItemDescriptions: (invoice.invoiceData.finishedInvoice.lineItems ?? [])
+          .map((lineItem) => lineItem.description?.trim())
+          .filter((description): description is string => Boolean(description))
+          .slice(0, 4)
+      })
+    );
 }
 
 export async function getSavedInvoiceById(
@@ -263,6 +300,10 @@ async function writeCollection(collection: SavedInvoiceCollection): Promise<void
   const content = JSON.stringify(collection, null, 2);
   await fs.writeFile(tempPath, `${content}\n`, "utf8");
   await fs.rename(tempPath, storeFilePath);
+}
+
+function normalizeClientName(value: string | undefined): string {
+  return typeof value === "string" ? value.trim().toLocaleLowerCase() : "";
 }
 
 async function ensureStoreExists(): Promise<void> {

@@ -249,6 +249,17 @@ export const InvoiceListItemSchema = z.object({
   total: OptionalNumber
 });
 
+export const RecentClientContextItemSchema = z.object({
+  invoiceId: z.string().uuid(),
+  invoiceNumber: OptionalString,
+  updatedAt: z.string().datetime(),
+  servicePeriodStart: OptionalString,
+  servicePeriodEnd: OptionalString,
+  total: OptionalNumber,
+  notes: OptionalString,
+  lineItemDescriptions: z.array(z.string().min(1)).default([])
+});
+
 export type StructuredInvoice = z.infer<typeof StructuredInvoiceSchema>;
 export type Task = z.infer<typeof TaskSchema>;
 export type Material = z.infer<typeof MaterialSchema>;
@@ -260,5 +271,6 @@ export type SavedInvoiceStatus = z.infer<typeof SavedInvoiceStatusSchema>;
 export type SavedInvoiceSourceType = z.infer<typeof SavedInvoiceSourceTypeSchema>;
 export type SavedInvoiceData = z.infer<typeof SavedInvoiceDataSchema>;
 export type InvoiceListItem = z.infer<typeof InvoiceListItemSchema>;
+export type RecentClientContextItem = z.infer<typeof RecentClientContextItemSchema>;
 export type OpenDecision = z.infer<typeof OpenDecisionSchema>;
 export type DecisionAction = z.infer<typeof DecisionActionSchema>;

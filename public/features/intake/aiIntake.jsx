@@ -253,6 +253,7 @@ function AIIntake() {
   const [decisionFocusIndex, setDecisionFocusIndex] = useState(0);
   const [showDecisionWhy, setShowDecisionWhy] = useState(false);
   const [optimisticDecisionState, setOptimisticDecisionState] = useState(null);
+  const [recentClientContext, setRecentClientContext] = useState([]);
   const [savedLaborRate, setSavedLaborRate] = useState(() => {
     const scopedRate = readStoredLaborRate(laborRateStorageKey);
     if (scopedRate !== null) {
@@ -354,6 +355,36 @@ function AIIntake() {
     setMessages,
     setIsTyping
   });
+  const currentReviewClientName =
+    typeof finishedInvoice?.customerName === "string" ? finishedInvoice.customerName.trim() : "";
+
+  useEffect(() => {
+    const apiFetch = requestIdentity.apiFetch ?? window.fetch.bind(window);
+    if (!currentReviewClientName) {
+      setRecentClientContext([]);
+      return undefined;
+    }
+    const abortController = new AbortController();
+    setRecentClientContext([]);
+    apiFetch(
+      `/api/invoices/recent-context?client=${encodeURIComponent(currentReviewClientName)}&limit=2`,
+      { signal: abortController.signal }
+    )
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error || "Failed to load recent client context.");
+        }
+        setRecentClientContext(Array.isArray(payload?.matches) ? payload.matches : []);
+      })
+      .catch((error) => {
+        if (error?.name === "AbortError") {
+          return;
+        }
+        setRecentClientContext([]);
+      });
+    return () => abortController.abort();
+  }, [currentReviewClientName, authSession?.userId]);
 
   const appendAiMessage = (text) => {
     setMessages((prev) => [
@@ -1759,6 +1790,7 @@ function AIIntake() {
                       recentlyChangedLineIds={recentlyChangedLines.ids}
                       recentlyChangedDescriptions={recentlyChangedLines.descriptions}
                       billieStatus={billieStatus}
+                      recentClientContext={recentClientContext}
                       submitUserMessage={submitUserMessage}
                       onBillieLineRefine={refineBillieLineItem}
                       onBillieNotesRefine={refineBillieNotes}

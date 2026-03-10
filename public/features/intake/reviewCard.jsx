@@ -36,6 +36,7 @@
     recentlyChangedLineIds,
     recentlyChangedDescriptions,
     billieStatus,
+    recentClientContext,
     submitUserMessage,
     onBillieLineRefine,
     onBillieNotesRefine
@@ -49,6 +50,8 @@
     );
     const hasBillieHighlights = changedLineIdSet.size > 0 || normalizedDescriptions.length > 0;
     const billieIsWorking = billieStatus?.kind === "working";
+    const recentContextEntries = Array.isArray(recentClientContext) ? recentClientContext : [];
+    const hasRecentClientContext = recentContextEntries.length > 0;
     const billieContextButtonClass =
       "rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300";
     const billieContextActionClass =
@@ -65,6 +68,21 @@
         setActiveBillieTarget(null);
       }
     }, [showReviewExpandedSections, isTyping]);
+
+    const formatRecentDate = (value) => {
+      if (!value) {
+        return "";
+      }
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) {
+        return "";
+      }
+      return parsed.toLocaleDateString([], {
+        month: "short",
+        day: "numeric",
+        year: "numeric"
+      });
+    };
 
     return (
       <div key={messageId} className="flex justify-start">
@@ -156,6 +174,13 @@
                   </button>
                 ) : null}
               </p>
+              {hasRecentClientContext ? (
+                <p className="mt-1 text-xs text-slate-500">
+                  <span className="font-semibold text-slate-700">Recent:</span>{" "}
+                  {recentContextEntries.length} prior invoice
+                  {recentContextEntries.length > 1 ? "s" : ""} found for this client.
+                </p>
+              ) : null}
               {capturedPreviewSummary ? (
                 <p className="mt-1 text-xs text-slate-500">
                   <span className="font-semibold text-slate-700">Captured:</span>{" "}
@@ -259,6 +284,55 @@
               <p className="text-xs text-slate-500">
                 I flag unclear money items below. You decide what to bill.
               </p>
+            ) : null}
+            {showReviewSecondary && hasRecentClientContext ? (
+              <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Recent for {payload.customerName}
+                </p>
+                <div className="mt-2 space-y-2">
+                  {recentContextEntries.map((entry) => {
+                    const servicePeriod =
+                      entry.servicePeriodStart && entry.servicePeriodEnd
+                        ? entry.servicePeriodStart === entry.servicePeriodEnd
+                          ? entry.servicePeriodStart
+                          : `${entry.servicePeriodStart} to ${entry.servicePeriodEnd}`
+                        : entry.servicePeriodStart || entry.servicePeriodEnd || formatRecentDate(entry.updatedAt);
+                    const descriptions = Array.isArray(entry.lineItemDescriptions)
+                      ? entry.lineItemDescriptions.slice(0, 3)
+                      : [];
+                    const notePreview =
+                      typeof entry.notes === "string" && entry.notes.trim()
+                        ? entry.notes.trim().slice(0, 120)
+                        : "";
+                    return (
+                      <div
+                        key={entry.invoiceId}
+                        className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-600"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-semibold text-slate-800">
+                            {entry.invoiceNumber || "Prior invoice"}
+                          </p>
+                          {servicePeriod ? <p>{servicePeriod}</p> : null}
+                        </div>
+                        {descriptions.length > 0 ? (
+                          <p className="mt-1">
+                            <span className="font-semibold text-slate-700">Jobs:</span>{" "}
+                            {descriptions.join(", ")}
+                          </p>
+                        ) : null}
+                        {notePreview ? (
+                          <p className="mt-1">
+                            <span className="font-semibold text-slate-700">Notes:</span> {notePreview}
+                            {entry.notes.trim().length > notePreview.length ? "…" : ""}
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             ) : null}
             {showReviewExpandedSections
               ? sections.map((section) => (

@@ -496,6 +496,24 @@ app.get("/api/invoices", async (_req: Request, res: Response, next: NextFunction
   }
 });
 
+app.get("/api/invoices/recent-context", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const query = z.object({
+      client: z.string().trim().min(1),
+      limit: z.coerce.number().int().min(1).max(5).optional()
+    }).parse(req.query);
+    const ownerId = getRequestOwnerId(req);
+    const matches = await savedInvoiceRepository.listRecentClientContext(
+      query.client,
+      query.limit ?? 2,
+      ownerId
+    );
+    res.json({ client: query.client, matches });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/invoices/:id", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const invoiceId = z.string().uuid().parse(req.params.id);

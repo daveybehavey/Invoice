@@ -1,8 +1,14 @@
-import { InvoiceListItem, SavedInvoice, SavedInvoiceStatus } from "../models/invoice.js";
+import {
+  InvoiceListItem,
+  RecentClientContextItem,
+  SavedInvoice,
+  SavedInvoiceStatus
+} from "../models/invoice.js";
 import {
   deleteSavedInvoice,
   duplicateSavedInvoice,
   getSavedInvoiceById,
+  listRecentClientContext,
   listSavedInvoiceMetadata,
   restoreSavedInvoice,
   saveInvoiceDocument,
@@ -34,6 +40,11 @@ export interface SavedInvoiceRepository {
     invoiceData: SavedInvoice["invoiceData"];
   }): Promise<SavedInvoice>;
   listSavedInvoiceMetadata(includeDeleted: boolean, ownerId: string): Promise<InvoiceListItem[]>;
+  listRecentClientContext(
+    clientName: string,
+    limit: number,
+    ownerId: string
+  ): Promise<RecentClientContextItem[]>;
   getSavedInvoiceById(invoiceId: string, ownerId: string): Promise<SavedInvoice>;
   duplicateSavedInvoice(invoiceId: string, ownerId: string): Promise<SavedInvoice>;
   updateSavedInvoiceStatus(
@@ -63,6 +74,14 @@ class FileSavedInvoiceRepository implements SavedInvoiceRepository {
 
   async listSavedInvoiceMetadata(includeDeleted = false, ownerId: string): Promise<InvoiceListItem[]> {
     return listSavedInvoiceMetadata(includeDeleted, ownerId);
+  }
+
+  async listRecentClientContext(
+    clientName: string,
+    limit: number,
+    ownerId: string
+  ): Promise<RecentClientContextItem[]> {
+    return listRecentClientContext(clientName, limit, ownerId);
   }
 
   async getSavedInvoiceById(invoiceId: string, ownerId: string): Promise<SavedInvoice> {

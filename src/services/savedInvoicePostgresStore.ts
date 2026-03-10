@@ -3,6 +3,8 @@ import { Pool } from "pg";
 import {
   InvoiceListItem,
   InvoiceListItemSchema,
+  RecentClientContextItem,
+  RecentClientContextItemSchema,
   SavedInvoice,
   SavedInvoiceSchema,
   SavedInvoiceStatus
@@ -154,6 +156,56 @@ export class PostgresSavedInvoiceRepository {
         invoiceNumber:
           row.invoice_data.finishedInvoice.invoiceNumber ?? row.invoice_data.structuredInvoice.invoiceNumber,
         total: row.invoice_data.finishedInvoice.total
+      })
+    );
+  }
+
+  async listRecentClientContext(
+    clientName: string,
+    limit: number,
+    ownerId: string
+  ): Promise<RecentClientContextItem[]> {
+    await this.ensureReady();
+    const normalizedClientName = clientName.trim();
+    if (!normalizedClientName) {
+      return [];
+    }
+    const clampedLimit = Math.max(1, Math.min(limit, 5));
+    const result = await this.pool.query<SavedInvoiceRow>(
+      `
+        select
+          invoice_id,
+          owner_id,
+          created_at,
+          updated_at,
+          status,
+          previous_status,
+          deleted_at,
+          source_type,
+          invoice_data
+        from saved_invoices
+        where owner_id = $1
+          and status <> 'deleted'
+          and lower(coalesce(invoice_data->'finishedInvoice'->>'customerName', '')) = lower($2)
+        order by updated_at desc
+        limit $3
+      `,
+      [ownerId, normalizedClientName, clampedLimit]
+    );
+
+    return result.rows.map((row) =>
+      RecentClientContextItemSchema.parse({
+        invoiceId: row.invoice_id,
+        invoiceNumber: row.invoice_data.finishedInvoice.invoiceNumber,
+        updatedAt: toIsoString(row.updated_at),
+        servicePeriodStart: row.invoice_data.finishedInvoice.servicePeriodStart,
+        servicePeriodEnd: row.invoice_data.finishedInvoice.servicePeriodEnd,
+        total: row.invoice_data.finishedInvoice.total,
+        notes: row.invoice_data.finishedInvoice.notes,
+        lineItemDescriptions: (row.invoice_data.finishedInvoice.lineItems ?? [])
+          .map((lineItem) => lineItem.description?.trim())
+          .filter((description): description is string => Boolean(description))
+          .slice(0, 4)
       })
     );
   }
