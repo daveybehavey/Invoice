@@ -9,6 +9,7 @@ type InvoicePdfInput = {
   stylePreset?: string;
   logoUrl?: string;
   logoVisible?: boolean;
+  notesVisible?: boolean;
   headerLayout?: "split" | "centered";
   spacingDensity?: "tight" | "balanced" | "airy";
 };
@@ -75,7 +76,9 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
   renderPartyBlocks(state, { fromLines, billToLines, styleScale });
   renderLineItemsSection(state, { invoice: input.invoice, styleScale });
   renderTotalsPanel(state, { invoice: input.invoice, styleScale });
-  renderNotes(state, { notes: input.invoice.notes ?? "", styleScale });
+  if (input.notesVisible !== false) {
+    renderNotes(state, { notes: input.invoice.notes ?? "", styleScale });
+  }
   renderFooter(state, { fromLines });
 
   const pdfBytes = await doc.save({ useObjectStreams: false });

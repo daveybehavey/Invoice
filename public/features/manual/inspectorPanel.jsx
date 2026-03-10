@@ -58,6 +58,7 @@
       accentColor: null,
       accentLabel: null,
       logoVisible: null,
+      notesVisible: null,
       headerLayout: null,
       headerLabel: null,
       spacingDensity: null,
@@ -123,10 +124,17 @@
       }
     }
 
+    if (/\b(notes?|terms?)\b/.test(normalized) && /\b(hide|remove)\b/.test(normalized)) {
+      result.notesVisible = false;
+    } else if (/\b(notes?|terms?)\b/.test(normalized) && /\b(show|restore)\b/.test(normalized)) {
+      result.notesVisible = true;
+    }
+
     if (
       !result.stylePreset &&
       !result.accentColor &&
       result.logoVisible === null &&
+      result.notesVisible === null &&
       !result.headerLayout &&
       !result.spacingDensity
     ) {
@@ -142,6 +150,9 @@
     }
     if (result.logoVisible !== null) {
       parts.push(`logo → ${result.logoVisible ? "visible" : "hidden"}`);
+    }
+    if (result.notesVisible !== null) {
+      parts.push(`notes → ${result.notesVisible ? "visible" : "hidden"}`);
     }
     if (result.headerLabel) {
       parts.push(`header → ${result.headerLabel}`);
@@ -164,11 +175,13 @@ function InspectorPanel({
   hideInternalTabs,
   logoUrl,
   logoVisible,
+  notesVisible,
   headerLayout,
   spacingDensity,
   onLogoChange,
   onLogoRemove,
   onLogoVisibilityChange,
+  onNotesVisibilityChange,
   onHeaderLayoutChange,
   onSpacingDensityChange,
   stylePreset,
@@ -327,6 +340,9 @@ function InspectorPanel({
       }
       if (styleCommand.logoVisible !== null) {
         onLogoVisibilityChange?.(styleCommand.logoVisible);
+      }
+      if (styleCommand.notesVisible !== null) {
+        onNotesVisibilityChange?.(styleCommand.notesVisible);
       }
       if (styleCommand.headerLayout) {
         onHeaderLayoutChange?.(styleCommand.headerLayout);
@@ -757,6 +773,24 @@ function InspectorPanel({
                   </p>
                 </div>
               ) : null}
+              <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Notes / Terms</p>
+                  <p className="mt-1 text-xs text-slate-500">Show or hide notes on the invoice.</p>
+                </div>
+                <button
+                  type="button"
+                  className="text-sm font-semibold text-slate-600"
+                  onClick={() => onNotesVisibilityChange?.(!notesVisible)}
+                >
+                  {notesVisible ? "Hide on invoice" : "Show on invoice"}
+                </button>
+                <p className="text-xs text-slate-500">
+                  {notesVisible
+                    ? "Notes are visible on the invoice."
+                    : "Notes are hidden from the invoice."}
+                </p>
+              </div>
             </div>
           ) : activeTab === "tone" ? (
           <div className="space-y-4">
@@ -1197,14 +1231,16 @@ function InspectorPanel({
                   </div>
                 </section>
 
-                <section className="space-y-2">
-                  <p className={`${previewPreset.textClass} ${previewPreset.labelClass}`}>
-                    Notes / Terms
-                  </p>
-                  <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                    <p className="whitespace-pre-line">{previewNotes}</p>
-                  </div>
-                </section>
+                {previewData?.notesVisible !== false ? (
+                  <section className="space-y-2">
+                    <p className={`${previewPreset.textClass} ${previewPreset.labelClass}`}>
+                      Notes / Terms
+                    </p>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                      <p className="whitespace-pre-line">{previewNotes}</p>
+                    </div>
+                  </section>
+                ) : null}
               </div>
             </div>
           </div>

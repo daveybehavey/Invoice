@@ -125,6 +125,7 @@ function ManualInvoiceCanvas() {
   );
   const [logoUrl, setLogoUrl] = useState(() => initialDraft?.logoUrl ?? seededDraft?.logoUrl ?? null);
   const [logoVisible, setLogoVisible] = useState(() => initialDraft?.logoVisible ?? true);
+  const [notesVisible, setNotesVisible] = useState(() => initialDraft?.notesVisible ?? true);
   const [headerLayout, setHeaderLayout] = useState(() => initialDraft?.headerLayout ?? "split");
   const [spacingDensity, setSpacingDensity] = useState(() => initialDraft?.spacingDensity ?? "balanced");
   const [stylePreset, setStylePreset] = useState(
@@ -174,6 +175,7 @@ function ManualInvoiceCanvas() {
     lineItems,
     logoUrl,
     logoVisible,
+    notesVisible,
     headerLayout,
     spacingDensity,
     accentColor
@@ -375,6 +377,7 @@ function ManualInvoiceCanvas() {
         stylePreset,
         logoUrl: logoUrl ?? undefined,
         logoVisible,
+        notesVisible,
         headerLayout,
         spacingDensity
       }
@@ -438,6 +441,7 @@ function ManualInvoiceCanvas() {
       lineItems,
       logoUrl,
       logoVisible,
+      notesVisible,
       headerLayout,
       spacingDensity,
       stylePreset,
@@ -487,6 +491,10 @@ function ManualInvoiceCanvas() {
     taxRate,
     lineItems,
     logoUrl,
+    logoVisible,
+    notesVisible,
+    headerLayout,
+    spacingDensity,
     stylePreset,
     accentColor,
     savedInvoiceId
@@ -982,11 +990,28 @@ function ManualInvoiceCanvas() {
               </div>
             </section>
 
-            <section className="space-y-2">
-              <p className={`${activePreset.textClass} ${activePreset.labelClass}`}>Notes / Terms</p>
+            <section className="space-y-2" data-notes-visible={notesVisible ? "true" : "false"}>
+              <div className="flex items-center justify-between gap-3">
+                <p className={`${activePreset.textClass} ${activePreset.labelClass}`}>Notes / Terms</p>
+                <span
+                  className="rounded-full border px-2.5 py-1 text-[11px] font-semibold"
+                  style={{
+                    backgroundColor: notesVisible ? accent.soft : "#fff7ed",
+                    borderColor: notesVisible ? accent.border : "#fdba74",
+                    color: notesVisible ? accent.text : "#9a3412"
+                  }}
+                >
+                  {notesVisible ? "Visible on invoice" : "Hidden on invoice"}
+                </span>
+              </div>
+              {notesVisible ? null : (
+                <p className="text-xs text-slate-500">
+                  Notes stay editable here but are hidden from the invoice preview and PDF.
+                </p>
+              )}
               <textarea
                 rows={4}
-                className={`w-full resize-none bg-slate-50/70 ${activePreset.inputClass} ${activePreset.textClass}`}
+                className={`w-full resize-none ${notesVisible ? "bg-slate-50/70" : "border-dashed bg-slate-50/40"} ${activePreset.inputClass} ${activePreset.textClass}`}
                 placeholder="Thank you for your business"
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
@@ -1001,11 +1026,13 @@ function ManualInvoiceCanvas() {
             onTabChange={setActiveInspectorTab}
             logoUrl={logoUrl}
             logoVisible={logoVisible}
+            notesVisible={notesVisible}
             headerLayout={headerLayout}
             spacingDensity={spacingDensity}
             onLogoChange={handleLogoChange}
             onLogoRemove={handleLogoRemove}
             onLogoVisibilityChange={setLogoVisible}
+            onNotesVisibilityChange={setNotesVisible}
             onHeaderLayoutChange={setHeaderLayout}
             onSpacingDensityChange={setSpacingDensity}
             stylePreset={stylePreset}
@@ -1094,11 +1121,13 @@ function ManualInvoiceCanvas() {
                 hideInternalTabs
                 logoUrl={logoUrl}
                 logoVisible={logoVisible}
+                notesVisible={notesVisible}
                 headerLayout={headerLayout}
                 spacingDensity={spacingDensity}
                 onLogoChange={handleLogoChange}
                 onLogoRemove={handleLogoRemove}
                 onLogoVisibilityChange={setLogoVisible}
+                onNotesVisibilityChange={setNotesVisible}
                 onHeaderLayoutChange={setHeaderLayout}
                 onSpacingDensityChange={setSpacingDensity}
                 stylePreset={stylePreset}

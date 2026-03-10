@@ -207,6 +207,7 @@ export const InvoicePdfExportRequestSchema = z.object({
   stylePreset: OptionalString,
   logoUrl: OptionalString,
   logoVisible: z.boolean().optional(),
+  notesVisible: z.boolean().optional(),
   headerLayout: z.enum(["split", "centered"]).optional(),
   spacingDensity: z.enum(["tight", "balanced", "airy"]).optional()
 });
