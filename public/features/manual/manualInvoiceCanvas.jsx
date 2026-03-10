@@ -425,7 +425,7 @@ function ManualInvoiceCanvas() {
         })
       );
     }
-    if (mode === "full" && typeof rewrittenNotes === "string") {
+    if ((mode === "full" || mode === "notes") && typeof rewrittenNotes === "string") {
       setNotes(rewrittenNotes);
     }
   };

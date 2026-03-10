@@ -732,6 +732,156 @@ test("manual billie applies style commands locally without calling the AI edit r
   }
 });
 
+test("manual billie routes description wording requests through safe rewording", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let editRequestCount = 0;
+  let rewordFullRequestCount = 0;
+  try {
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-notes", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected notes reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-full", async (route) => {
+      rewordFullRequestCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          invoice: {
+            invoiceNumber: "INV-0001",
+            issueDate: "2026-03-10",
+            customerName: "Mike Johnson",
+            currency: "USD",
+            lineItems: [
+              {
+                id: "line-1",
+                type: "other",
+                description: "Kitchen faucet repair service",
+                quantity: 1,
+                unitPrice: 90,
+                amount: 90
+              }
+            ],
+            notes: "Leave check at the front desk.",
+            subtotal: 90,
+            total: 90,
+            balanceDue: 90
+          }
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("fixed sink");
+    await page.getByPlaceholder("Thank you for your business").fill("Leave check at the front desk.");
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+
+    const composer = page
+      .getByPlaceholder("Example: Use the bold template with a navy accent.")
+      .first();
+    await composer.fill("Make the descriptions more formal.");
+    await page.getByRole("button", { name: "Draft edit" }).click();
+
+    await page.getByText("Descriptions updated. Numbers unchanged.").waitFor({ state: "visible" });
+    await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
+    await expectValueEquals(
+      page.getByPlaceholder("Thank you for your business"),
+      "Leave check at the front desk."
+    );
+    assert.equal(rewordFullRequestCount, 1);
+    assert.equal(editRequestCount, 0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual billie routes notes wording requests through safe notes rewording", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let editRequestCount = 0;
+  let rewordNotesRequestCount = 0;
+  try {
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-full", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected full reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-notes", async (route) => {
+      rewordNotesRequestCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          invoice: {
+            invoiceNumber: "INV-0001",
+            issueDate: "2026-03-10",
+            customerName: "Mike Johnson",
+            currency: "USD",
+            lineItems: [
+              {
+                id: "line-1",
+                type: "other",
+                description: "Faucet repair",
+                quantity: 1,
+                unitPrice: 90,
+                amount: 90
+              }
+            ],
+            notes: "Payment due within 14 days of receipt.",
+            subtotal: 90,
+            total: 90,
+            balanceDue: 90
+          }
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.getByPlaceholder("Thank you for your business").fill("Pay in 14 days.");
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+
+    const composer = page
+      .getByPlaceholder("Example: Use the bold template with a navy accent.")
+      .first();
+    await composer.fill("Make the notes more formal.");
+    await page.getByRole("button", { name: "Draft edit" }).click();
+
+    await page.getByText("Notes updated. Numbers unchanged.").waitFor({ state: "visible" });
+    await expectValueEquals(
+      page.getByPlaceholder("Thank you for your business"),
+      "Payment due within 14 days of receipt."
+    );
+    await expectValueEquals(page.getByPlaceholder("Description").first(), "Faucet repair");
+    assert.equal(rewordNotesRequestCount, 1);
+    assert.equal(editRequestCount, 0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual billie can hide and show the logo locally and export preserves visibility state", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {
@@ -1503,4 +1653,22 @@ async function expectValueContains(
   }
   const finalValue = await locator.inputValue();
   throw new Error(`Expected value to include "${expectedValue}" but got "${finalValue}".`);
+}
+
+async function expectValueEquals(
+  locator: ReturnType<Page["getByPlaceholder"]>,
+  expectedValue: string,
+  timeoutMs = 5000
+) {
+  await locator.waitFor({ state: "visible" });
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const currentValue = await locator.inputValue();
+    if (currentValue === expectedValue) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const finalValue = await locator.inputValue();
+  throw new Error(`Expected value to equal "${expectedValue}" but got "${finalValue}".`);
 }

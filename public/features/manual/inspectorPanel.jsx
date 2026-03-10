@@ -167,6 +167,40 @@
     };
   };
 
+  const resolveBillieWordingCommand = (instruction) => {
+    const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
+    if (!normalized) {
+      return null;
+    }
+
+    const hasWordingVerb =
+      /\b(rewrite|refine|polish|clean up|improve|make|shorten|simplify)\b/.test(normalized) ||
+      /\b(formal|professional|friendly|clearer|clear|concise|simpler|plain)\b/.test(normalized);
+    if (!hasWordingVerb) {
+      return null;
+    }
+
+    let scope = "full";
+    if (/\b(notes?|terms?)\b/.test(normalized)) {
+      scope = "notes";
+    } else if (/\b(descriptions?|line items?|items?)\b/.test(normalized)) {
+      scope = "descriptions";
+    }
+
+    let tone = "Neutral";
+    if (/\b(formal|professional|stronger)\b/.test(normalized)) {
+      tone = "Formal";
+    } else if (/\b(friendly|warmer|softer)\b/.test(normalized)) {
+      tone = "Friendly";
+    } else if (/\b(simpler|simple|plain|clearer|clear|concise|shorter)\b/.test(normalized)) {
+      tone = "Neutral";
+    }
+
+    const label =
+      scope === "notes" ? "notes" : scope === "descriptions" ? "descriptions" : "wording";
+    return { scope, tone, loadingText: `Billie is refining ${label}…` };
+  };
+
 function InspectorPanel({
   activeTab,
   onTabChange,
@@ -313,6 +347,75 @@ function InspectorPanel({
       });
   };
 
+  const runAssistantWordingRewrite = (instruction, wordingCommand) => {
+    const payloadResult = buildRewriteInvoicePayload?.();
+    if (!payloadResult || payloadResult.error) {
+      setAssistantError(payloadResult?.error ?? "Add at least one line item before editing.");
+      return;
+    }
+
+    if (wordingCommand.scope === "notes" && !(payloadResult.invoice.notes ?? "").trim()) {
+      setAssistantError("Add notes before asking Billie to rewrite them.");
+      return;
+    }
+
+    const routePath =
+      wordingCommand.scope === "notes" ? "/api/invoices/reword-notes" : "/api/invoices/reword-full";
+    const requestBody =
+      wordingCommand.scope === "notes"
+        ? { invoice: payloadResult.invoice, tone: wordingCommand.tone }
+        : { invoice: payloadResult.invoice, tone: wordingCommand.tone };
+
+    assistantRequestIdRef.current += 1;
+    const requestId = assistantRequestIdRef.current;
+    setAssistantLoading(true);
+    setAssistantError("");
+    setAssistantStatus(wordingCommand.loadingText);
+    setAssistantMessages((prev) => [...prev, { role: "user", text: instruction }]);
+
+    apiFetch(routePath, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody)
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Rewrite failed");
+        }
+        return response.json();
+      })
+      .then((payload) => {
+        if (requestId !== assistantRequestIdRef.current) {
+          return;
+        }
+        if (!payload?.invoice) {
+          throw new Error("Rewrite failed");
+        }
+        onApplyRewrite?.({
+          lineItems: payload.invoice.lineItems ?? [],
+          notes: payload.invoice.notes ?? "",
+          mode: wordingCommand.scope === "notes" ? "notes" : wordingCommand.scope
+        });
+        const responseText =
+          wordingCommand.scope === "notes"
+            ? "Notes updated. Numbers unchanged."
+            : wordingCommand.scope === "descriptions"
+              ? "Descriptions updated. Numbers unchanged."
+              : "Wording updated. Numbers unchanged.";
+        setAssistantMessages((prev) => [...prev, { role: "ai", text: responseText }]);
+        setAssistantStatus(responseText);
+        setAssistantInstruction("");
+        setAssistantLoading(false);
+      })
+      .catch(() => {
+        if (requestId !== assistantRequestIdRef.current) {
+          return;
+        }
+        setAssistantError("Rewrite failed. Try again.");
+        setAssistantLoading(false);
+      });
+  };
+
   const submitAssistantEdit = () => {
     const instruction = assistantInstruction.trim();
     if (!instruction) {
@@ -351,6 +454,11 @@ function InspectorPanel({
         onSpacingDensityChange?.(styleCommand.spacingDensity);
       }
       setAssistantInstruction("");
+      return;
+    }
+    const wordingCommand = resolveBillieWordingCommand(instruction);
+    if (wordingCommand) {
+      runAssistantWordingRewrite(instruction, wordingCommand);
       return;
     }
     const payloadResult = buildEditableInvoicePayload?.();
