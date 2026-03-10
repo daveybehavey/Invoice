@@ -544,7 +544,7 @@ export async function changeLineWording(
       lineItem.id === lineItemId
         ? {
             ...lineItem,
-            description: modelResponse.description
+            description: finalizeRewordedLineItemDescription(lineItem.description, modelResponse.description)
           }
         : lineItem
     )
@@ -624,8 +624,10 @@ export async function rewordFullInvoice(invoice: FinishedInvoice, tone?: string)
     ...invoice,
     lineItems: invoice.lineItems.map((lineItem, index) => ({
       ...lineItem,
-      description:
+      description: finalizeRewordedLineItemDescription(
+        lineItem.description,
         descriptionById.get(lineItem.id ?? wordingSource.lineItems[index]?.id ?? "") ?? lineItem.description
+      )
     })),
     notes: modelResponse.notes ?? invoice.notes
   };
@@ -3093,24 +3095,68 @@ function polishLineItemDescription(text?: string): string {
     { re: /^(updated|update|tweaked|tweak)\s+(.+)/i, suffix: "update" },
     { re: /^(designed|design)\s+(.+)/i, suffix: "design" }
   ];
-  for (const mapping of nounMappings) {
-    const match = cleaned.match(mapping.re);
-    const objectText = match?.[2]?.trim();
-    if (!objectText) {
-      continue;
+  const buildMappedPhrase = (segment: string): string | null => {
+    for (const mapping of nounMappings) {
+      const match = segment.match(mapping.re);
+      const objectText = match?.[2]?.trim();
+      if (!objectText) {
+        continue;
+      }
+      const normalizedObject = objectText
+        .replace(/^(the|a|an|my|our|your|his|her|their)\s+/i, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!normalizedObject || normalizedObject.split(" ").length > 8) {
+        continue;
+      }
+      return `${normalizedObject} ${mapping.suffix}`;
     }
-    const normalizedObject = objectText
-      .replace(/^(the|a|an|my|our|your|his|her|their)\s+/i, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!normalizedObject || normalizedObject.split(" ").length > 8) {
-      continue;
+    return null;
+  };
+
+  const compoundSegments = cleaned
+    .split(/\s+(?:and|&)\s+/i)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (compoundSegments.length > 1) {
+    const mappedSegments = compoundSegments.map((segment) => buildMappedPhrase(segment));
+    if (mappedSegments.every(Boolean)) {
+      cleaned = mappedSegments.join(" and ");
+    } else {
+      const mappedSingle = buildMappedPhrase(cleaned);
+      if (mappedSingle) {
+        cleaned = mappedSingle;
+      }
     }
-    cleaned = `${normalizedObject} ${mapping.suffix}`;
-    break;
+  } else {
+    const mappedSingle = buildMappedPhrase(cleaned);
+    if (mappedSingle) {
+      cleaned = mappedSingle;
+    }
   }
   cleaned = cleaned.replace(/\s+/g, " ").trim();
   return cleaned ? `${cleaned.charAt(0).toUpperCase()}${cleaned.slice(1)}` : "";
+}
+
+function finalizeRewordedLineItemDescription(originalDescription: string, rewrittenDescription?: string): string {
+  const polishedOriginal = polishLineItemDescription(originalDescription);
+  const rawRewritten = (rewrittenDescription ?? "").trim();
+  const polishedRewritten = polishLineItemDescription(rawRewritten);
+  if (!polishedRewritten) {
+    return polishedOriginal;
+  }
+  if (/^(?:of|for|to|and|with)\b/i.test(rawRewritten) && polishedOriginal) {
+    return polishedOriginal;
+  }
+  if (
+    /\b(?:replacement|installation|inspection|adjustment|cleaning|painting|tuning|update|design)\s+repair\b/i.test(
+      polishedRewritten
+    ) &&
+    polishedOriginal
+  ) {
+    return polishedOriginal;
+  }
+  return polishedRewritten;
 }
 
 function buildLaborLineItem(task: Task, sessionDate?: string) {

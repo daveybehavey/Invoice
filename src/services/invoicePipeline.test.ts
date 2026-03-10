@@ -88,6 +88,39 @@ test("rewordFullInvoice keeps the full rewrite path when notes are present", asy
   assert.ok(((capturedOptions as CapturedTaskOptions | null)?.maxCompletionTokens ?? 0) >= 500);
 });
 
+test("rewordFullInvoice falls back to a polished original when the model returns the exact awkward lead-in wording seen in production", async () => {
+  setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
+    return {
+      lineItems: [{ id: "line-1", description: "Of sink and replacement of cartridge repair" }],
+      notes: "Thank you for your business."
+    } as T;
+  });
+
+  const updated = await rewordFullInvoice({
+    invoiceNumber: "INV-2B",
+    issueDate: "2026-03-07",
+    customerName: "Mike Johnson",
+    currency: "USD",
+    lineItems: [
+      {
+        id: "line-1",
+        type: "labor",
+        description: "fixed sink and replaced cartridge",
+        quantity: 2,
+        unitPrice: 80,
+        amount: 160
+      }
+    ],
+    notes: "Thanks for your business.",
+    subtotal: 160,
+    total: 160,
+    balanceDue: 160
+  });
+
+  assert.equal(updated.lineItems[0]?.description, "Sink repair and cartridge replacement");
+  assert.equal(updated.notes, "Thank you for your business.");
+});
+
 test("rewordFullInvoice raises wording token budget for larger multi-line drafts", async () => {
   let capturedOptions: CapturedTaskOptions | null = null;
   setJsonTaskRunnerForTests(async <T>(_prompt: string, options?: CapturedTaskOptions): Promise<T> => {

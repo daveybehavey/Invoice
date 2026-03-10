@@ -68,21 +68,43 @@
       { re: /^(updated|update|tweaked|tweak)\s+(.+)/i, suffix: "update" },
       { re: /^(designed|design)\s+(.+)/i, suffix: "design" }
     ];
-    for (const mapping of nounMappings) {
-      const match = cleaned.match(mapping.re);
-      const objectText = match?.[2]?.trim();
-      if (!objectText) {
-        continue;
+    const buildMappedPhrase = (segment) => {
+      for (const mapping of nounMappings) {
+        const match = segment.match(mapping.re);
+        const objectText = match?.[2]?.trim();
+        if (!objectText) {
+          continue;
+        }
+        const normalizedObject = objectText
+          .replace(/^(the|a|an|my|our|your|his|her|their)\s+/i, "")
+          .replace(/\s+/g, " ")
+          .trim();
+        if (!normalizedObject || normalizedObject.split(" ").length > 8) {
+          continue;
+        }
+        return `${normalizedObject} ${mapping.suffix}`;
       }
-      const normalizedObject = objectText
-        .replace(/^(the|a|an|my|our|your|his|her|their)\s+/i, "")
-        .replace(/\s+/g, " ")
-        .trim();
-      if (!normalizedObject || normalizedObject.split(" ").length > 8) {
-        continue;
+      return null;
+    };
+    const compoundSegments = cleaned
+      .split(/\s+(?:and|&)\s+/i)
+      .map((segment) => segment.trim())
+      .filter(Boolean);
+    if (compoundSegments.length > 1) {
+      const mappedSegments = compoundSegments.map((segment) => buildMappedPhrase(segment));
+      if (mappedSegments.every(Boolean)) {
+        cleaned = mappedSegments.join(" and ");
+      } else {
+        const mappedSingle = buildMappedPhrase(cleaned);
+        if (mappedSingle) {
+          cleaned = mappedSingle;
+        }
       }
-      cleaned = `${normalizedObject} ${mapping.suffix}`;
-      break;
+    } else {
+      const mappedSingle = buildMappedPhrase(cleaned);
+      if (mappedSingle) {
+        cleaned = mappedSingle;
+      }
     }
     cleaned = cleaned.replace(/\s+/g, " ").trim();
     return cleaned ? `${cleaned.charAt(0).toUpperCase()}${cleaned.slice(1)}` : "";
