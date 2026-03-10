@@ -371,6 +371,19 @@ test("extract-notes returns OCR text and warnings for image uploads", async () =
   );
 });
 
+test("extract-upload-text returns extracted text for document uploads", async () => {
+  const response = await request(app)
+    .post("/api/invoices/extract-upload-text")
+    .attach("invoiceFile", Buffer.from("Mike Johnson\nJan 30 faucet repair 2h at $80/hr."), {
+      filename: "notes.txt",
+      contentType: "text/plain"
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.sourceType, "document");
+  assert.match(response.body.extractedText, /Jan 30 faucet repair/i);
+});
+
 test("extract-notes returns low OCR confidence for tiny extracted text", async () => {
   setImageOcrRunnerForTests(async () => ({
     extractedText: "Fix sink",

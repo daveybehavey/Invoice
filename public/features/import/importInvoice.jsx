@@ -296,9 +296,44 @@ function ImportInvoice() {
     }
   };
 
+  const handlePreviewUploadText = async () => {
+    if (!selectedFile) {
+      setError("Upload a document file first.");
+      return;
+    }
+    if (isImageFile(selectedFile)) {
+      setError("Use Extract text for image uploads.");
+      return;
+    }
+    setIsExtracting(true);
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.append("invoiceFile", selectedFile);
+      const response = await apiFetch("/api/invoices/extract-upload-text", {
+        method: "POST",
+        body: formData
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || "Could not preview extracted text.");
+      }
+      const extractedText = typeof payload?.extractedText === "string" ? payload.extractedText.trim() : "";
+      if (!extractedText) {
+        throw new Error("No readable text found in the document.");
+      }
+      setReviewedText(extractedText);
+    } catch (uploadError) {
+      console.error("Document text preview failed", uploadError);
+      setError(uploadError?.message || "Could not preview extracted text.");
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
   const handleBuildFromReviewedText = async () => {
-    if (!selectedFile || !isImageFile(selectedFile)) {
-      setError("Upload an image file first.");
+    if (!selectedFile) {
+      setError("Upload a file first.");
       return;
     }
     const extractedText = reviewedText.trim();
@@ -306,7 +341,7 @@ function ImportInvoice() {
       setError("Review the extracted text before building the draft.");
       return;
     }
-    if (ocrConfidence === "low" && !lowConfidenceConfirmed) {
+    if (isImageFile(selectedFile) && ocrConfidence === "low" && !lowConfidenceConfirmed) {
       setError("Confirm low-confidence OCR text before building the draft.");
       return;
     }
@@ -399,7 +434,7 @@ function ImportInvoice() {
           </p>
           <h1 className="text-2xl font-semibold text-slate-900">Upload invoice files or photo notes</h1>
           <p className="text-sm text-slate-600">
-            PDF/text files build a draft directly. Photo notes require text review before parsing.
+            PDF/text files can build directly or preview extracted text first. Photo notes require text review before parsing.
           </p>
         </div>
 
@@ -568,6 +603,44 @@ function ImportInvoice() {
             </div>
           ) : null}
 
+          {selectedFile && !isImageFile(selectedFile) ? (
+            <div className="space-y-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-4">
+              <p className="text-sm font-semibold text-sky-950">Preview extracted text (optional)</p>
+              <p className="text-xs text-sky-900">
+                Check what Billie will parse before building the draft. You can edit the extracted text if needed.
+              </p>
+              {isExtracting ? (
+                <p className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs text-sky-900">
+                  Reading text from document...
+                </p>
+              ) : null}
+              {hasReviewedText ? (
+                <textarea
+                  rows={6}
+                  className="w-full resize-none rounded-xl border border-sky-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  placeholder="Review and edit extracted text if needed."
+                  value={reviewedText}
+                  onChange={(event) => setReviewedText(event.target.value)}
+                  disabled={isExtracting || isUploading}
+                />
+              ) : (
+                <p className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs text-sky-900">
+                  Preview extracted text if you want to check it before building the draft.
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-full border border-sky-200 bg-white px-3 py-1 text-xs font-semibold text-sky-900 hover:border-sky-300 disabled:cursor-not-allowed disabled:text-sky-400"
+                  onClick={handlePreviewUploadText}
+                  disabled={isExtracting || isUploading}
+                >
+                  {isExtracting ? "Previewing..." : reviewedText ? "Re-preview extracted text" : "Preview extracted text"}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <div>
             <label className="text-sm font-semibold text-slate-900">Optional notes</label>
             <p className="mt-1 text-xs text-slate-500">
@@ -589,7 +662,7 @@ function ImportInvoice() {
           ) : null}
 
           <div className="flex flex-wrap items-center gap-3">
-            {selectedFile && isImageFile(selectedFile) ? (
+            {selectedFile && hasReviewedText ? (
               <button
                 type="button"
                 className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
@@ -599,7 +672,7 @@ function ImportInvoice() {
                   !hasReviewedText ||
                   isUploading ||
                   isExtracting ||
-                  (ocrConfidence === "low" && !lowConfidenceConfirmed)
+                  (isImageFile(selectedFile) && ocrConfidence === "low" && !lowConfidenceConfirmed)
                 }
               >
                 {isUploading ? "Building draft..." : "Build draft from reviewed text"}
@@ -616,13 +689,17 @@ function ImportInvoice() {
             )}
               <p className="text-xs text-slate-500">
               {isExtracting
-                ? "Extracting text from image..."
-                  : isUploading
+                ? selectedFile && isImageFile(selectedFile)
+                  ? "Extracting text from image..."
+                  : "Reading text from document..."
+                : isUploading
                     ? "Building your draft..."
                   : selectedFile && isImageFile(selectedFile)
                     ? requiresLowConfidenceConfirm
                       ? "Low confidence OCR: review text, re-extract if needed, then confirm."
                       : "Extract text, review it, then build."
+                    : hasReviewedText
+                      ? "Review the extracted text, then build."
                     : "We’ll open the editor next."}
               </p>
           </div>

@@ -603,6 +603,31 @@ test("importing image notes requires OCR review before building draft", async ()
   }
 });
 
+test("previewing document text lets the user review before building", async () => {
+  useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/import`, { waitUntil: "networkidle" });
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "notes.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Jan 30 faucet repair, 2 hours at $80/hr for Mike Johnson.")
+    });
+
+    await page.getByRole("button", { name: "Preview extracted text" }).click();
+    const reviewTextarea = page.locator('textarea[placeholder="Review and edit extracted text if needed."]');
+    await reviewTextarea.waitFor({ state: "visible" });
+    await expectValueContains(reviewTextarea, "Jan 30 faucet repair");
+    await page.getByRole("button", { name: "Build draft from reviewed text" }).click();
+
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor polishes line item wording on blur", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();

@@ -313,6 +313,25 @@ app.post("/api/invoices/extract-notes", imageUpload.single("invoiceFile"), async
   }
 });
 
+app.post(
+  "/api/invoices/extract-upload-text",
+  importUpload.single("invoiceFile"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) {
+        throw new Error("Upload a supported document first.");
+      }
+      const extractedText = await extractUploadedInvoiceText(req.file);
+      res.json({
+        sourceType: "document",
+        extractedText
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 app.post("/api/invoices/from-input/labor-pricing", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = LaborPricingFollowUpRequestSchema.parse(req.body);
