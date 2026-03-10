@@ -28,6 +28,60 @@
   const { DEFAULT_ACCENT_COLOR, buildAccentPalette } = brandThemeUtils;
   const { STYLE_PRESETS, STYLE_OPTIONS, TEMPLATE_PREVIEWS } = styleCatalogUtils;
 
+  const BILLIE_STYLE_ACCENTS = [
+    { label: "Navy", value: "#093064", matches: [/navy/, /dark blue/, /deep blue/] },
+    { label: "Blue", value: "#6993D2", matches: [/\bblue\b/, /accent blue/, /clean blue/] },
+    { label: "Light blue", value: "#ACCCF0", matches: [/light blue/, /sky blue/, /pale blue/] }
+  ];
+
+  const resolveBillieStyleCommand = (instruction) => {
+    const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
+    if (!normalized) {
+      return null;
+    }
+
+    const hasStyleContext = /\b(template|style|layout|look|accent|color)\b/.test(normalized);
+    const result = { stylePreset: null, styleLabel: null, accentColor: null, accentLabel: null };
+
+    if (hasStyleContext || /\bclassic\b/.test(normalized)) {
+      if (/\b(classic|default)\b/.test(normalized)) {
+        result.stylePreset = "default";
+        result.styleLabel = STYLE_PRESETS.default.label;
+      } else if (/\b(minimal|compact)\b/.test(normalized)) {
+        result.stylePreset = "compact";
+        result.styleLabel = STYLE_PRESETS.compact.label;
+      } else if (/\b(bold|spacious)\b/.test(normalized)) {
+        result.stylePreset = "spacious";
+        result.styleLabel = STYLE_PRESETS.spacious.label;
+      }
+    }
+
+    const matchedAccent = BILLIE_STYLE_ACCENTS.find((accent) =>
+      accent.matches.some((pattern) => pattern.test(normalized))
+    );
+    if (matchedAccent) {
+      result.accentColor = matchedAccent.value;
+      result.accentLabel = matchedAccent.label;
+    }
+
+    if (!result.stylePreset && !result.accentColor) {
+      return null;
+    }
+
+    const parts = [];
+    if (result.styleLabel) {
+      parts.push(`template → ${result.styleLabel}`);
+    }
+    if (result.accentLabel) {
+      parts.push(`accent → ${result.accentLabel}`);
+    }
+
+    return {
+      ...result,
+      responseText: `Applied style updates: ${parts.join(", ")}.`
+    };
+  };
+
 function InspectorPanel({
   activeTab,
   onTabChange,
@@ -83,12 +137,12 @@ function InspectorPanel({
   ];
   const styleOptions = STYLE_OPTIONS;
   const toneOptions = ["Formal", "Neutral", "Friendly"];
-  const accentSwatches = ["#0f9d6e", "#0f766e", "#1d4ed8", "#be123c", "#7c3aed", "#111827"];
+  const accentSwatches = ["#093064", "#6993D2", "#ACCCF0", "#0f9d6e", "#be123c", "#111827"];
   const accent = buildAccentPalette(accentColor);
   const accentButtonStyle = {
     backgroundColor: accent.primary,
     borderColor: accent.primary,
-    color: "#ffffff"
+    color: accent.buttonText
   };
   const accentGhostButtonStyle = {
     backgroundColor: accent.soft,
@@ -174,6 +228,24 @@ function InspectorPanel({
     }
     if (pendingAssistantEdit) {
       setAssistantError("Apply or discard the pending changes first.");
+      return;
+    }
+    const styleCommand = resolveBillieStyleCommand(instruction);
+    if (styleCommand) {
+      setAssistantError("");
+      setAssistantStatus("");
+      setAssistantMessages((prev) => [
+        ...prev,
+        { role: "user", text: instruction },
+        { role: "ai", text: styleCommand.responseText }
+      ]);
+      if (styleCommand.stylePreset) {
+        onStylePresetChange?.(styleCommand.stylePreset);
+      }
+      if (styleCommand.accentColor) {
+        onAccentColorChange?.(styleCommand.accentColor);
+      }
+      setAssistantInstruction("");
       return;
     }
     const payloadResult = buildEditableInvoicePayload?.();
@@ -674,8 +746,8 @@ function InspectorPanel({
                   ))
                 ) : (
                   <p className="text-xs text-slate-500">
-                    Ask for changes like “Rename the logo line item to Brand refresh” or “Remove the
-                    parking fee.”
+                    Ask for changes like “Use the bold template with a navy accent.” or “Rename the
+                    logo line item to Brand refresh.”
                   </p>
                 )}
               </div>
@@ -683,7 +755,7 @@ function InspectorPanel({
             <textarea
               rows={4}
               className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-              placeholder="Example: Change the labor rate to $80/hr and remove the parking line."
+              placeholder="Example: Use the bold template with a navy accent."
               value={assistantInstruction}
               onChange={(event) => setAssistantInstruction(event.target.value)}
               disabled={assistantLoading}

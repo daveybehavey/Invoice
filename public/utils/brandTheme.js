@@ -26,15 +26,29 @@
     };
   };
 
+  const relativeLuminance = ({ r, g, b }) => {
+    const normalizeChannel = (channel) => {
+      const value = channel / 255;
+      return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    };
+    return (
+      0.2126 * normalizeChannel(r) +
+      0.7152 * normalizeChannel(g) +
+      0.0722 * normalizeChannel(b)
+    );
+  };
+
   const buildAccentPalette = (hexColor) => {
     const normalized = normalizeAccentColor(hexColor);
     const { r, g, b } = hexToRgb(normalized);
+    const isLightAccent = relativeLuminance({ r, g, b }) > 0.34;
     return {
       primary: normalized,
       soft: `rgba(${r}, ${g}, ${b}, 0.12)`,
       border: `rgba(${r}, ${g}, ${b}, 0.35)`,
       muted: `rgba(${r}, ${g}, ${b}, 0.18)`,
-      text: `rgba(${r}, ${g}, ${b}, 0.92)`
+      text: isLightAccent ? "#093064" : `rgba(${r}, ${g}, ${b}, 0.92)`,
+      buttonText: isLightAccent ? "#093064" : "#ffffff"
     };
   };
 

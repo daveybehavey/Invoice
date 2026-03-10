@@ -693,6 +693,45 @@ test("manual editor quick clean descriptions polishes existing draft line items"
   }
 });
 
+test("manual billie applies style commands locally without calling the AI edit route", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let editRequestCount = 0;
+  try {
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+
+    const composer = page
+      .getByPlaceholder("Example: Use the bold template with a navy accent.")
+      .first();
+    await composer.fill("Use the bold template with a navy accent.");
+    await page.getByRole("button", { name: "Draft edit" }).click();
+
+    await page
+      .getByText("Applied style updates: template → Bold, accent → Navy.")
+      .waitFor({ state: "visible" });
+    assert.equal(editRequestCount, 0);
+
+    await page.getByRole("button", { name: "Style" }).first().click();
+    await page
+      .getByRole("button", { name: /Bold.*Selected/i })
+      .waitFor({ state: "visible" });
+    await page.getByText("#093064").first().waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("business identity defaults prefill new manual drafts", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
