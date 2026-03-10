@@ -125,6 +125,7 @@ function ManualInvoiceCanvas() {
   );
   const [logoUrl, setLogoUrl] = useState(() => initialDraft?.logoUrl ?? seededDraft?.logoUrl ?? null);
   const [logoVisible, setLogoVisible] = useState(() => initialDraft?.logoVisible ?? true);
+  const [headerLayout, setHeaderLayout] = useState(() => initialDraft?.headerLayout ?? "split");
   const [stylePreset, setStylePreset] = useState(
     () => initialDraft?.stylePreset ?? seededDraft?.stylePreset ?? "default"
   );
@@ -171,6 +172,7 @@ function ManualInvoiceCanvas() {
     lineItems,
     logoUrl,
     logoVisible,
+    headerLayout,
     accentColor
   };
 
@@ -369,7 +371,8 @@ function ManualInvoiceCanvas() {
         accentColor,
         stylePreset,
         logoUrl: logoUrl ?? undefined,
-        logoVisible
+        logoVisible,
+        headerLayout
       }
     };
   };
@@ -431,6 +434,7 @@ function ManualInvoiceCanvas() {
       lineItems,
       logoUrl,
       logoVisible,
+      headerLayout,
       stylePreset,
       accentColor,
       savedInvoiceId
@@ -770,9 +774,9 @@ function ManualInvoiceCanvas() {
               </button>
             </div>
 
-            <header className="space-y-5">
+            <header className="space-y-5" data-header-layout={headerLayout}>
               {logoUrl && logoVisible ? (
-                <div className="flex items-center">
+                <div className={`flex ${headerLayout === "centered" ? "justify-center" : "items-center"}`}>
                   <img
                     src={logoUrl}
                     alt="Company logo"
@@ -780,7 +784,13 @@ function ManualInvoiceCanvas() {
                   />
                 </div>
               ) : null}
-              <div className="flex flex-wrap items-start justify-between gap-4">
+              <div
+                className={`flex flex-wrap gap-4 ${
+                  headerLayout === "centered"
+                    ? "flex-col items-center text-center"
+                    : "items-start justify-between"
+                }`}
+              >
                 <div>
                   <h1 className={activePreset.titleClass}>INVOICE</h1>
                   <p className="mt-2 text-xs font-semibold uppercase tracking-[0.2em]" style={{ color: accent.primary }}>
@@ -985,9 +995,11 @@ function ManualInvoiceCanvas() {
             onTabChange={setActiveInspectorTab}
             logoUrl={logoUrl}
             logoVisible={logoVisible}
+            headerLayout={headerLayout}
             onLogoChange={handleLogoChange}
             onLogoRemove={handleLogoRemove}
             onLogoVisibilityChange={setLogoVisible}
+            onHeaderLayoutChange={setHeaderLayout}
             stylePreset={stylePreset}
             onStylePresetChange={setStylePreset}
             accentColor={accentColor}
@@ -1074,9 +1086,11 @@ function ManualInvoiceCanvas() {
                 hideInternalTabs
                 logoUrl={logoUrl}
                 logoVisible={logoVisible}
+                headerLayout={headerLayout}
                 onLogoChange={handleLogoChange}
                 onLogoRemove={handleLogoRemove}
                 onLogoVisibilityChange={setLogoVisible}
+                onHeaderLayoutChange={setHeaderLayout}
                 stylePreset={stylePreset}
                 onStylePresetChange={setStylePreset}
                 accentColor={accentColor}

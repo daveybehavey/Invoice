@@ -1787,6 +1787,48 @@ test("export-pdf accepts hidden logos without dropping the uploaded logo data", 
   assert.ok(response.body.byteLength > 200);
 });
 
+test("export-pdf accepts centered header layout requests", async () => {
+  const response = await request(app)
+    .post("/api/invoices/export-pdf")
+    .buffer(true)
+    .parse((res, callback) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      res.on("end", () => callback(null, Buffer.concat(chunks)));
+    })
+    .send({
+      invoice: {
+        invoiceNumber: "INV-1003",
+        issueDate: "2026-02-27",
+        customerName: "Mike Johnson",
+        currency: "USD",
+        lineItems: [
+          {
+            id: "line-1",
+            type: "labor",
+            description: "Faucet repair",
+            quantity: 2,
+            unitPrice: 80,
+            amount: 160
+          }
+        ],
+        subtotal: 160,
+        total: 160,
+        balanceDue: 160
+      },
+      fromDetails: "Acme Plumbing\n123 Main St",
+      billToDetails: "Mike Johnson\n1423 Pine St",
+      accentColor: "#093064",
+      stylePreset: "default",
+      headerLayout: "centered"
+    });
+
+  assert.equal(response.status, 200);
+  assert.match(String(response.headers["content-type"]), /^application\/pdf/);
+  assert.ok(Buffer.isBuffer(response.body));
+  assert.ok(response.body.byteLength > 200);
+});
+
 test("export-pdf rejects invoices with no line items", async () => {
   const response = await request(app).post("/api/invoices/export-pdf").send({
     invoice: {

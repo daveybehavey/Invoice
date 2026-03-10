@@ -9,6 +9,7 @@ type InvoicePdfInput = {
   stylePreset?: string;
   logoUrl?: string;
   logoVisible?: boolean;
+  headerLayout?: "split" | "centered";
 };
 
 const PAGE_WIDTH = 612;
@@ -64,7 +65,8 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
     fromLines,
     issueDate: input.invoice.issueDate?.trim() || "Not set",
     logo,
-    styleScale
+    styleScale,
+    headerLayout: input.headerLayout
   });
   renderPartyBlocks(state, { fromLines, billToLines, styleScale });
   renderLineItemsSection(state, { invoice: input.invoice, styleScale });
@@ -93,14 +95,20 @@ function renderHeader(
     issueDate: string;
     logo: PDFImage | null;
     styleScale: number;
+    headerLayout?: "split" | "centered";
   }
 ): void {
-  const { fromLines, issueDate, logo, styleScale } = options;
+  const { fromLines, issueDate, logo, styleScale, headerLayout } = options;
+  if (headerLayout === "centered") {
+    renderCenteredHeader(state, { fromLines, issueDate, logo, styleScale });
+    return;
+  }
+  const { fromLines: splitFromLines, issueDate: splitIssueDate, logo: splitLogo } = options;
   const { page, regularFont, boldFont, accent } = state;
   let leftCursor = PAGE_TOP;
 
-  if (logo) {
-    const scaled = logo.scale(1);
+  if (splitLogo) {
+    const scaled = splitLogo.scale(1);
     const maxWidth = 110 * styleScale;
     const maxHeight = 56 * styleScale;
     const widthScale = maxWidth / scaled.width;
@@ -108,7 +116,7 @@ function renderHeader(
     const scale = Math.min(widthScale, heightScale, 1);
     const width = scaled.width * scale;
     const height = scaled.height * scale;
-    page.drawImage(logo, {
+    page.drawImage(splitLogo, {
       x: PAGE_MARGIN_X,
       y: leftCursor - height,
       width,
@@ -117,7 +125,7 @@ function renderHeader(
     leftCursor -= height + 10;
   }
 
-  const businessName = fromLines[0] || "Your Business";
+  const businessName = splitFromLines[0] || "Your Business";
   page.drawText(businessName, {
     x: PAGE_MARGIN_X,
     y: leftCursor - 16,
@@ -127,7 +135,7 @@ function renderHeader(
   });
   leftCursor -= 24;
 
-  const supportingLines = fromLines.slice(1, 3);
+  const supportingLines = splitFromLines.slice(1, 3);
   for (const line of supportingLines) {
     page.drawText(line, {
       x: PAGE_MARGIN_X,
@@ -188,6 +196,127 @@ function renderHeader(
     font: boldFont,
     color: SLATE_500
   });
+  page.drawText(splitIssueDate, {
+    x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(splitIssueDate, 10.5),
+    y: metaBoxY + 13,
+    size: 10.5,
+    font: regularFont,
+    color: SLATE_900
+  });
+
+  const dividerY = Math.min(leftCursor - 10, metaBoxY - 14);
+  page.drawLine({
+    start: { x: PAGE_MARGIN_X, y: dividerY },
+    end: { x: PAGE_WIDTH - PAGE_MARGIN_X, y: dividerY },
+    thickness: 1.2,
+    color: accent.primary
+  });
+
+  state.cursorY = dividerY - 18;
+}
+
+function renderCenteredHeader(
+  state: PdfRenderState,
+  options: {
+    fromLines: string[];
+    issueDate: string;
+    logo: PDFImage | null;
+    styleScale: number;
+  }
+): void {
+  const { fromLines, issueDate, logo, styleScale } = options;
+  const { page, regularFont, boldFont, accent } = state;
+  let cursorY = PAGE_TOP;
+
+  if (logo) {
+    const scaled = logo.scale(1);
+    const maxWidth = 110 * styleScale;
+    const maxHeight = 56 * styleScale;
+    const widthScale = maxWidth / scaled.width;
+    const heightScale = maxHeight / scaled.height;
+    const scale = Math.min(widthScale, heightScale, 1);
+    const width = scaled.width * scale;
+    const height = scaled.height * scale;
+    page.drawImage(logo, {
+      x: (PAGE_WIDTH - width) / 2,
+      y: cursorY - height,
+      width,
+      height
+    });
+    cursorY -= height + 12;
+  }
+
+  const businessName = fromLines[0] || "Your Business";
+  const businessNameSize = 14 * styleScale;
+  page.drawText(businessName, {
+    x: (PAGE_WIDTH - boldFont.widthOfTextAtSize(businessName, businessNameSize)) / 2,
+    y: cursorY - businessNameSize,
+    size: businessNameSize,
+    font: boldFont,
+    color: SLATE_900
+  });
+  cursorY -= 24;
+
+  for (const line of fromLines.slice(1, 3)) {
+    const lineSize = 9.5 * styleScale;
+    page.drawText(line, {
+      x: (PAGE_WIDTH - regularFont.widthOfTextAtSize(line, lineSize)) / 2,
+      y: cursorY - lineSize,
+      size: lineSize,
+      font: regularFont,
+      color: SLATE_600
+    });
+    cursorY -= 13;
+  }
+
+  const title = "INVOICE";
+  const titleSize = 30 * styleScale;
+  page.drawText(title, {
+    x: (PAGE_WIDTH - boldFont.widthOfTextAtSize(title, titleSize)) / 2,
+    y: cursorY - titleSize - 4,
+    size: titleSize,
+    font: boldFont,
+    color: SLATE_900
+  });
+  cursorY -= titleSize + 22;
+
+  const metaBoxWidth = 220;
+  const metaBoxHeight = 56;
+  const metaBoxX = (PAGE_WIDTH - metaBoxWidth) / 2;
+  const metaBoxY = cursorY - metaBoxHeight;
+
+  page.drawRectangle({
+    x: metaBoxX,
+    y: metaBoxY,
+    width: metaBoxWidth,
+    height: metaBoxHeight,
+    borderColor: SLATE_200,
+    borderWidth: 1,
+    color: SURFACE
+  });
+
+  page.drawText("Invoice #", {
+    x: metaBoxX + 12,
+    y: metaBoxY + metaBoxHeight - 16,
+    size: 9,
+    font: boldFont,
+    color: SLATE_500
+  });
+  page.drawText(state.invoiceNumberLabel, {
+    x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(state.invoiceNumberLabel, 10.5),
+    y: metaBoxY + metaBoxHeight - 17,
+    size: 10.5,
+    font: regularFont,
+    color: SLATE_900
+  });
+
+  page.drawText("Date", {
+    x: metaBoxX + 12,
+    y: metaBoxY + 14,
+    size: 9,
+    font: boldFont,
+    color: SLATE_500
+  });
   page.drawText(issueDate, {
     x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(issueDate, 10.5),
     y: metaBoxY + 13,
@@ -196,7 +325,7 @@ function renderHeader(
     color: SLATE_900
   });
 
-  const dividerY = Math.min(leftCursor - 10, metaBoxY - 14);
+  const dividerY = metaBoxY - 14;
   page.drawLine({
     start: { x: PAGE_MARGIN_X, y: dividerY },
     end: { x: PAGE_WIDTH - PAGE_MARGIN_X, y: dividerY },

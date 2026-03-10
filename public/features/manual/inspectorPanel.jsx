@@ -33,6 +33,10 @@
     { label: "Blue", value: "#6993D2", matches: [/\bblue\b/, /accent blue/, /clean blue/] },
     { label: "Light blue", value: "#ACCCF0", matches: [/light blue/, /sky blue/, /pale blue/] }
   ];
+  const HEADER_LAYOUT_OPTIONS = [
+    { id: "split", label: "Split" },
+    { id: "centered", label: "Centered" }
+  ];
 
   const resolveBillieStyleCommand = (instruction, options = {}) => {
     const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
@@ -47,7 +51,9 @@
       styleLabel: null,
       accentColor: null,
       accentLabel: null,
-      logoVisible: null
+      logoVisible: null,
+      headerLayout: null,
+      headerLabel: null
     };
 
     if (hasStyleContext || /\bclassic\b/.test(normalized)) {
@@ -71,6 +77,14 @@
       result.accentLabel = matchedAccent.label;
     }
 
+    if (/\bheader\b/.test(normalized) && /\b(center|centered|stacked)\b/.test(normalized)) {
+      result.headerLayout = "centered";
+      result.headerLabel = "Centered";
+    } else if (/\bheader\b/.test(normalized) && /\bsplit\b/.test(normalized)) {
+      result.headerLayout = "split";
+      result.headerLabel = "Split";
+    }
+
     if (hasLogoInstruction && /\b(hide|remove)\b/.test(normalized)) {
       if (options.logoUrl) {
         result.logoVisible = false;
@@ -85,7 +99,12 @@
       }
     }
 
-    if (!result.stylePreset && !result.accentColor && result.logoVisible === null) {
+    if (
+      !result.stylePreset &&
+      !result.accentColor &&
+      result.logoVisible === null &&
+      !result.headerLayout
+    ) {
       return null;
     }
 
@@ -98,6 +117,9 @@
     }
     if (result.logoVisible !== null) {
       parts.push(`logo → ${result.logoVisible ? "visible" : "hidden"}`);
+    }
+    if (result.headerLabel) {
+      parts.push(`header → ${result.headerLabel}`);
     }
 
     return {
@@ -114,9 +136,11 @@ function InspectorPanel({
   hideInternalTabs,
   logoUrl,
   logoVisible,
+  headerLayout,
   onLogoChange,
   onLogoRemove,
   onLogoVisibilityChange,
+  onHeaderLayoutChange,
   stylePreset,
   onStylePresetChange,
   accentColor,
@@ -273,6 +297,9 @@ function InspectorPanel({
       }
       if (styleCommand.logoVisible !== null) {
         onLogoVisibilityChange?.(styleCommand.logoVisible);
+      }
+      if (styleCommand.headerLayout) {
+        onHeaderLayoutChange?.(styleCommand.headerLayout);
       }
       setAssistantInstruction("");
       return;
@@ -611,6 +638,28 @@ function InspectorPanel({
                   />
                   <span className="font-mono text-[11px] text-slate-500">{accentColor ?? "#0f9d6e"}</span>
                 </label>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-slate-900">Header layout</p>
+                <p className="text-xs text-slate-500">Choose how the invoice header is arranged.</p>
+                <div className="flex flex-wrap gap-2">
+                  {HEADER_LAYOUT_OPTIONS.map((option) => {
+                    const isSelected = headerLayout === option.id;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${
+                          isSelected ? "" : "border-slate-200 text-slate-600"
+                        }`}
+                        style={isSelected ? accentButtonStyle : undefined}
+                        onClick={() => onHeaderLayoutChange?.(option.id)}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">Logo</p>
@@ -960,9 +1009,11 @@ function InspectorPanel({
                   <span>Preview</span>
                 </div>
 
-                <header className="space-y-5">
+                <header className="space-y-5" data-header-layout={previewData?.headerLayout ?? "split"}>
                   {previewData?.logoUrl && previewData?.logoVisible !== false ? (
-                    <div className="flex items-center">
+                    <div
+                      className={`flex ${previewData?.headerLayout === "centered" ? "justify-center" : "items-center"}`}
+                    >
                       <img
                         src={previewData.logoUrl}
                         alt="Company logo"
@@ -970,7 +1021,13 @@ function InspectorPanel({
                       />
                     </div>
                   ) : null}
-                  <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div
+                    className={`flex flex-wrap gap-4 ${
+                      previewData?.headerLayout === "centered"
+                        ? "flex-col items-center text-center"
+                        : "items-start justify-between"
+                    }`}
+                  >
                     <div>
                       <h1 className={previewPreset.titleClass}>INVOICE</h1>
                       <p

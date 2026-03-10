@@ -807,6 +807,65 @@ test("manual billie can hide and show the logo locally and export preserves visi
   }
 });
 
+test("manual billie can switch header layout locally and export preserves the selected layout", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let editRequestCount = 0;
+  let exportRequestBody: any = null;
+  try {
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+    await page.route("**/api/invoices/export-pdf", async (route) => {
+      exportRequestBody = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/pdf",
+        headers: {
+          "content-disposition": 'attachment; filename="Invoice-Draft.pdf"'
+        },
+        body: Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n")
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.locator("[data-header-layout='split']").first().waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+
+    const composer = page
+      .getByPlaceholder("Example: Use the bold template with a navy accent.")
+      .first();
+    await composer.fill("Center the header and use a split layout later if needed.");
+    await page.getByRole("button", { name: "Draft edit" }).click();
+
+    await page
+      .getByText("Applied style updates: header → Centered.")
+      .waitFor({ state: "visible" });
+    await page.locator("[data-header-layout='centered']").first().waitFor({ state: "visible" });
+    assert.equal(editRequestCount, 0);
+
+    await page.getByRole("button", { name: "Export" }).last().click();
+    await page.getByRole("button", { name: "Download PDF" }).click();
+    await page.getByText("PDF download started").waitFor({ state: "visible" });
+    assert.equal(exportRequestBody?.headerLayout, "centered");
+
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+    await composer.fill("Use the split header.");
+    await page.getByRole("button", { name: "Draft edit" }).click();
+    await page.getByText("Applied style updates: header → Split.").waitFor({ state: "visible" });
+    await page.locator("[data-header-layout='split']").first().waitFor({ state: "visible" });
+    assert.equal(editRequestCount, 0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("business identity defaults prefill new manual drafts", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
