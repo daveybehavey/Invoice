@@ -48,8 +48,13 @@ test("resolveJsonTaskConfig uses compact wording settings for wording tasks", ()
 
   assert.equal(config.model, "gpt-main");
   assert.equal(config.maxCompletionTokens, 400);
+  assert.equal(config.temperature, 0.2);
   assert.deepEqual(config.responseFormat, { type: "json_object" });
   assert.match(config.systemPrompt, /rewrite invoice wording only/i);
+  assert.match(
+    config.systemPrompt,
+    /Do not start descriptions with prepositions like "of", "for", or "with"\./i
+  );
   assert.doesNotMatch(config.systemPrompt, /AI Invoice Translator & Generator/i);
 });
 

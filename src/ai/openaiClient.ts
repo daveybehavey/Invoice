@@ -15,6 +15,7 @@ type JsonTaskConfig = {
   model: string;
   systemPrompt: string;
   maxCompletionTokens?: number;
+  temperature?: number;
   responseFormat?:
     | OpenAI.Chat.Completions.ChatCompletionCreateParams["response_format"]
     | undefined;
@@ -36,6 +37,8 @@ const WORDING_SYSTEM_PROMPT = [
   "You rewrite invoice wording only.",
   "Preserve every number, date, id, quantity, rate, amount, total, and line-item order exactly.",
   "Do not add, remove, merge, split, or reorder line items.",
+  'Do not start descriptions with prepositions like "of", "for", or "with".',
+  "For short trade descriptions, prefer concise service noun phrases like 'Sink repair and cartridge replacement'.",
   "Return valid JSON only."
 ].join(" ");
 
@@ -66,6 +69,7 @@ export function resolveJsonTaskConfig(options: JsonTaskOptions = {}): JsonTaskCo
     return {
       model,
       systemPrompt: WORDING_SYSTEM_PROMPT,
+      temperature: 0.2,
       maxCompletionTokens:
         Number.isFinite(options.maxCompletionTokens) && Number(options.maxCompletionTokens) > 0
           ? Math.floor(Number(options.maxCompletionTokens))
@@ -108,6 +112,7 @@ export async function runJsonTask<T>(
     const completion = await getClient().chat.completions.create({
       model: taskConfig.model,
       max_completion_tokens: taskConfig.maxCompletionTokens,
+      temperature: taskConfig.temperature,
       response_format: taskConfig.responseFormat,
       messages: [
         {

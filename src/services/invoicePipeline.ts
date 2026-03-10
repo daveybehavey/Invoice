@@ -3148,6 +3148,9 @@ function finalizeRewordedLineItemDescription(originalDescription: string, rewrit
   if (/^(?:of|for|to|and|with)\b/i.test(rawRewritten) && polishedOriginal) {
     return polishedOriginal;
   }
+  if (/^(?:of|for|to|and|with)\b/i.test(polishedRewritten) && polishedOriginal) {
+    return polishedOriginal;
+  }
   if (
     /\b(?:replacement|installation|inspection|adjustment|cleaning|painting|tuning|update|design)\s+repair\b/i.test(
       polishedRewritten

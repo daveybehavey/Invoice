@@ -121,6 +121,72 @@ test("rewordFullInvoice falls back to a polished original when the model returns
   assert.equal(updated.notes, "Thank you for your business.");
 });
 
+test("rewordFullInvoice preserves an already-polished trade description when the model returns the awkward lead-in wording", async () => {
+  setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
+    return {
+      lineItems: [{ id: "line-1", description: "Of sink and replacement of cartridge repair" }],
+      notes: "Please remit payment within 7 days. Thank you."
+    } as T;
+  });
+
+  const updated = await rewordFullInvoice({
+    invoiceNumber: "INV-2C",
+    issueDate: "2026-03-07",
+    customerName: "Mike Johnson",
+    currency: "USD",
+    lineItems: [
+      {
+        id: "line-1",
+        type: "labor",
+        description: "Sink repair and cartridge replacement",
+        quantity: 1,
+        unitPrice: 90,
+        amount: 90
+      }
+    ],
+    notes: "pay in 7 days thanks",
+    subtotal: 90,
+    total: 90,
+    balanceDue: 90
+  });
+
+  assert.equal(updated.lineItems[0]?.description, "Sink repair and cartridge replacement");
+  assert.equal(updated.notes, "Please remit payment within 7 days. Thank you.");
+});
+
+test("rewordFullInvoice falls back when the model returns a repair-of phrasing that polishes into an awkward lead-in", async () => {
+  setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
+    return {
+      lineItems: [{ id: "line-1", description: "Repair of sink and replacement of cartridge" }],
+      notes: "Please remit payment within 7 days. Thank you."
+    } as T;
+  });
+
+  const updated = await rewordFullInvoice({
+    invoiceNumber: "INV-2D",
+    issueDate: "2026-03-07",
+    customerName: "Mike Johnson",
+    currency: "USD",
+    lineItems: [
+      {
+        id: "line-1",
+        type: "labor",
+        description: "Sink repair and cartridge replacement",
+        quantity: 1,
+        unitPrice: 90,
+        amount: 90
+      }
+    ],
+    notes: "pay in 7 days thanks",
+    subtotal: 90,
+    total: 90,
+    balanceDue: 90
+  });
+
+  assert.equal(updated.lineItems[0]?.description, "Sink repair and cartridge replacement");
+  assert.equal(updated.notes, "Please remit payment within 7 days. Thank you.");
+});
+
 test("rewordFullInvoice raises wording token budget for larger multi-line drafts", async () => {
   let capturedOptions: CapturedTaskOptions | null = null;
   setJsonTaskRunnerForTests(async <T>(_prompt: string, options?: CapturedTaskOptions): Promise<T> => {
