@@ -732,6 +732,81 @@ test("manual billie applies style commands locally without calling the AI edit r
   }
 });
 
+test("manual billie can hide and show the logo locally and export preserves visibility state", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const draft = {
+      invoiceNumber: "INV-LOGO-1",
+      invoiceDate: "2026-03-10",
+      fromDetails: "Acme Plumbing",
+      billToDetails: "Mike Johnson",
+      notes: "Thanks for your business.",
+      taxRate: "0",
+      lineItems: [{ id: "line-1", description: "Faucet repair", qty: "1", rate: "90" }],
+      logoUrl:
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMBgBxVSnoAAAAASUVORK5CYII=",
+      logoVisible: true,
+      stylePreset: "default",
+      accentColor: "#093064",
+      savedInvoiceId: ""
+    };
+    window.localStorage.setItem("invoiceDraft", JSON.stringify(draft));
+  });
+  const page = await context.newPage();
+  let editRequestCount = 0;
+  let exportRequestBody: any = null;
+  try {
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+    await page.route("**/api/invoices/export-pdf", async (route) => {
+      exportRequestBody = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/pdf",
+        headers: {
+          "content-disposition": 'attachment; filename="Invoice-INV-LOGO-1.pdf"'
+        },
+        body: Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n")
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByAltText("Company logo").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+
+    const composer = page
+      .getByPlaceholder("Example: Use the bold template with a navy accent.")
+      .first();
+
+    await composer.fill("Hide the logo.");
+    await page.getByRole("button", { name: "Draft edit" }).click();
+    await page.getByText("Applied style updates: logo → hidden.").waitFor({ state: "visible" });
+    await page.getByAltText("Company logo").waitFor({ state: "hidden" });
+    assert.equal(editRequestCount, 0);
+
+    await page.getByRole("button", { name: "Export" }).last().click();
+    await page.getByRole("button", { name: "Download PDF" }).click();
+    await page.getByText("PDF download started").waitFor({ state: "visible" });
+    assert.equal(exportRequestBody?.logoVisible, false);
+    assert.match(String(exportRequestBody?.logoUrl || ""), /^data:image\/png;base64,/);
+
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+    await composer.fill("Show the logo.");
+    await page.getByRole("button", { name: "Draft edit" }).click();
+    await page.getByText("Applied style updates: logo → visible.").waitFor({ state: "visible" });
+    await page.getByAltText("Company logo").waitFor({ state: "visible" });
+    assert.equal(editRequestCount, 0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("business identity defaults prefill new manual drafts", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();

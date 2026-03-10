@@ -34,14 +34,21 @@
     { label: "Light blue", value: "#ACCCF0", matches: [/light blue/, /sky blue/, /pale blue/] }
   ];
 
-  const resolveBillieStyleCommand = (instruction) => {
+  const resolveBillieStyleCommand = (instruction, options = {}) => {
     const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
     if (!normalized) {
       return null;
     }
 
     const hasStyleContext = /\b(template|style|layout|look|accent|color)\b/.test(normalized);
-    const result = { stylePreset: null, styleLabel: null, accentColor: null, accentLabel: null };
+    const hasLogoInstruction = /\blogo\b/.test(normalized);
+    const result = {
+      stylePreset: null,
+      styleLabel: null,
+      accentColor: null,
+      accentLabel: null,
+      logoVisible: null
+    };
 
     if (hasStyleContext || /\bclassic\b/.test(normalized)) {
       if (/\b(classic|default)\b/.test(normalized)) {
@@ -64,7 +71,21 @@
       result.accentLabel = matchedAccent.label;
     }
 
-    if (!result.stylePreset && !result.accentColor) {
+    if (hasLogoInstruction && /\b(hide|remove)\b/.test(normalized)) {
+      if (options.logoUrl) {
+        result.logoVisible = false;
+      } else {
+        return { responseText: "No uploaded logo yet. Add one from Style first." };
+      }
+    } else if (hasLogoInstruction && /\b(show|restore)\b/.test(normalized)) {
+      if (options.logoUrl) {
+        result.logoVisible = true;
+      } else {
+        return { responseText: "No uploaded logo yet. Add one from Style first." };
+      }
+    }
+
+    if (!result.stylePreset && !result.accentColor && result.logoVisible === null) {
       return null;
     }
 
@@ -74,6 +95,9 @@
     }
     if (result.accentLabel) {
       parts.push(`accent → ${result.accentLabel}`);
+    }
+    if (result.logoVisible !== null) {
+      parts.push(`logo → ${result.logoVisible ? "visible" : "hidden"}`);
     }
 
     return {
@@ -89,8 +113,10 @@ function InspectorPanel({
   showCloseButton,
   hideInternalTabs,
   logoUrl,
+  logoVisible,
   onLogoChange,
   onLogoRemove,
+  onLogoVisibilityChange,
   stylePreset,
   onStylePresetChange,
   accentColor,
@@ -230,7 +256,7 @@ function InspectorPanel({
       setAssistantError("Apply or discard the pending changes first.");
       return;
     }
-    const styleCommand = resolveBillieStyleCommand(instruction);
+    const styleCommand = resolveBillieStyleCommand(instruction, { logoUrl, logoVisible });
     if (styleCommand) {
       setAssistantError("");
       setAssistantStatus("");
@@ -244,6 +270,9 @@ function InspectorPanel({
       }
       if (styleCommand.accentColor) {
         onAccentColorChange?.(styleCommand.accentColor);
+      }
+      if (styleCommand.logoVisible !== null) {
+        onLogoVisibilityChange?.(styleCommand.logoVisible);
       }
       setAssistantInstruction("");
       return;
@@ -609,6 +638,16 @@ function InspectorPanel({
                   >
                     Remove logo
                   </button>
+                  <button
+                    type="button"
+                    className="text-sm font-semibold text-slate-600"
+                    onClick={() => onLogoVisibilityChange?.(!logoVisible)}
+                  >
+                    {logoVisible ? "Hide on invoice" : "Show on invoice"}
+                  </button>
+                  <p className="text-xs text-slate-500">
+                    {logoVisible ? "Logo is visible on the invoice." : "Logo is hidden from the invoice."}
+                  </p>
                 </div>
               ) : null}
             </div>
@@ -922,7 +961,7 @@ function InspectorPanel({
                 </div>
 
                 <header className="space-y-5">
-                  {previewData?.logoUrl ? (
+                  {previewData?.logoUrl && previewData?.logoVisible !== false ? (
                     <div className="flex items-center">
                       <img
                         src={previewData.logoUrl}

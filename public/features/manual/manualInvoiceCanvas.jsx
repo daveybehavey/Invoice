@@ -124,6 +124,7 @@ function ManualInvoiceCanvas() {
       : [{ id: "line-1", description: "", qty: "", rate: "" }]
   );
   const [logoUrl, setLogoUrl] = useState(() => initialDraft?.logoUrl ?? seededDraft?.logoUrl ?? null);
+  const [logoVisible, setLogoVisible] = useState(() => initialDraft?.logoVisible ?? true);
   const [stylePreset, setStylePreset] = useState(
     () => initialDraft?.stylePreset ?? seededDraft?.stylePreset ?? "default"
   );
@@ -169,6 +170,7 @@ function ManualInvoiceCanvas() {
     total,
     lineItems,
     logoUrl,
+    logoVisible,
     accentColor
   };
 
@@ -276,6 +278,7 @@ function ManualInvoiceCanvas() {
     try {
       const result = await readLogoFileForStorage(file);
       setLogoUrl(result.dataUrl);
+      setLogoVisible(true);
       setSaveError("");
       if (result.convertedFromSvg) {
         setDraftStatus("SVG logo converted to PNG for PDF compatibility");
@@ -294,6 +297,7 @@ function ManualInvoiceCanvas() {
 
   const handleLogoRemove = () => {
     setLogoUrl(null);
+    setLogoVisible(true);
   };
 
   const handleAccentColorChange = (nextColor) => {
@@ -364,7 +368,8 @@ function ManualInvoiceCanvas() {
         billToDetails: billToDetails?.trim() || undefined,
         accentColor,
         stylePreset,
-        logoUrl: logoUrl ?? undefined
+        logoUrl: logoUrl ?? undefined,
+        logoVisible
       }
     };
   };
@@ -425,6 +430,7 @@ function ManualInvoiceCanvas() {
       taxRate,
       lineItems,
       logoUrl,
+      logoVisible,
       stylePreset,
       accentColor,
       savedInvoiceId
@@ -765,7 +771,7 @@ function ManualInvoiceCanvas() {
             </div>
 
             <header className="space-y-5">
-              {logoUrl ? (
+              {logoUrl && logoVisible ? (
                 <div className="flex items-center">
                   <img
                     src={logoUrl}
@@ -978,8 +984,10 @@ function ManualInvoiceCanvas() {
             activeTab={activeInspectorTab}
             onTabChange={setActiveInspectorTab}
             logoUrl={logoUrl}
+            logoVisible={logoVisible}
             onLogoChange={handleLogoChange}
             onLogoRemove={handleLogoRemove}
+            onLogoVisibilityChange={setLogoVisible}
             stylePreset={stylePreset}
             onStylePresetChange={setStylePreset}
             accentColor={accentColor}
@@ -1065,8 +1073,10 @@ function ManualInvoiceCanvas() {
                 onClose={() => setInspectorOpen(false)}
                 hideInternalTabs
                 logoUrl={logoUrl}
+                logoVisible={logoVisible}
                 onLogoChange={handleLogoChange}
                 onLogoRemove={handleLogoRemove}
+                onLogoVisibilityChange={setLogoVisible}
                 stylePreset={stylePreset}
                 onStylePresetChange={setStylePreset}
                 accentColor={accentColor}

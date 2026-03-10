@@ -8,6 +8,7 @@ type InvoicePdfInput = {
   accentColor?: string;
   stylePreset?: string;
   logoUrl?: string;
+  logoVisible?: boolean;
 };
 
 const PAGE_WIDTH = 612;
@@ -57,7 +58,7 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
 
   const fromLines = splitMultilineText(input.fromDetails ?? "");
   const billToLines = splitMultilineText(input.billToDetails ?? input.invoice.customerName ?? "");
-  const logo = await tryEmbedLogoImage(doc, input.logoUrl);
+  const logo = input.logoVisible === false ? null : await tryEmbedLogoImage(doc, input.logoUrl);
 
   renderHeader(state, {
     fromLines,
