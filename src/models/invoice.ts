@@ -207,7 +207,8 @@ export const InvoicePdfExportRequestSchema = z.object({
   stylePreset: OptionalString,
   logoUrl: OptionalString,
   logoVisible: z.boolean().optional(),
-  headerLayout: z.enum(["split", "centered"]).optional()
+  headerLayout: z.enum(["split", "centered"]).optional(),
+  spacingDensity: z.enum(["tight", "balanced", "airy"]).optional()
 });
 
 export const SavedInvoiceStatusSchema = z.enum(["draft", "sent", "paid", "deleted"]);

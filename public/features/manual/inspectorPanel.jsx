@@ -26,7 +26,13 @@
 
   const { polishLineItemDescription } = formatUtils;
   const { DEFAULT_ACCENT_COLOR, buildAccentPalette } = brandThemeUtils;
-  const { STYLE_PRESETS, STYLE_OPTIONS, TEMPLATE_PREVIEWS } = styleCatalogUtils;
+  const {
+    STYLE_PRESETS,
+    STYLE_OPTIONS,
+    TEMPLATE_PREVIEWS,
+    SPACING_DENSITY_PRESETS,
+    SPACING_DENSITY_OPTIONS
+  } = styleCatalogUtils;
 
   const BILLIE_STYLE_ACCENTS = [
     { label: "Navy", value: "#093064", matches: [/navy/, /dark blue/, /deep blue/] },
@@ -53,7 +59,9 @@
       accentLabel: null,
       logoVisible: null,
       headerLayout: null,
-      headerLabel: null
+      headerLabel: null,
+      spacingDensity: null,
+      spacingLabel: null
     };
 
     if (hasStyleContext || /\bclassic\b/.test(normalized)) {
@@ -85,6 +93,22 @@
       result.headerLabel = "Split";
     }
 
+    const hasSpacingInstruction =
+      /\b(spacing|density|padding)\b/.test(normalized) || /breathing room/.test(normalized);
+    if (hasSpacingInstruction && /\b(tight|tighter|dense|denser)\b/.test(normalized)) {
+      result.spacingDensity = "tight";
+      result.spacingLabel = SPACING_DENSITY_PRESETS.tight.label;
+    } else if (
+      hasSpacingInstruction &&
+      (/\b(airy|airier|loose|looser)\b/.test(normalized) || /breathing room/.test(normalized))
+    ) {
+      result.spacingDensity = "airy";
+      result.spacingLabel = SPACING_DENSITY_PRESETS.airy.label;
+    } else if (hasSpacingInstruction && /\b(standard|balanced|normal)\b/.test(normalized)) {
+      result.spacingDensity = "balanced";
+      result.spacingLabel = SPACING_DENSITY_PRESETS.balanced.label;
+    }
+
     if (hasLogoInstruction && /\b(hide|remove)\b/.test(normalized)) {
       if (options.logoUrl) {
         result.logoVisible = false;
@@ -103,7 +127,8 @@
       !result.stylePreset &&
       !result.accentColor &&
       result.logoVisible === null &&
-      !result.headerLayout
+      !result.headerLayout &&
+      !result.spacingDensity
     ) {
       return null;
     }
@@ -121,6 +146,9 @@
     if (result.headerLabel) {
       parts.push(`header → ${result.headerLabel}`);
     }
+    if (result.spacingLabel) {
+      parts.push(`spacing → ${result.spacingLabel}`);
+    }
 
     return {
       ...result,
@@ -137,10 +165,12 @@ function InspectorPanel({
   logoUrl,
   logoVisible,
   headerLayout,
+  spacingDensity,
   onLogoChange,
   onLogoRemove,
   onLogoVisibilityChange,
   onHeaderLayoutChange,
+  onSpacingDensityChange,
   stylePreset,
   onStylePresetChange,
   accentColor,
@@ -301,6 +331,9 @@ function InspectorPanel({
       if (styleCommand.headerLayout) {
         onHeaderLayoutChange?.(styleCommand.headerLayout);
       }
+      if (styleCommand.spacingDensity) {
+        onSpacingDensityChange?.(styleCommand.spacingDensity);
+      }
       setAssistantInstruction("");
       return;
     }
@@ -455,6 +488,9 @@ function InspectorPanel({
   const previewTemplate = previewTemplateId ? templateCatalog[previewTemplateId] : null;
   const previewIsSelected = previewTemplateId && stylePreset === previewTemplateId;
   const previewPreset = previewTemplate ?? templateCatalog.default;
+  const previewSpacing =
+    SPACING_DENSITY_PRESETS[previewData?.spacingDensity ?? spacingDensity] ??
+    SPACING_DENSITY_PRESETS.balanced;
   const previewLineItems = Array.isArray(previewData?.lineItems) ? previewData.lineItems : [];
   const parsedLineItems = previewLineItems
     .filter(
@@ -654,6 +690,28 @@ function InspectorPanel({
                         }`}
                         style={isSelected ? accentButtonStyle : undefined}
                         onClick={() => onHeaderLayoutChange?.(option.id)}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-slate-900">Spacing density</p>
+                <p className="text-xs text-slate-500">Adjust how tight or airy the invoice feels.</p>
+                <div className="flex flex-wrap gap-2">
+                  {SPACING_DENSITY_OPTIONS.map((option) => {
+                    const isSelected = spacingDensity === option.id;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={`rounded-lg border px-3 py-1.5 text-sm font-semibold ${
+                          isSelected ? "" : "border-slate-200 text-slate-600"
+                        }`}
+                        style={isSelected ? accentButtonStyle : undefined}
+                        onClick={() => onSpacingDensityChange?.(option.id)}
                       >
                         {option.label}
                       </button>
@@ -1001,9 +1059,10 @@ function InspectorPanel({
           </div>
           <div className="px-6 py-5">
             <div
-              className={`rounded-2xl border p-6 ${previewPreset.shellClass} ${previewPreset.textClass}`}
+              className={`rounded-2xl border ${previewSpacing.shellPaddingClass} ${previewPreset.shellClass} ${previewPreset.textClass}`}
+              data-spacing-density={previewData?.spacingDensity ?? spacingDensity}
             >
-              <div className={previewPreset.sectionGap}>
+              <div className={previewSpacing.sectionGapClass || previewPreset.sectionGap}>
                 <div className={`flex items-center justify-between ${previewPreset.metaClass}`}>
                   <span>Invoice Document</span>
                   <span>Preview</span>

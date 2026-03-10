@@ -52,6 +52,29 @@
     label: preset.label
   }));
 
+  const SPACING_DENSITY_PRESETS = {
+    tight: {
+      label: "Tighter",
+      shellPaddingClass: "p-5",
+      sectionGapClass: "space-y-5"
+    },
+    balanced: {
+      label: "Standard",
+      shellPaddingClass: "p-6",
+      sectionGapClass: ""
+    },
+    airy: {
+      label: "Airy",
+      shellPaddingClass: "p-7",
+      sectionGapClass: "space-y-8"
+    }
+  };
+
+  const SPACING_DENSITY_OPTIONS = Object.entries(SPACING_DENSITY_PRESETS).map(([id, preset]) => ({
+    id,
+    label: preset.label
+  }));
+
   const TEMPLATE_PREVIEWS = {
     default: {
       title: "bg-slate-900",
@@ -79,6 +102,8 @@
   window.InvoiceManualStyleCatalog = {
     STYLE_PRESETS,
     STYLE_OPTIONS,
-    TEMPLATE_PREVIEWS
+    TEMPLATE_PREVIEWS,
+    SPACING_DENSITY_PRESETS,
+    SPACING_DENSITY_OPTIONS
   };
 })();

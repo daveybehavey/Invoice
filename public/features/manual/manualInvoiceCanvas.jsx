@@ -66,7 +66,7 @@
   const { polishLineItemDescription } = formatUtils;
   const { InspectorPanel } = manualInspectorUtils;
   const { DEFAULT_ACCENT_COLOR, normalizeAccentColor, buildAccentPalette } = brandThemeUtils;
-  const { STYLE_PRESETS } = styleCatalogUtils;
+  const { STYLE_PRESETS, SPACING_DENSITY_PRESETS } = styleCatalogUtils;
   const { getBusinessProfile, applyBusinessProfileToDraft } = businessProfileUtils;
   const { rememberClientDetails } = clientMemoryUtils;
   const { getLineItemLibrary, rememberLineItems } = lineItemLibraryUtils;
@@ -126,6 +126,7 @@ function ManualInvoiceCanvas() {
   const [logoUrl, setLogoUrl] = useState(() => initialDraft?.logoUrl ?? seededDraft?.logoUrl ?? null);
   const [logoVisible, setLogoVisible] = useState(() => initialDraft?.logoVisible ?? true);
   const [headerLayout, setHeaderLayout] = useState(() => initialDraft?.headerLayout ?? "split");
+  const [spacingDensity, setSpacingDensity] = useState(() => initialDraft?.spacingDensity ?? "balanced");
   const [stylePreset, setStylePreset] = useState(
     () => initialDraft?.stylePreset ?? seededDraft?.stylePreset ?? "default"
   );
@@ -147,6 +148,7 @@ function ManualInvoiceCanvas() {
   const draftStatusLabel = "Draft restored";
 
   const activePreset = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.default;
+  const activeSpacing = SPACING_DENSITY_PRESETS[spacingDensity] ?? SPACING_DENSITY_PRESETS.balanced;
 
   const parseNumber = (value) => {
     const parsed = Number.parseFloat(value);
@@ -173,6 +175,7 @@ function ManualInvoiceCanvas() {
     logoUrl,
     logoVisible,
     headerLayout,
+    spacingDensity,
     accentColor
   };
 
@@ -372,7 +375,8 @@ function ManualInvoiceCanvas() {
         stylePreset,
         logoUrl: logoUrl ?? undefined,
         logoVisible,
-        headerLayout
+        headerLayout,
+        spacingDensity
       }
     };
   };
@@ -435,6 +439,7 @@ function ManualInvoiceCanvas() {
       logoUrl,
       logoVisible,
       headerLayout,
+      spacingDensity,
       stylePreset,
       accentColor,
       savedInvoiceId
@@ -732,14 +737,15 @@ function ManualInvoiceCanvas() {
           </button>
         </div>
         <div
-          className={`printable-invoice relative w-full overflow-hidden rounded-2xl border p-6 ${activePreset.shellClass} ${invoiceInteractionClass}`}
+          className={`printable-invoice relative w-full overflow-hidden rounded-2xl border ${activeSpacing.shellPaddingClass} ${activePreset.shellClass} ${invoiceInteractionClass}`}
           style={{ borderColor: accent.border }}
+          data-spacing-density={spacingDensity}
         >
           <div
             className="pointer-events-none absolute inset-x-0 top-0 h-24"
             style={{ background: `linear-gradient(180deg, ${accent.soft} 0%, rgba(255,255,255,0) 100%)` }}
           />
-          <div className={`relative ${activePreset.sectionGap}`}>
+          <div className={`relative ${activeSpacing.sectionGapClass || activePreset.sectionGap}`}>
             <div className={`flex items-center justify-between ${activePreset.metaClass}`}>
               <span>Invoice Document</span>
               <span className="flex items-center gap-2">
@@ -996,10 +1002,12 @@ function ManualInvoiceCanvas() {
             logoUrl={logoUrl}
             logoVisible={logoVisible}
             headerLayout={headerLayout}
+            spacingDensity={spacingDensity}
             onLogoChange={handleLogoChange}
             onLogoRemove={handleLogoRemove}
             onLogoVisibilityChange={setLogoVisible}
             onHeaderLayoutChange={setHeaderLayout}
+            onSpacingDensityChange={setSpacingDensity}
             stylePreset={stylePreset}
             onStylePresetChange={setStylePreset}
             accentColor={accentColor}
@@ -1087,10 +1095,12 @@ function ManualInvoiceCanvas() {
                 logoUrl={logoUrl}
                 logoVisible={logoVisible}
                 headerLayout={headerLayout}
+                spacingDensity={spacingDensity}
                 onLogoChange={handleLogoChange}
                 onLogoRemove={handleLogoRemove}
                 onLogoVisibilityChange={setLogoVisible}
                 onHeaderLayoutChange={setHeaderLayout}
+                onSpacingDensityChange={setSpacingDensity}
                 stylePreset={stylePreset}
                 onStylePresetChange={setStylePreset}
                 accentColor={accentColor}

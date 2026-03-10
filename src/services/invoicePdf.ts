@@ -10,6 +10,7 @@ type InvoicePdfInput = {
   logoUrl?: string;
   logoVisible?: boolean;
   headerLayout?: "split" | "centered";
+  spacingDensity?: "tight" | "balanced" | "airy";
 };
 
 const PAGE_WIDTH = 612;
@@ -37,6 +38,7 @@ type PdfRenderState = {
   accent: ReturnType<typeof resolveAccentPalette>;
   cursorY: number;
   invoiceNumberLabel: string;
+  spacingScale: number;
 };
 
 export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Buffer> {
@@ -45,6 +47,7 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
   const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);
   const accent = resolveAccentPalette(input.accentColor);
   const styleScale = resolveStyleScale(input.stylePreset);
+  const spacingScale = resolveSpacingScale(input.spacingDensity);
 
   const firstPage = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   const state: PdfRenderState = {
@@ -54,7 +57,8 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
     boldFont,
     accent,
     cursorY: PAGE_TOP,
-    invoiceNumberLabel: input.invoice.invoiceNumber?.trim() || "Draft"
+    invoiceNumberLabel: input.invoice.invoiceNumber?.trim() || "Draft",
+    spacingScale
   };
 
   const fromLines = splitMultilineText(input.fromDetails ?? "");
@@ -105,6 +109,7 @@ function renderHeader(
   }
   const { fromLines: splitFromLines, issueDate: splitIssueDate, logo: splitLogo } = options;
   const { page, regularFont, boldFont, accent } = state;
+  const spacingScale = state.spacingScale;
   let leftCursor = PAGE_TOP;
 
   if (splitLogo) {
@@ -122,7 +127,7 @@ function renderHeader(
       width,
       height
     });
-    leftCursor -= height + 10;
+    leftCursor -= height + 10 * spacingScale;
   }
 
   const businessName = splitFromLines[0] || "Your Business";
@@ -133,7 +138,7 @@ function renderHeader(
     font: boldFont,
     color: SLATE_900
   });
-  leftCursor -= 24;
+  leftCursor -= 24 * spacingScale;
 
   const supportingLines = splitFromLines.slice(1, 3);
   for (const line of supportingLines) {
@@ -144,7 +149,7 @@ function renderHeader(
       font: regularFont,
       color: SLATE_600
     });
-    leftCursor -= 13;
+    leftCursor -= 13 * spacingScale;
   }
 
   const title = "INVOICE";
@@ -162,7 +167,7 @@ function renderHeader(
   const metaBoxWidth = 216;
   const metaBoxHeight = 56;
   const metaBoxX = PAGE_WIDTH - PAGE_MARGIN_X - metaBoxWidth;
-  const metaBoxY = PAGE_TOP - titleSize - 72;
+  const metaBoxY = PAGE_TOP - titleSize - 72 * spacingScale;
 
   page.drawRectangle({
     x: metaBoxX,
@@ -204,7 +209,7 @@ function renderHeader(
     color: SLATE_900
   });
 
-  const dividerY = Math.min(leftCursor - 10, metaBoxY - 14);
+  const dividerY = Math.min(leftCursor - 10 * spacingScale, metaBoxY - 14 * spacingScale);
   page.drawLine({
     start: { x: PAGE_MARGIN_X, y: dividerY },
     end: { x: PAGE_WIDTH - PAGE_MARGIN_X, y: dividerY },
@@ -212,7 +217,7 @@ function renderHeader(
     color: accent.primary
   });
 
-  state.cursorY = dividerY - 18;
+  state.cursorY = dividerY - 18 * spacingScale;
 }
 
 function renderCenteredHeader(
@@ -226,6 +231,7 @@ function renderCenteredHeader(
 ): void {
   const { fromLines, issueDate, logo, styleScale } = options;
   const { page, regularFont, boldFont, accent } = state;
+  const spacingScale = state.spacingScale;
   let cursorY = PAGE_TOP;
 
   if (logo) {
@@ -243,7 +249,7 @@ function renderCenteredHeader(
       width,
       height
     });
-    cursorY -= height + 12;
+    cursorY -= height + 12 * spacingScale;
   }
 
   const businessName = fromLines[0] || "Your Business";
@@ -255,7 +261,7 @@ function renderCenteredHeader(
     font: boldFont,
     color: SLATE_900
   });
-  cursorY -= 24;
+  cursorY -= 24 * spacingScale;
 
   for (const line of fromLines.slice(1, 3)) {
     const lineSize = 9.5 * styleScale;
@@ -266,7 +272,7 @@ function renderCenteredHeader(
       font: regularFont,
       color: SLATE_600
     });
-    cursorY -= 13;
+    cursorY -= 13 * spacingScale;
   }
 
   const title = "INVOICE";
@@ -278,7 +284,7 @@ function renderCenteredHeader(
     font: boldFont,
     color: SLATE_900
   });
-  cursorY -= titleSize + 22;
+  cursorY -= titleSize + 22 * spacingScale;
 
   const metaBoxWidth = 220;
   const metaBoxHeight = 56;
@@ -325,7 +331,7 @@ function renderCenteredHeader(
     color: SLATE_900
   });
 
-  const dividerY = metaBoxY - 14;
+  const dividerY = metaBoxY - 14 * spacingScale;
   page.drawLine({
     start: { x: PAGE_MARGIN_X, y: dividerY },
     end: { x: PAGE_WIDTH - PAGE_MARGIN_X, y: dividerY },
@@ -333,7 +339,7 @@ function renderCenteredHeader(
     color: accent.primary
   });
 
-  state.cursorY = dividerY - 18;
+  state.cursorY = dividerY - 18 * spacingScale;
 }
 
 function renderPartyBlocks(
@@ -341,13 +347,13 @@ function renderPartyBlocks(
   options: { fromLines: string[]; billToLines: string[]; styleScale: number }
 ): void {
   const { fromLines, billToLines, styleScale } = options;
-  ensureVerticalSpace(state, 120, false);
+  ensureVerticalSpace(state, 120 * state.spacingScale, false);
 
   const top = state.cursorY;
   const blockWidth = (CONTENT_WIDTH - 14) / 2;
-  const minHeight = 92;
+  const minHeight = 92 * state.spacingScale;
   const contentLines = Math.max(fromLines.length, billToLines.length, 1);
-  const blockHeight = Math.max(minHeight, 38 + contentLines * 14);
+  const blockHeight = Math.max(minHeight, (38 + contentLines * 14) * state.spacingScale);
 
   drawAddressBlock(state, {
     x: PAGE_MARGIN_X,
@@ -366,7 +372,7 @@ function renderPartyBlocks(
     lines: billToLines.length > 0 ? billToLines : ["Add client details"]
   });
 
-  state.cursorY = top - blockHeight - 20 * styleScale;
+  state.cursorY = top - blockHeight - 20 * styleScale * state.spacingScale;
 }
 
 function drawAddressBlock(
@@ -382,6 +388,7 @@ function drawAddressBlock(
 ): void {
   const { x, top, width, height, title, lines } = options;
   const { page, regularFont, boldFont, accent } = state;
+  const spacingScale = state.spacingScale;
   const bottom = top - height;
 
   page.drawRectangle({
@@ -402,7 +409,7 @@ function drawAddressBlock(
     color: accent.text
   });
 
-  let lineY = top - 32;
+  let lineY = top - 32 * spacingScale;
   for (const line of lines.slice(0, 5)) {
     page.drawText(line, {
       x: x + 10,
@@ -411,7 +418,7 @@ function drawAddressBlock(
       font: regularFont,
       color: SLATE_700
     });
-    lineY -= 13;
+    lineY -= 13 * spacingScale;
   }
 }
 
@@ -422,30 +429,31 @@ function renderLineItemsSection(
   const { invoice } = options;
   const groups = groupLineItems(invoice.lineItems);
   const showGroupHeaders = groups.length > 1;
+  const spacingScale = state.spacingScale;
 
   drawSectionTitle(state, "Line items");
   drawTableHeader(state);
 
   for (const group of groups) {
     if (showGroupHeaders) {
-      ensureVerticalSpace(state, 26, true);
+      ensureVerticalSpace(state, 26 * spacingScale, true);
       state.page.drawRectangle({
         x: PAGE_MARGIN_X,
-        y: state.cursorY - 18,
+        y: state.cursorY - 18 * spacingScale,
         width: CONTENT_WIDTH,
-        height: 18,
+        height: 18 * spacingScale,
         color: state.accent.soft,
         borderColor: state.accent.border,
         borderWidth: 0.5
       });
       state.page.drawText(group.label, {
         x: PAGE_MARGIN_X + 8,
-        y: state.cursorY - 13.5,
+        y: state.cursorY - 13.5 * spacingScale,
         size: 9.5,
         font: state.boldFont,
         color: state.accent.text
       });
-      state.cursorY -= 24;
+      state.cursorY -= 24 * spacingScale;
     }
 
     for (const item of group.items) {
@@ -461,17 +469,20 @@ function renderLineItemsSection(
       );
       const amountText = formatMoney(amountValue);
 
-      const rowHeight = Math.max(36, 12 + descriptionLines.length * 12 + secondaryLines.length * 10);
-      ensureVerticalSpace(state, rowHeight + 8, true);
+      const rowHeight = Math.max(
+        36 * spacingScale,
+        (12 + descriptionLines.length * 12 + secondaryLines.length * 10) * spacingScale
+      );
+      ensureVerticalSpace(state, rowHeight + 8 * spacingScale, true);
 
       state.page.drawLine({
-        start: { x: PAGE_MARGIN_X, y: state.cursorY + 3 },
-        end: { x: PAGE_WIDTH - PAGE_MARGIN_X, y: state.cursorY + 3 },
+        start: { x: PAGE_MARGIN_X, y: state.cursorY + 3 * spacingScale },
+        end: { x: PAGE_WIDTH - PAGE_MARGIN_X, y: state.cursorY + 3 * spacingScale },
         thickness: 0.7,
         color: SLATE_200
       });
 
-      let textY = state.cursorY - 9;
+      let textY = state.cursorY - 9 * spacingScale;
       for (const line of descriptionLines) {
         state.page.drawText(line, {
           x: PAGE_MARGIN_X + 10,
@@ -480,7 +491,7 @@ function renderLineItemsSection(
           font: state.boldFont,
           color: SLATE_900
         });
-        textY -= 12;
+        textY -= 12 * spacingScale;
       }
       for (const detailLine of secondaryLines) {
         state.page.drawText(detailLine, {
@@ -490,12 +501,12 @@ function renderLineItemsSection(
           font: state.regularFont,
           color: SLATE_500
         });
-        textY -= 10;
+        textY -= 10 * spacingScale;
       }
 
       state.page.drawText(amountText, {
         x: PAGE_WIDTH - PAGE_MARGIN_X - 10 - state.boldFont.widthOfTextAtSize(amountText, 11),
-        y: state.cursorY - 10.5,
+        y: state.cursorY - 10.5 * spacingScale,
         size: 11,
         font: state.boldFont,
         color: SLATE_900
@@ -507,31 +518,32 @@ function renderLineItemsSection(
 }
 
 function drawTableHeader(state: PdfRenderState): void {
-  ensureVerticalSpace(state, 26, true);
+  const spacingScale = state.spacingScale;
+  ensureVerticalSpace(state, 26 * spacingScale, true);
   state.page.drawRectangle({
     x: PAGE_MARGIN_X,
-    y: state.cursorY - 18,
+    y: state.cursorY - 18 * spacingScale,
     width: CONTENT_WIDTH,
-    height: 18,
+    height: 18 * spacingScale,
     color: SURFACE,
     borderColor: SLATE_200,
     borderWidth: 1
   });
   state.page.drawText("Description", {
     x: PAGE_MARGIN_X + 10,
-    y: state.cursorY - 13.5,
+    y: state.cursorY - 13.5 * spacingScale,
     size: 9,
     font: state.boldFont,
     color: SLATE_500
   });
   state.page.drawText("Amount", {
     x: PAGE_WIDTH - PAGE_MARGIN_X - 10 - state.boldFont.widthOfTextAtSize("Amount", 9),
-    y: state.cursorY - 13.5,
+    y: state.cursorY - 13.5 * spacingScale,
     size: 9,
     font: state.boldFont,
     color: SLATE_500
   });
-  state.cursorY -= 24;
+  state.cursorY -= 24 * spacingScale;
 }
 
 function renderTotalsPanel(
@@ -539,6 +551,7 @@ function renderTotalsPanel(
   options: { invoice: FinishedInvoice; styleScale: number }
 ): void {
   const { invoice } = options;
+  const spacingScale = state.spacingScale;
   const subtotal = normalizeMoneyValue(
     invoice.subtotal,
     invoice.lineItems.reduce((sum, item) => sum + normalizeMoneyValue(item.amount, 0), 0)
@@ -548,9 +561,9 @@ function renderTotalsPanel(
   const tax = normalizeMoneyValue(total - (subtotal - discount), 0);
   const balanceDue = normalizeMoneyValue(invoice.balanceDue, total);
 
-  ensureVerticalSpace(state, 132, true);
+  ensureVerticalSpace(state, 132 * spacingScale, true);
   const panelWidth = 216;
-  const panelHeight = discount > 0 ? 112 : 96;
+  const panelHeight = (discount > 0 ? 112 : 96) * spacingScale;
   const panelX = PAGE_WIDTH - PAGE_MARGIN_X - panelWidth;
   const panelY = state.cursorY - panelHeight;
 
@@ -564,30 +577,30 @@ function renderTotalsPanel(
     borderWidth: 1
   });
 
-  let lineY = panelY + panelHeight - 18;
+  let lineY = panelY + panelHeight - 18 * spacingScale;
   drawTotalsRow(state, panelX, lineY, "Subtotal", formatMoney(subtotal), false);
-  lineY -= 16;
+  lineY -= 16 * spacingScale;
 
   if (discount > 0) {
     drawTotalsRow(state, panelX, lineY, "Discount", `-${formatMoney(discount)}`, false);
-    lineY -= 16;
+    lineY -= 16 * spacingScale;
   }
 
   drawTotalsRow(state, panelX, lineY, "Tax", formatMoney(tax), false);
-  lineY -= 20;
+  lineY -= 20 * spacingScale;
 
   state.page.drawLine({
-    start: { x: panelX + 10, y: lineY + 8 },
-    end: { x: panelX + panelWidth - 10, y: lineY + 8 },
+    start: { x: panelX + 10, y: lineY + 8 * spacingScale },
+    end: { x: panelX + panelWidth - 10, y: lineY + 8 * spacingScale },
     thickness: 0.8,
     color: SLATE_300
   });
 
-  drawTotalsRow(state, panelX, lineY - 4, "Total", formatMoney(total), true);
-  lineY -= 22;
+  drawTotalsRow(state, panelX, lineY - 4 * spacingScale, "Total", formatMoney(total), true);
+  lineY -= 22 * spacingScale;
 
-  drawTotalsRow(state, panelX, lineY - 2, "Balance due", formatMoney(balanceDue), false);
-  state.cursorY = panelY - 18;
+  drawTotalsRow(state, panelX, lineY - 2 * spacingScale, "Balance due", formatMoney(balanceDue), false);
+  state.cursorY = panelY - 18 * spacingScale;
 }
 
 function drawTotalsRow(
@@ -623,6 +636,7 @@ function renderNotes(
   options: { notes: string; styleScale: number }
 ): void {
   const { notes } = options;
+  const spacingScale = state.spacingScale;
   const trimmedNotes = notes.trim();
   if (!trimmedNotes) {
     return;
@@ -630,21 +644,21 @@ function renderNotes(
   const noteLines = splitMultilineText(trimmedNotes)
     .flatMap((line) => wrapTextToWidth(line, state.regularFont, 10, CONTENT_WIDTH - 20, 8))
     .slice(0, 20);
-  const sectionHeight = 30 + noteLines.length * 12;
-  ensureVerticalSpace(state, sectionHeight + 10, true);
+  const sectionHeight = (30 + noteLines.length * 12) * spacingScale;
+  ensureVerticalSpace(state, sectionHeight + 10 * spacingScale, true);
 
   drawSectionTitle(state, "Notes / Terms");
   state.page.drawRectangle({
     x: PAGE_MARGIN_X,
-    y: state.cursorY - (noteLines.length * 12 + 16),
+    y: state.cursorY - (noteLines.length * 12 + 16) * spacingScale,
     width: CONTENT_WIDTH,
-    height: noteLines.length * 12 + 16,
+    height: (noteLines.length * 12 + 16) * spacingScale,
     borderColor: SLATE_200,
     borderWidth: 1,
     color: rgb(1, 1, 1)
   });
 
-  let y = state.cursorY - 12;
+  let y = state.cursorY - 12 * spacingScale;
   for (const line of noteLines) {
     state.page.drawText(line, {
       x: PAGE_MARGIN_X + 10,
@@ -653,9 +667,9 @@ function renderNotes(
       font: state.regularFont,
       color: SLATE_700
     });
-    y -= 12;
+    y -= 12 * spacingScale;
   }
-  state.cursorY = y - 8;
+  state.cursorY = y - 8 * spacingScale;
 }
 
 function renderFooter(state: PdfRenderState, options: { fromLines: string[] }): void {
@@ -685,15 +699,15 @@ function renderFooter(state: PdfRenderState, options: { fromLines: string[] }): 
 }
 
 function drawSectionTitle(state: PdfRenderState, title: string): void {
-  ensureVerticalSpace(state, 20, true);
+  ensureVerticalSpace(state, 20 * state.spacingScale, true);
   state.page.drawText(title, {
     x: PAGE_MARGIN_X,
-    y: state.cursorY - 2,
+    y: state.cursorY - 2 * state.spacingScale,
     size: 10,
     font: state.boldFont,
     color: state.accent.text
   });
-  state.cursorY -= 16;
+  state.cursorY -= 16 * state.spacingScale;
 }
 
 function ensureVerticalSpace(state: PdfRenderState, height: number, tableContinuation: boolean): void {
@@ -718,7 +732,7 @@ function ensureVerticalSpace(state: PdfRenderState, height: number, tableContinu
     thickness: 0.8,
     color: SLATE_300
   });
-  state.cursorY -= 22;
+  state.cursorY -= 22 * state.spacingScale;
   if (tableContinuation) {
     drawTableHeader(state);
   }
@@ -846,6 +860,16 @@ function resolveStyleScale(stylePreset?: string): number {
   }
   if (stylePreset === "spacious") {
     return 1.03;
+  }
+  return 1;
+}
+
+function resolveSpacingScale(spacingDensity?: string): number {
+  if (spacingDensity === "tight") {
+    return 0.88;
+  }
+  if (spacingDensity === "airy") {
+    return 1.12;
   }
   return 1;
 }
