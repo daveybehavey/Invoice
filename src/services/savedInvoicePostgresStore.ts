@@ -155,7 +155,8 @@ export class PostgresSavedInvoiceRepository {
         sourceType: row.source_type,
         invoiceNumber:
           row.invoice_data.finishedInvoice.invoiceNumber ?? row.invoice_data.structuredInvoice.invoiceNumber,
-        total: row.invoice_data.finishedInvoice.total
+        total: row.invoice_data.finishedInvoice.total,
+        paymentLinkUrl: row.invoice_data.finishedInvoice.paymentLinkUrl
       })
     );
   }

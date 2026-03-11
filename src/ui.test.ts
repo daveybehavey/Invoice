@@ -1962,6 +1962,67 @@ test("invoice library filters cards by lifecycle status", async () => {
   }
 });
 
+test("invoice library shows open pay link action when payment link exists", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-pay-link-owner");
+  });
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-pay-link-owner"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Pay Link Client",
+          workSessions: [
+            {
+              date: "Jan 10",
+              tasks: [{ description: "Emergency patch", hours: 1, rate: 140, amount: 140 }]
+            }
+          ],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PAY-LINK-1",
+          issueDate: "2026-03-10",
+          customerName: "Pay Link Client",
+          currency: "USD",
+          paymentLinkUrl: "https://pay.example.com/invoice/INV-PAY-LINK-1",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Emergency patch",
+              quantity: 1,
+              unitPrice: 140,
+              amount: 140
+            }
+          ],
+          subtotal: 140,
+          total: 140,
+          balanceDue: 140
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page
+      .locator("div.rounded-2xl.border.border-slate-200.bg-white")
+      .filter({ hasText: "INV-PAY-LINK-1" })
+      .first();
+    await card.getByRole("link", { name: "Open pay link" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("saving a client remembers bill-to details and autofills later matching drafts", async () => {
   useMockResponses([structuredDuplicateDraft(), emptyAudit()]);
 

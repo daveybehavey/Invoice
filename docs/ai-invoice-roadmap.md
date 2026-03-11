@@ -250,6 +250,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added status controls in the manual Export panel for saved invoices (`Mark sent`, `Mark paid`, `Mark draft`).
    - Manual flow now keeps saved status in local draft handoff so reopened invoices show the current lifecycle state.
    - Added UI coverage to verify manual save -> sent -> paid status flow.
+72. Library pay-link quick action
+   - Invoice library now surfaces `Open pay link` when a saved invoice includes a payment URL.
+   - Added payment-link metadata to invoice list payloads for file and Postgres backends.
+   - Added UI coverage to verify pay-link action visibility in the library.
 
 ## Next (current priorities)
 1. Modularization continuation

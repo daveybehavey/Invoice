@@ -843,6 +843,16 @@ function InvoiceLibrary() {
                           >
                             Invoice again
                           </button>
+                          {invoice.paymentLinkUrl ? (
+                            <a
+                              href={invoice.paymentLinkUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-800"
+                            >
+                              Open pay link
+                            </a>
+                          ) : null}
                           {showMarkSent ? (
                             <button
                               type="button"

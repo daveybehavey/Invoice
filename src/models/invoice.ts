@@ -264,7 +264,8 @@ export const InvoiceListItemSchema = z.object({
   status: SavedInvoiceStatusSchema,
   sourceType: SavedInvoiceSourceTypeSchema,
   invoiceNumber: OptionalString,
-  total: OptionalNumber
+  total: OptionalNumber,
+  paymentLinkUrl: OptionalUrl
 });
 
 export const RecentClientContextItemSchema = z.object({
