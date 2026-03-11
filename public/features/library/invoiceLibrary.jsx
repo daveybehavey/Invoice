@@ -38,11 +38,13 @@ function InvoiceLibrary() {
   const [authRequiredError, setAuthRequiredError] = useState(false);
   const [actionId, setActionId] = useState("");
   const [showTrash, setShowTrash] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [confirmSkipChecked, setConfirmSkipChecked] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [statusActionId, setStatusActionId] = useState("");
   const [skipDeleteConfirm, setSkipDeleteConfirm] = useState(() => {
     if (typeof window === "undefined") {
       return false;
@@ -227,6 +229,12 @@ function InvoiceLibrary() {
   }, [showTrash, authPolicyLoaded, authRequiredByPolicy, authSession?.userId, authRequiredError]);
 
   useEffect(() => {
+    if (showTrash && statusFilter !== "all") {
+      setStatusFilter("all");
+    }
+  }, [showTrash, statusFilter]);
+
+  useEffect(() => {
     if (!requiresSignIn) {
       return;
     }
@@ -279,6 +287,42 @@ function InvoiceLibrary() {
       freshDraft: true,
       savedInvoiceId: ""
     });
+
+  const handleStatusUpdate = async (invoiceId, status) => {
+    const statusActionKey = `${invoiceId}:${status}`;
+    setStatusActionId(statusActionKey);
+    setError("");
+    try {
+      const payload = await requestJson(
+        `/api/invoices/${invoiceId}/status`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status })
+        },
+        "Failed to update invoice status."
+      );
+      setAuthRequiredError(false);
+      const updatedInvoice = payload?.invoice;
+      if (updatedInvoice?.invoiceId) {
+        setInvoices((prev) =>
+          prev.map((invoice) =>
+            invoice.invoiceId === updatedInvoice.invoiceId
+              ? {
+                  ...invoice,
+                  status: updatedInvoice.status ?? invoice.status,
+                  updatedAt: updatedInvoice.updatedAt ?? invoice.updatedAt
+                }
+              : invoice
+          )
+        );
+      }
+    } catch (statusError) {
+      handleLibraryError(statusError, "Failed to update invoice status.");
+    } finally {
+      setStatusActionId("");
+    }
+  };
 
   const handleRestore = async (ids) => {
     if (!ids.length) {
@@ -411,8 +455,27 @@ function InvoiceLibrary() {
     paid: "bg-emerald-100 text-emerald-700",
     deleted: "bg-rose-100 text-rose-700"
   };
+  const statusFilterOptions = [
+    { id: "all", label: "All" },
+    { id: "draft", label: "Draft" },
+    { id: "sent", label: "Sent" },
+    { id: "paid", label: "Paid" }
+  ];
+  const statusCounts = invoices.reduce(
+    (counts, invoice) => {
+      if (invoice?.status === "draft" || invoice?.status === "sent" || invoice?.status === "paid") {
+        counts[invoice.status] += 1;
+      }
+      return counts;
+    },
+    { draft: 0, sent: 0, paid: 0 }
+  );
+  const filteredInvoices =
+    showTrash || statusFilter === "all"
+      ? invoices
+      : invoices.filter((invoice) => invoice.status === statusFilter);
   const selectedCount = selectedIds.length;
-  const visibleIds = invoices.map((invoice) => invoice.invoiceId);
+  const visibleIds = filteredInvoices.map((invoice) => invoice.invoiceId);
   const allSelected = visibleIds.length > 0 && selectedCount === visibleIds.length;
 
   const toggleSelection = (invoiceId) => {
@@ -485,7 +548,35 @@ function InvoiceLibrary() {
                 Trash
               </button>
             </div>
-            {invoices.length > 0 ? (
+            {!showTrash ? (
+              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+                {statusFilterOptions.map((option) => {
+                  const isActive = statusFilter === option.id;
+                  const countLabel =
+                    option.id === "all"
+                      ? invoices.length
+                      : statusCounts[option.id] ?? 0;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                        isActive
+                          ? "bg-slate-900 text-white"
+                          : "text-slate-500 hover:text-slate-700"
+                      }`}
+                      onClick={() => {
+                        setStatusFilter(option.id);
+                        setSelectedIds([]);
+                      }}
+                    >
+                      {option.label} ({countLabel})
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+            {filteredInvoices.length > 0 ? (
               <button
                 type="button"
                 className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300"
@@ -556,7 +647,7 @@ function InvoiceLibrary() {
           </div>
         ) : null}
 
-        {!requiresSignIn && selectionMode && invoices.length > 0 ? (
+        {!requiresSignIn && selectionMode && filteredInvoices.length > 0 ? (
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm">
             <div className="flex items-center gap-3">
               <span className="text-sm font-semibold text-slate-900">
@@ -624,7 +715,7 @@ function InvoiceLibrary() {
             </div>
           ) : null}
 
-          {!loading && invoices.length === 0 ? (
+          {!loading && filteredInvoices.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center shadow-sm">
               {showTrash ? (
                 <>
@@ -635,30 +726,40 @@ function InvoiceLibrary() {
                 </>
               ) : (
                 <>
-                  <p className="text-sm font-semibold text-slate-900">No saved invoices yet</p>
-                  <p className="mt-2 text-sm text-slate-600">
-                    Save a draft from the editor and it will show up here.
+                  <p className="text-sm font-semibold text-slate-900">
+                    {statusFilter === "all" ? "No saved invoices yet" : `No ${statusFilter} invoices`}
                   </p>
-                  <button
-                    type="button"
-                    className="mt-4 inline-flex h-10 items-center justify-center rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm"
-                    onClick={() => navigate("/ai-intake")}
-                  >
-                    Create your first draft
-                  </button>
+                  <p className="mt-2 text-sm text-slate-600">
+                    {statusFilter === "all"
+                      ? "Save a draft from the editor and it will show up here."
+                      : `Try another status filter or update an invoice to ${statusFilter}.`}
+                  </p>
+                  {statusFilter === "all" ? (
+                    <button
+                      type="button"
+                      className="mt-4 inline-flex h-10 items-center justify-center rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm"
+                      onClick={() => navigate("/ai-intake")}
+                    >
+                      Create your first draft
+                    </button>
+                  ) : null}
                 </>
               )}
             </div>
           ) : null}
 
-          {!loading && invoices.length > 0
-            ? invoices.map((invoice) => {
+          {!loading && filteredInvoices.length > 0
+            ? filteredInvoices.map((invoice) => {
                 const statusClass = statusStyles[invoice.status] ?? statusStyles.draft;
                 const totalLabel = Number.isFinite(invoice.total)
                   ? formatMoney(invoice.total)
                   : "—";
                 const isDeleted = invoice.status === "deleted";
                 const isSelected = selectedIds.includes(invoice.invoiceId);
+                const isStatusBusy = statusActionId.startsWith(`${invoice.invoiceId}:`);
+                const showMarkSent = invoice.status === "draft" || invoice.status === "paid";
+                const showMarkPaid = invoice.status === "sent";
+                const showMarkDraft = invoice.status === "sent" || invoice.status === "paid";
                 return (
                   <div
                     key={invoice.invoiceId}
@@ -736,10 +837,40 @@ function InvoiceLibrary() {
                             type="button"
                             className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300"
                             onClick={() => handleInvoiceAgain(invoice.invoiceId)}
-                            disabled={actionId === invoice.invoiceId}
+                            disabled={actionId === invoice.invoiceId || isStatusBusy}
                           >
                             Invoice again
                           </button>
+                          {showMarkSent ? (
+                            <button
+                              type="button"
+                              className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm transition hover:border-blue-300 hover:text-blue-800 disabled:cursor-not-allowed disabled:text-blue-300"
+                              onClick={() => handleStatusUpdate(invoice.invoiceId, "sent")}
+                              disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                            >
+                              {invoice.status === "paid" ? "Mark sent again" : "Mark sent"}
+                            </button>
+                          ) : null}
+                          {showMarkPaid ? (
+                            <button
+                              type="button"
+                              className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-800 disabled:cursor-not-allowed disabled:text-emerald-300"
+                              onClick={() => handleStatusUpdate(invoice.invoiceId, "paid")}
+                              disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                            >
+                              Mark paid
+                            </button>
+                          ) : null}
+                          {showMarkDraft ? (
+                            <button
+                              type="button"
+                              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-700 disabled:cursor-not-allowed disabled:text-slate-300"
+                              onClick={() => handleStatusUpdate(invoice.invoiceId, "draft")}
+                              disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                            >
+                              Mark draft
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-600 shadow-sm transition hover:border-rose-300 hover:text-rose-700 disabled:cursor-not-allowed disabled:text-rose-300"

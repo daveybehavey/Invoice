@@ -1811,6 +1811,157 @@ test("invoice library invoice again opens a fresh draft with today's date and a 
   }
 });
 
+test("invoice library supports sent and paid status actions", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-status-owner");
+  });
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-status-owner"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Casey Client",
+          workSessions: [
+            {
+              date: "Jan 10",
+              tasks: [{ description: "Roof patch", hours: 2, rate: 110, amount: 220 }]
+            }
+          ],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-STATUS-1",
+          issueDate: "2026-03-10",
+          customerName: "Casey Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Roof patch",
+              quantity: 2,
+              unitPrice: 110,
+              amount: 220
+            }
+          ],
+          subtotal: 220,
+          total: 220,
+          balanceDue: 220
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page
+      .locator("div.rounded-2xl.border.border-slate-200.bg-white")
+      .filter({ hasText: "INV-STATUS-1" })
+      .first();
+    await card.getByRole("button", { name: "Mark sent" }).click();
+    await card.locator("span.rounded-full", { hasText: "sent" }).waitFor({ state: "visible" });
+
+    await card.getByRole("button", { name: "Mark paid" }).click();
+    await card.locator("span.rounded-full", { hasText: "paid" }).waitFor({ state: "visible" });
+
+    const listResponse = await context.request.get(`${baseUrl}/api/invoices`, {
+      headers: {
+        "x-invoice-user-id": "ui-status-owner"
+      }
+    });
+    assert.equal(listResponse.status(), 200);
+    const listPayload = await listResponse.json();
+    const savedInvoice = (listPayload.invoices || []).find(
+      (invoice: { invoiceNumber?: string }) => invoice.invoiceNumber === "INV-STATUS-1"
+    );
+    assert.ok(savedInvoice);
+    assert.equal(savedInvoice.status, "paid");
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library filters cards by lifecycle status", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-status-filter-owner");
+  });
+
+  const createInvoice = async (invoiceNumber: string, description: string) => {
+    const response = await context.request.post(`${baseUrl}/api/invoices/save`, {
+      headers: {
+        "x-invoice-user-id": "ui-status-filter-owner"
+      },
+      data: {
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: {
+            customerName: "Filter Client",
+            workSessions: [
+              {
+                date: "Jan 10",
+                tasks: [{ description, hours: 1, rate: 120, amount: 120 }]
+              }
+            ],
+            materials: []
+          },
+          finishedInvoice: {
+            invoiceNumber,
+            issueDate: "2026-03-10",
+            customerName: "Filter Client",
+            currency: "USD",
+            lineItems: [
+              {
+                id: `${invoiceNumber}-line-1`,
+                type: "labor",
+                description,
+                quantity: 1,
+                unitPrice: 120,
+                amount: 120
+              }
+            ],
+            subtotal: 120,
+            total: 120,
+            balanceDue: 120
+          }
+        }
+      }
+    });
+    assert.equal(response.status(), 200);
+    return (await response.json()).invoice.invoiceId as string;
+  };
+
+  const sentId = await createInvoice("INV-FILTER-SENT", "Leak inspection");
+  await context.request.post(`${baseUrl}/api/invoices/${sentId}/status`, {
+    headers: {
+      "x-invoice-user-id": "ui-status-filter-owner",
+      "Content-Type": "application/json"
+    },
+    data: { status: "sent" }
+  });
+
+  await createInvoice("INV-FILTER-DRAFT", "Pipe replacement");
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Sent (1)" }).click();
+
+    await page.getByText("INV-FILTER-SENT").waitFor({ state: "visible" });
+    await page.getByText("INV-FILTER-DRAFT").waitFor({ state: "hidden" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("saving a client remembers bill-to details and autofills later matching drafts", async () => {
   useMockResponses([structuredDuplicateDraft(), emptyAudit()]);
 

@@ -238,6 +238,14 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Manual editor now supports payment-link entry plus local Billie commands ("set payment link", "clear payment link") with undo.
    - PDF export now renders a "Pay online" block when a payment link is present.
    - Saved/imported drafts now preserve payment links via `buildDraftFromFinishedInvoice`.
+69. Invoice lifecycle status actions (library)
+   - Added in-library status controls for Draft/Sent/Paid transitions without leaving the invoice list.
+   - Status updates now apply inline on each card and preserve existing delete/restore flows.
+   - Added UI coverage to verify status transitions persist (`draft -> sent -> paid`).
+70. Invoice library status filters
+   - Added list filters for `All`, `Draft`, `Sent`, and `Paid` with live counts.
+   - Filtered empty states now explain what happened and reduce list-scanning on mobile/desktop.
+   - Added UI coverage to verify sent/draft filtering behavior.
 
 ## Next (current priorities)
 1. Modularization continuation
