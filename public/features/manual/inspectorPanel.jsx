@@ -251,6 +251,7 @@ function InspectorPanel({
   const [assistantError, setAssistantError] = useState("");
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantMessages, setAssistantMessages] = useState([]);
+  const [assistantChangePreview, setAssistantChangePreview] = useState([]);
   const [pendingAssistantEdit, setPendingAssistantEdit] = useState(null);
   const [previewTemplateId, setPreviewTemplateId] = useState(null);
   const previewCloseButtonRef = useRef(null);
@@ -285,6 +286,36 @@ function InspectorPanel({
     backgroundColor: accent.soft,
     borderColor: accent.border,
     color: accent.text
+  };
+  const buildAssistantChangePreview = (beforeInvoice, afterInvoice, scope) => {
+    if (scope === "notes") {
+      const beforeText = (beforeInvoice?.notes ?? "").trim();
+      const afterText = (afterInvoice?.notes ?? "").trim();
+      if (!beforeText || !afterText || beforeText === afterText) {
+        return [];
+      }
+      return [{ label: "Notes", before: beforeText, after: afterText }];
+    }
+
+    const beforeItems = Array.isArray(beforeInvoice?.lineItems) ? beforeInvoice.lineItems : [];
+    const afterItems = Array.isArray(afterInvoice?.lineItems) ? afterInvoice.lineItems : [];
+    const changes = [];
+    for (let index = 0; index < Math.min(beforeItems.length, afterItems.length); index += 1) {
+      const beforeText = (beforeItems[index]?.description ?? "").trim();
+      const afterText = (afterItems[index]?.description ?? "").trim();
+      if (!beforeText || !afterText || beforeText === afterText) {
+        continue;
+      }
+      changes.push({
+        label: `Line ${changes.length + 1}`,
+        before: beforeText,
+        after: afterText
+      });
+      if (changes.length >= 2) {
+        break;
+      }
+    }
+    return changes;
   };
 
   useEffect(() => {
@@ -404,6 +435,9 @@ function InspectorPanel({
         if (!payload?.invoice) {
           throw new Error("Rewrite failed");
         }
+        setAssistantChangePreview(
+          buildAssistantChangePreview(payloadResult.invoice, payload.invoice, wordingCommand.scope)
+        );
         onApplyRewrite?.({
           lineItems: payload.invoice.lineItems ?? [],
           notes: payload.invoice.notes ?? "",
@@ -485,6 +519,7 @@ function InspectorPanel({
         ...(styleCommand.responseText ? [{ role: "ai", text: styleCommand.responseText }] : [])
       ]);
       setAssistantInstruction("");
+      setAssistantChangePreview([]);
       if (styleApplied) {
         setAssistantStatus("");
       }
@@ -498,6 +533,7 @@ function InspectorPanel({
       applyAssistantStyleCommand(styleCommand);
       setAssistantError("");
       setAssistantStatus("");
+      setAssistantChangePreview([]);
       setAssistantMessages((prev) => [
         ...prev,
         { role: "user", text: instruction },
@@ -521,6 +557,7 @@ function InspectorPanel({
     setAssistantLoading(true);
     setAssistantError("");
     setAssistantStatus("");
+    setAssistantChangePreview([]);
     setAssistantMessages((prev) => [...prev, { role: "user", text: instruction }]);
     apiFetch("/api/invoices/edit", {
       method: "POST",
@@ -1106,6 +1143,34 @@ function InspectorPanel({
                 )}
               </div>
             </div>
+            {assistantChangePreview.length > 0 ? (
+              <div
+                className="space-y-3 rounded-lg border p-3"
+                style={{ borderColor: accent.border, backgroundColor: accent.soft }}
+                data-testid="manual-billie-change-preview"
+              >
+                <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: accent.text }}>
+                  Last Billie change
+                </p>
+                <div className="space-y-3">
+                  {assistantChangePreview.map((entry, index) => (
+                    <div key={`${entry.label}-${index}`} className="space-y-1">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                        {entry.label}
+                      </p>
+                      <p className="text-xs text-slate-500">Before</p>
+                      <p className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                        {entry.before}
+                      </p>
+                      <p className="text-xs text-slate-500">After</p>
+                      <p className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-medium text-slate-700">
+                        {entry.after}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <textarea
               rows={4}
               className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"

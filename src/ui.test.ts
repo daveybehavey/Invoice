@@ -868,6 +868,11 @@ test("manual billie routes description wording requests through safe rewording",
       .getByText("Descriptions updated. Numbers unchanged.")
       .first()
       .waitFor({ state: "visible" });
+    const changePreview = page.getByTestId("manual-billie-change-preview");
+    await changePreview.getByText(/^Last Billie change$/).waitFor({ state: "visible" });
+    await changePreview.getByText(/^Before$/).waitFor({ state: "visible" });
+    await changePreview.getByText(/^After$/).waitFor({ state: "visible" });
+    await changePreview.getByText("Kitchen faucet repair service").waitFor({ state: "visible" });
     assert.equal(
       await page.locator("p.text-xs.text-slate-500").filter({
         hasText: "Descriptions updated. Numbers unchanged."
