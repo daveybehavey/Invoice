@@ -272,6 +272,50 @@
       responseText: `Applied discount → $${cappedAmount.toFixed(2)}.`
     };
   };
+  const resolveBilliePaymentLinkCommand = (instruction) => {
+    const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
+    if (!normalized) {
+      return null;
+    }
+    const mentionsPaymentLink =
+      /\b(payment|pay)\s*(link|url)\b/.test(normalized) ||
+      /\bpay online\b/.test(normalized) ||
+      /\bonline payment\b/.test(normalized);
+    if (!mentionsPaymentLink) {
+      return null;
+    }
+
+    if (/\b(clear|remove|delete|hide|no)\b/.test(normalized)) {
+      return {
+        paymentLinkUrl: "",
+        responseText: "Cleared payment link."
+      };
+    }
+
+    const urlMatch = instruction.match(/https?:\/\/[^\s)]+/i);
+    if (!urlMatch) {
+      return {
+        responseText: "Share the full payment URL, like https://pay.example.com/invoice/123."
+      };
+    }
+    const normalizedUrl = urlMatch[0].replace(/[.,!?]+$/g, "");
+    try {
+      const parsed = new URL(normalizedUrl);
+      if (!/^https?:$/i.test(parsed.protocol)) {
+        return {
+          responseText: "Use an http or https payment link."
+        };
+      }
+      return {
+        paymentLinkUrl: parsed.toString(),
+        responseText: `Applied payment link → ${parsed.toString()}.`
+      };
+    } catch (_error) {
+      return {
+        responseText: "That payment link doesn't look valid yet."
+      };
+    }
+  };
   const resolveBillieLineValueCommand = (instruction, options = {}) => {
     const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
     const lineItems = Array.isArray(options.lineItems)
@@ -367,6 +411,7 @@ function InspectorPanel({
   spacingDensity,
   taxRate,
   discountAmount,
+  paymentLinkUrl,
   onLogoChange,
   onLogoRemove,
   onLogoVisibilityChange,
@@ -375,6 +420,7 @@ function InspectorPanel({
   onSpacingDensityChange,
   onTaxRateChange,
   onDiscountAmountChange,
+  onPaymentLinkChange,
   onUpdateLineItemValues,
   stylePreset,
   onStylePresetChange,
@@ -482,6 +528,7 @@ function InspectorPanel({
       issueDate: previewData?.invoiceDate ?? "",
       customerName: previewData?.billToDetails ?? "",
       notes: previewData?.notes ?? "",
+      paymentLinkUrl: previewData?.paymentLinkUrl ?? "",
       lineItems: Array.isArray(previewData?.lineItems)
         ? previewData.lineItems.map((item) => ({
             id: item.id,
@@ -712,9 +759,14 @@ function InspectorPanel({
     const styleCommand = resolveBillieStyleCommand(instruction, { logoUrl, logoVisible });
     const taxCommand = resolveBillieTaxCommand(instruction);
     const discountCommand = resolveBillieDiscountCommand(instruction, { subtotal: previewData?.subtotal });
+    const paymentLinkCommand = resolveBilliePaymentLinkCommand(instruction);
     const lineValueCommand = resolveBillieLineValueCommand(instruction, { lineItems: previewData?.lineItems });
-    const wordingCommand = lineValueCommand ? null : resolveBillieWordingCommand(instruction);
-    if ((styleCommand || taxCommand || discountCommand || lineValueCommand) && wordingCommand) {
+    const wordingCommand =
+      lineValueCommand || paymentLinkCommand ? null : resolveBillieWordingCommand(instruction);
+    if (
+      (styleCommand || taxCommand || discountCommand || paymentLinkCommand || lineValueCommand) &&
+      wordingCommand
+    ) {
       const undoState = buildAssistantUndoState();
       const localResponses = [];
       const styleApplied = styleCommand ? applyAssistantStyleCommand(styleCommand) : false;
@@ -731,6 +783,14 @@ function InspectorPanel({
         }
         if (discountCommand.responseText) {
           localResponses.push({ role: "ai", text: discountCommand.responseText });
+        }
+      }
+      if (paymentLinkCommand) {
+        if (paymentLinkCommand.paymentLinkUrl !== undefined) {
+          onPaymentLinkChange?.(paymentLinkCommand.paymentLinkUrl);
+        }
+        if (paymentLinkCommand.responseText) {
+          localResponses.push({ role: "ai", text: paymentLinkCommand.responseText });
         }
       }
       if (lineValueCommand) {
@@ -753,6 +813,7 @@ function InspectorPanel({
         styleApplied ||
         taxCommand ||
         discountCommand?.discountAmount !== undefined ||
+        paymentLinkCommand?.paymentLinkUrl !== undefined ||
         lineValueCommand?.targetLineId
       ) {
         setAssistantStatus("");
@@ -763,7 +824,7 @@ function InspectorPanel({
       }, undoState);
       return;
     }
-    if (styleCommand || taxCommand || discountCommand || lineValueCommand) {
+    if (styleCommand || taxCommand || discountCommand || paymentLinkCommand || lineValueCommand) {
       setAssistantUndoState(buildAssistantUndoState());
       if (styleCommand) {
         applyAssistantStyleCommand(styleCommand);
@@ -773,6 +834,9 @@ function InspectorPanel({
       }
       if (discountCommand?.discountAmount !== undefined) {
         onDiscountAmountChange?.(discountCommand.discountAmount);
+      }
+      if (paymentLinkCommand?.paymentLinkUrl !== undefined) {
+        onPaymentLinkChange?.(paymentLinkCommand.paymentLinkUrl);
       }
       if (lineValueCommand?.targetLineId && lineValueCommand.updates) {
         onUpdateLineItemValues?.(lineValueCommand.targetLineId, lineValueCommand.updates);
@@ -786,6 +850,9 @@ function InspectorPanel({
         ...(styleCommand?.responseText ? [{ role: "ai", text: styleCommand.responseText }] : []),
         ...(taxCommand?.responseText ? [{ role: "ai", text: taxCommand.responseText }] : []),
         ...(discountCommand?.responseText ? [{ role: "ai", text: discountCommand.responseText }] : []),
+        ...(paymentLinkCommand?.responseText
+          ? [{ role: "ai", text: paymentLinkCommand.responseText }]
+          : []),
         ...(lineValueCommand?.responseText ? [{ role: "ai", text: lineValueCommand.responseText }] : [])
       ]);
       setAssistantInstruction("");
@@ -871,6 +938,9 @@ function InspectorPanel({
     }
     if ((before.notes ?? "") !== (after.notes ?? "")) {
       summary.push("Notes updated");
+    }
+    if ((before.paymentLinkUrl ?? "") !== (after.paymentLinkUrl ?? "")) {
+      summary.push("Payment link updated");
     }
     const beforeLines = Array.isArray(before.lineItems) ? before.lineItems : [];
     const afterLines = Array.isArray(after.lineItems) ? after.lineItems : [];
@@ -1017,6 +1087,7 @@ function InspectorPanel({
   const previewFromDetails = previewData?.fromDetails?.trim() || "Add your business details";
   const previewBillToDetails = previewData?.billToDetails?.trim() || "Add client details";
   const previewNotes = previewData?.notes?.trim() || "Add payment terms or a note.";
+  const previewPaymentLink = previewData?.paymentLinkUrl?.trim() || "";
   const previewAccent = buildAccentPalette(previewData?.accentColor ?? accentColor ?? DEFAULT_ACCENT_COLOR);
 
   return (
@@ -1751,6 +1822,22 @@ function InspectorPanel({
                     </p>
                     <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
                       <p className="whitespace-pre-line">{previewNotes}</p>
+                    </div>
+                  </section>
+                ) : null}
+                {previewPaymentLink ? (
+                  <section className="space-y-2">
+                    <p className={`${previewPreset.textClass} ${previewPreset.labelClass}`}>Pay online</p>
+                    <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                      <a
+                        href={previewPaymentLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="break-all font-semibold underline-offset-2 hover:underline"
+                        style={{ color: previewAccent.text }}
+                      >
+                        {previewPaymentLink}
+                      </a>
                     </div>
                   </section>
                 ) : null}

@@ -79,6 +79,7 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
   if (input.notesVisible !== false) {
     renderNotes(state, { notes: input.invoice.notes ?? "", styleScale });
   }
+  renderPaymentLink(state, { paymentLinkUrl: input.invoice.paymentLinkUrl ?? "", styleScale });
   renderFooter(state, { fromLines });
 
   const pdfBytes = await doc.save({ useObjectStreams: false });
@@ -669,6 +670,46 @@ function renderNotes(
       size: 10,
       font: state.regularFont,
       color: SLATE_700
+    });
+    y -= 12 * spacingScale;
+  }
+  state.cursorY = y - 8 * spacingScale;
+}
+
+function renderPaymentLink(
+  state: PdfRenderState,
+  options: { paymentLinkUrl: string; styleScale: number }
+): void {
+  const { paymentLinkUrl } = options;
+  const spacingScale = state.spacingScale;
+  const trimmedPaymentLink = paymentLinkUrl.trim();
+  if (!trimmedPaymentLink) {
+    return;
+  }
+
+  const textLines = wrapTextToWidth(trimmedPaymentLink, state.regularFont, 10, CONTENT_WIDTH - 20, 6).slice(0, 4);
+  const sectionHeight = (30 + textLines.length * 12) * spacingScale;
+  ensureVerticalSpace(state, sectionHeight + 10 * spacingScale, true);
+
+  drawSectionTitle(state, "Pay online");
+  state.page.drawRectangle({
+    x: PAGE_MARGIN_X,
+    y: state.cursorY - (textLines.length * 12 + 16) * spacingScale,
+    width: CONTENT_WIDTH,
+    height: (textLines.length * 12 + 16) * spacingScale,
+    borderColor: state.accent.border,
+    borderWidth: 1,
+    color: SURFACE
+  });
+
+  let y = state.cursorY - 12 * spacingScale;
+  for (const line of textLines) {
+    state.page.drawText(line, {
+      x: PAGE_MARGIN_X + 10,
+      y,
+      size: 10,
+      font: state.boldFont,
+      color: state.accent.text
     });
     y -= 12 * spacingScale;
   }

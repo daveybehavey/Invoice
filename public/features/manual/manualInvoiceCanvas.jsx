@@ -117,6 +117,7 @@ function ManualInvoiceCanvas() {
   );
   const [billToDetails, setBillToDetails] = useState(() => initialDraft?.billToDetails ?? "");
   const [notes, setNotes] = useState(() => initialDraft?.notes ?? "");
+  const [paymentLinkUrl, setPaymentLinkUrl] = useState(() => initialDraft?.paymentLinkUrl ?? "");
   const [taxRate, setTaxRate] = useState(() => initialDraft?.taxRate ?? "0");
   const [discountAmount, setDiscountAmount] = useState(() =>
     initialDraft?.discountAmount === undefined ? "0" : String(initialDraft.discountAmount)
@@ -173,6 +174,7 @@ function ManualInvoiceCanvas() {
     fromDetails,
     billToDetails,
     notes,
+    paymentLinkUrl,
     taxRate,
     discountAmount: effectiveDiscountAmount,
     subtotal,
@@ -353,6 +355,7 @@ function ManualInvoiceCanvas() {
         amount: getLineAmount(item)
       })),
       notes: notes?.trim() || undefined,
+      paymentLinkUrl: paymentLinkUrl?.trim() || undefined,
       discountAmount: effectiveDiscountAmount,
       subtotal,
       total,
@@ -380,6 +383,7 @@ function ManualInvoiceCanvas() {
         amount: getLineAmount(item)
       })),
       notes: notes?.trim() || undefined,
+      paymentLinkUrl: paymentLinkUrl?.trim() || undefined,
       discountAmount: effectiveDiscountAmount,
       subtotal,
       total,
@@ -425,6 +429,9 @@ function ManualInvoiceCanvas() {
     if (updatedInvoice.notes !== undefined) {
       setNotes(updatedInvoice.notes ?? "");
     }
+    if (updatedInvoice.paymentLinkUrl !== undefined) {
+      setPaymentLinkUrl(updatedInvoice.paymentLinkUrl ?? "");
+    }
     if (updatedInvoice.discountAmount !== undefined) {
       setDiscountAmount(String(updatedInvoice.discountAmount ?? 0));
     }
@@ -465,6 +472,7 @@ function ManualInvoiceCanvas() {
       fromDetails,
       billToDetails,
       notes,
+      paymentLinkUrl,
       taxRate,
       discountAmount,
       lineItems,
@@ -517,6 +525,7 @@ function ManualInvoiceCanvas() {
     fromDetails,
     billToDetails,
     notes,
+    paymentLinkUrl,
     taxRate,
     discountAmount,
     lineItems,
@@ -1066,6 +1075,38 @@ function ManualInvoiceCanvas() {
                 onChange={(event) => setNotes(event.target.value)}
               />
             </section>
+
+            <section className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <label
+                  htmlFor="payment-link-url"
+                  className={`${activePreset.textClass} ${activePreset.labelClass}`}
+                >
+                  Payment link
+                </label>
+                <span className="text-[11px] font-semibold text-slate-400">Optional</span>
+              </div>
+              <input
+                id="payment-link-url"
+                aria-label="Payment link"
+                type="url"
+                className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
+                placeholder="https://pay.example.com/invoice/123"
+                value={paymentLinkUrl}
+                onChange={(event) => setPaymentLinkUrl(event.target.value)}
+              />
+              {paymentLinkUrl.trim().length > 0 ? (
+                <a
+                  href={paymentLinkUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex text-xs font-semibold underline-offset-2 hover:underline"
+                  style={{ color: accent.primary }}
+                >
+                  Open payment link
+                </a>
+              ) : null}
+            </section>
           </div>
         </div>
 
@@ -1092,6 +1133,8 @@ function ManualInvoiceCanvas() {
             onTaxRateChange={setTaxRate}
             discountAmount={discountAmount}
             onDiscountAmountChange={setDiscountAmount}
+            paymentLinkUrl={paymentLinkUrl}
+            onPaymentLinkChange={setPaymentLinkUrl}
             onUpdateLineItemValues={handleUpdateLineItemValues}
             onPrint={handlePrint}
             onDownloadPdf={handleDownloadPdf}
@@ -1192,6 +1235,8 @@ function ManualInvoiceCanvas() {
                 onTaxRateChange={setTaxRate}
                 discountAmount={discountAmount}
                 onDiscountAmountChange={setDiscountAmount}
+                paymentLinkUrl={paymentLinkUrl}
+                onPaymentLinkChange={setPaymentLinkUrl}
                 onUpdateLineItemValues={handleUpdateLineItemValues}
                 onPrint={handlePrint}
                 onDownloadPdf={handleDownloadPdf}

@@ -1914,6 +1914,34 @@ test("export-pdf accepts hidden notes requests", async () => {
   assert.ok(response.body.byteLength > 200);
 });
 
+test("export-pdf rejects invalid payment link urls", async () => {
+  const response = await request(app).post("/api/invoices/export-pdf").send({
+    invoice: {
+      invoiceNumber: "INV-1006",
+      issueDate: "2026-02-27",
+      customerName: "Mike Johnson",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line-1",
+          type: "labor",
+          description: "Faucet repair",
+          quantity: 2,
+          unitPrice: 80,
+          amount: 160
+        }
+      ],
+      paymentLinkUrl: "not-a-url",
+      subtotal: 160,
+      total: 160,
+      balanceDue: 160
+    }
+  });
+
+  assert.equal(response.status, 400);
+  assert.match(String(response.body.error || ""), /Invalid url/i);
+});
+
 test("export-pdf rejects invoices with no line items", async () => {
   const response = await request(app).post("/api/invoices/export-pdf").send({
     invoice: {

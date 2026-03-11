@@ -207,6 +207,7 @@
       fromDetails: "",
       billToDetails: invoice?.customerName ?? "",
       notes: invoice?.notes ?? "",
+      paymentLinkUrl: invoice?.paymentLinkUrl ?? "",
       taxRate: options.taxRate ?? "0",
       lineItems: lineItems.length
         ? lineItems

@@ -233,6 +233,11 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added client-side SVG logo conversion to PNG during upload so branding logos stay PDF-compatible.
    - Kept financial behavior deterministic: qty/rate/amount/totals are rendered from canonical invoice values only.
    - Extended export request payload to include branding fields (`accentColor`, `stylePreset`, `logoUrl`).
+68. Payment link baseline (manual + Billie + PDF)
+   - Added optional `paymentLinkUrl` to canonical invoice schema with URL validation.
+   - Manual editor now supports payment-link entry plus local Billie commands ("set payment link", "clear payment link") with undo.
+   - PDF export now renders a "Pay online" block when a payment link is present.
+   - Saved/imported drafts now preserve payment links via `buildDraftFromFinishedInvoice`.
 
 ## Next (current priorities)
 1. Modularization continuation

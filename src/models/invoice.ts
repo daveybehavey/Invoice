@@ -48,6 +48,19 @@ const CurrencyString = z.preprocess((value) => {
   return value;
 }, z.string().min(1).default("USD"));
 
+const OptionalUrl = z.preprocess((value) => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length ? trimmed : undefined;
+  }
+
+  return value;
+}, z.string().url().optional());
+
 export const TaskSchema = z.object({
   description: z.string().min(1),
   hours: OptionalNumber,
@@ -117,6 +130,7 @@ export const FinishedInvoiceSchema = z.object({
   currency: CurrencyString,
   lineItems: z.array(InvoiceLineItemSchema).min(1),
   notes: OptionalString,
+  paymentLinkUrl: OptionalUrl,
   discountAmount: OptionalNumber,
   discountReason: OptionalString,
   subtotal: OptionalNumber,
