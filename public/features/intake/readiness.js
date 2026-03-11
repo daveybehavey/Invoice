@@ -214,7 +214,8 @@
         : [{ id: `line-${Date.now()}`, description: "", qty: "", rate: "" }],
       logoUrl: null,
       stylePreset: "default",
-      savedInvoiceId: options.savedInvoiceId ?? ""
+      savedInvoiceId: options.savedInvoiceId ?? "",
+      savedInvoiceStatus: options.savedInvoiceStatus ?? (options.savedInvoiceId ? "draft" : "")
     };
     return applyClientMemoryToDraft(draft);
   };

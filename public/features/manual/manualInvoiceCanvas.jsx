@@ -146,6 +146,11 @@ function ManualInvoiceCanvas() {
   const [saveNeedsAuth, setSaveNeedsAuth] = useState(false);
   const [saveAuthRequiredPolicy, setSaveAuthRequiredPolicy] = useState(false);
   const [savedInvoiceId, setSavedInvoiceId] = useState(() => initialDraft?.savedInvoiceId ?? "");
+  const [savedInvoiceStatus, setSavedInvoiceStatus] = useState(
+    () => initialDraft?.savedInvoiceStatus ?? (initialDraft?.savedInvoiceId ? "draft" : "")
+  );
+  const [statusUpdateLoading, setStatusUpdateLoading] = useState(false);
+  const [statusUpdateError, setStatusUpdateError] = useState("");
   const [savedLineItemLibrary, setSavedLineItemLibrary] = useState(() => getLineItemLibrary());
   const [showSavedLineItems, setShowSavedLineItems] = useState(false);
   const saveTimeoutRef = useRef(null);
@@ -483,7 +488,8 @@ function ManualInvoiceCanvas() {
       spacingDensity,
       stylePreset,
       accentColor,
-      savedInvoiceId
+      savedInvoiceId,
+      savedInvoiceStatus
     };
     window.localStorage.setItem(draftStorageKey, JSON.stringify(payload));
   };
@@ -536,7 +542,8 @@ function ManualInvoiceCanvas() {
     spacingDensity,
     stylePreset,
     accentColor,
-    savedInvoiceId
+    savedInvoiceId,
+    savedInvoiceStatus
   ]);
 
   const handlePrint = () => {
@@ -619,6 +626,7 @@ function ManualInvoiceCanvas() {
       return;
     }
     setSaveError("");
+    setStatusUpdateError("");
     setSaveNeedsAuth(false);
     setSaveStatus(savedInvoiceId ? "Updating..." : "Saving...");
     try {
@@ -654,6 +662,7 @@ function ManualInvoiceCanvas() {
       if (nextId) {
         setSavedInvoiceId(nextId);
       }
+      setSavedInvoiceStatus(payload?.invoice?.status ?? "draft");
       rememberClientDetails(billToDetails);
       setSavedLineItemLibrary(rememberLineItems(editableResult.invoice.lineItems));
       setSaveNeedsAuth(false);
@@ -670,6 +679,43 @@ function ManualInvoiceCanvas() {
         setSaveError("Save failed. Try again.");
       }
       setSaveStatus("");
+    }
+  };
+
+  const handleUpdateSavedInvoiceStatus = async (nextStatus) => {
+    if (!savedInvoiceId) {
+      setStatusUpdateError("Save invoice first to track status.");
+      return;
+    }
+    setStatusUpdateLoading(true);
+    setStatusUpdateError("");
+    setSaveError("");
+    try {
+      const response = await apiFetch(`/api/invoices/${savedInvoiceId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: nextStatus })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const requestError = new Error(payload?.error || "Couldn't update invoice status.");
+        requestError.status = response.status;
+        throw requestError;
+      }
+      const appliedStatus = payload?.invoice?.status ?? nextStatus;
+      setSavedInvoiceStatus(appliedStatus);
+      setSaveStatus(
+        appliedStatus === "paid" ? "Marked paid" : appliedStatus === "sent" ? "Marked sent" : "Marked draft"
+      );
+      window.setTimeout(() => setSaveStatus(""), 1500);
+    } catch (error) {
+      const status = Number(error?.status ?? error?.statusCode ?? 0);
+      if (status === 401) {
+        setSaveNeedsAuth(true);
+      }
+      setStatusUpdateError(error?.message || "Couldn't update invoice status.");
+    } finally {
+      setStatusUpdateLoading(false);
     }
   };
 
@@ -1148,6 +1194,10 @@ function ManualInvoiceCanvas() {
               navigate("/");
             }}
             savedInvoiceId={savedInvoiceId}
+            savedInvoiceStatus={savedInvoiceStatus}
+            statusUpdateLoading={statusUpdateLoading}
+            statusUpdateError={statusUpdateError}
+            onUpdateSavedInvoiceStatus={handleUpdateSavedInvoiceStatus}
             previewData={previewData}
             toneSource={{ lineItems, notes }}
             onPolishDescriptions={handlePolishDescriptions}
@@ -1250,6 +1300,10 @@ function ManualInvoiceCanvas() {
                   navigate("/");
                 }}
                 savedInvoiceId={savedInvoiceId}
+                savedInvoiceStatus={savedInvoiceStatus}
+                statusUpdateLoading={statusUpdateLoading}
+                statusUpdateError={statusUpdateError}
+                onUpdateSavedInvoiceStatus={handleUpdateSavedInvoiceStatus}
                 previewData={previewData}
                 toneSource={{ lineItems, notes }}
                 onPolishDescriptions={handlePolishDescriptions}

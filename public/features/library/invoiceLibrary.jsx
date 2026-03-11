@@ -270,6 +270,7 @@ function InvoiceLibrary() {
       const draft = buildDraftFromFinishedInvoice(invoiceData.finishedInvoice, {
         taxRate: deriveTaxRate(invoiceData.finishedInvoice),
         savedInvoiceId: savedInvoice?.invoiceId ?? "",
+        savedInvoiceStatus: savedInvoice?.status ?? "",
         ...draftOptions
       });
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
@@ -285,7 +286,8 @@ function InvoiceLibrary() {
   const handleInvoiceAgain = (invoiceId) =>
     openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`, "GET", {
       freshDraft: true,
-      savedInvoiceId: ""
+      savedInvoiceId: "",
+      savedInvoiceStatus: ""
     });
 
   const handleStatusUpdate = async (invoiceId, status) => {

@@ -246,6 +246,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added list filters for `All`, `Draft`, `Sent`, and `Paid` with live counts.
    - Filtered empty states now explain what happened and reduce list-scanning on mobile/desktop.
    - Added UI coverage to verify sent/draft filtering behavior.
+71. Manual export status controls
+   - Added status controls in the manual Export panel for saved invoices (`Mark sent`, `Mark paid`, `Mark draft`).
+   - Manual flow now keeps saved status in local draft handoff so reopened invoices show the current lifecycle state.
+   - Added UI coverage to verify manual save -> sent -> paid status flow.
 
 ## Next (current priorities)
 1. Modularization continuation

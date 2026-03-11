@@ -2108,6 +2108,44 @@ test("manual editor save shows sign-in guidance when auth is required", async ()
   }
 });
 
+test("manual export panel can mark a saved invoice as sent then paid", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-manual-status-owner");
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("Roof leak repair");
+    await page.getByPlaceholder("0").first().fill("1");
+    await page.getByPlaceholder("$0").first().fill("180");
+
+    await page.getByRole("button", { name: "Export" }).last().click();
+    await page.getByText("Save to library").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Save invoice" }).click();
+    await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Mark sent" }).click();
+    await page.getByText("Current: sent").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Mark paid" }).click();
+    await page.getByText("Current: paid").waitFor({ state: "visible" });
+
+    const listResponse = await context.request.get(`${baseUrl}/api/invoices`, {
+      headers: {
+        "x-invoice-user-id": "ui-manual-status-owner"
+      }
+    });
+    assert.equal(listResponse.status(), 200);
+    const listPayload = await listResponse.json();
+    assert.equal(Array.isArray(listPayload.invoices), true);
+    assert.equal(listPayload.invoices.length, 1);
+    assert.equal(listPayload.invoices[0].status, "paid");
+  } finally {
+    await context.close();
+  }
+});
+
 test("diagnostics route shows OCR and friction telemetry panels", async () => {
   if (flowFrictionReportFilePath) {
     await fs.writeFile(

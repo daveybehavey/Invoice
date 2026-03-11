@@ -435,6 +435,10 @@ function InspectorPanel({
   onSaveAuthRetry,
   onGoToLauncherSignIn,
   savedInvoiceId,
+  savedInvoiceStatus,
+  statusUpdateLoading,
+  statusUpdateError,
+  onUpdateSavedInvoiceStatus,
   previewData,
   toneSource,
   onPolishDescriptions,
@@ -492,6 +496,15 @@ function InspectorPanel({
     borderColor: accent.border,
     color: accent.text
   };
+  const invoiceStatus = savedInvoiceStatus || (savedInvoiceId ? "draft" : "");
+  const invoiceStatusStyles = {
+    draft: "bg-slate-100 text-slate-700",
+    sent: "bg-blue-100 text-blue-700",
+    paid: "bg-emerald-100 text-emerald-700"
+  };
+  const canMarkSent = invoiceStatus === "draft" || invoiceStatus === "paid";
+  const canMarkPaid = invoiceStatus === "sent";
+  const canMarkDraft = invoiceStatus === "sent" || invoiceStatus === "paid";
   const buildAssistantChangePreview = (beforeInvoice, afterInvoice, scope) => {
     if (scope === "notes") {
       const beforeText = (beforeInvoice?.notes ?? "").trim();
@@ -1619,6 +1632,54 @@ function InspectorPanel({
                 </div>
               ) : null}
             </div>
+            {savedInvoiceId ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-900">Invoice status</p>
+                  <span
+                    className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                      invoiceStatusStyles[invoiceStatus] ?? invoiceStatusStyles.draft
+                    }`}
+                  >
+                    Current: {invoiceStatus || "draft"}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">Track draft, sent, and paid state for this saved invoice.</p>
+                <div className="flex flex-wrap gap-2">
+                  {canMarkSent ? (
+                    <button
+                      type="button"
+                      className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 disabled:cursor-not-allowed disabled:text-blue-300"
+                      onClick={() => onUpdateSavedInvoiceStatus("sent")}
+                      disabled={statusUpdateLoading}
+                    >
+                      {invoiceStatus === "paid" ? "Mark sent again" : "Mark sent"}
+                    </button>
+                  ) : null}
+                  {canMarkPaid ? (
+                    <button
+                      type="button"
+                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:text-emerald-300"
+                      onClick={() => onUpdateSavedInvoiceStatus("paid")}
+                      disabled={statusUpdateLoading}
+                    >
+                      Mark paid
+                    </button>
+                  ) : null}
+                  {canMarkDraft ? (
+                    <button
+                      type="button"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 disabled:cursor-not-allowed disabled:text-slate-300"
+                      onClick={() => onUpdateSavedInvoiceStatus("draft")}
+                      disabled={statusUpdateLoading}
+                    >
+                      Mark draft
+                    </button>
+                  ) : null}
+                </div>
+                {statusUpdateError ? <p className="text-xs text-rose-600">{statusUpdateError}</p> : null}
+              </div>
+            ) : null}
             <div className="space-y-2">
               <p className="text-sm font-semibold text-slate-900">Download PDF</p>
               <p className="text-xs text-slate-500">Save a PDF copy of the current invoice.</p>
