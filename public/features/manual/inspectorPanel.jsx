@@ -406,7 +406,7 @@ function InspectorPanel({
               ? "Descriptions updated. Numbers unchanged."
               : "Wording updated. Numbers unchanged.";
         setAssistantMessages((prev) => [...prev, { role: "ai", text: responseText }]);
-        setAssistantStatus(responseText);
+        setAssistantStatus("");
         setAssistantInstruction("");
         setAssistantLoading(false);
       })
@@ -415,6 +415,7 @@ function InspectorPanel({
           return;
         }
         setAssistantError("Rewrite failed. Try again.");
+        setAssistantStatus("");
         setAssistantLoading(false);
       });
   };

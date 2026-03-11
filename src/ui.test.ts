@@ -798,6 +798,12 @@ test("manual billie routes description wording requests through safe rewording",
       .getByText("Descriptions updated. Numbers unchanged.")
       .first()
       .waitFor({ state: "visible" });
+    assert.equal(
+      await page.locator("p.text-xs.text-slate-500").filter({
+        hasText: "Descriptions updated. Numbers unchanged."
+      }).count(),
+      0
+    );
     await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
     await expectValueEquals(
       page.getByPlaceholder("Thank you for your business"),
