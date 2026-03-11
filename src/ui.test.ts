@@ -795,6 +795,9 @@ test("manual billie quick actions trigger safe wording rewrites without using th
       .first()
       .waitFor({ state: "visible" });
     await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
+    await page.getByRole("button", { name: "Undo last Billie change" }).click();
+    await page.getByText("Undid last Billie change.").first().waitFor({ state: "visible" });
+    await expectValueEquals(page.getByPlaceholder("Description").first(), "Sink repair");
     assert.equal(rewordFullRequestCount, 1);
     assert.equal(editRequestCount, 0);
   } finally {

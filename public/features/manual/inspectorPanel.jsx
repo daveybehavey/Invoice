@@ -252,6 +252,7 @@ function InspectorPanel({
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantMessages, setAssistantMessages] = useState([]);
   const [assistantChangePreview, setAssistantChangePreview] = useState([]);
+  const [assistantUndoState, setAssistantUndoState] = useState(null);
   const [pendingAssistantEdit, setPendingAssistantEdit] = useState(null);
   const [previewTemplateId, setPreviewTemplateId] = useState(null);
   const previewCloseButtonRef = useRef(null);
@@ -316,6 +317,43 @@ function InspectorPanel({
       }
     }
     return changes;
+  };
+  const buildAssistantUndoState = () => ({
+    invoice: {
+      invoiceNumber: previewData?.invoiceNumber ?? "",
+      issueDate: previewData?.invoiceDate ?? "",
+      customerName: previewData?.billToDetails ?? "",
+      notes: previewData?.notes ?? "",
+      lineItems: Array.isArray(previewData?.lineItems)
+        ? previewData.lineItems.map((item) => ({
+            id: item.id,
+            type: "other",
+            description: item.description ?? "",
+            quantity: item.qty === "" ? undefined : Number.parseFloat(item.qty),
+            unitPrice: item.rate === "" ? undefined : Number.parseFloat(item.rate)
+          }))
+        : []
+    },
+    style: {
+      stylePreset,
+      accentColor,
+      logoVisible,
+      notesVisible,
+      headerLayout,
+      spacingDensity
+    }
+  });
+  const restoreAssistantUndoState = (undoState) => {
+    if (!undoState) {
+      return;
+    }
+    onApplyAiEdit?.(undoState.invoice);
+    onStylePresetChange?.(undoState.style.stylePreset);
+    onAccentColorChange?.(undoState.style.accentColor);
+    onLogoVisibilityChange?.(undoState.style.logoVisible);
+    onNotesVisibilityChange?.(undoState.style.notesVisible);
+    onHeaderLayoutChange?.(undoState.style.headerLayout);
+    onSpacingDensityChange?.(undoState.style.spacingDensity);
   };
 
   useEffect(() => {
@@ -388,7 +426,7 @@ function InspectorPanel({
       });
   };
 
-  const runAssistantWordingRewrite = (instruction, wordingCommand) => {
+  const runAssistantWordingRewrite = (instruction, wordingCommand, undoStateOverride = null) => {
     const appendUserMessage = wordingCommand.appendUserMessage !== false;
     const payloadResult = buildRewriteInvoicePayload?.();
     if (!payloadResult || payloadResult.error) {
@@ -435,6 +473,7 @@ function InspectorPanel({
         if (!payload?.invoice) {
           throw new Error("Rewrite failed");
         }
+        setAssistantUndoState(undoStateOverride ?? buildAssistantUndoState());
         setAssistantChangePreview(
           buildAssistantChangePreview(payloadResult.invoice, payload.invoice, wordingCommand.scope)
         );
@@ -511,6 +550,7 @@ function InspectorPanel({
     const styleCommand = resolveBillieStyleCommand(instruction, { logoUrl, logoVisible });
     const wordingCommand = resolveBillieWordingCommand(instruction);
     if (styleCommand && wordingCommand) {
+      const undoState = buildAssistantUndoState();
       const styleApplied = applyAssistantStyleCommand(styleCommand);
       setAssistantError("");
       setAssistantMessages((prev) => [
@@ -526,10 +566,11 @@ function InspectorPanel({
       runAssistantWordingRewrite(instruction, {
         ...wordingCommand,
         appendUserMessage: false
-      });
+      }, undoState);
       return;
     }
     if (styleCommand) {
+      setAssistantUndoState(buildAssistantUndoState());
       applyAssistantStyleCommand(styleCommand);
       setAssistantError("");
       setAssistantStatus("");
@@ -659,6 +700,8 @@ function InspectorPanel({
     if (!pendingAssistantEdit) {
       return;
     }
+    setAssistantUndoState(buildAssistantUndoState());
+    setAssistantChangePreview([]);
     onApplyAiEdit?.(pendingAssistantEdit.invoice);
     setAssistantMessages((prev) => [...prev, { role: "ai", text: "Changes applied." }]);
     setPendingAssistantEdit(null);
@@ -670,6 +713,18 @@ function InspectorPanel({
     }
     setAssistantMessages((prev) => [...prev, { role: "ai", text: "Okay — discarded that draft." }]);
     setPendingAssistantEdit(null);
+  };
+  const handleUndoAssistantChange = () => {
+    if (!assistantUndoState) {
+      return;
+    }
+    restoreAssistantUndoState(assistantUndoState);
+    setAssistantUndoState(null);
+    setAssistantChangePreview([]);
+    setAssistantStatus("");
+    setAssistantError("");
+    setPendingAssistantEdit(null);
+    setAssistantMessages((prev) => [...prev, { role: "ai", text: "Undid last Billie change." }]);
   };
 
   const buildPreview = (items, previewNotes) => {
@@ -1143,6 +1198,17 @@ function InspectorPanel({
                 )}
               </div>
             </div>
+            {assistantUndoState ? (
+              <button
+                type="button"
+                className="w-full rounded-lg border px-3 py-2 text-sm font-semibold"
+                style={accentGhostButtonStyle}
+                onClick={handleUndoAssistantChange}
+                disabled={assistantLoading}
+              >
+                Undo last Billie change
+              </button>
+            ) : null}
             {assistantChangePreview.length > 0 ? (
               <div
                 className="space-y-3 rounded-lg border p-3"
