@@ -118,6 +118,9 @@ function ManualInvoiceCanvas() {
   const [billToDetails, setBillToDetails] = useState(() => initialDraft?.billToDetails ?? "");
   const [notes, setNotes] = useState(() => initialDraft?.notes ?? "");
   const [taxRate, setTaxRate] = useState(() => initialDraft?.taxRate ?? "0");
+  const [discountAmount, setDiscountAmount] = useState(() =>
+    initialDraft?.discountAmount === undefined ? "0" : String(initialDraft.discountAmount)
+  );
   const [lineItems, setLineItems] = useState(() =>
     Array.isArray(initialDraft?.lineItems) && initialDraft.lineItems.length > 0
       ? initialDraft.lineItems
@@ -160,8 +163,10 @@ function ManualInvoiceCanvas() {
 
   const getLineAmount = (item) => parseNumber(item.qty) * parseNumber(item.rate);
   const subtotal = lineItems.reduce((sum, item) => sum + getLineAmount(item), 0);
-  const taxAmount = subtotal * (parseNumber(taxRate) / 100);
-  const total = subtotal + taxAmount;
+  const effectiveDiscountAmount = Math.min(subtotal, Math.max(0, parseNumber(discountAmount)));
+  const discountedSubtotal = Math.max(0, subtotal - effectiveDiscountAmount);
+  const taxAmount = discountedSubtotal * (parseNumber(taxRate) / 100);
+  const total = discountedSubtotal + taxAmount;
   const previewData = {
     invoiceNumber,
     invoiceDate,
@@ -169,6 +174,7 @@ function ManualInvoiceCanvas() {
     billToDetails,
     notes,
     taxRate,
+    discountAmount: effectiveDiscountAmount,
     subtotal,
     taxAmount,
     total,
@@ -330,6 +336,7 @@ function ManualInvoiceCanvas() {
         amount: getLineAmount(item)
       })),
       notes: notes?.trim() || undefined,
+      discountAmount: effectiveDiscountAmount,
       subtotal,
       total,
       balanceDue: total
@@ -356,6 +363,7 @@ function ManualInvoiceCanvas() {
         amount: getLineAmount(item)
       })),
       notes: notes?.trim() || undefined,
+      discountAmount: effectiveDiscountAmount,
       subtotal,
       total,
       balanceDue: total
@@ -400,6 +408,9 @@ function ManualInvoiceCanvas() {
     if (updatedInvoice.notes !== undefined) {
       setNotes(updatedInvoice.notes ?? "");
     }
+    if (updatedInvoice.discountAmount !== undefined) {
+      setDiscountAmount(String(updatedInvoice.discountAmount ?? 0));
+    }
     if (Array.isArray(updatedInvoice.lineItems) && updatedInvoice.lineItems.length > 0) {
       setLineItems(
         updatedInvoice.lineItems.map((item, index) => ({
@@ -438,6 +449,7 @@ function ManualInvoiceCanvas() {
       billToDetails,
       notes,
       taxRate,
+      discountAmount,
       lineItems,
       logoUrl,
       logoVisible,
@@ -489,6 +501,7 @@ function ManualInvoiceCanvas() {
     billToDetails,
     notes,
     taxRate,
+    discountAmount,
     lineItems,
     logoUrl,
     logoVisible,
@@ -972,9 +985,28 @@ function ManualInvoiceCanvas() {
                 </div>
                 <div className={`flex justify-between ${activePreset.totalsMutedClass}`}>
                   <span className="flex items-center gap-2">
+                    Discount
+                    <input
+                      type="number"
+                      aria-label="Discount amount"
+                      className="w-20 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      value={discountAmount}
+                      min="0"
+                      step="0.01"
+                      onChange={(event) => setDiscountAmount(event.target.value)}
+                    />
+                    <span className="text-xs text-slate-400">$</span>
+                  </span>
+                  <span className="tabular-nums">
+                    {effectiveDiscountAmount > 0 ? `-${formatMoney(effectiveDiscountAmount)}` : formatMoney(0)}
+                  </span>
+                </div>
+                <div className={`flex justify-between ${activePreset.totalsMutedClass}`}>
+                  <span className="flex items-center gap-2">
                     Tax
                     <input
                       type="number"
+                      aria-label="Tax rate"
                       className="w-16 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                       value={taxRate}
                       onChange={(event) => setTaxRate(event.target.value)}
@@ -1041,6 +1073,8 @@ function ManualInvoiceCanvas() {
             onAccentColorChange={handleAccentColorChange}
             taxRate={taxRate}
             onTaxRateChange={setTaxRate}
+            discountAmount={discountAmount}
+            onDiscountAmountChange={setDiscountAmount}
             onPrint={handlePrint}
             onDownloadPdf={handleDownloadPdf}
             onSaveInvoice={handleSaveInvoice}
@@ -1138,6 +1172,8 @@ function ManualInvoiceCanvas() {
                 onAccentColorChange={handleAccentColorChange}
                 taxRate={taxRate}
                 onTaxRateChange={setTaxRate}
+                discountAmount={discountAmount}
+                onDiscountAmountChange={setDiscountAmount}
                 onPrint={handlePrint}
                 onDownloadPdf={handleDownloadPdf}
                 onSaveInvoice={handleSaveInvoice}

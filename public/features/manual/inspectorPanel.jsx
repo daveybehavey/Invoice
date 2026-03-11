@@ -223,6 +223,55 @@
       responseText: `Applied tax → ${explicitRate[1]}%.`
     };
   };
+  const resolveBillieDiscountCommand = (instruction, options = {}) => {
+    const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
+    if (!normalized || !/\bdiscount\b|\boff\b/.test(normalized)) {
+      return null;
+    }
+
+    if (/\b(no discount|remove discount|delete discount|clear discount|discount off)\b/.test(normalized)) {
+      return { discountAmount: "0", responseText: "Applied discount → $0.00." };
+    }
+
+    const subtotal = Number.isFinite(options.subtotal) ? Number(options.subtotal) : 0;
+    const roundMoney = (value) => Math.round(value * 100) / 100;
+
+    const percentMatch = normalized.match(/(\d+(?:\.\d+)?)\s*%\s*(?:discount|off)\b/);
+    if (percentMatch) {
+      if (subtotal <= 0) {
+        return { responseText: "Add priced line items before applying a discount." };
+      }
+      const percent = Number.parseFloat(percentMatch[1]);
+      if (!Number.isFinite(percent) || percent < 0) {
+        return null;
+      }
+      const amount = roundMoney(Math.min(subtotal, subtotal * (percent / 100)));
+      return {
+        discountAmount: String(amount),
+        responseText: `Applied discount → $${amount.toFixed(2)} (${percentMatch[1]}%).`
+      };
+    }
+
+    const amountMatch =
+      normalized.match(/\$\s*(\d+(?:\.\d{1,2})?)/) ??
+      normalized.match(/\bdiscount\b[^0-9]{0,16}(\d+(?:\.\d{1,2})?)\b/) ??
+      normalized.match(/\b(\d+(?:\.\d{1,2})?)\s*dollars?\s+off\b/);
+    if (!amountMatch) {
+      return null;
+    }
+    if (subtotal <= 0) {
+      return { responseText: "Add priced line items before applying a discount." };
+    }
+    const amount = Number.parseFloat(amountMatch[1]);
+    if (!Number.isFinite(amount) || amount < 0) {
+      return null;
+    }
+    const cappedAmount = roundMoney(Math.min(subtotal, amount));
+    return {
+      discountAmount: String(cappedAmount),
+      responseText: `Applied discount → $${cappedAmount.toFixed(2)}.`
+    };
+  };
 
 function InspectorPanel({
   activeTab,
@@ -236,6 +285,7 @@ function InspectorPanel({
   headerLayout,
   spacingDensity,
   taxRate,
+  discountAmount,
   onLogoChange,
   onLogoRemove,
   onLogoVisibilityChange,
@@ -243,6 +293,7 @@ function InspectorPanel({
   onHeaderLayoutChange,
   onSpacingDensityChange,
   onTaxRateChange,
+  onDiscountAmountChange,
   stylePreset,
   onStylePresetChange,
   accentColor,
@@ -366,7 +417,8 @@ function InspectorPanel({
       notesVisible,
       headerLayout,
       spacingDensity,
-      taxRate
+      taxRate,
+      discountAmount
     }
   });
   const restoreAssistantUndoState = (undoState) => {
@@ -381,6 +433,7 @@ function InspectorPanel({
     onHeaderLayoutChange?.(undoState.style.headerLayout);
     onSpacingDensityChange?.(undoState.style.spacingDensity);
     onTaxRateChange?.(undoState.style.taxRate);
+    onDiscountAmountChange?.(undoState.style.discountAmount);
   };
 
   useEffect(() => {
@@ -577,7 +630,8 @@ function InspectorPanel({
     const styleCommand = resolveBillieStyleCommand(instruction, { logoUrl, logoVisible });
     const wordingCommand = resolveBillieWordingCommand(instruction);
     const taxCommand = resolveBillieTaxCommand(instruction);
-    if ((styleCommand || taxCommand) && wordingCommand) {
+    const discountCommand = resolveBillieDiscountCommand(instruction, { subtotal: previewData?.subtotal });
+    if ((styleCommand || taxCommand || discountCommand) && wordingCommand) {
       const undoState = buildAssistantUndoState();
       const localResponses = [];
       const styleApplied = styleCommand ? applyAssistantStyleCommand(styleCommand) : false;
@@ -588,6 +642,14 @@ function InspectorPanel({
         onTaxRateChange?.(taxCommand.taxRate);
         localResponses.push({ role: "ai", text: taxCommand.responseText });
       }
+      if (discountCommand) {
+        if (discountCommand.discountAmount !== undefined) {
+          onDiscountAmountChange?.(discountCommand.discountAmount);
+        }
+        if (discountCommand.responseText) {
+          localResponses.push({ role: "ai", text: discountCommand.responseText });
+        }
+      }
       setAssistantError("");
       setAssistantMessages((prev) => [
         ...prev,
@@ -596,7 +658,7 @@ function InspectorPanel({
       ]);
       setAssistantInstruction("");
       setAssistantChangePreview([]);
-      if (styleApplied || taxCommand) {
+      if (styleApplied || taxCommand || discountCommand?.discountAmount !== undefined) {
         setAssistantStatus("");
       }
       runAssistantWordingRewrite(instruction, {
@@ -605,13 +667,16 @@ function InspectorPanel({
       }, undoState);
       return;
     }
-    if (styleCommand || taxCommand) {
+    if (styleCommand || taxCommand || discountCommand) {
       setAssistantUndoState(buildAssistantUndoState());
       if (styleCommand) {
         applyAssistantStyleCommand(styleCommand);
       }
       if (taxCommand) {
         onTaxRateChange?.(taxCommand.taxRate);
+      }
+      if (discountCommand?.discountAmount !== undefined) {
+        onDiscountAmountChange?.(discountCommand.discountAmount);
       }
       setAssistantError("");
       setAssistantStatus("");
@@ -620,7 +685,8 @@ function InspectorPanel({
         ...prev,
         { role: "user", text: instruction },
         ...(styleCommand?.responseText ? [{ role: "ai", text: styleCommand.responseText }] : []),
-        ...(taxCommand?.responseText ? [{ role: "ai", text: taxCommand.responseText }] : [])
+        ...(taxCommand?.responseText ? [{ role: "ai", text: taxCommand.responseText }] : []),
+        ...(discountCommand?.responseText ? [{ role: "ai", text: discountCommand.responseText }] : [])
       ]);
       setAssistantInstruction("");
       return;
