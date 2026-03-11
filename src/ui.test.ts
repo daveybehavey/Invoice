@@ -732,6 +732,52 @@ test("manual billie applies style commands locally without calling the AI edit r
   }
 });
 
+test("manual billie applies explicit tax commands locally without calling the AI edit route", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let editRequestCount = 0;
+  try {
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-full", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected full reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-notes", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected notes reword route call." })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+
+    const composer = page
+      .getByPlaceholder("Example: Use the bold template with a navy accent.")
+      .first();
+    await composer.fill("Set tax to 5%.");
+    await page.getByRole("button", { name: "Draft edit" }).click();
+
+    await page.getByText("Applied tax → 5%.").waitFor({ state: "visible" });
+    await expectValueEquals(page.locator('input[type="number"]').last(), "5");
+    assert.equal(editRequestCount, 0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual billie quick actions trigger safe wording rewrites without using the edit route", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();

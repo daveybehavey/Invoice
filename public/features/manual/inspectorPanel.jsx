@@ -200,6 +200,29 @@
       scope === "notes" ? "notes" : scope === "descriptions" ? "descriptions" : "wording";
     return { scope, tone, loadingText: `Billie is refining ${label}…` };
   };
+  const resolveBillieTaxCommand = (instruction) => {
+    const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
+    if (!normalized || !/\btax\b/.test(normalized)) {
+      return null;
+    }
+    if (
+      /\b(no tax|remove tax|tax off|zero tax)\b/.test(normalized) ||
+      (/\btax\b/.test(normalized) && /\b0\s*%/.test(normalized))
+    ) {
+      return { taxRate: "0", responseText: "Applied tax → 0%." };
+    }
+    if (!/\b(set|make|use|apply|change|update|add)\b/.test(normalized)) {
+      return null;
+    }
+    const explicitRate = normalized.match(/(\d+(?:\.\d+)?)\s*%/);
+    if (!explicitRate) {
+      return null;
+    }
+    return {
+      taxRate: explicitRate[1],
+      responseText: `Applied tax → ${explicitRate[1]}%.`
+    };
+  };
 
 function InspectorPanel({
   activeTab,
@@ -212,12 +235,14 @@ function InspectorPanel({
   notesVisible,
   headerLayout,
   spacingDensity,
+  taxRate,
   onLogoChange,
   onLogoRemove,
   onLogoVisibilityChange,
   onNotesVisibilityChange,
   onHeaderLayoutChange,
   onSpacingDensityChange,
+  onTaxRateChange,
   stylePreset,
   onStylePresetChange,
   accentColor,
@@ -340,7 +365,8 @@ function InspectorPanel({
       logoVisible,
       notesVisible,
       headerLayout,
-      spacingDensity
+      spacingDensity,
+      taxRate
     }
   });
   const restoreAssistantUndoState = (undoState) => {
@@ -354,6 +380,7 @@ function InspectorPanel({
     onNotesVisibilityChange?.(undoState.style.notesVisible);
     onHeaderLayoutChange?.(undoState.style.headerLayout);
     onSpacingDensityChange?.(undoState.style.spacingDensity);
+    onTaxRateChange?.(undoState.style.taxRate);
   };
 
   useEffect(() => {
@@ -549,18 +576,27 @@ function InspectorPanel({
     }
     const styleCommand = resolveBillieStyleCommand(instruction, { logoUrl, logoVisible });
     const wordingCommand = resolveBillieWordingCommand(instruction);
-    if (styleCommand && wordingCommand) {
+    const taxCommand = resolveBillieTaxCommand(instruction);
+    if ((styleCommand || taxCommand) && wordingCommand) {
       const undoState = buildAssistantUndoState();
-      const styleApplied = applyAssistantStyleCommand(styleCommand);
+      const localResponses = [];
+      const styleApplied = styleCommand ? applyAssistantStyleCommand(styleCommand) : false;
+      if (styleCommand?.responseText) {
+        localResponses.push({ role: "ai", text: styleCommand.responseText });
+      }
+      if (taxCommand) {
+        onTaxRateChange?.(taxCommand.taxRate);
+        localResponses.push({ role: "ai", text: taxCommand.responseText });
+      }
       setAssistantError("");
       setAssistantMessages((prev) => [
         ...prev,
         { role: "user", text: instruction },
-        ...(styleCommand.responseText ? [{ role: "ai", text: styleCommand.responseText }] : [])
+        ...localResponses
       ]);
       setAssistantInstruction("");
       setAssistantChangePreview([]);
-      if (styleApplied) {
+      if (styleApplied || taxCommand) {
         setAssistantStatus("");
       }
       runAssistantWordingRewrite(instruction, {
@@ -569,16 +605,22 @@ function InspectorPanel({
       }, undoState);
       return;
     }
-    if (styleCommand) {
+    if (styleCommand || taxCommand) {
       setAssistantUndoState(buildAssistantUndoState());
-      applyAssistantStyleCommand(styleCommand);
+      if (styleCommand) {
+        applyAssistantStyleCommand(styleCommand);
+      }
+      if (taxCommand) {
+        onTaxRateChange?.(taxCommand.taxRate);
+      }
       setAssistantError("");
       setAssistantStatus("");
       setAssistantChangePreview([]);
       setAssistantMessages((prev) => [
         ...prev,
         { role: "user", text: instruction },
-        { role: "ai", text: styleCommand.responseText }
+        ...(styleCommand?.responseText ? [{ role: "ai", text: styleCommand.responseText }] : []),
+        ...(taxCommand?.responseText ? [{ role: "ai", text: taxCommand.responseText }] : [])
       ]);
       setAssistantInstruction("");
       return;

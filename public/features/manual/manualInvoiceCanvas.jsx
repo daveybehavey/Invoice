@@ -1039,6 +1039,8 @@ function ManualInvoiceCanvas() {
             onStylePresetChange={setStylePreset}
             accentColor={accentColor}
             onAccentColorChange={handleAccentColorChange}
+            taxRate={taxRate}
+            onTaxRateChange={setTaxRate}
             onPrint={handlePrint}
             onDownloadPdf={handleDownloadPdf}
             onSaveInvoice={handleSaveInvoice}
@@ -1134,6 +1136,8 @@ function ManualInvoiceCanvas() {
                 onStylePresetChange={setStylePreset}
                 accentColor={accentColor}
                 onAccentColorChange={handleAccentColorChange}
+                taxRate={taxRate}
+                onTaxRateChange={setTaxRate}
                 onPrint={handlePrint}
                 onDownloadPdf={handleDownloadPdf}
                 onSaveInvoice={handleSaveInvoice}
