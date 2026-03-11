@@ -256,6 +256,16 @@ function InspectorPanel({
   const previewCloseButtonRef = useRef(null);
   const previewFocusReturnRef = useRef(null);
   const assistantRequestIdRef = useRef(0);
+  const assistantQuickActions = [
+    { id: "formal-descriptions", label: "Formal descriptions", instruction: "Make the descriptions more formal." },
+    { id: "shorter-descriptions", label: "Shorter descriptions", instruction: "Make the descriptions shorter and clearer." },
+    { id: "navy-accent", label: "Navy accent", instruction: "Use a navy accent." },
+    {
+      id: notesVisible ? "hide-notes" : "show-notes",
+      label: notesVisible ? "Hide notes" : "Show notes",
+      instruction: notesVisible ? "Hide the notes on the invoice." : "Show the notes on the invoice."
+    }
+  ];
   const tabs = [
     { id: "style", label: "Style", content: "Style controls coming soon" },
     { id: "tone", label: "Tone", content: "Tone controls coming soon" },
@@ -452,8 +462,10 @@ function InspectorPanel({
     return applied;
   };
 
-  const submitAssistantEdit = () => {
-    const instruction = assistantInstruction.trim();
+  const submitAssistantEdit = (instructionOverride = null) => {
+    const instructionSource =
+      typeof instructionOverride === "string" ? instructionOverride : assistantInstruction;
+    const instruction = instructionSource.trim();
     if (!instruction) {
       setAssistantError("Add an instruction for Billie.");
       return;
@@ -474,7 +486,7 @@ function InspectorPanel({
       ]);
       setAssistantInstruction("");
       if (styleApplied) {
-        setAssistantStatus(styleCommand.responseText);
+        setAssistantStatus("");
       }
       runAssistantWordingRewrite(instruction, {
         ...wordingCommand,
@@ -1048,6 +1060,23 @@ function InspectorPanel({
               <p className="mt-1 text-xs text-slate-500">
                 Ask for changes without retyping. Billie will only adjust what you request.
               </p>
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Quick actions</p>
+              <div className="flex flex-wrap gap-2">
+                {assistantQuickActions.map((action) => (
+                  <button
+                    key={action.id}
+                    type="button"
+                    className="rounded-full border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                    style={accentGhostButtonStyle}
+                    onClick={() => submitAssistantEdit(action.instruction)}
+                    disabled={assistantLoading || !!pendingAssistantEdit}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">

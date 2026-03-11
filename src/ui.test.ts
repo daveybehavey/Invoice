@@ -732,6 +732,76 @@ test("manual billie applies style commands locally without calling the AI edit r
   }
 });
 
+test("manual billie quick actions trigger safe wording rewrites without using the edit route", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let editRequestCount = 0;
+  let rewordFullRequestCount = 0;
+  try {
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-notes", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected notes reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-full", async (route) => {
+      rewordFullRequestCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          invoice: {
+            invoiceNumber: "INV-0001",
+            issueDate: "2026-03-10",
+            customerName: "Mike Johnson",
+            currency: "USD",
+            lineItems: [
+              {
+                id: "line-1",
+                type: "other",
+                description: "Kitchen faucet repair service",
+                quantity: 1,
+                unitPrice: 90,
+                amount: 90
+              }
+            ],
+            notes: "Leave check at the front desk.",
+            subtotal: 90,
+            total: 90,
+            balanceDue: 90
+          }
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("fixed sink");
+    await page.getByPlaceholder("Thank you for your business").fill("Leave check at the front desk.");
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+
+    await page.getByRole("button", { name: "Formal descriptions" }).click();
+
+    await page
+      .getByText("Descriptions updated. Numbers unchanged.")
+      .first()
+      .waitFor({ state: "visible" });
+    await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
+    assert.equal(rewordFullRequestCount, 1);
+    assert.equal(editRequestCount, 0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual billie routes description wording requests through safe rewording", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
