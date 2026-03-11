@@ -204,6 +204,23 @@ function ManualInvoiceCanvas() {
       prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
     );
   };
+  const handleUpdateLineItemValues = (id, updates) => {
+    if (!id || !updates) {
+      return;
+    }
+    setLineItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) {
+          return item;
+        }
+        return {
+          ...item,
+          ...(updates.qty !== undefined ? { qty: updates.qty } : {}),
+          ...(updates.rate !== undefined ? { rate: updates.rate } : {})
+        };
+      })
+    );
+  };
 
   const handleLineItemDescriptionBlur = (id) => {
     setLineItems((prev) =>
@@ -1075,6 +1092,7 @@ function ManualInvoiceCanvas() {
             onTaxRateChange={setTaxRate}
             discountAmount={discountAmount}
             onDiscountAmountChange={setDiscountAmount}
+            onUpdateLineItemValues={handleUpdateLineItemValues}
             onPrint={handlePrint}
             onDownloadPdf={handleDownloadPdf}
             onSaveInvoice={handleSaveInvoice}
@@ -1174,6 +1192,7 @@ function ManualInvoiceCanvas() {
                 onTaxRateChange={setTaxRate}
                 discountAmount={discountAmount}
                 onDiscountAmountChange={setDiscountAmount}
+                onUpdateLineItemValues={handleUpdateLineItemValues}
                 onPrint={handlePrint}
                 onDownloadPdf={handleDownloadPdf}
                 onSaveInvoice={handleSaveInvoice}

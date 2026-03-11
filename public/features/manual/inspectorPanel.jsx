@@ -272,6 +272,87 @@
       responseText: `Applied discount → $${cappedAmount.toFixed(2)}.`
     };
   };
+  const resolveBillieLineValueCommand = (instruction, options = {}) => {
+    const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
+    const lineItems = Array.isArray(options.lineItems)
+      ? options.lineItems.filter((item) => {
+          const description = typeof item?.description === "string" ? item.description.trim() : "";
+          const quantity = `${item?.qty ?? ""}`.trim();
+          const rate = `${item?.rate ?? ""}`.trim();
+          return Boolean(description || quantity || rate);
+        })
+      : [];
+    if (!normalized || lineItems.length === 0) {
+      return null;
+    }
+
+    const hasValueIntent =
+      /\b(rate|price|qty|quantity|hours?|hrs?)\b/.test(normalized) ||
+      /@\s*\$?\d/.test(normalized) ||
+      /\bat\s+\$?\d/.test(normalized);
+    const hasChangeVerb = /\b(set|change|update|make|use)\b/.test(normalized);
+    if (!hasValueIntent || !hasChangeVerb) {
+      return null;
+    }
+
+    const resolveLineIndex = () => {
+      if (lineItems.length === 1) {
+        return 0;
+      }
+      const numberedMatch = normalized.match(/\b(?:line|item)\s+(\d+)\b/);
+      if (numberedMatch) {
+        const parsed = Number.parseInt(numberedMatch[1], 10);
+        return Number.isInteger(parsed) && parsed > 0 && parsed <= lineItems.length ? parsed - 1 : null;
+      }
+      if (/\bfirst\b/.test(normalized)) return 0;
+      if (/\bsecond\b/.test(normalized) && lineItems.length >= 2) return 1;
+      if (/\bthird\b/.test(normalized) && lineItems.length >= 3) return 2;
+      return null;
+    };
+
+    const targetIndex = resolveLineIndex();
+    if (targetIndex === null) {
+      return {
+        responseText: "Specify which line item to update, like “set line 2 rate to $150”."
+      };
+    }
+
+    const quantityMatch =
+      normalized.match(/\b(?:qty|quantity)\s*(?:to)?\s*(\d+(?:\.\d+)?)\b/) ??
+      normalized.match(/\b(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b/);
+    const rateMatch =
+      normalized.match(/\brate\s*(?:to|at)?\s*\$?\s*(\d+(?:\.\d+)?)\b/) ??
+      normalized.match(/@\s*\$?\s*(\d+(?:\.\d+)?)\s*(?:\/hr|per hour|hr|hour)?\b/) ??
+      normalized.match(/\bat\s+\$?\s*(\d+(?:\.\d+)?)\s*(?:\/hr|per hour|hr|hour)\b/);
+
+    const quantity = quantityMatch ? Number.parseFloat(quantityMatch[1]) : undefined;
+    const rate = rateMatch ? Number.parseFloat(rateMatch[1]) : undefined;
+    const updates = {};
+    if (Number.isFinite(quantity) && quantity >= 0) {
+      updates.qty = String(quantity);
+    }
+    if (Number.isFinite(rate) && rate >= 0) {
+      updates.rate = String(rate);
+    }
+    if (!("qty" in updates) && !("rate" in updates)) {
+      return null;
+    }
+
+    const responseParts = [];
+    if ("qty" in updates) {
+      responseParts.push(`qty ${updates.qty}`);
+    }
+    if ("rate" in updates) {
+      responseParts.push(`rate $${Number.parseFloat(updates.rate).toFixed(2)}`);
+    }
+
+    return {
+      targetLineId: lineItems[targetIndex]?.id,
+      targetLineIndex: targetIndex,
+      updates,
+      responseText: `Updated line ${targetIndex + 1} → ${responseParts.join(", ")}.`
+    };
+  };
 
 function InspectorPanel({
   activeTab,
@@ -294,6 +375,7 @@ function InspectorPanel({
   onSpacingDensityChange,
   onTaxRateChange,
   onDiscountAmountChange,
+  onUpdateLineItemValues,
   stylePreset,
   onStylePresetChange,
   accentColor,
@@ -628,10 +710,11 @@ function InspectorPanel({
       return;
     }
     const styleCommand = resolveBillieStyleCommand(instruction, { logoUrl, logoVisible });
-    const wordingCommand = resolveBillieWordingCommand(instruction);
     const taxCommand = resolveBillieTaxCommand(instruction);
     const discountCommand = resolveBillieDiscountCommand(instruction, { subtotal: previewData?.subtotal });
-    if ((styleCommand || taxCommand || discountCommand) && wordingCommand) {
+    const lineValueCommand = resolveBillieLineValueCommand(instruction, { lineItems: previewData?.lineItems });
+    const wordingCommand = lineValueCommand ? null : resolveBillieWordingCommand(instruction);
+    if ((styleCommand || taxCommand || discountCommand || lineValueCommand) && wordingCommand) {
       const undoState = buildAssistantUndoState();
       const localResponses = [];
       const styleApplied = styleCommand ? applyAssistantStyleCommand(styleCommand) : false;
@@ -650,6 +733,14 @@ function InspectorPanel({
           localResponses.push({ role: "ai", text: discountCommand.responseText });
         }
       }
+      if (lineValueCommand) {
+        if (lineValueCommand.targetLineId && lineValueCommand.updates) {
+          onUpdateLineItemValues?.(lineValueCommand.targetLineId, lineValueCommand.updates);
+        }
+        if (lineValueCommand.responseText) {
+          localResponses.push({ role: "ai", text: lineValueCommand.responseText });
+        }
+      }
       setAssistantError("");
       setAssistantMessages((prev) => [
         ...prev,
@@ -658,7 +749,12 @@ function InspectorPanel({
       ]);
       setAssistantInstruction("");
       setAssistantChangePreview([]);
-      if (styleApplied || taxCommand || discountCommand?.discountAmount !== undefined) {
+      if (
+        styleApplied ||
+        taxCommand ||
+        discountCommand?.discountAmount !== undefined ||
+        lineValueCommand?.targetLineId
+      ) {
         setAssistantStatus("");
       }
       runAssistantWordingRewrite(instruction, {
@@ -667,7 +763,7 @@ function InspectorPanel({
       }, undoState);
       return;
     }
-    if (styleCommand || taxCommand || discountCommand) {
+    if (styleCommand || taxCommand || discountCommand || lineValueCommand) {
       setAssistantUndoState(buildAssistantUndoState());
       if (styleCommand) {
         applyAssistantStyleCommand(styleCommand);
@@ -678,6 +774,9 @@ function InspectorPanel({
       if (discountCommand?.discountAmount !== undefined) {
         onDiscountAmountChange?.(discountCommand.discountAmount);
       }
+      if (lineValueCommand?.targetLineId && lineValueCommand.updates) {
+        onUpdateLineItemValues?.(lineValueCommand.targetLineId, lineValueCommand.updates);
+      }
       setAssistantError("");
       setAssistantStatus("");
       setAssistantChangePreview([]);
@@ -686,7 +785,8 @@ function InspectorPanel({
         { role: "user", text: instruction },
         ...(styleCommand?.responseText ? [{ role: "ai", text: styleCommand.responseText }] : []),
         ...(taxCommand?.responseText ? [{ role: "ai", text: taxCommand.responseText }] : []),
-        ...(discountCommand?.responseText ? [{ role: "ai", text: discountCommand.responseText }] : [])
+        ...(discountCommand?.responseText ? [{ role: "ai", text: discountCommand.responseText }] : []),
+        ...(lineValueCommand?.responseText ? [{ role: "ai", text: lineValueCommand.responseText }] : [])
       ]);
       setAssistantInstruction("");
       return;

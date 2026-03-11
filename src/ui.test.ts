@@ -7,7 +7,7 @@ import { after, afterEach, before, beforeEach, test } from "node:test";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { chromium, type Browser, type Page } from "playwright";
+import { chromium, type Browser, type Locator, type Page } from "playwright";
 import request from "supertest";
 
 process.env.NODE_ENV = "test";
@@ -824,6 +824,114 @@ test("manual billie applies explicit discount commands locally and supports undo
     await page.getByRole("button", { name: "Undo last Billie change" }).click();
     await page.getByText("Undid last Billie change.").first().waitFor({ state: "visible" });
     await expectValueEquals(page.getByLabel("Discount amount"), "0");
+    assert.equal(editRequestCount, 0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual billie applies explicit line pricing commands locally and supports undo", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let editRequestCount = 0;
+  try {
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-full", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected full reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-notes", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected notes reword route call." })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const firstRow = page.locator("tbody tr").first();
+    await firstRow.getByPlaceholder("Description", { exact: true }).fill("Faucet repair");
+    await firstRow.getByPlaceholder("0", { exact: true }).fill("1");
+    await firstRow.getByPlaceholder("$0", { exact: true }).fill("100");
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+
+    const composer = page
+      .getByPlaceholder("Example: Use the bold template with a navy accent.")
+      .first();
+    await composer.fill("Make it 3 hours at $90/hr.");
+    await page.getByRole("button", { name: "Draft edit" }).click();
+
+    await expectValueEquals(firstRow.getByPlaceholder("0", { exact: true }), "3");
+    await expectValueEquals(firstRow.getByPlaceholder("$0", { exact: true }), "90");
+    await page.waitForFunction(() => document.body.innerText.includes("$270.00"));
+    await page.getByRole("button", { name: "Undo last Billie change" }).click();
+    await page.getByText("Undid last Billie change.").first().waitFor({ state: "visible" });
+    await expectValueEquals(firstRow.getByPlaceholder("0", { exact: true }), "1");
+    await expectValueEquals(firstRow.getByPlaceholder("$0", { exact: true }), "100");
+    assert.equal(editRequestCount, 0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual billie asks for a line number before changing pricing on multi-line drafts", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let editRequestCount = 0;
+  try {
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-full", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected full reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-notes", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected notes reword route call." })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const firstRow = page.locator("tbody tr").nth(0);
+    const secondRow = page.locator("tbody tr").nth(1);
+    await firstRow.getByPlaceholder("Description", { exact: true }).fill("Faucet repair");
+    await firstRow.getByPlaceholder("0", { exact: true }).fill("1");
+    await firstRow.getByPlaceholder("$0", { exact: true }).fill("100");
+    await page.getByRole("button", { name: "+ Add line item" }).click();
+    await secondRow.getByPlaceholder("Description", { exact: true }).fill("Cartridge");
+    await secondRow.getByPlaceholder("0", { exact: true }).fill("1");
+    await secondRow.getByPlaceholder("$0", { exact: true }).fill("25");
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+
+    const composer = page
+      .getByPlaceholder("Example: Use the bold template with a navy accent.")
+      .first();
+    await composer.fill("Set the rate to $90.");
+    await page.getByRole("button", { name: "Draft edit" }).click();
+
+    await expectValueEquals(firstRow.getByPlaceholder("$0", { exact: true }), "100");
+    await expectValueEquals(secondRow.getByPlaceholder("$0", { exact: true }), "25");
     assert.equal(editRequestCount, 0);
   } finally {
     await context.close();
@@ -1982,7 +2090,7 @@ function emptyAudit() {
 }
 
 async function expectValueContains(
-  locator: ReturnType<Page["getByPlaceholder"]>,
+  locator: Locator,
   expectedValue: string,
   timeoutMs = 5000
 ) {
@@ -2000,7 +2108,7 @@ async function expectValueContains(
 }
 
 async function expectValueEquals(
-  locator: ReturnType<Page["getByPlaceholder"]>,
+  locator: Locator,
   expectedValue: string,
   timeoutMs = 5000
 ) {
