@@ -472,6 +472,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added a stale-draft reminder panel for draft invoices untouched for 7+ days.
    - Users can jump directly into the oldest stale draft with one tap or filter to all draft invoices.
    - Added UI coverage for stale draft detection and resume-oldest behavior.
+122. Send-from-library baseline with delivery tracking
+   - Invoice Library now supports `Send invoice`/`Resend invoice` with recipient email capture.
+   - Added delivery state tracking (`sent/opened`, timestamps, counts) plus one-tap `Mark opened`.
+   - API list/get responses now include per-invoice delivery summaries for status visibility.
 
 ## Next (current priorities)
 1. Optional modularization continuation

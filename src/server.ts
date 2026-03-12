@@ -51,6 +51,12 @@ import {
 } from "./services/savedInvoiceRepository.js";
 import { getOcrMetricsSnapshot, trackOcrConfidenceMetric } from "./services/ocrMetricsStore.js";
 import {
+  getInvoiceDeliverySummary,
+  getInvoiceDeliverySummariesByInvoiceIds,
+  markInvoiceDeliveryOpened,
+  recordInvoiceDeliverySend
+} from "./services/invoiceDeliveryStore.js";
+import {
   exportOcrMetricsSnapshot,
   isOcrMetricsExportConfigured
 } from "./services/ocrMetricsExporter.js";
@@ -644,7 +650,16 @@ app.get("/api/invoices", async (_req: Request, res: Response, next: NextFunction
     const includeDeleted = _req.query.includeDeleted === "true";
     const ownerId = getRequestOwnerId(_req);
     const invoices = await savedInvoiceRepository.listSavedInvoiceMetadata(includeDeleted, ownerId);
-    res.json({ invoices });
+    const deliverySummaries = await getInvoiceDeliverySummariesByInvoiceIds({
+      ownerId,
+      invoiceIds: invoices.map((invoice) => invoice.invoiceId)
+    });
+    res.json({
+      invoices: invoices.map((invoice) => ({
+        ...invoice,
+        delivery: deliverySummaries[invoice.invoiceId] ?? null
+      }))
+    });
   } catch (error) {
     next(error);
   }
@@ -673,7 +688,56 @@ app.get("/api/invoices/:id", async (req: Request, res: Response, next: NextFunct
     const invoiceId = z.string().uuid().parse(req.params.id);
     const ownerId = getRequestOwnerId(req);
     const invoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
-    res.json({ invoice });
+    const delivery = await getInvoiceDeliverySummary({ ownerId, invoiceId });
+    res.json({
+      invoice: {
+        ...invoice,
+        delivery
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invoiceId = z.string().uuid().parse(req.params.id);
+    const parsedRequest = z
+      .object({
+        recipientEmail: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+          z.string().email()
+        )
+      })
+      .parse(req.body ?? {});
+    const ownerId = getRequestOwnerId(req);
+    const existingInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
+    if (existingInvoice.status === "deleted") {
+      throw new HttpStatusError(400, "Restore this invoice before sending.");
+    }
+
+    const delivery = await recordInvoiceDeliverySend({
+      ownerId,
+      invoiceId,
+      recipientEmail: parsedRequest.recipientEmail
+    });
+    const invoice =
+      existingInvoice.status === "sent"
+        ? existingInvoice
+        : await savedInvoiceRepository.updateSavedInvoiceStatus(invoiceId, "sent", ownerId);
+    res.json({ invoice, delivery, mode: "record_only" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/invoices/:id/delivery/opened", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invoiceId = z.string().uuid().parse(req.params.id);
+    const ownerId = getRequestOwnerId(req);
+    const delivery = await markInvoiceDeliveryOpened({ ownerId, invoiceId });
+    res.json({ delivery });
   } catch (error) {
     next(error);
   }

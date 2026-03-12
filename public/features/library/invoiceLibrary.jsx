@@ -201,6 +201,25 @@ function InvoiceLibrary() {
     return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
   };
 
+  const formatDateTime = (timestamp) => {
+    if (!timestamp) {
+      return "";
+    }
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+    return date.toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    });
+  };
+
+  const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+
   const deriveTaxRate = (invoice) => {
     if (!invoice) {
       return "0";
@@ -569,6 +588,92 @@ function InvoiceLibrary() {
       handleLibraryError(statusError, "Failed to update invoice status.");
     } finally {
       setStatusActionId("");
+    }
+  };
+
+  const handleSendInvoice = async (invoice) => {
+    if (!invoice?.invoiceId) {
+      return;
+    }
+    if (typeof window === "undefined") {
+      return;
+    }
+    const suggestedEmail = invoice?.delivery?.recipientEmail ?? "";
+    const recipientInput = window.prompt(
+      "Send invoice to which email?",
+      typeof suggestedEmail === "string" ? suggestedEmail : ""
+    );
+    if (recipientInput === null) {
+      return;
+    }
+    const recipientEmail = recipientInput.trim().toLowerCase();
+    if (!recipientEmail || !isValidEmail(recipientEmail)) {
+      setError("Enter a valid recipient email.");
+      return;
+    }
+    setActionId(invoice.invoiceId);
+    setError("");
+    try {
+      const payload = await requestJson(
+        `/api/invoices/${invoice.invoiceId}/send`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recipientEmail })
+        },
+        "Failed to send invoice."
+      );
+      setAuthRequiredError(false);
+      setInvoices((prev) =>
+        prev.map((candidate) =>
+          candidate.invoiceId === invoice.invoiceId
+            ? {
+                ...candidate,
+                status: payload?.invoice?.status ?? "sent",
+                updatedAt: payload?.invoice?.updatedAt ?? candidate.updatedAt,
+                delivery: payload?.delivery ?? candidate.delivery ?? null
+              }
+            : candidate
+        )
+      );
+    } catch (sendError) {
+      handleLibraryError(sendError, "Failed to send invoice.");
+    } finally {
+      setActionId("");
+    }
+  };
+
+  const handleMarkDeliveryOpened = async (invoiceId) => {
+    if (!invoiceId) {
+      return;
+    }
+    setActionId(invoiceId);
+    setError("");
+    try {
+      const payload = await requestJson(
+        `/api/invoices/${invoiceId}/delivery/opened`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        },
+        "Failed to update delivery status."
+      );
+      setAuthRequiredError(false);
+      setInvoices((prev) =>
+        prev.map((candidate) =>
+          candidate.invoiceId === invoiceId
+            ? {
+                ...candidate,
+                delivery: payload?.delivery ?? candidate.delivery ?? null
+              }
+            : candidate
+        )
+      );
+    } catch (deliveryError) {
+      handleLibraryError(deliveryError, "Failed to update delivery status.");
+    } finally {
+      setActionId("");
     }
   };
 
@@ -1311,6 +1416,11 @@ function InvoiceLibrary() {
                   ? formatRecurringCadence(recurringEntry.intervalDays)
                   : "";
                 const recurringNextDue = recurringEntry ? formatDate(recurringEntry.nextDueAt) : "";
+                const delivery = invoice?.delivery ?? null;
+                const hasDelivery = Boolean(delivery?.recipientEmail) && Boolean(delivery?.sentAt);
+                const deliverySentAt = hasDelivery ? formatDateTime(delivery.sentAt) : "";
+                const deliveryOpenedAt = delivery?.openedAt ? formatDateTime(delivery.openedAt) : "";
+                const deliveryOpened = delivery?.status === "opened";
                 const isDeleted = invoice.status === "deleted";
                 const isSelected = selectedIds.includes(invoice.invoiceId);
                 const isStatusBusy = statusActionId.startsWith(`${invoice.invoiceId}:`);
@@ -1345,6 +1455,14 @@ function InvoiceLibrary() {
                           <p className="text-xs text-slate-500">
                             Updated {formatDate(invoice.updatedAt)}
                           </p>
+                          {hasDelivery ? (
+                            <p className="mt-1 text-xs text-blue-800">
+                              Sent to {delivery.recipientEmail}
+                              {deliveryOpened
+                                ? ` · Opened ${deliveryOpenedAt || "recently"}`
+                                : ` · Sent ${deliverySentAt || "recently"}`}
+                            </p>
+                          ) : null}
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
@@ -1406,6 +1524,30 @@ function InvoiceLibrary() {
                           >
                             Invoice again
                           </button>
+                          <button
+                            type="button"
+                            className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm transition hover:border-blue-300 hover:text-blue-800 disabled:cursor-not-allowed disabled:text-blue-300"
+                            onClick={() => handleSendInvoice(invoice)}
+                            disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                            aria-label={`${hasDelivery ? "Resend invoice" : "Send invoice"} ${invoice.invoiceNumber || "Draft invoice"}`}
+                          >
+                            {actionId === invoice.invoiceId
+                              ? "Sending…"
+                              : hasDelivery
+                                ? "Resend invoice"
+                                : "Send invoice"}
+                          </button>
+                          {hasDelivery && !deliveryOpened ? (
+                            <button
+                              type="button"
+                              className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm transition hover:border-blue-300 hover:text-blue-800 disabled:cursor-not-allowed disabled:text-blue-300"
+                              onClick={() => handleMarkDeliveryOpened(invoice.invoiceId)}
+                              disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                              aria-label={`Mark opened ${invoice.invoiceNumber || "Draft invoice"}`}
+                            >
+                              Mark opened
+                            </button>
+                          ) : null}
                           {invoice.paymentLinkUrl ? (
                             <a
                               href={invoice.paymentLinkUrl}

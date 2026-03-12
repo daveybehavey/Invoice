@@ -2981,6 +2981,65 @@ test("invoice library shows draft recovery inbox for stale draft invoices", asyn
   }
 });
 
+test("invoice library send action records delivery and supports mark opened", async () => {
+  const ownerId = "ui-send-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Send Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-SEND-1",
+          issueDate: "2026-03-10",
+          customerName: "Send Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-send-1",
+              type: "labor",
+              description: "Send baseline",
+              quantity: 1,
+              unitPrice: 130,
+              amount: 130
+            }
+          ],
+          subtotal: 130,
+          total: 130,
+          balanceDue: 130
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  page.on("dialog", async (dialog) => {
+    await dialog.accept("client@example.com");
+  });
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Send invoice INV-SEND-1" }).click();
+    await page.getByText(/Sent to client@example.com/i).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Mark opened INV-SEND-1" }).click();
+    await page.getByText(/Opened/i).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library invoice again opens a fresh draft with today's date and a new number", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

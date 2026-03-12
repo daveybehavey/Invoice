@@ -25,6 +25,10 @@ process.env.STRIPE_ENTITLEMENTS_STORE_FILE = path.join(
   os.tmpdir(),
   `invoice-stripe-entitlements-${randomUUID()}.json`
 );
+process.env.INVOICE_DELIVERY_STORE_FILE = path.join(
+  os.tmpdir(),
+  `invoice-delivery-store-${randomUUID()}.json`
+);
 
 const [{ app }, { setImageOcrRunnerForTests, setJsonTaskRunnerForTests }] = await Promise.all([
   import("./server.js"),
@@ -51,6 +55,10 @@ const stripeEntitlementsStoreFilePath = process.env.STRIPE_ENTITLEMENTS_STORE_FI
 if (!stripeEntitlementsStoreFilePath) {
   throw new Error("STRIPE_ENTITLEMENTS_STORE_FILE is required for tests.");
 }
+const invoiceDeliveryStoreFilePath = process.env.INVOICE_DELIVERY_STORE_FILE;
+if (!invoiceDeliveryStoreFilePath) {
+  throw new Error("INVOICE_DELIVERY_STORE_FILE is required for tests.");
+}
 const nativeFetch = globalThis.fetch;
 
 beforeEach(async () => {
@@ -64,6 +72,8 @@ beforeEach(async () => {
   await fs.rm(flowFrictionHistoryFilePath, { force: true });
   await fs.mkdir(path.dirname(stripeEntitlementsStoreFilePath), { recursive: true });
   await fs.rm(stripeEntitlementsStoreFilePath, { force: true });
+  await fs.mkdir(path.dirname(invoiceDeliveryStoreFilePath), { recursive: true });
+  await fs.rm(invoiceDeliveryStoreFilePath, { force: true });
   delete process.env.OCR_METRICS_EXPORT_PROVIDER;
   delete process.env.OCR_METRICS_EXPORT_URL;
   delete process.env.OCR_METRICS_GA4_MEASUREMENT_ID;
@@ -99,6 +109,7 @@ after(async () => {
   await fs.rm(flowFrictionReportFilePath, { force: true });
   await fs.rm(flowFrictionHistoryFilePath, { force: true });
   await fs.rm(stripeEntitlementsStoreFilePath, { force: true });
+  await fs.rm(invoiceDeliveryStoreFilePath, { force: true });
 });
 
 test("asks one labor pricing follow-up and does not finalize with $0 labor", async () => {
@@ -2062,6 +2073,125 @@ test("save remains explicit-only", async () => {
   const listAfterSave = await request(app).get("/api/invoices");
   assert.equal(listAfterSave.status, 200);
   assert.equal(listAfterSave.body.invoices.length, 1);
+});
+
+test("send endpoint records delivery and marks invoice as sent", async () => {
+  const ownerId = "delivery-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Delivery Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-1",
+          issueDate: "2026-03-10",
+          customerName: "Delivery Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-delivery-1",
+              type: "labor",
+              description: "Delivery baseline",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          subtotal: 120,
+          total: 120,
+          balanceDue: 120
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "CLIENT@Example.com" });
+  assert.equal(sendResponse.status, 200);
+  assert.equal(sendResponse.body.mode, "record_only");
+  assert.equal(sendResponse.body.invoice.status, "sent");
+  assert.equal(sendResponse.body.delivery.recipientEmail, "client@example.com");
+  assert.equal(sendResponse.body.delivery.status, "sent");
+  assert.equal(sendResponse.body.delivery.sendCount, 1);
+
+  const listResponse = await request(app).get("/api/invoices").set("x-invoice-user-id", ownerId);
+  assert.equal(listResponse.status, 200);
+  assert.equal(listResponse.body.invoices.length, 1);
+  assert.equal(listResponse.body.invoices[0].status, "sent");
+  assert.equal(listResponse.body.invoices[0].delivery.recipientEmail, "client@example.com");
+  assert.equal(listResponse.body.invoices[0].delivery.status, "sent");
+});
+
+test("delivery opened endpoint updates tracked delivery status", async () => {
+  const ownerId = "delivery-open-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Delivery Open Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-OPEN-1",
+          issueDate: "2026-03-10",
+          customerName: "Delivery Open Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-delivery-open-1",
+              type: "labor",
+              description: "Delivery open baseline",
+              quantity: 1,
+              unitPrice: 140,
+              amount: 140
+            }
+          ],
+          subtotal: 140,
+          total: 140,
+          balanceDue: 140
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "open@example.com" });
+  assert.equal(sendResponse.status, 200);
+
+  const openResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/delivery/opened`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(openResponse.status, 200);
+  assert.equal(openResponse.body.delivery.status, "opened");
+  assert.equal(openResponse.body.delivery.openCount, 1);
+  assert.equal(typeof openResponse.body.delivery.openedAt, "string");
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.status, 200);
+  assert.equal(getResponse.body.invoice.delivery.status, "opened");
+  assert.equal(getResponse.body.invoice.delivery.openCount, 1);
 });
 
 test("account plan endpoint reports free-tier usage and remaining saves", async () => {
