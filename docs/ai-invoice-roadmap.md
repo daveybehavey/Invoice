@@ -444,6 +444,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Manual line items now show a one-tap `Use suggested $X/hr` action when rate is blank and a saved match exists.
    - Suggestions prioritize same-client history first, then service wording overlap, then recency.
    - Added UI coverage for apply-flow behavior and visible rate-fill confirmation.
+115. Billie quick-action wording expansion
+   - Added a first-class `Stronger wording` quick action alongside Formal/Simpler/Notes actions in the manual Billie panel.
+   - Wording command parsing now maps stronger/assertive phrasing to a dedicated `Stronger` tone request.
+   - Added UI coverage confirming the new quick action stays on the safe descriptions-only reword route.
 
 ## Next (current priorities)
 1. Optional modularization continuation

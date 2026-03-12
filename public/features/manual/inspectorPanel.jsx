@@ -156,6 +156,11 @@ function InspectorPanel({
       instruction: "Make the descriptions more formal."
     },
     {
+      id: "stronger-descriptions",
+      label: "Stronger wording",
+      instruction: "Make the descriptions stronger and more decisive."
+    },
+    {
       id: "simpler-descriptions",
       label: "Simpler wording",
       instruction: "Make the descriptions simpler and clearer."

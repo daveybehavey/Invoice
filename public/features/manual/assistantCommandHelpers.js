@@ -167,7 +167,9 @@
     }
 
     let tone = "Neutral";
-    if (/\b(formal|professional|stronger)\b/.test(normalized)) {
+    if (/\b(stronger|assertive)\b/.test(normalized)) {
+      tone = "Stronger";
+    } else if (/\b(formal|professional)\b/.test(normalized)) {
       tone = "Formal";
     } else if (/\b(friendly|warmer|softer)\b/.test(normalized)) {
       tone = "Friendly";

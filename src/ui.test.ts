@@ -1278,7 +1278,13 @@ test("manual billie quick actions trigger safe wording rewrites without using th
     await page.getByRole("button", { name: "Undo last Billie change" }).click();
     await page.getByText("Undid last Billie change.").first().waitFor({ state: "visible" });
     await expectValueEquals(page.getByPlaceholder("Description").first(), "Sink repair");
-    assert.equal(rewordDescriptionsRequestCount, 1);
+    await page.getByRole("button", { name: "Stronger wording" }).click();
+    await page
+      .getByText("Descriptions updated. Numbers unchanged.")
+      .first()
+      .waitFor({ state: "visible" });
+    await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
+    assert.equal(rewordDescriptionsRequestCount, 2);
     assert.equal(editRequestCount, 0);
   } finally {
     await context.close();
