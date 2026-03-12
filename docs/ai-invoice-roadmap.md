@@ -448,6 +448,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added a first-class `Stronger wording` quick action alongside Formal/Simpler/Notes actions in the manual Billie panel.
    - Wording command parsing now maps stronger/assertive phrasing to a dedicated `Stronger` tone request.
    - Added UI coverage confirming the new quick action stays on the safe descriptions-only reword route.
+116. Manual smart-rate helper modularization
+   - Extracted client/service smart-rate ranking and one-tap suggestion logic into `features/manual/smartRateSuggestions.js`.
+   - `manualInvoiceCanvas.jsx` now consumes helper exports for saved-item ranking and per-line rate suggestions.
+   - Keeps behavior unchanged while reducing orchestration complexity in the manual canvas.
 
 ## Next (current priorities)
 1. Optional modularization continuation
