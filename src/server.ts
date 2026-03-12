@@ -61,6 +61,11 @@ import {
 } from "./services/invoiceDeliveryStore.js";
 import { getInvoiceEmailCapabilities, sendInvoiceEmail } from "./services/invoiceEmailDelivery.js";
 import {
+  listDueInvoiceReminderCandidates,
+  runDueInvoiceReminders,
+  sendInvoiceReminderById
+} from "./services/invoiceReminderScheduler.js";
+import {
   exportOcrMetricsSnapshot,
   isOcrMetricsExportConfigured
 } from "./services/ocrMetricsExporter.js";
@@ -310,11 +315,23 @@ app.get("/api/system/delivery", async (_req: Request, res: Response, next: NextF
   try {
     const capabilities = getInvoiceEmailCapabilities();
     const summary = await getInvoiceDeliveryStoreSummary();
+    const defaultOwnerId = asOptionalString(process.env.INVOICE_DEFAULT_USER_ID) ?? "local-default";
+    const reminderPreview = await listDueInvoiceReminderCandidates({
+      ownerId: defaultOwnerId,
+      repository: savedInvoiceRepository
+    });
     const warning = resolveDeliverySystemWarning(capabilities, summary);
     res.json({
       provider: capabilities.provider,
       capabilities,
       summary,
+      reminders: {
+        ownerId: defaultOwnerId,
+        settings: reminderPreview.settings,
+        scannedCount: reminderPreview.scannedCount,
+        dueCount: reminderPreview.due.length,
+        due: reminderPreview.due.slice(0, 10)
+      },
       warning
     });
   } catch (error) {
@@ -786,6 +803,80 @@ app.get("/api/invoices/:id/delivery/opened/pixel", async (req: Request, res: Res
     console.error("Failed to mark delivery opened from pixel route", error);
   }
   sendTrackingPixelResponse(res);
+});
+
+app.post("/api/invoices/:id/send-reminder", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invoiceId = z.string().uuid().parse(req.params.id);
+    const ownerId = getRequestOwnerId(req);
+    const reminder = await sendInvoiceReminderById({
+      ownerId,
+      invoiceId,
+      repository: savedInvoiceRepository,
+      baseUrl: resolvePublicBaseUrl(req)
+    });
+    res.json({
+      reminder: {
+        invoiceId: reminder.invoiceId,
+        invoiceNumber: reminder.invoiceNumber,
+        recipientEmail: reminder.recipientEmail
+      },
+      invoice: reminder.invoice,
+      delivery: reminder.delivery,
+      mode: reminder.mode,
+      provider: reminder.provider,
+      warning: reminder.warning ?? null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/invoices/reminders/run", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = z
+      .object({
+        dryRun: z.boolean().optional(),
+        maxPerRun: z.number().int().min(1).max(100).optional(),
+        dueAfterDays: z.number().int().min(1).max(120).optional(),
+        cooldownDays: z.number().int().min(1).max(60).optional()
+      })
+      .default({})
+      .parse(req.body ?? {});
+    const ownerId = getRequestOwnerId(req);
+    if (parsedRequest.dryRun) {
+      const preview = await listDueInvoiceReminderCandidates({
+        ownerId,
+        repository: savedInvoiceRepository,
+        settings: {
+          maxPerRun: parsedRequest.maxPerRun,
+          dueAfterDays: parsedRequest.dueAfterDays,
+          cooldownDays: parsedRequest.cooldownDays
+        }
+      });
+      res.json({
+        dryRun: true,
+        settings: preview.settings,
+        scannedCount: preview.scannedCount,
+        dueCount: preview.due.length,
+        due: preview.due
+      });
+      return;
+    }
+    const runResult = await runDueInvoiceReminders({
+      ownerId,
+      repository: savedInvoiceRepository,
+      baseUrl: resolvePublicBaseUrl(req),
+      settings: {
+        maxPerRun: parsedRequest.maxPerRun,
+        dueAfterDays: parsedRequest.dueAfterDays,
+        cooldownDays: parsedRequest.cooldownDays
+      }
+    });
+    res.json(runResult);
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/api/invoices/:id/delivery/opened", async (req: Request, res: Response, next: NextFunction) => {

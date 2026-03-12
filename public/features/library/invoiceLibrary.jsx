@@ -656,6 +656,51 @@ function InvoiceLibrary() {
     }
   };
 
+  const handleSendReminder = async (invoice) => {
+    if (!invoice?.invoiceId) {
+      return;
+    }
+    setActionId(invoice.invoiceId);
+    setError("");
+    setDeliveryNotice("");
+    try {
+      const payload = await requestJson(
+        `/api/invoices/${invoice.invoiceId}/send-reminder`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        },
+        "Failed to send reminder."
+      );
+      setAuthRequiredError(false);
+      setInvoices((prev) =>
+        prev.map((candidate) =>
+          candidate.invoiceId === invoice.invoiceId
+            ? {
+                ...candidate,
+                status: payload?.invoice?.status ?? candidate.status,
+                updatedAt: payload?.invoice?.updatedAt ?? candidate.updatedAt,
+                delivery: payload?.delivery ?? candidate.delivery ?? null
+              }
+            : candidate
+        )
+      );
+      const recipient = payload?.delivery?.recipientEmail ?? invoice?.delivery?.recipientEmail ?? "";
+      if (payload?.mode === "provider") {
+        setDeliveryNotice(`Reminder emailed to ${recipient}.`);
+      } else {
+        setDeliveryNotice(
+          payload?.warning || "Reminder was recorded. Configure an email provider to send automatically."
+        );
+      }
+    } catch (reminderError) {
+      handleLibraryError(reminderError, "Failed to send reminder.");
+    } finally {
+      setActionId("");
+    }
+  };
+
   const startSendComposer = (invoice) => {
     if (!invoice?.invoiceId) {
       return;
@@ -939,7 +984,9 @@ function InvoiceLibrary() {
   const oldestSentReminder = sentFollowUpInvoices[0] ?? null;
   const recurringCandidateInvoice = oldestSentReminder;
   const oldestSentRecipient = oldestSentReminder?.delivery?.recipientEmail ?? "";
-  const canQuickResendOldest = Boolean(oldestSentReminder?.invoiceId && isValidEmail(oldestSentRecipient));
+  const canQuickSendReminderOldest = Boolean(
+    oldestSentReminder?.invoiceId && isValidEmail(oldestSentRecipient)
+  );
   const reminderHiddenUntilMs = Date.parse(followUpReminderState?.hiddenUntil ?? "");
   const reminderIsSnoozed =
     Number.isFinite(reminderHiddenUntilMs) && reminderHiddenUntilMs > Date.now();
@@ -1296,19 +1343,14 @@ function InvoiceLibrary() {
                     : "Invoice again oldest"}
                 </button>
               ) : null}
-              {canQuickResendOldest ? (
+              {canQuickSendReminderOldest ? (
                 <button
                   type="button"
                   className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 disabled:cursor-not-allowed disabled:text-blue-400"
-                  onClick={() =>
-                    handleSendInvoice(oldestSentReminder, {
-                      skipPrompt: true,
-                      recipientEmail: oldestSentRecipient
-                    })
-                  }
+                  onClick={() => handleSendReminder(oldestSentReminder)}
                   disabled={actionId === oldestSentReminder.invoiceId}
                 >
-                  {actionId === oldestSentReminder.invoiceId ? "Resending…" : "Resend oldest"}
+                  {actionId === oldestSentReminder.invoiceId ? "Sending…" : "Send reminder"}
                 </button>
               ) : null}
               <button

@@ -381,6 +381,13 @@
               {" · "}
               Last opened: {deliveryInfo?.summary?.lastOpenedAt || "n/a"}
             </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Reminder due now: {deliveryInfo?.reminders?.dueCount ?? 0}
+              {" · "}
+              Reminder scanned sent invoices: {deliveryInfo?.reminders?.scannedCount ?? 0}
+              {" · "}
+              Owner: {deliveryInfo?.reminders?.ownerId || "n/a"}
+            </p>
             {deliveryInfo?.warning ? (
               <p className="mt-2 text-xs text-amber-700">{deliveryInfo.warning}</p>
             ) : null}

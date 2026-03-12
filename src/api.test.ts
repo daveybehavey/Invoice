@@ -2526,6 +2526,149 @@ test("delivery diagnostics endpoint reports provider readiness + send summary", 
   assert.equal(afterSend.body.summary?.sentCount, 1);
   assert.equal(afterSend.body.summary?.recordOnlyCount, 1);
   assert.equal(afterSend.body.summary?.providerSendCount, 0);
+  assert.equal(afterSend.body.reminders?.dueCount, 0);
+});
+
+test("send-reminder endpoint reuses tracked recipient and bumps delivery/send timestamps", async () => {
+  const ownerId = "delivery-reminder-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Reminder Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REMINDER-1",
+          issueDate: "2026-03-11",
+          customerName: "Reminder Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-reminder-1",
+              type: "labor",
+              description: "Reminder baseline",
+              quantity: 1,
+              unitPrice: 95,
+              amount: 95
+            }
+          ],
+          subtotal: 95,
+          total: 95,
+          balanceDue: 95
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "reminder@example.com" });
+  assert.equal(sendResponse.status, 200);
+  const firstSentAt = sendResponse.body.delivery?.sentAt as string;
+  const firstUpdatedAt = sendResponse.body.invoice?.updatedAt as string;
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const reminderResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send-reminder`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(reminderResponse.status, 200);
+  assert.equal(reminderResponse.body.mode, "record_only");
+  assert.equal(reminderResponse.body.provider, "none");
+  assert.equal(reminderResponse.body.reminder?.recipientEmail, "reminder@example.com");
+  assert.equal(reminderResponse.body.delivery?.sendCount, 2);
+  assert.equal(reminderResponse.body.delivery?.recipientEmail, "reminder@example.com");
+  assert.ok(Date.parse(reminderResponse.body.delivery?.sentAt) >= Date.parse(firstSentAt));
+  assert.ok(Date.parse(reminderResponse.body.invoice?.updatedAt) > Date.parse(firstUpdatedAt));
+});
+
+test("reminder run endpoint previews and sends due reminders with overrides", async () => {
+  const ownerId = "delivery-reminder-run-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Reminder Run Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REMINDER-RUN-1",
+          issueDate: "2026-03-11",
+          customerName: "Reminder Run Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-reminder-run-1",
+              type: "labor",
+              description: "Reminder run baseline",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          subtotal: 120,
+          total: 120,
+          balanceDue: 120
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "run-reminder@example.com" });
+  assert.equal(sendResponse.status, 200);
+
+  await mutateDeliveryStoreEntry(invoiceId, (entry) => ({
+    ...entry,
+    sentAt: "2026-01-01T00:00:00.000Z"
+  }));
+
+  const dryRunResponse = await request(app)
+    .post("/api/invoices/reminders/run")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      dryRun: true,
+      dueAfterDays: 14
+    });
+  assert.equal(dryRunResponse.status, 200);
+  assert.equal(dryRunResponse.body.dryRun, true);
+  assert.equal(dryRunResponse.body.dueCount, 1);
+  assert.equal(dryRunResponse.body.due?.[0]?.invoiceId, invoiceId);
+
+  const runResponse = await request(app)
+    .post("/api/invoices/reminders/run")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      dueAfterDays: 14
+    });
+  assert.equal(runResponse.status, 200);
+  assert.equal(runResponse.body.dueCount, 1);
+  assert.equal(runResponse.body.sentCount, 1);
+  assert.equal(runResponse.body.results?.[0]?.invoiceId, invoiceId);
+  assert.equal(runResponse.body.results?.[0]?.sent, true);
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.status, 200);
+  assert.equal(getResponse.body.invoice?.delivery?.sendCount, 2);
 });
 
 test("checkout session endpoint returns a setup error when stripe is not configured", async () => {
@@ -3215,6 +3358,21 @@ function useMockResponses(responses: unknown[]): void {
 
     return queue.shift() as T;
   });
+}
+
+async function mutateDeliveryStoreEntry(
+  invoiceId: string,
+  mutate: (entry: Record<string, unknown>) => Record<string, unknown>
+): Promise<void> {
+  const raw = await fs.readFile(invoiceDeliveryStoreFilePath, "utf8");
+  const parsed = JSON.parse(raw) as { entries?: Array<Record<string, unknown>> };
+  parsed.entries = (parsed.entries ?? []).map((entry) => {
+    if (entry?.invoiceId !== invoiceId) {
+      return entry;
+    }
+    return mutate(entry);
+  });
+  await fs.writeFile(invoiceDeliveryStoreFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
 }
 
 function structuredWithoutLaborPricing() {

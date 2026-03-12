@@ -488,6 +488,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Replaced browser prompt-based send flow with inline recipient composer directly on invoice cards.
    - First send now captures recipient inline; resends reuse known recipient without extra prompts.
    - Keeps delivery guardrails intact while reducing send-flow cognitive load on desktop/mobile.
+126. Automated reminder endpoints + one-tap follow-up action
+   - Added reminder APIs (`POST /api/invoices/:id/send-reminder`, `POST /api/invoices/reminders/run`) with dry-run support and deterministic due/cooldown rules.
+   - Follow-up reminder banner now sends true reminder emails (or tracked reminders in record-only mode) instead of generic resends.
+   - Delivery diagnostics now includes reminder candidate preview counts (`due now`, `scanned sent invoices`) for fast operational checks.
 
 ## Next (current priorities)
 1. Optional modularization continuation

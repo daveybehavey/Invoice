@@ -20,6 +20,7 @@ type SendInvoiceEmailInput = {
   invoice: FinishedInvoice;
   invoiceId: string;
   openTrackingPixelUrl: string;
+  messageType?: "invoice" | "reminder";
 };
 
 const RESEND_API_URL = "https://api.resend.com/emails";
@@ -104,7 +105,7 @@ async function sendViaResend(input: SendInvoiceEmailInput, fromEmail: string): P
 }
 
 function buildResendPayload(input: SendInvoiceEmailInput, fromEmail: string): Record<string, unknown> {
-  const subject = buildInvoiceEmailSubject(input.invoice);
+  const subject = buildInvoiceEmailSubject(input);
   const text = buildInvoiceEmailText(input);
   const html = buildInvoiceEmailHtml(input);
   return {
@@ -116,12 +117,14 @@ function buildResendPayload(input: SendInvoiceEmailInput, fromEmail: string): Re
   };
 }
 
-function buildInvoiceEmailSubject(invoice: FinishedInvoice): string {
+function buildInvoiceEmailSubject(input: SendInvoiceEmailInput): string {
+  const invoice = input.invoice;
   const invoiceNumber = toOptionalTrimmedString(invoice.invoiceNumber);
+  const prefix = input.messageType === "reminder" ? "Payment reminder" : "Invoice";
   if (invoiceNumber) {
-    return `Invoice ${invoiceNumber}`;
+    return `${prefix} ${invoiceNumber}`;
   }
-  return "Invoice from NoteBill";
+  return `${prefix} from NoteBill`;
 }
 
 function buildInvoiceEmailText(input: SendInvoiceEmailInput): string {
@@ -138,10 +141,14 @@ function buildInvoiceEmailText(input: SendInvoiceEmailInput): string {
     .slice(0, 8)
     .map((lineItem) => `- ${lineItem.description}: ${formatCurrency(lineItem.amount, invoice.currency)}`)
     .join("\n");
+  const introLine =
+    input.messageType === "reminder"
+      ? `This is a reminder for invoice${invoiceNumber ? ` (${invoiceNumber})` : ""}${issueDate ? ` dated ${issueDate}` : ""}.`
+      : `Here is your invoice${invoiceNumber ? ` (${invoiceNumber})` : ""}${issueDate ? ` dated ${issueDate}` : ""}.`;
   return [
     `Hi ${customerName},`,
     "",
-    `Here is your invoice${invoiceNumber ? ` (${invoiceNumber})` : ""}${issueDate ? ` dated ${issueDate}` : ""}.`,
+    introLine,
     "",
     linePreview,
     "",
@@ -173,6 +180,10 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
     })
     .join("");
 
+  const introLine =
+    input.messageType === "reminder"
+      ? `Hi ${customerName}, this is a reminder for your invoice.`
+      : `Hi ${customerName}, here is your invoice.`;
   const paymentBlock = paymentLink
     ? `<p style="margin:16px 0 0 0;font-size:14px;line-height:1.5;">
         <a href="${escapeAttribute(paymentLink)}" style="color:#0b63ce;">Pay online</a>
@@ -190,7 +201,7 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
               <td>
                 <h1 style="margin:0;font-size:20px;color:#093064;">Invoice ${invoiceNumber}</h1>
                 <p style="margin:6px 0 0 0;font-size:14px;color:#475569;">Issue date: ${issueDate}</p>
-                <p style="margin:12px 0 0 0;font-size:14px;color:#334155;">Hi ${customerName}, here is your invoice.</p>
+                <p style="margin:12px 0 0 0;font-size:14px;color:#334155;">${introLine}</p>
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:14px;">
                   ${lineRows}
                 </table>

@@ -2727,7 +2727,7 @@ test("invoice library follow-up reminder supports snooze and persists it", async
   }
 });
 
-test("invoice library follow-up reminder can resend oldest without prompting", async () => {
+test("invoice library follow-up reminder can send oldest reminder without prompting", async () => {
   const ownerId = "ui-reminder-resend-owner";
   const context = await browser.newContext();
   await context.addInitScript((initOwnerId) => {
@@ -2797,8 +2797,8 @@ test("invoice library follow-up reminder can resend oldest without prompting", a
   });
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    await page.getByRole("button", { name: "Resend oldest" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Resend oldest" }).click();
+    await page.getByRole("button", { name: "Send reminder" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Send reminder" }).click();
     const startedAt = Date.now();
     let sendCount = 0;
     while (Date.now() - startedAt < 5000) {
