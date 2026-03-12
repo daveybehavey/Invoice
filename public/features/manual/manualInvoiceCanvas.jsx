@@ -325,7 +325,10 @@ function ManualInvoiceCanvas() {
     }
     handleLineItemChange(lineId, "rate", String(suggestion.rate));
     const matchLabel = suggestion.clientMatch ? "client match" : "service match";
-    setTimedDraftStatus(`Applied suggested rate $${suggestion.rate.toFixed(2)}/hr (${matchLabel})`);
+    const confidenceLabel = suggestion.confidence ? `, ${suggestion.confidence} confidence` : "";
+    setTimedDraftStatus(
+      `Applied suggested rate $${suggestion.rate.toFixed(2)}/hr (${matchLabel}${confidenceLabel})`
+    );
   };
 
   const handleLogoChange = async (event) => {
@@ -1051,17 +1054,24 @@ function ManualInvoiceCanvas() {
                                 handleLineItemChange(item.id, "rate", event.target.value)
                               }
                             />
-                            {rateSuggestion ? (
+                          {rateSuggestion ? (
+                            <div className="mt-1 flex flex-wrap items-center gap-2">
                               <button
                                 type="button"
-                                className="mt-1 inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 transition hover:border-blue-300 hover:text-blue-900"
+                                className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 transition hover:border-blue-300 hover:text-blue-900"
                                 onClick={() => handleApplySuggestedRate(item.id, rateSuggestion)}
                                 aria-label={`Apply suggested rate $${rateSuggestion.rate.toFixed(2)} to line ${index + 1}`}
                               >
                                 {`Use suggested $${rateSuggestion.rate.toFixed(2)}/hr`}
                               </button>
-                            ) : null}
-                          </td>
+                              {rateSuggestion.confidence === "high" ? (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+                                  High confidence
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </td>
                           <td className="py-3 pr-2 text-right align-top text-slate-600 tabular-nums">
                             {item.qty !== "" && item.rate !== "" ? (
                               formatMoney(getLineAmount(item))

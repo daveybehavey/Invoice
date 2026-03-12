@@ -37,6 +37,11 @@
     return value.replace(/\s+/g, " ").trim();
   };
 
+  const normalizeUsageCount = (value) => {
+    const parsed = Number.parseInt(String(value ?? ""), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+  };
+
   const buildLookupKey = (description, qty, rate, clientName) =>
     [description.toLocaleLowerCase(), qty, rate, clientName.toLocaleLowerCase()].join("|");
 
@@ -53,6 +58,7 @@
       qty,
       rate,
       clientName,
+      usageCount: normalizeUsageCount(value?.usageCount),
       lookupKey: buildLookupKey(description, qty, rate, clientName),
       updatedAt:
         typeof value?.updatedAt === "string" && value.updatedAt.trim()
@@ -128,17 +134,31 @@
       .map((item) =>
         normalizeEntry({
           ...item,
-          clientName
+          clientName,
+          usageCount: 1
         })
       )
       .filter(Boolean);
     if (normalizedItems.length === 0) {
       return getLineItemLibrary();
     }
-    const existing = getLineItemLibrary().filter(
-      (entry) => !normalizedItems.some((item) => item.lookupKey === entry.lookupKey)
-    );
-    return saveLineItemLibrary([...normalizedItems, ...existing]);
+    const nowIso = new Date().toISOString();
+    const merged = new Map();
+    getLineItemLibrary().forEach((entry) => {
+      if (entry?.lookupKey) {
+        merged.set(entry.lookupKey, { ...entry, usageCount: normalizeUsageCount(entry.usageCount) });
+      }
+    });
+    normalizedItems.forEach((item) => {
+      const existing = merged.get(item.lookupKey);
+      const existingUsage = existing ? normalizeUsageCount(existing.usageCount) : 0;
+      merged.set(item.lookupKey, {
+        ...item,
+        usageCount: existingUsage + 1,
+        updatedAt: nowIso
+      });
+    });
+    return saveLineItemLibrary(Array.from(merged.values()));
   };
 
   window.InvoiceLineItemLibrary = {

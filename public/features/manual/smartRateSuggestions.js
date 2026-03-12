@@ -35,6 +35,19 @@
     const parsed = Number.parseFloat(String(value ?? ""));
     return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : null;
   };
+  const parseUsageCount = (value) => {
+    const parsed = Number.parseInt(String(value ?? ""), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+  };
+  const resolveMatchConfidence = ({ clientMatch, overlap, usageCount }) => {
+    if (clientMatch && (overlap >= 2 || usageCount >= 3)) {
+      return "high";
+    }
+    if (clientMatch || overlap >= 2) {
+      return "medium";
+    }
+    return "low";
+  };
 
   const resolveBestSavedRateSuggestion = ({ lineDescription, currentClientName, lineItemLibrary }) => {
     const lineTokens = tokenizeMatchText(lineDescription);
@@ -69,6 +82,12 @@
         rate,
         clientMatch,
         overlap,
+        usageCount: parseUsageCount(entry?.usageCount),
+        confidence: resolveMatchConfidence({
+          clientMatch,
+          overlap,
+          usageCount: parseUsageCount(entry?.usageCount)
+        }),
         description: typeof entry?.description === "string" ? entry.description.trim() : "",
         updatedAtTs: Number.isFinite(updatedAtTs) ? updatedAtTs : 0
       };
@@ -84,6 +103,12 @@
       }
       if (candidate.overlap !== bestMatch.overlap) {
         if (candidate.overlap > bestMatch.overlap) {
+          bestMatch = candidate;
+        }
+        continue;
+      }
+      if (candidate.usageCount !== bestMatch.usageCount) {
+        if (candidate.usageCount > bestMatch.usageCount) {
           bestMatch = candidate;
         }
         continue;
@@ -113,6 +138,7 @@
           (score, token) => (currentLineTokens.has(token) ? score + 1 : score),
           0
         );
+        const usageCount = parseUsageCount(entry?.usageCount);
         const updatedAtTs = Number.parseInt(
           String(Date.parse(typeof entry?.updatedAt === "string" ? entry.updatedAt : "")),
           10
@@ -121,6 +147,7 @@
           entry,
           clientMatch,
           serviceMatchScore,
+          usageCount,
           updatedAtTs: Number.isFinite(updatedAtTs) ? updatedAtTs : 0
         };
       })
@@ -130,6 +157,9 @@
         }
         if (right.serviceMatchScore !== left.serviceMatchScore) {
           return right.serviceMatchScore - left.serviceMatchScore;
+        }
+        if (right.usageCount !== left.usageCount) {
+          return right.usageCount - left.usageCount;
         }
         return right.updatedAtTs - left.updatedAtTs;
       });

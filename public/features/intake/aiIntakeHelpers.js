@@ -104,6 +104,19 @@
     const parsed = Number.parseFloat(String(value ?? ""));
     return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : null;
   };
+  const parseUsageCount = (value) => {
+    const parsed = Number.parseInt(String(value ?? ""), 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+  };
+  const resolveMatchConfidence = ({ clientMatch, score, usageCount }) => {
+    if (clientMatch && (score >= 2 || usageCount >= 3)) {
+      return "high";
+    }
+    if (clientMatch || score >= 2) {
+      return "medium";
+    }
+    return "low";
+  };
 
   const normalizeClientName = (value) =>
     normalizePreviewText(value)
@@ -165,6 +178,12 @@
           rate,
           description: normalizePreviewText(entry?.description),
           score,
+          usageCount: parseUsageCount(entry?.usageCount),
+          confidence: resolveMatchConfidence({
+            clientMatch: isClientMatch,
+            score,
+            usageCount: parseUsageCount(entry?.usageCount)
+          }),
           clientMatch: isClientMatch,
           updatedAt: typeof entry?.updatedAt === "string" ? entry.updatedAt : ""
         };
@@ -176,6 +195,9 @@
         }
         if (right.score !== left.score) {
           return right.score - left.score;
+        }
+        if ((right.usageCount ?? 0) !== (left.usageCount ?? 0)) {
+          return (right.usageCount ?? 0) - (left.usageCount ?? 0);
         }
         return (right.updatedAt || "").localeCompare(left.updatedAt || "");
       });
@@ -196,7 +218,9 @@
       ordered.push({
         source: "last_used",
         rate: savedRate,
-        description: ""
+        description: "",
+        confidence: "medium",
+        usageCount: 0
       });
     }
 
@@ -208,7 +232,9 @@
       ordered.push({
         source: "common",
         rate: fallbackRate,
-        description: ""
+        description: "",
+        confidence: "low",
+        usageCount: 0
       });
     });
 

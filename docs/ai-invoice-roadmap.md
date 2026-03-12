@@ -452,6 +452,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Extracted client/service smart-rate ranking and one-tap suggestion logic into `features/manual/smartRateSuggestions.js`.
    - `manualInvoiceCanvas.jsx` now consumes helper exports for saved-item ranking and per-line rate suggestions.
    - Keeps behavior unchanged while reducing orchestration complexity in the manual canvas.
+117. Advanced smart-rate defaults (usage-weighted ranking)
+   - Line-item memory now tracks `usageCount` per saved entry and increments on repeated saves.
+   - Intake and manual smart-rate suggestion ranking now uses client match + service overlap + usage frequency before recency.
+   - Added UI coverage proving labor follow-up picks the higher-usage client match when wording overlap is tied.
 
 ## Next (current priorities)
 1. Optional modularization continuation

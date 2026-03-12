@@ -339,6 +339,62 @@ test("labor follow-up prioritizes client-matched rates over generic saved matche
   }
 });
 
+test("labor follow-up favors higher-usage client matches when overlap is tied", async () => {
+  useMockResponses([
+    {
+      customerName: "Mike Johnson",
+      workSessions: [
+        {
+          date: "Jan 11",
+          tasks: [{ description: "Leak inspection" }]
+        }
+      ],
+      materials: []
+    },
+    emptyAudit()
+  ]);
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-rate-usage-priority-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          description: "Leak inspection service",
+          qty: "1",
+          rate: "142",
+          clientName: "Mike Johnson",
+          usageCount: 6,
+          updatedAt: "2026-03-09T12:00:00.000Z"
+        },
+        {
+          description: "Leak inspection service",
+          qty: "1",
+          rate: "155",
+          clientName: "Mike Johnson",
+          usageCount: 1,
+          updatedAt: "2026-03-11T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Did one labor visit this week.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+
+    await page.getByText("Pricing needed", { exact: true }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Use client match ($142/hr)" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("review quick actions include merge duplicates when duplicate line items are present", async () => {
   useMockResponses([structuredDuplicateDraft(), emptyAudit()]);
 
@@ -3134,7 +3190,7 @@ test("manual line items offer one-tap suggested rate from saved client history",
     await page.getByRole("button", { name: /Apply suggested rate \$155\.00 to line 1/i }).click();
 
     assert.equal(await page.getByPlaceholder("$0").first().inputValue(), "155");
-    await page.getByText("Applied suggested rate $155.00/hr (client match)").waitFor({
+    await page.getByText(/Applied suggested rate \$155\.00\/hr \(client match/i).waitFor({
       state: "visible"
     });
   } finally {
