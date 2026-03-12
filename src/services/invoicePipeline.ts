@@ -532,6 +532,22 @@ export async function changeLineWording(
     throw new Error(`Line item "${lineItemId}" was not found.`);
   }
 
+  if (supportsDeterministicDescriptionWordingTone(tone)) {
+    const updatedInvoice: FinishedInvoice = {
+      ...invoice,
+      lineItems: invoice.lineItems.map((lineItem) =>
+        lineItem.id === lineItemId
+          ? {
+              ...lineItem,
+              description: finalizeRewordedLineItemDescription(lineItem.description, lineItem.description)
+            }
+          : lineItem
+      )
+    };
+
+    return normalizeInvoice(FinishedInvoiceSchema.parse(updatedInvoice));
+  }
+
   const taskPrompt = [
     "Reword a single invoice line item.",
     "Keep the same meaning and professionalism.",
@@ -606,6 +622,18 @@ export async function changeDescriptionsWording(
     }
   }
 
+  if (supportsDeterministicDescriptionWordingTone(tone)) {
+    const updatedInvoice: FinishedInvoice = {
+      ...invoice,
+      lineItems: invoice.lineItems.map((lineItem) => ({
+        ...lineItem,
+        description: finalizeRewordedLineItemDescription(lineItem.description, lineItem.description)
+      }))
+    };
+
+    return normalizeInvoice(FinishedInvoiceSchema.parse(updatedInvoice));
+  }
+
   const lineItemSource = invoice.lineItems.map((lineItem, index) => ({
     id: lineItem.id ?? `line-${index + 1}`,
     description: lineItem.description
@@ -647,6 +675,10 @@ export async function changeDescriptionsWording(
 }
 
 export async function rewordFullInvoice(invoice: FinishedInvoice, tone?: string): Promise<FinishedInvoice> {
+  if (!(invoice.notes ?? "").trim() && supportsDeterministicDescriptionWordingTone(tone)) {
+    return changeDescriptionsWording(invoice, tone);
+  }
+
   if (invoice.lineItems.length === 1 && !(invoice.notes ?? "").trim()) {
     const [singleLineItem] = invoice.lineItems;
     if (singleLineItem?.id) {
@@ -3198,6 +3230,11 @@ function polishLineItemDescription(text?: string): string {
   }
   cleaned = cleaned.replace(/\s+/g, " ").trim();
   return cleaned ? `${cleaned.charAt(0).toUpperCase()}${cleaned.slice(1)}` : "";
+}
+
+function supportsDeterministicDescriptionWordingTone(tone?: string): boolean {
+  const normalizedTone = tone?.trim().toLowerCase();
+  return normalizedTone === "formal" || normalizedTone === "neutral";
 }
 
 function finalizeRewordedLineItemDescription(originalDescription: string, rewrittenDescription?: string): string {

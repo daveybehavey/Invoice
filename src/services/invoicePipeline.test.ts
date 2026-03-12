@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { setJsonTaskRunnerForTests } from "../ai/openaiClient.js";
-import { changeNotesWording, rewordFullInvoice } from "./invoicePipeline.js";
+import {
+  changeDescriptionsWording,
+  changeLineWording,
+  changeNotesWording,
+  rewordFullInvoice
+} from "./invoicePipeline.js";
 
 type CapturedTaskOptions = {
   taskType?: string;
@@ -265,4 +270,127 @@ test("changeNotesWording rewrites only notes and keeps line items untouched", as
   assert.equal(updated.lineItems[0]?.description, "Faucet repair");
   assert.match(capturedPrompt, /Rewrite invoice notes only\./);
   assert.equal((capturedOptions as CapturedTaskOptions | null)?.taskType, "wording");
+});
+
+test("changeLineWording uses a deterministic fast path for Formal tone", async () => {
+  setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
+    throw new Error("Model should not run for deterministic Formal line wording.");
+  });
+
+  const updated = await changeLineWording(
+    {
+      invoiceNumber: "INV-5",
+      issueDate: "2026-03-07",
+      customerName: "Mike Johnson",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line-1",
+          type: "labor",
+          description: "fixed sink",
+          quantity: 2,
+          unitPrice: 80,
+          amount: 160
+        }
+      ],
+      notes: "",
+      subtotal: 160,
+      total: 160,
+      balanceDue: 160
+    },
+    "line-1",
+    "Formal"
+  );
+
+  assert.equal(updated.lineItems[0]?.description, "Sink repair");
+  assert.equal(updated.lineItems[0]?.quantity, 2);
+  assert.equal(updated.lineItems[0]?.unitPrice, 80);
+  assert.equal(updated.lineItems[0]?.amount, 160);
+});
+
+test("changeDescriptionsWording uses a deterministic fast path for Neutral tone", async () => {
+  setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
+    throw new Error("Model should not run for deterministic Neutral description wording.");
+  });
+
+  const updated = await changeDescriptionsWording(
+    {
+      invoiceNumber: "INV-6",
+      issueDate: "2026-03-07",
+      customerName: "Mike Johnson",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line-1",
+          type: "labor",
+          description: "fixed sink",
+          quantity: 2,
+          unitPrice: 80,
+          amount: 160
+        },
+        {
+          id: "line-2",
+          type: "material",
+          description: "replaced washer",
+          quantity: 1,
+          unitPrice: 5,
+          amount: 5
+        }
+      ],
+      notes: "pay in 7 days thanks",
+      subtotal: 165,
+      total: 165,
+      balanceDue: 165
+    },
+    "Neutral"
+  );
+
+  assert.deepEqual(
+    updated.lineItems.map((lineItem) => lineItem.description),
+    ["Sink repair", "Washer replacement"]
+  );
+  assert.equal(updated.notes, "pay in 7 days thanks");
+});
+
+test("rewordFullInvoice uses deterministic description cleanup when notes are blank and tone is Formal", async () => {
+  setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
+    throw new Error("Model should not run for deterministic Formal full wording cleanup.");
+  });
+
+  const updated = await rewordFullInvoice(
+    {
+      invoiceNumber: "INV-7",
+      issueDate: "2026-03-07",
+      customerName: "Mike Johnson",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line-1",
+          type: "labor",
+          description: "fixed sink and replaced cartridge",
+          quantity: 2,
+          unitPrice: 80,
+          amount: 160
+        },
+        {
+          id: "line-2",
+          type: "material",
+          description: "washer kit",
+          quantity: 1,
+          unitPrice: 6,
+          amount: 6
+        }
+      ],
+      notes: "",
+      subtotal: 166,
+      total: 166,
+      balanceDue: 166
+    },
+    "Formal"
+  );
+
+  assert.deepEqual(
+    updated.lineItems.map((lineItem) => lineItem.description),
+    ["Sink repair and cartridge replacement", "Washer kit"]
+  );
 });

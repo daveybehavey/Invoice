@@ -1760,6 +1760,48 @@ test("reword-descriptions keeps notes and totals unchanged", async () => {
   assert.equal(response.body.invoice.total, 120);
 });
 
+test("reword-full uses deterministic wording cleanup for Formal tone when notes are blank", async () => {
+  setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
+    throw new Error("Model should not run for deterministic Formal full wording cleanup.");
+  });
+
+  const response = await request(app).post("/api/invoices/reword-full").send({
+    tone: "Formal",
+    invoice: {
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line_1",
+          type: "labor",
+          description: "fixed sink",
+          quantity: 2,
+          unitPrice: 60,
+          amount: 120
+        },
+        {
+          id: "line_2",
+          type: "material",
+          description: "replaced washer",
+          quantity: 1,
+          unitPrice: 5,
+          amount: 5
+        }
+      ],
+      notes: "",
+      subtotal: 125,
+      total: 125,
+      balanceDue: 125
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(
+    response.body.invoice.lineItems.map((lineItem: { description: string }) => lineItem.description),
+    ["Sink repair", "Washer replacement"]
+  );
+  assert.equal(response.body.invoice.total, 125);
+});
+
 test("export-pdf returns a downloadable pdf document", async () => {
   const response = await request(app)
     .post("/api/invoices/export-pdf")
