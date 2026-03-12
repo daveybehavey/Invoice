@@ -42,6 +42,7 @@
     onBillieNotesRefine
   }) {
     const [activeBillieTarget, setActiveBillieTarget] = React.useState(null);
+    const [showTransparencyComparison, setShowTransparencyComparison] = React.useState(false);
     const normalizedDescriptions = Array.isArray(recentlyChangedDescriptions)
       ? recentlyChangedDescriptions
       : [];
@@ -52,6 +53,34 @@
     const billieIsWorking = billieStatus?.kind === "working";
     const recentContextEntries = Array.isArray(recentClientContext) ? recentClientContext : [];
     const hasRecentClientContext = recentContextEntries.length > 0;
+    const normalizedSourceTranscript =
+      typeof payload?.sourceText === "string" ? payload.sourceText.replace(/\s+/g, " ").trim() : "";
+    const sourcePreview = normalizedSourceTranscript
+      ? normalizedSourceTranscript.length > 240
+        ? `${normalizedSourceTranscript.slice(0, 240).trimEnd()}…`
+        : normalizedSourceTranscript
+      : "Your original notes are preserved in chat history.";
+    const polishedDescriptions = Array.isArray(payload?.lineItems)
+      ? payload.lineItems
+          .map((lineItem) =>
+            typeof lineItem?.description === "string" ? lineItem.description.trim() : ""
+          )
+          .filter(Boolean)
+      : [];
+    const sourceSegments = normalizedSourceTranscript
+      ? normalizedSourceTranscript
+          .split(/\n|;|\. +|, +/g)
+          .map((part) => part.trim())
+          .filter(Boolean)
+      : [];
+    const sourcePreviewList = sourceSegments.slice(0, 3);
+    const polishedPreviewList = polishedDescriptions.slice(0, 3);
+    const polishedPreviewText =
+      polishedPreviewList.join(", ") || "No captured draft lines yet.";
+    const remainingPolishedCount = Math.max(0, polishedDescriptions.length - polishedPreviewList.length);
+    const remainingSourceCount = Math.max(0, sourceSegments.length - sourcePreviewList.length);
+    const cleanedLineCount = polishedDescriptions.length;
+    const hasTransparencyPreview = true;
     const billieContextButtonClass =
       "rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300";
     const billieContextActionClass =
@@ -68,6 +97,12 @@
         setActiveBillieTarget(null);
       }
     }, [showReviewExpandedSections, isTyping]);
+
+    React.useEffect(() => {
+      if (!showReviewSecondary || isTyping) {
+        setShowTransparencyComparison(false);
+      }
+    }, [showReviewSecondary, isTyping]);
 
     const formatRecentDate = (value) => {
       if (!value) {
@@ -119,16 +154,6 @@
               >
                 Edit with Billie
               </button>
-              {hasReviewSecondaryContent && !isCompactViewport ? (
-                <button
-                  type="button"
-                  className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
-                  onClick={() => setReviewCardCollapsed((prev) => !prev)}
-                  disabled={isTyping}
-                >
-                  {reviewDetailsToggleLabel}
-                </button>
-              ) : null}
             </div>
           </div>
 
@@ -166,7 +191,7 @@
                 {pendingDecisionCount > 0 ? (
                   <button
                     type="button"
-                    className="ml-2 inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-100"
+                    className="ml-2 inline-flex items-center rounded-full border border-blue-300 bg-blue-100 px-2.5 py-0.5 text-[11px] font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 hover:bg-blue-200"
                     onClick={() => scrollToSection(decisionsRef)}
                     disabled={isTyping}
                   >
@@ -174,13 +199,6 @@
                   </button>
                 ) : null}
               </p>
-              {hasRecentClientContext ? (
-                <p className="mt-1 text-xs text-slate-500">
-                  <span className="font-semibold text-slate-700">Recent:</span>{" "}
-                  {recentContextEntries.length} prior invoice
-                  {recentContextEntries.length > 1 ? "s" : ""} found for this client.
-                </p>
-              ) : null}
               {capturedPreviewSummary ? (
                 <p className="mt-1 text-xs text-slate-500">
                   <span className="font-semibold text-slate-700">Captured:</span>{" "}
@@ -188,7 +206,7 @@
                   {capturedPreviewHiddenCount > 0 ? ` (+${capturedPreviewHiddenCount} more)` : ""}
                 </p>
               ) : null}
-              {hasReviewSecondaryContent && isCompactViewport ? (
+              {hasReviewSecondaryContent ? (
                 <p className="mt-2">
                   <button
                     type="button"
@@ -237,11 +255,75 @@
                 </div>
               </div>
             ) : null}
+            {showReviewSecondary && hasTransparencyPreview ? (
+              <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Before and after
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  <span className="font-semibold text-slate-700">Cleaned lines:</span> {cleanedLineCount}
+                </p>
+                <p className="mt-1 text-xs text-slate-600">{sourcePreview}</p>
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                    onClick={() => setShowTransparencyComparison((prev) => !prev)}
+                    disabled={isTyping}
+                  >
+                    {showTransparencyComparison ? "Hide full comparison" : "Show full comparison"}
+                  </button>
+                </div>
+                {showTransparencyComparison ? (
+                  <div className="mt-2 space-y-2">
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        From your notes
+                      </p>
+                      {sourcePreviewList.length > 0 ? (
+                        <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-slate-600">
+                          {sourcePreviewList.map((line, index) => (
+                            <li key={`source-line-${index}`}>{line}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="mt-1 text-xs text-slate-600">No source note lines available.</p>
+                      )}
+                      {remainingSourceCount > 0 ? (
+                        <p className="mt-1 text-[11px] text-slate-500">+{remainingSourceCount} more</p>
+                      ) : null}
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Client-facing draft
+                      </p>
+                      {polishedPreviewList.length > 0 ? (
+                        <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-slate-700">
+                          {polishedPreviewList.map((line, index) => (
+                            <li key={`draft-line-${index}`}>{line}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="mt-1 text-xs text-slate-700">No captured draft lines yet.</p>
+                      )}
+                      {remainingPolishedCount > 0 ? (
+                        <p className="mt-1 text-[11px] text-slate-500">+{remainingPolishedCount} more</p>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-700">
+                    {polishedPreviewText}
+                    {remainingPolishedCount > 0 ? ` (+${remainingPolishedCount} more)` : ""}
+                  </p>
+                )}
+              </div>
+            ) : null}
             {billieStatus && !isCompactViewport ? (
               <div
                 className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
                   billieStatus.kind === "safe"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    ? "border-blue-300 bg-blue-100 text-blue-900"
                     : billieStatus.kind === "warning"
                       ? "border-amber-200 bg-amber-50 text-amber-800"
                       : billieStatus.kind === "working"
@@ -365,7 +447,7 @@
                             key={`${section.id}-${item.id ?? "item"}-${index}`}
                             className={`flex flex-wrap items-start justify-between gap-2 rounded-xl border px-3 py-2 transition-colors ${
                               isRecentlyChanged
-                                ? "border-emerald-200 bg-emerald-50/70"
+                                ? "border-blue-300 bg-blue-100/70"
                                 : "border-slate-100 bg-slate-50"
                             }`}
                           >
@@ -373,7 +455,7 @@
                               <p className="text-sm font-semibold text-slate-800">{item.description}</p>
                               {meta ? <p className="text-xs text-slate-500">{meta}</p> : null}
                               {isRecentlyChanged ? (
-                                <p className="text-[11px] font-semibold text-emerald-700">Updated by Billie</p>
+                                <p className="text-[11px] font-semibold text-blue-900">Updated by Billie</p>
                               ) : null}
                               {showBillieActions ? (
                                 <div className="flex flex-wrap gap-2 pt-1">
@@ -435,7 +517,7 @@
                 ))
               : null}
             {showReviewExpandedSections && hasBillieHighlights ? (
-              <p className="text-xs text-emerald-700">Recent changes are highlighted for 1–2 seconds.</p>
+              <p className="text-xs text-blue-900">Recent changes are highlighted for 1–2 seconds.</p>
             ) : null}
           </div>
 

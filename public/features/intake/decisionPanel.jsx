@@ -52,7 +52,16 @@
     primaryCtaDisabled,
     handlePrimaryCta,
     primaryCtaLabel,
-    ctaHelper
+    ctaHelper,
+    planLimitReached,
+    planSummary,
+    planWarning,
+    showUpgradeAction,
+    useStripeUpgradeAction,
+    upgradeUrl,
+    billingBusy,
+    billingError,
+    handleUpgradeAction
   }) {
     if (!showAssumptionsCard) {
       return null;
@@ -81,20 +90,11 @@
                 </span>
               ) : null}
             </div>
-            {showContextDetailsToggle && !isCompactViewport ? (
-              <button
-                type="button"
-                className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
-                onClick={() => setAssumptionsCollapsed((prev) => !prev)}
-              >
-                {contextDetailsToggleLabel}
-              </button>
-            ) : null}
           </div>
           {summaryTimeLabel ? (
             <p className="mt-1 text-xs text-slate-500">Summary updated {summaryTimeLabel}</p>
           ) : null}
-          {showContextDetailsToggle && isCompactViewport ? (
+          {showContextDetailsToggle ? (
             <p className="mt-2">
               <button
                 type="button"
@@ -105,7 +105,7 @@
               </button>
             </p>
           ) : null}
-          {openDecisionCount > 0 && showConfirmDetails ? (
+          {openDecisionCount > 0 && showConfirmDetails && !showQuickDecisions ? (
             <p className="mt-2 text-xs text-amber-800">I found unclear money items. Choose Add or Skip.</p>
           ) : null}
           {showConfirmDetails && (showQuickDecisions || hasVisibleDetails || hasDecisions) ? (
@@ -146,16 +146,11 @@
                     </button>
                   </div>
                   {decisionApplyPending ? (
-                    <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
-                      <p className="text-xs font-semibold text-emerald-800">
+                    <div className="mt-2 rounded-lg border border-blue-300 bg-blue-100 px-3 py-2">
+                      <p className="text-xs font-semibold text-blue-900">
                         {decisionApplyLabel || "Billie: Applying decision..."}
                       </p>
                     </div>
-                  ) : null}
-                  {openDecisionCount > 0 ? (
-                    <p className="mt-2 text-xs font-semibold text-amber-800">
-                      Pick one option below to continue.
-                    </p>
                   ) : null}
                   {showDecisionWhy ? (
                     <p className="mt-2 text-sm text-amber-900">
@@ -501,17 +496,61 @@
           <div className="mt-3 space-y-2">
             <button
               type="button"
-              className={`inline-flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 active:scale-[0.98] ${
+              className={`inline-flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 active:scale-[0.98] ${
                 primaryCtaDisabled
                   ? "cursor-not-allowed bg-slate-200 text-slate-500"
-                  : "bg-emerald-600 text-white"
+                  : "bg-blue-800 text-white"
               }`}
               disabled={primaryCtaDisabled}
               onClick={handlePrimaryCta}
             >
               {primaryCtaLabel}
             </button>
-            <p className="text-xs text-slate-500">{ctaHelper}</p>
+            {!(openDecisionCount > 0 && showQuickDecisions) && ctaHelper ? (
+              <p className="text-xs text-slate-500">{ctaHelper}</p>
+            ) : null}
+            {planLimitReached ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                <p className="text-sm font-semibold text-amber-900">Free plan limit reached</p>
+                {planSummary ? (
+                  <p className="mt-1 text-xs font-semibold text-amber-800">{planSummary}</p>
+                ) : null}
+                <p className="mt-1 text-xs text-amber-800">
+                  You can keep generating drafts. Saving a new invoice is locked until you upgrade.
+                </p>
+                {showUpgradeAction ? (
+                  <div className="mt-2">
+                    {useStripeUpgradeAction ? (
+                      <button
+                        type="button"
+                        className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                        onClick={handleUpgradeAction}
+                        disabled={billingBusy}
+                      >
+                        {billingBusy ? "Opening..." : "Upgrade plan"}
+                      </button>
+                    ) : (
+                      <a
+                        href={upgradeUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-300 hover:text-amber-900"
+                      >
+                        Upgrade plan
+                      </a>
+                    )}
+                  </div>
+                ) : null}
+                {billingError ? <p className="mt-2 text-xs text-rose-700">{billingError}</p> : null}
+              </div>
+            ) : planWarning ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                {planSummary ? (
+                  <p className="text-xs text-amber-800">{planSummary}</p>
+                ) : null}
+                <p className="mt-1 text-xs font-semibold text-amber-900">{planWarning}</p>
+              </div>
+            ) : null}
           </div>
         </section>
       </div>

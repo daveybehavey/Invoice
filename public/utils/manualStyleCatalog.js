@@ -10,7 +10,7 @@
       titleClass: "text-3xl font-['Fraunces'] tracking-[0.12em] text-slate-900",
       labelClass: "text-slate-700 font-semibold",
       inputClass:
-        "rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-[inset_0_1px_1px_rgba(15,23,42,0.05)] focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200",
+        "rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 shadow-[inset_0_1px_1px_rgba(15,23,42,0.05)] focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200",
       tableHeadClass: "text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500",
       totalsMutedClass: "text-slate-600",
       totalsStrongClass: "text-slate-900"

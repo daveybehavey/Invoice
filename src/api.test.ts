@@ -5,6 +5,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { after, afterEach, beforeEach, test } from "node:test";
 import request from "supertest";
+import Stripe from "stripe";
 
 process.env.NODE_ENV = "test";
 process.env.INVOICE_STORE_BACKEND = "file";
@@ -19,6 +20,10 @@ process.env.FLOW_FRICTION_REPORT_FILE = path.join(
 process.env.FLOW_FRICTION_HISTORY_FILE = path.join(
   os.tmpdir(),
   `invoice-flow-friction-history-${randomUUID()}.json`
+);
+process.env.STRIPE_ENTITLEMENTS_STORE_FILE = path.join(
+  os.tmpdir(),
+  `invoice-stripe-entitlements-${randomUUID()}.json`
 );
 
 const [{ app }, { setImageOcrRunnerForTests, setJsonTaskRunnerForTests }] = await Promise.all([
@@ -42,6 +47,10 @@ const flowFrictionHistoryFilePath = process.env.FLOW_FRICTION_HISTORY_FILE;
 if (!flowFrictionHistoryFilePath) {
   throw new Error("FLOW_FRICTION_HISTORY_FILE is required for tests.");
 }
+const stripeEntitlementsStoreFilePath = process.env.STRIPE_ENTITLEMENTS_STORE_FILE;
+if (!stripeEntitlementsStoreFilePath) {
+  throw new Error("STRIPE_ENTITLEMENTS_STORE_FILE is required for tests.");
+}
 const nativeFetch = globalThis.fetch;
 
 beforeEach(async () => {
@@ -53,6 +62,8 @@ beforeEach(async () => {
   await fs.rm(flowFrictionReportFilePath, { force: true });
   await fs.mkdir(path.dirname(flowFrictionHistoryFilePath), { recursive: true });
   await fs.rm(flowFrictionHistoryFilePath, { force: true });
+  await fs.mkdir(path.dirname(stripeEntitlementsStoreFilePath), { recursive: true });
+  await fs.rm(stripeEntitlementsStoreFilePath, { force: true });
   delete process.env.OCR_METRICS_EXPORT_PROVIDER;
   delete process.env.OCR_METRICS_EXPORT_URL;
   delete process.env.OCR_METRICS_GA4_MEASUREMENT_ID;
@@ -61,6 +72,17 @@ beforeEach(async () => {
   delete process.env.OCR_METRICS_SEGMENT_WRITE_KEY;
   delete process.env.OCR_METRICS_SEGMENT_ENDPOINT;
   delete process.env.OCR_METRICS_EXPORT_AUTOSEND;
+  delete process.env.INVOICE_DEFAULT_PLAN;
+  delete process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH;
+  delete process.env.INVOICE_PRO_EMAILS;
+  delete process.env.INVOICE_PRO_USER_IDS;
+  delete process.env.INVOICE_PRO_OWNER_IDS;
+  delete process.env.INVOICE_UPGRADE_URL;
+  delete process.env.INVOICE_BILLING_PORTAL_URL;
+  delete process.env.STRIPE_SECRET_KEY;
+  delete process.env.STRIPE_PRICE_ID;
+  delete process.env.STRIPE_WEBHOOK_SECRET;
+  delete process.env.APP_BASE_URL;
 });
 
 afterEach(() => {
@@ -76,6 +98,7 @@ after(async () => {
   await fs.rm(ocrMetricsStoreFilePath, { force: true });
   await fs.rm(flowFrictionReportFilePath, { force: true });
   await fs.rm(flowFrictionHistoryFilePath, { force: true });
+  await fs.rm(stripeEntitlementsStoreFilePath, { force: true });
 });
 
 test("asks one labor pricing follow-up and does not finalize with $0 labor", async () => {
@@ -2002,6 +2025,392 @@ test("save remains explicit-only", async () => {
   const listAfterSave = await request(app).get("/api/invoices");
   assert.equal(listAfterSave.status, 200);
   assert.equal(listAfterSave.body.invoices.length, 1);
+});
+
+test("account plan endpoint reports free-tier usage and remaining saves", async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "2";
+
+  const saveResponse = await request(app).post("/api/invoices/save").send({
+    confirmSave: true,
+    sourceType: "text_input",
+    invoiceData: {
+      structuredInvoice: {
+        customerName: "Mike Johnson",
+        workSessions: [],
+        materials: [],
+        notes: "Test"
+      },
+      finishedInvoice: {
+        invoiceNumber: "INV-2001",
+        issueDate: "2026-03-10",
+        customerName: "Mike Johnson",
+        currency: "USD",
+        lineItems: [
+          {
+            id: "line-1",
+            type: "labor",
+            description: "Roof repair",
+            quantity: 1,
+            unitPrice: 100,
+            amount: 100
+          }
+        ],
+        subtotal: 100,
+        total: 100,
+        balanceDue: 100
+      }
+    }
+  });
+
+  assert.equal(saveResponse.status, 200);
+
+  const planResponse = await request(app).get("/api/account/plan");
+  assert.equal(planResponse.status, 200);
+  assert.equal(planResponse.body.plan, "free");
+  assert.equal(planResponse.body.limits.invoicesPerMonth, 2);
+  assert.equal(planResponse.body.usage.invoicesCreated, 1);
+  assert.equal(planResponse.body.usage.invoicesRemaining, 1);
+  assert.equal(planResponse.body.canCreateInvoice, true);
+  assert.equal(planResponse.body.upgradeRequired, false);
+});
+
+test("account plan endpoint includes sanitized upgrade and billing links", async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.INVOICE_UPGRADE_URL = "https://notebill.app/upgrade";
+  process.env.INVOICE_BILLING_PORTAL_URL = "https://notebill.app/billing";
+
+  const validResponse = await request(app).get("/api/account/plan");
+  assert.equal(validResponse.status, 200);
+  assert.equal(validResponse.body.links?.upgradeUrl, "https://notebill.app/upgrade");
+  assert.equal(validResponse.body.links?.billingPortalUrl, "https://notebill.app/billing");
+
+  process.env.INVOICE_UPGRADE_URL = "javascript:alert(1)";
+  process.env.INVOICE_BILLING_PORTAL_URL = "ftp://notebill.app/billing";
+
+  const invalidResponse = await request(app).get("/api/account/plan");
+  assert.equal(invalidResponse.status, 200);
+  assert.equal(invalidResponse.body.links?.upgradeUrl, null);
+  assert.equal(invalidResponse.body.links?.billingPortalUrl, null);
+});
+
+test("account plan endpoint reports stripe billing capabilities from env flags", async () => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_PRICE_ID = "price_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+
+  const response = await request(app).get("/api/account/plan");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.billing?.provider, "stripe");
+  assert.equal(response.body.billing?.checkoutAvailable, true);
+  assert.equal(response.body.billing?.portalAvailable, true);
+  assert.equal(response.body.billing?.webhookAvailable, true);
+});
+
+test("billing diagnostics endpoint reports stripe readiness + entitlement counts", async () => {
+  const baseline = await request(app).get("/api/system/billing");
+  assert.equal(baseline.status, 200);
+  assert.equal(baseline.body.provider, "none");
+  assert.equal(baseline.body.entitlements?.subscriptionCount, 0);
+  assert.equal(baseline.body.entitlements?.activeSubscriptionCount, 0);
+  assert.match(String(baseline.body.warning || ""), /STRIPE_SECRET_KEY/i);
+
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+  process.env.STRIPE_PRICE_ID = "price_test_placeholder";
+
+  const payload = JSON.stringify({
+    id: "evt_test_billing_diag_checkout",
+    object: "event",
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_test_billing_diag",
+        object: "checkout.session",
+        customer: "cus_test_billing_diag",
+        subscription: "sub_test_billing_diag",
+        customer_email: "diag@test.dev",
+        metadata: {
+          ownerId: "owner-diagnostics",
+          userId: "user-diagnostics",
+          email: "diag@test.dev"
+        }
+      }
+    }
+  });
+  const signature = Stripe.webhooks.generateTestHeaderString({
+    payload,
+    secret: process.env.STRIPE_WEBHOOK_SECRET
+  });
+  const webhookResponse = await request(app)
+    .post("/api/billing/stripe/webhook")
+    .set("Content-Type", "application/json")
+    .set("stripe-signature", signature)
+    .send(payload);
+  assert.equal(webhookResponse.status, 200);
+
+  const afterWebhook = await request(app).get("/api/system/billing");
+  assert.equal(afterWebhook.status, 200);
+  assert.equal(afterWebhook.body.provider, "stripe");
+  assert.equal(afterWebhook.body.capabilities?.checkoutAvailable, true);
+  assert.equal(afterWebhook.body.capabilities?.webhookAvailable, true);
+  assert.equal(afterWebhook.body.entitlements?.customerCount, 1);
+  assert.equal(afterWebhook.body.entitlements?.subscriptionCount, 1);
+  assert.equal(afterWebhook.body.entitlements?.activeSubscriptionCount, 1);
+  assert.equal(afterWebhook.body.entitlements?.missingIdentityCount, 0);
+  assert.equal(afterWebhook.body.entitlements?.byStatus?.active, 1);
+  assert.equal(afterWebhook.body.warning, null);
+});
+
+test("checkout session endpoint returns a setup error when stripe is not configured", async () => {
+  const response = await request(app).post("/api/billing/checkout-session").send({});
+  assert.equal(response.status, 400);
+  assert.match(String(response.body.error || ""), /STRIPE_SECRET_KEY/i);
+});
+
+test("billing portal endpoint requires an authenticated session", async () => {
+  const response = await request(app).post("/api/billing/portal-session").send({});
+  assert.equal(response.status, 401);
+  assert.match(String(response.body.error || ""), /sign in/i);
+});
+
+test("stripe webhook checkout event grants pro access for matching signed-in user", async () => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+
+  const email = "stripe-pro@test.dev";
+  const signInResponse = await request(app).post("/api/auth/session").send({ email });
+  assert.equal(signInResponse.status, 200);
+  const token = signInResponse.body.token as string;
+  const session = signInResponse.body.session as { userId: string; email: string };
+
+  const planBefore = await request(app).get("/api/account/plan").set("authorization", `Bearer ${token}`);
+  assert.equal(planBefore.status, 200);
+  assert.equal(planBefore.body.plan, "free");
+
+  const webhookPayload = JSON.stringify({
+    id: "evt_test_checkout_completed",
+    object: "event",
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_test_123",
+        object: "checkout.session",
+        customer: "cus_test_123",
+        subscription: "sub_test_123",
+        customer_email: email,
+        metadata: {
+          ownerId: session.userId,
+          userId: session.userId,
+          email: session.email
+        }
+      }
+    }
+  });
+  const signature = Stripe.webhooks.generateTestHeaderString({
+    payload: webhookPayload,
+    secret: process.env.STRIPE_WEBHOOK_SECRET
+  });
+
+  const webhookResponse = await request(app)
+    .post("/api/billing/stripe/webhook")
+    .set("Content-Type", "application/json")
+    .set("stripe-signature", signature)
+    .send(webhookPayload);
+  assert.equal(webhookResponse.status, 200);
+  assert.equal(webhookResponse.body.ok, true);
+  assert.equal(webhookResponse.body.handled, true);
+  assert.equal(webhookResponse.body.eventType, "checkout.session.completed");
+
+  const planAfter = await request(app).get("/api/account/plan").set("authorization", `Bearer ${token}`);
+  assert.equal(planAfter.status, 200);
+  assert.equal(planAfter.body.plan, "pro");
+});
+
+test("stripe webhook endpoint requires signature header", async () => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+
+  const response = await request(app)
+    .post("/api/billing/stripe/webhook")
+    .set("Content-Type", "application/json")
+    .send(JSON.stringify({ id: "evt_test_missing_signature", type: "checkout.session.completed", data: { object: {} } }));
+
+  assert.equal(response.status, 400);
+  assert.match(String(response.body.error || ""), /Missing Stripe signature header/i);
+});
+
+test("free-tier save limit blocks new saves but still allows updates", async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "1";
+
+  const firstSave = await request(app).post("/api/invoices/save").send({
+    confirmSave: true,
+    sourceType: "text_input",
+    invoiceData: {
+      structuredInvoice: {
+        customerName: "Mike Johnson",
+        workSessions: [],
+        materials: [],
+        notes: "Initial note"
+      },
+      finishedInvoice: {
+        invoiceNumber: "INV-3001",
+        issueDate: "2026-03-10",
+        customerName: "Mike Johnson",
+        currency: "USD",
+        lineItems: [
+          {
+            id: "line-1",
+            type: "labor",
+            description: "Roof repair",
+            quantity: 1,
+            unitPrice: 125,
+            amount: 125
+          }
+        ],
+        notes: "Initial note",
+        subtotal: 125,
+        total: 125,
+        balanceDue: 125
+      }
+    }
+  });
+  assert.equal(firstSave.status, 200);
+  const invoiceId = firstSave.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const blockedSave = await request(app).post("/api/invoices/save").send({
+    confirmSave: true,
+    sourceType: "text_input",
+    invoiceData: {
+      structuredInvoice: {
+        customerName: "Second Client",
+        workSessions: [],
+        materials: []
+      },
+      finishedInvoice: {
+        invoiceNumber: "INV-3002",
+        issueDate: "2026-03-10",
+        customerName: "Second Client",
+        currency: "USD",
+        lineItems: [
+          {
+            id: "line-2",
+            type: "labor",
+            description: "Gutter cleanup",
+            quantity: 1,
+            unitPrice: 90,
+            amount: 90
+          }
+        ],
+        subtotal: 90,
+        total: 90,
+        balanceDue: 90
+      }
+    }
+  });
+
+  assert.equal(blockedSave.status, 402);
+  assert.match(String(blockedSave.body.error || ""), /Free plan limit reached/i);
+
+  const updateSave = await request(app).post("/api/invoices/save").send({
+    confirmSave: true,
+    invoiceId,
+    sourceType: "text_input",
+    invoiceData: {
+      structuredInvoice: {
+        customerName: "Mike Johnson",
+        workSessions: [],
+        materials: [],
+        notes: "Updated note"
+      },
+      finishedInvoice: {
+        invoiceNumber: "INV-3001",
+        issueDate: "2026-03-10",
+        customerName: "Mike Johnson",
+        currency: "USD",
+        lineItems: [
+          {
+            id: "line-1",
+            type: "labor",
+            description: "Roof repair and cleanup",
+            quantity: 1,
+            unitPrice: 125,
+            amount: 125
+          }
+        ],
+        notes: "Updated note",
+        subtotal: 125,
+        total: 125,
+        balanceDue: 125
+      }
+    }
+  });
+
+  assert.equal(updateSave.status, 200);
+  assert.equal(updateSave.body.invoice.invoiceId, invoiceId);
+});
+
+test("pro allowlist bypasses free monthly save limit", async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "1";
+  process.env.INVOICE_PRO_EMAILS = "pro@test.dev";
+
+  const signInResponse = await request(app).post("/api/auth/session").send({ email: "pro@test.dev" });
+  assert.equal(signInResponse.status, 200);
+  const token = signInResponse.body.token as string;
+  assert.ok(token);
+
+  const buildSavePayload = (invoiceNumber: string) => ({
+    confirmSave: true,
+    sourceType: "text_input",
+    invoiceData: {
+      structuredInvoice: {
+        customerName: "Pro Client",
+        workSessions: [],
+        materials: []
+      },
+      finishedInvoice: {
+        invoiceNumber,
+        issueDate: "2026-03-10",
+        customerName: "Pro Client",
+        currency: "USD",
+        lineItems: [
+          {
+            id: `${invoiceNumber}-line`,
+            type: "labor",
+            description: "Pro save",
+            quantity: 1,
+            unitPrice: 150,
+            amount: 150
+          }
+        ],
+        subtotal: 150,
+        total: 150,
+        balanceDue: 150
+      }
+    }
+  });
+
+  const firstSave = await request(app)
+    .post("/api/invoices/save")
+    .set("authorization", `Bearer ${token}`)
+    .send(buildSavePayload("INV-PRO-1"));
+  assert.equal(firstSave.status, 200);
+
+  const secondSave = await request(app)
+    .post("/api/invoices/save")
+    .set("authorization", `Bearer ${token}`)
+    .send(buildSavePayload("INV-PRO-2"));
+  assert.equal(secondSave.status, 200);
+
+  const planResponse = await request(app).get("/api/account/plan").set("authorization", `Bearer ${token}`);
+  assert.equal(planResponse.status, 200);
+  assert.equal(planResponse.body.plan, "pro");
+  assert.equal(planResponse.body.canCreateInvoice, true);
+  assert.equal(planResponse.body.upgradeRequired, false);
+  assert.equal(planResponse.body.limits.invoicesPerMonth, null);
 });
 
 test("delete removes saved invoice", async () => {

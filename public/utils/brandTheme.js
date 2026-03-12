@@ -1,5 +1,5 @@
 (() => {
-  const DEFAULT_ACCENT_COLOR = "#0f9d6e";
+  const DEFAULT_ACCENT_COLOR = "#6993d2";
 
   const normalizeAccentColor = (value) => {
     const raw = typeof value === "string" ? value.trim() : "";

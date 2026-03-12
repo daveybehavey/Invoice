@@ -202,6 +202,7 @@
       customerName: invoice.customerName ?? "",
       servicePeriodStart: invoice.servicePeriodStart ?? "",
       servicePeriodEnd: invoice.servicePeriodEnd ?? "",
+      sourceText: typeof transcript === "string" ? transcript : "",
       notes: invoice.notes ?? "",
       lineItems: orderedLineItems.map((item, index) => ({
         id: item.id ?? `review-line-${index}`,
@@ -286,13 +287,18 @@
       return "";
     }
     let cleaned = snippet.trim();
+    cleaned = cleaned.replace(/^["'“”]+|["'“”]+$/g, "");
     cleaned = cleaned.replace(
       /^(on\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\s+\d{1,2}\b[,:-]?\s*/i,
       ""
     );
+    cleaned = cleaned.replace(/^(bill|charge|invoice)\b[\s:,-]*/i, "");
+    cleaned = cleaned.replace(/^this item\b[\s:,-]*/i, "");
+    cleaned = cleaned.replace(/^\b(?:if we|if i|if)\s+/i, "");
     cleaned = cleaned.replace(/\b(not sure if i should bill|up to you|do what makes sense).*$/i, "");
     cleaned = cleaned.replace(/\bmaybe\b/gi, "");
     cleaned = cleaned.replace(/\s*[-–—]\s*$/g, "");
+    cleaned = cleaned.replace(/[?!.,;:]+$/g, "");
     cleaned = cleaned.replace(/\s{2,}/g, " ").trim();
     return cleaned;
   };
@@ -353,24 +359,24 @@
     const rawSnippet = extractDecisionSnippet(decision.prompt ?? "");
     const cleanedSnippet = cleanDecisionSnippet(rawSnippet) || rawSnippet;
     const snippet = shortenSnippet(cleanedSnippet);
-    const cleanedActionSnippet = (rawSnippet || decision.prompt || "this item").replace(
-      /^bill\s+/i,
-      ""
-    );
-    const cleanedDisplaySnippet = snippet.replace(/^bill\s+/i, "");
+    const cleanedActionSnippet = cleanDecisionSnippet(rawSnippet || decision.prompt || "this item")
+      .replace(/^bill\s+/i, "")
+      .trim();
+    const cleanedDisplaySnippet = snippet.replace(/^bill\s+/i, "").replace(/[?!.,;:]+$/g, "").trim();
+    const actionSnippet = cleanedActionSnippet || cleanedDisplaySnippet || "this item";
     const baseAction = { id: decision.id, kind: decision.kind, snippet: rawSnippet };
     const display =
       decision.kind === "tax"
         ? "Apply tax?"
-        : rawSnippet
+        : cleanedDisplaySnippet
           ? `Bill ${cleanedDisplaySnippet}?`
           : decision.prompt ?? "Decision needed";
     const includeLabel = decision.kind === "tax" ? "Apply tax" : "Add";
     const excludeLabel = decision.kind === "tax" ? "No tax" : "Skip";
     const includeValue =
-      decision.kind === "tax" ? "Apply tax." : `Bill ${cleanedActionSnippet}.`;
+      decision.kind === "tax" ? "Apply tax." : `Bill ${actionSnippet}.`;
     const excludeValue =
-      decision.kind === "tax" ? "No tax." : `Don't bill ${cleanedActionSnippet}.`;
+      decision.kind === "tax" ? "No tax." : `Don't bill ${actionSnippet}.`;
     return {
       display,
       includeLabel,

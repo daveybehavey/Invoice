@@ -6,7 +6,7 @@
   "scope": "/",
   "display": "standalone",
   "background_color": "#f8fafc",
-  "theme_color": "#0f9d6e",
+  "theme_color": "#093064",
   "icons": [
     {
       "src": "/icons/notebill-192.png",

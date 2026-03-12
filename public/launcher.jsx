@@ -6,7 +6,7 @@ if (!uiPrimitives) {
   throw new Error("Missing /ui/primitives.jsx load. Ensure it is loaded before /launcher.jsx.");
 }
 
-const { SparklesIcon, PencilIcon, UploadIcon, ArchiveIcon, SwatchIcon, LauncherCard } = uiPrimitives;
+const { SparklesIcon, PencilIcon, UploadIcon, ArchiveIcon, SwatchIcon } = uiPrimitives;
 
 const intakeFeatureUtils = window.InvoiceIntakeFeature;
 if (!intakeFeatureUtils) {
@@ -62,12 +62,84 @@ if (!manualCanvasUtils) {
 
 const { ManualInvoiceCanvas } = manualCanvasUtils;
 
+const accountPlanUtils = window.InvoiceAccountPlanUtils;
+if (!accountPlanUtils) {
+  throw new Error("Missing /utils/accountPlan.js load. Ensure it is loaded before /launcher.jsx.");
+}
+
+const { formatPlanSummary, getPlanUpgradeUrl, getPlanBillingPortalUrl, getPlanPrelimitWarning } =
+  accountPlanUtils;
+const billingActions = window.InvoiceBillingActions;
+if (!billingActions) {
+  throw new Error("Missing /utils/billingActions.js load. Ensure it is loaded before /launcher.jsx.");
+}
+
+const { hasStripeCheckout, hasStripePortal, startUpgradeCheckout, openBillingPortal } = billingActions;
+
 const requestIdentity = window.InvoiceRequestIdentity;
 if (!requestIdentity) {
   throw new Error("Missing /utils/requestIdentity.js load. Ensure it is loaded before /launcher.jsx.");
 }
 
-const { getAuthSession, refreshSession, signInWithEmail, signOut } = requestIdentity;
+const { apiFetch, getAuthSession, refreshSession, signInWithEmail, signOut } = requestIdentity;
+
+const launcherSectionUtils = window.InvoiceLauncherSections;
+if (!launcherSectionUtils) {
+  throw new Error(
+    "Missing /features/launcher/launcherSections.jsx load. Ensure it is loaded before /launcher.jsx."
+  );
+}
+
+const { AccountStrip, DraftRecoverySection, StartSection, AlternateStartsSection, ManageSection, AuthModal } =
+  launcherSectionUtils;
+const launcherHelperUtils = window.InvoiceLauncherHelpers;
+if (!launcherHelperUtils) {
+  throw new Error(
+    "Missing /features/launcher/launcherHelpers.js load. Ensure it is loaded before /launcher.jsx."
+  );
+}
+
+const {
+  readBillingNoticeFromUrl,
+  isValidEmail,
+  isDiagnosticsHost,
+  buildLauncherOptions,
+  buildPlanActionState,
+  hasResumeDraftForKey
+} = launcherHelperUtils;
+const intakeReadinessUtils = window.InvoiceIntakeReadiness;
+if (!intakeReadinessUtils) {
+  throw new Error("Missing /features/intake/readiness.js load. Ensure it is loaded before /launcher.jsx.");
+}
+
+const { buildDraftFromFinishedInvoice } = intakeReadinessUtils;
+
+function deriveTaxRate(invoice) {
+  if (!invoice) {
+    return "0";
+  }
+  const subtotal = Number(invoice.subtotal);
+  const total = Number(invoice.total);
+  if (!Number.isFinite(subtotal) || !Number.isFinite(total) || subtotal <= 0) {
+    return "0";
+  }
+  const taxAmount = total - subtotal;
+  if (taxAmount <= 0) {
+    return "0";
+  }
+  return ((taxAmount / subtotal) * 100).toFixed(2);
+}
+
+function formatUpdatedLabel(value) {
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  return parsed.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
 
 function Launcher() {
   const navigate = useNavigate();
@@ -77,9 +149,17 @@ function Launcher() {
   const [authEmailError, setAuthEmailError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [accountPlan, setAccountPlan] = useState(null);
+  const [billingNotice, setBillingNotice] = useState(null);
   const showDiagnosticsLink =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+    typeof window !== "undefined" && isDiagnosticsHost(window.location.hostname);
+
+  useEffect(() => {
+    const notice = readBillingNoticeFromUrl();
+    if (notice) {
+      setBillingNotice(notice);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -102,6 +182,36 @@ function Launcher() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    const loadPlan = async () => {
+      try {
+        const response = await apiFetch("/api/account/plan");
+        if (!active) {
+          return;
+        }
+        if (!response.ok) {
+          setAccountPlan(null);
+          return;
+        }
+        const payload = await response.json();
+        if (!active) {
+          return;
+        }
+        setAccountPlan(payload && typeof payload === "object" ? payload : null);
+      } catch (_error) {
+        if (!active) {
+          return;
+        }
+        setAccountPlan(null);
+      }
+    };
+    loadPlan();
+    return () => {
+      active = false;
+    };
+  }, [authSession?.userId]);
+
+  useEffect(() => {
     if (!authModalOpen) {
       return undefined;
     }
@@ -115,8 +225,6 @@ function Launcher() {
       window.removeEventListener("keydown", handleKeydown);
     };
   }, [authModalOpen, authBusy]);
-
-  const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
   const handleSignIn = async () => {
     const normalizedEmail = authEmail.trim().toLowerCase();
@@ -165,97 +273,237 @@ function Launcher() {
     }
   };
 
-  const options = [
-    {
-      key: "ai",
-      title: "Let Billie Build",
-      description: "Paste notes or describe the job for Billie.",
-      icon: <SparklesIcon />,
-      onClick: () => navigate("/ai-intake"),
-      disabled: false
-    },
-    {
-      key: "import",
-      title: "Import Existing Invoice",
-      description: "Upload a PDF or text invoice to edit.",
-      icon: <UploadIcon />,
-      onClick: () => navigate("/import"),
-      disabled: false
-    },
-    {
-      key: "manual",
-      title: "Build It Yourself",
-      description: "Start with a clean, editable invoice.",
-      icon: <PencilIcon />,
-      onClick: () => navigate("/manual"),
-      disabled: false
-    },
-    {
-      key: "library",
-      title: "Invoice Library",
-      description: "Reopen saved invoices and drafts.",
-      icon: <ArchiveIcon />,
-      onClick: () => navigate("/invoices"),
-      disabled: false
-    },
-    {
-      key: "identity",
-      title: "Business Identity",
-      description: "Set your logo, style, and default From details.",
-      icon: <SwatchIcon />,
-      onClick: () => navigate("/settings/business"),
-      disabled: false
+  const options = buildLauncherOptions({
+    navigate,
+    icons: {
+      sparkles: <SparklesIcon />,
+      upload: <UploadIcon />,
+      pencil: <PencilIcon />,
+      archive: <ArchiveIcon />,
+      swatch: <SwatchIcon />
     }
-  ];
+  });
+  const primaryOption = options.find((option) => option.key === "ai") ?? options[0];
+  const quickStartOptions = options.filter(
+    (option) => option.key === "import" || option.key === "manual"
+  );
+  const manageOptions = options.filter(
+    (option) => option.key === "library" || option.key === "identity"
+  );
+  const planSummary = formatPlanSummary(accountPlan);
+  const planAtLimit = Boolean(accountPlan?.upgradeRequired);
+  const planWarning = getPlanPrelimitWarning(accountPlan);
+  const upgradeUrl = getPlanUpgradeUrl(accountPlan);
+  const billingPortalUrl = getPlanBillingPortalUrl(accountPlan);
+  const {
+    useStripeUpgradeAction,
+    useStripePortalAction,
+    showUpgradeAction,
+    showBillingPortalAction,
+    hasPlanActions
+  } = buildPlanActionState({
+    accountPlan,
+    upgradeUrl,
+    billingPortalUrl,
+    hasStripeCheckout,
+    hasStripePortal
+  });
+  const draftStorageKey = requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? "invoiceDraft";
+  const [hasResumeDraft, setHasResumeDraft] = useState(false);
+  const [showAlternateStarts, setShowAlternateStarts] = useState(false);
+  const [showPlanActions, setShowPlanActions] = useState(false);
+  const [showManageOptions, setShowManageOptions] = useState(false);
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [billingError, setBillingError] = useState("");
+  const [draftRecoveryItems, setDraftRecoveryItems] = useState([]);
+  const [draftRecoveryLoading, setDraftRecoveryLoading] = useState(false);
+  const [resumeDraftBusyId, setResumeDraftBusyId] = useState("");
+
+  const handleUpgradeAction = async () => {
+    setBillingBusy(true);
+    setBillingError("");
+    try {
+      await startUpgradeCheckout(accountPlan, { successPath: "/?billing=success" });
+    } catch (error) {
+      setBillingError(error?.message || "Unable to open upgrade.");
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const handleBillingAction = async () => {
+    setBillingBusy(true);
+    setBillingError("");
+    try {
+      await openBillingPortal(accountPlan, { returnPath: "/" });
+    } catch (error) {
+      setBillingError(error?.message || "Unable to open billing.");
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    const checkDraft = () => {
+      setHasResumeDraft(hasResumeDraftForKey(draftStorageKey));
+    };
+    checkDraft();
+    window.addEventListener("focus", checkDraft);
+    return () => {
+      window.removeEventListener("focus", checkDraft);
+    };
+  }, [draftStorageKey, authSession?.userId]);
+
+  useEffect(() => {
+    let active = true;
+    const loadDraftRecovery = async () => {
+      setDraftRecoveryLoading(true);
+      try {
+        const response = await apiFetch("/api/invoices");
+        if (!active) {
+          return;
+        }
+        if (!response.ok) {
+          setDraftRecoveryItems([]);
+          return;
+        }
+        const payload = await response.json();
+        if (!active) {
+          return;
+        }
+        const drafts = Array.isArray(payload?.invoices)
+          ? payload.invoices
+              .filter((invoice) => invoice?.status === "draft")
+              .slice(0, 3)
+              .map((invoice) => ({
+                invoiceId: invoice.invoiceId,
+                invoiceNumber: invoice.invoiceNumber || "Draft invoice",
+                updatedLabel: formatUpdatedLabel(invoice.updatedAt)
+              }))
+          : [];
+        setDraftRecoveryItems(drafts);
+      } catch (_error) {
+        if (!active) {
+          return;
+        }
+        setDraftRecoveryItems([]);
+      } finally {
+        if (active) {
+          setDraftRecoveryLoading(false);
+        }
+      }
+    };
+    void loadDraftRecovery();
+    const handleFocus = () => {
+      void loadDraftRecovery();
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [authSession?.userId]);
+
+  const handleResumeSavedDraft = async (invoiceId) => {
+    if (!invoiceId || resumeDraftBusyId) {
+      return;
+    }
+    setAuthError("");
+    setResumeDraftBusyId(invoiceId);
+    try {
+      const response = await apiFetch(`/api/invoices/${invoiceId}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to open draft.");
+      }
+      const savedInvoice = payload?.invoice;
+      const finishedInvoice = savedInvoice?.invoiceData?.finishedInvoice;
+      if (!finishedInvoice) {
+        throw new Error("Saved draft is incomplete.");
+      }
+      const draft = buildDraftFromFinishedInvoice(finishedInvoice, {
+        taxRate: deriveTaxRate(finishedInvoice),
+        savedInvoiceId: savedInvoice?.invoiceId ?? "",
+        savedInvoiceStatus: savedInvoice?.status ?? "draft"
+      });
+      window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+      navigate("/manual");
+    } catch (error) {
+      setAuthError(error?.message || "Failed to open draft.");
+    } finally {
+      setResumeDraftBusyId("");
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50">
       <main className="mx-auto max-w-xl px-4 py-10 md:max-w-5xl md:py-16">
         <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">NoteBill</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">NoteBill</p>
           <h1 className="text-2xl font-semibold text-slate-900 md:text-3xl">Create a New Invoice</h1>
           <p className="text-sm text-slate-600 md:text-base">
-            Choose how you want to start. Billie can turn messy notes into a clean draft in seconds.
+            Billie turns messy notes into a clean invoice draft.
           </p>
         </div>
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
-          <p className="text-sm text-slate-600">
-            {authSession?.email ? `Signed in as ${authSession.email}` : "Not signed in (local mode)"}
+        <AccountStrip
+          authSession={authSession}
+          authBusy={authBusy}
+          planSummary={planSummary}
+          planAtLimit={planAtLimit}
+          planWarning={planWarning}
+          hasPlanActions={hasPlanActions}
+          showPlanActions={showPlanActions}
+          onTogglePlanActions={() => setShowPlanActions((current) => !current)}
+          showUpgradeAction={showUpgradeAction}
+          upgradeUrl={upgradeUrl}
+          useStripeUpgradeAction={useStripeUpgradeAction}
+          showBillingPortalAction={showBillingPortalAction}
+          billingPortalUrl={billingPortalUrl}
+          useStripePortalAction={useStripePortalAction}
+          billingBusy={billingBusy}
+          onOpenUpgrade={handleUpgradeAction}
+          onOpenBillingPortal={handleBillingAction}
+          onOpenSignIn={openSignInModal}
+          onSignOut={handleSignOut}
+        />
+        {billingNotice ? (
+          <p
+            className={`mt-2 rounded-lg border px-3 py-2 text-sm ${
+              billingNotice.tone === "green"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                : "border-amber-200 bg-amber-50 text-amber-800"
+            }`}
+          >
+            {billingNotice.message}
           </p>
-          {authSession?.email ? (
-            <button
-              type="button"
-              className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-60"
-              onClick={handleSignOut}
-              disabled={authBusy}
-            >
-              {authBusy ? "Signing out..." : "Sign out"}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700 disabled:opacity-60"
-              onClick={openSignInModal}
-              disabled={authBusy}
-            >
-              Sign in
-            </button>
-          )}
-        </div>
+        ) : null}
         {authError ? <p className="mt-2 text-sm text-rose-600">{authError}</p> : null}
-        <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 lg:grid-cols-3">
-          {options.map((option) => (
-            <LauncherCard
-              key={option.key}
-              title={option.title}
-              description={option.description}
-              icon={option.icon}
-              onClick={option.onClick}
-              disabled={option.disabled}
-              badge={option.badge}
-            />
-          ))}
-        </div>
+        {billingError ? <p className="mt-2 text-sm text-rose-600">{billingError}</p> : null}
+        <StartSection
+          primaryOption={primaryOption}
+          hasResumeDraft={hasResumeDraft}
+          onResumeDraft={() => navigate("/manual")}
+          showAlternateStarts={showAlternateStarts}
+          onToggleAlternateStarts={() => setShowAlternateStarts((current) => !current)}
+        />
+        <DraftRecoverySection
+          drafts={draftRecoveryItems}
+          loading={draftRecoveryLoading}
+          busyInvoiceId={resumeDraftBusyId}
+          onResumeDraft={handleResumeSavedDraft}
+          onOpenLibrary={() => navigate("/invoices")}
+        />
+
+        <AlternateStartsSection
+          showAlternateStarts={showAlternateStarts}
+          quickStartOptions={quickStartOptions}
+        />
+
+        <ManageSection
+          showManageOptions={showManageOptions}
+          onToggleManageOptions={() => setShowManageOptions((current) => !current)}
+          manageOptions={manageOptions}
+        />
         {showDiagnosticsLink ? (
           <button
             type="button"
@@ -266,57 +514,18 @@ function Launcher() {
           </button>
         ) : null}
       </main>
-      {authModalOpen ? (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 px-4">
-          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
-            <h2 className="text-lg font-semibold text-slate-900">Sign in</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Enter your email to keep invoices scoped to your account.
-            </p>
-            <label className="mt-4 block text-sm font-semibold text-slate-700" htmlFor="launcher-auth-email">
-              Email
-            </label>
-            <input
-              id="launcher-auth-email"
-              type="email"
-              autoFocus
-              value={authEmail}
-              onChange={(event) => {
-                setAuthEmail(event.target.value);
-                setAuthEmailError("");
-              }}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none ring-emerald-200 focus:border-emerald-500 focus:ring-2"
-              placeholder="you@example.com"
-              disabled={authBusy}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !authBusy) {
-                  event.preventDefault();
-                  handleSignIn();
-                }
-              }}
-            />
-            {authEmailError ? <p className="mt-2 text-sm text-rose-600">{authEmailError}</p> : null}
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-60"
-                onClick={() => setAuthModalOpen(false)}
-                disabled={authBusy}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700 disabled:opacity-60"
-                onClick={handleSignIn}
-                disabled={authBusy}
-              >
-                {authBusy ? "Signing in..." : "Sign in"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <AuthModal
+        open={authModalOpen}
+        authBusy={authBusy}
+        authEmail={authEmail}
+        authEmailError={authEmailError}
+        onChangeEmail={(event) => {
+          setAuthEmail(event.target.value);
+          setAuthEmailError("");
+        }}
+        onCancel={() => setAuthModalOpen(false)}
+        onSubmit={handleSignIn}
+      />
     </div>
   );
 }
@@ -328,7 +537,7 @@ function Placeholder({ title, description }) {
       <main className="mx-auto max-w-xl px-4 py-10">
         <button
           type="button"
-          className="text-sm font-semibold text-emerald-700"
+          className="text-sm font-semibold text-blue-800"
           onClick={() => navigate("/")}
         >
           Back to launcher

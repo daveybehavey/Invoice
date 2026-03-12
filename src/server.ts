@@ -32,6 +32,13 @@ import {
 } from "./services/invoicePipeline.js";
 import { buildPdfFilename, createInvoicePdfBuffer } from "./services/invoicePdf.js";
 import {
+  createStripeBillingPortalSession,
+  createStripeCheckoutSession,
+  getStripeBillingCapabilities,
+  processStripeWebhookEvent
+} from "./services/stripeBilling.js";
+import { getBillingEntitlementsSummary } from "./services/billingEntitlementsStore.js";
+import {
   assertSavedInvoicePersistencePolicy,
   getSavedInvoiceBackend,
   getSavedInvoiceBackendMode,
@@ -54,6 +61,7 @@ import {
   getAuthSessionFromRequest,
   isInvoiceSessionSecretConfigured
 } from "./services/authSession.js";
+import { buildFreePlanLimitMessage, getAccountPlanSummary } from "./services/accountPlanPolicy.js";
 
 const app = express();
 assertSavedInvoicePersistencePolicy();
@@ -73,6 +81,26 @@ const port = Number(process.env.PORT ?? 3000);
 const publicDir = path.resolve(process.cwd(), "public");
 
 app.use(cors());
+app.post(
+  "/api/billing/stripe/webhook",
+  express.raw({ type: "application/json" }),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const signature = asOptionalString(req.headers["stripe-signature"]);
+      if (!signature) {
+        throw new HttpStatusError(400, "Missing Stripe signature header.");
+      }
+      const rawBody =
+        req.body instanceof Buffer
+          ? req.body
+          : Buffer.from(typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {}), "utf8");
+      const result = await processStripeWebhookEvent({ rawBody, signature });
+      res.json({ ok: true, handled: result.handled, eventType: result.eventType });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 app.use(express.json({ limit: "4mb" }));
 app.use(express.static(publicDir));
 
@@ -87,6 +115,72 @@ app.get("/invoices", (_req: Request, res: Response) => {
 
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
+});
+
+app.get("/api/account/plan", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const ownerId = getRequestOwnerId(req);
+    const authSession = getAuthSessionFromRequest(req);
+    const summary = await getAccountPlanSummary({
+      ownerId,
+      authSession,
+      repository: savedInvoiceRepository
+    });
+    res.json({
+      ...summary,
+      billing: getStripeBillingCapabilities()
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/billing/checkout-session", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = z
+      .object({
+        successPath: z.string().trim().optional(),
+        cancelPath: z.string().trim().optional()
+      })
+      .default({})
+      .parse(req.body ?? {});
+    const ownerId = getRequestOwnerId(req);
+    const authSession = getAuthSessionFromRequest(req);
+    const checkoutSession = await createStripeCheckoutSession({
+      ownerId,
+      userId: authSession?.userId,
+      email: authSession?.email,
+      baseUrl: resolvePublicBaseUrl(req),
+      successPath: parsedRequest.successPath,
+      cancelPath: parsedRequest.cancelPath
+    });
+    res.json(checkoutSession);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/billing/portal-session", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = z
+      .object({
+        returnPath: z.string().trim().optional()
+      })
+      .default({})
+      .parse(req.body ?? {});
+    const authSession = getAuthSessionFromRequest(req);
+    if (!authSession?.email) {
+      throw new HttpStatusError(401, "Sign in to open billing settings.");
+    }
+    const portalSession = await createStripeBillingPortalSession({
+      email: authSession.email,
+      baseUrl: resolvePublicBaseUrl(req),
+      returnPath: parsedRequest.returnPath
+    });
+    res.json(portalSession);
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/api/auth/session", async (req: Request, res: Response, next: NextFunction) => {
@@ -177,6 +271,22 @@ app.get("/api/system/persistence/migration", async (_req: Request, res: Response
       fileStore,
       migrationStatus,
       migrationCommand: "npm run migrate:invoices:postgres -- --dry-run"
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/system/billing", async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const capabilities = getStripeBillingCapabilities();
+    const entitlements = await getBillingEntitlementsSummary();
+    const warning = resolveBillingSystemWarning(capabilities, entitlements);
+    res.json({
+      provider: capabilities.provider,
+      capabilities,
+      entitlements,
+      warning
     });
   } catch (error) {
     next(error);
@@ -490,6 +600,17 @@ app.post("/api/invoices/save", async (req: Request, res: Response, next: NextFun
   try {
     const parsedRequest = SaveInvoiceRequestSchema.parse(req.body);
     const ownerId = getRequestOwnerId(req);
+    const authSession = getAuthSessionFromRequest(req);
+    if (!parsedRequest.invoiceId) {
+      const planSummary = await getAccountPlanSummary({
+        ownerId,
+        authSession,
+        repository: savedInvoiceRepository
+      });
+      if (!planSummary.canCreateInvoice) {
+        throw new HttpStatusError(402, buildFreePlanLimitMessage(planSummary));
+      }
+    }
 
     const savedInvoice = await savedInvoiceRepository.saveInvoiceDocument({
       ownerId,
@@ -623,6 +744,50 @@ function asOptionalString(value: unknown): string | undefined {
     return typeof first === "string" && first.trim() ? first.trim() : undefined;
   }
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function resolvePublicBaseUrl(req: Request): string {
+  const envBaseUrl = asOptionalString(process.env.APP_BASE_URL);
+  if (envBaseUrl) {
+    try {
+      const parsed = new URL(envBaseUrl);
+      return parsed.origin;
+    } catch (_error) {
+      // ignore invalid APP_BASE_URL and fallback to request-derived origin
+    }
+  }
+  const hostHeader = asOptionalString(req.headers.host) ?? "localhost:3000";
+  const forwardedProto =
+    asOptionalString(req.headers["x-forwarded-proto"]) ??
+    asOptionalString(req.headers["x-forwarded-protocol"]);
+  const protocol = forwardedProto === "https" || forwardedProto === "http" ? forwardedProto : req.protocol;
+  return `${protocol}://${hostHeader}`;
+}
+
+function resolveBillingSystemWarning(
+  capabilities: ReturnType<typeof getStripeBillingCapabilities>,
+  entitlements: {
+    subscriptionCount: number;
+    activeSubscriptionCount: number;
+    missingIdentityCount: number;
+  }
+): string | null {
+  if (!capabilities.hasSecretKey) {
+    return "Stripe is not configured (missing STRIPE_SECRET_KEY).";
+  }
+  if (!capabilities.hasCheckoutPrice) {
+    return "Stripe checkout is disabled (missing STRIPE_PRICE_ID).";
+  }
+  if (!capabilities.hasWebhookSecret) {
+    return "Webhook signature secret is missing; Pro entitlement sync is disabled.";
+  }
+  if (entitlements.subscriptionCount > 0 && entitlements.activeSubscriptionCount === 0) {
+    return "Stripe has subscription records, but none are currently active.";
+  }
+  if (entitlements.missingIdentityCount > 0) {
+    return "Some subscriptions are missing owner/user/email metadata. Plan sync may be incomplete.";
+  }
+  return null;
 }
 
 function asOptionalParseMode(value: unknown): "fast" | "full" | undefined {

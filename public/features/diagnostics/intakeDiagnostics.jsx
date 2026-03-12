@@ -31,6 +31,7 @@
     const [trendSnapshot, setTrendSnapshot] = useState(null);
     const [systemInfo, setSystemInfo] = useState(null);
     const [migrationInfo, setMigrationInfo] = useState(null);
+    const [billingInfo, setBillingInfo] = useState(null);
     const [exporting, setExporting] = useState(false);
     const [exportResult, setExportResult] = useState(null);
 
@@ -42,21 +43,30 @@
       }
       setError("");
       try {
-        const [ocrResponse, frictionResponse, trendResponse, systemResponse, migrationResponse] =
+        const [
+          ocrResponse,
+          frictionResponse,
+          trendResponse,
+          systemResponse,
+          migrationResponse,
+          billingResponse
+        ] =
           await Promise.all([
           apiFetch("/api/telemetry/ocr-confidence"),
           apiFetch("/api/telemetry/flow-friction"),
           apiFetch("/api/telemetry/intake-trends"),
           apiFetch("/api/system/persistence"),
-          apiFetch("/api/system/persistence/migration")
+          apiFetch("/api/system/persistence/migration"),
+          apiFetch("/api/system/billing")
         ]);
-        const [ocrPayload, frictionPayload, trendPayload, systemPayload, migrationPayload] =
+        const [ocrPayload, frictionPayload, trendPayload, systemPayload, migrationPayload, billingPayload] =
           await Promise.all([
           ocrResponse.json(),
           frictionResponse.json(),
           trendResponse.json(),
           systemResponse.json(),
-          migrationResponse.json()
+          migrationResponse.json(),
+          billingResponse.json()
         ]);
         if (!ocrResponse.ok) {
           throw new Error(ocrPayload?.error || "Failed to load OCR telemetry.");
@@ -73,11 +83,15 @@
         if (!migrationResponse.ok) {
           throw new Error(migrationPayload?.error || "Failed to load persistence migration info.");
         }
+        if (!billingResponse.ok) {
+          throw new Error(billingPayload?.error || "Failed to load billing diagnostics.");
+        }
         setOcrSnapshot(ocrPayload);
         setFrictionSnapshot(frictionPayload);
         setTrendSnapshot(trendPayload);
         setSystemInfo(systemPayload);
         setMigrationInfo(migrationPayload);
+        setBillingInfo(billingPayload);
       } catch (loadError) {
         console.error("Failed to load intake diagnostics", loadError);
         setError(loadError?.message || "Failed to load diagnostics.");
@@ -161,6 +175,15 @@
       failedRate: 0,
       issueRuns: 0
     };
+    const persistenceReady = Boolean(systemInfo?.productionReady);
+    const billingReady = Boolean(
+      billingInfo?.capabilities?.checkoutAvailable &&
+        billingInfo?.capabilities?.portalAvailable &&
+        billingInfo?.capabilities?.webhookAvailable
+    );
+    const migrationBacklog = Boolean(migrationInfo?.migrationStatus?.backlogDetected);
+    const ocrLowRatePct = `${(trend24h.lowRate * 100).toFixed(1)}%`;
+    const frictionFailedRatePct = `${(frictionTrend24h.failedRate * 100).toFixed(1)}%`;
 
     return (
       <div className="min-h-screen bg-slate-50">
@@ -216,6 +239,46 @@
             </p>
           </div>
 
+          <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">System health snapshot</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Quick view of rollout readiness and intake quality signals.
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+              <StatusPill
+                label="Persistence readiness"
+                value={persistenceReady ? "Ready" : "Needs attention"}
+                tone={persistenceReady ? "green" : "amber"}
+              />
+              <StatusPill
+                label="Billing readiness"
+                value={billingReady ? "Ready" : "Needs setup"}
+                tone={billingReady ? "green" : "amber"}
+              />
+              <StatusPill
+                label="OCR low-confidence (24h)"
+                value={ocrLowRatePct}
+                tone={trend24h.lowRate <= 0.2 ? "green" : trend24h.lowRate <= 0.35 ? "amber" : "red"}
+              />
+              <StatusPill
+                label="Friction failed rate (24h)"
+                value={frictionFailedRatePct}
+                tone={
+                  frictionTrend24h.failedRate <= 0.1
+                    ? "green"
+                    : frictionTrend24h.failedRate <= 0.25
+                      ? "amber"
+                      : "red"
+                }
+              />
+            </div>
+            {migrationBacklog ? (
+              <p className="mt-2 text-xs text-amber-700">
+                Legacy migration backlog detected. Complete migration before strict production cutover.
+              </p>
+            ) : null}
+          </section>
+
           <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Persistence migration</h2>
             <p className="mt-2 text-xs text-slate-500">
@@ -243,6 +306,33 @@
               >
                 {migrationInfo.migrationStatus.message}
               </p>
+            ) : null}
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Billing diagnostics</h2>
+            <p className="mt-2 text-xs text-slate-500">
+              Provider: {billingInfo?.provider || "n/a"}
+              {" · "}
+              Checkout: {billingInfo?.capabilities?.checkoutAvailable ? "ready" : "not ready"}
+              {" · "}
+              Portal: {billingInfo?.capabilities?.portalAvailable ? "ready" : "not ready"}
+              {" · "}
+              Webhook: {billingInfo?.capabilities?.webhookAvailable ? "ready" : "not ready"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Entitlements: {billingInfo?.entitlements?.activeSubscriptionCount ?? 0} active /{" "}
+              {billingInfo?.entitlements?.subscriptionCount ?? 0} subscriptions
+              {" · "}
+              Customers: {billingInfo?.entitlements?.customerCount ?? 0}
+              {" · "}
+              Missing identity: {billingInfo?.entitlements?.missingIdentityCount ?? 0}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Last entitlement update: {billingInfo?.entitlements?.updatedAt || "n/a"}
+            </p>
+            {billingInfo?.warning ? (
+              <p className="mt-2 text-xs text-amber-700">{billingInfo.warning}</p>
             ) : null}
           </div>
 

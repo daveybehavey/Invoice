@@ -1,6 +1,6 @@
 (() => {
   const cardBase =
-    "w-full rounded-xl border bg-white p-5 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 active:scale-[0.99]";
+    "w-full rounded-xl border bg-white p-5 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 active:scale-[0.99]";
 
   function SparklesIcon({ className }) {
     return (
@@ -100,7 +100,7 @@
   }
 
   function LauncherCard({ title, description, icon, onClick, disabled, badge }) {
-    const iconClass = disabled ? "h-6 w-6 text-slate-400" : "h-6 w-6 text-emerald-600";
+    const iconClass = disabled ? "h-6 w-6 text-slate-400" : "h-6 w-6 text-blue-800";
     return (
       <button
         type="button"
@@ -114,7 +114,7 @@
         <div className="flex items-start gap-4">
           <div
             className={`flex h-11 w-11 items-center justify-center rounded-lg ${
-              disabled ? "bg-slate-100" : "bg-emerald-50"
+              disabled ? "bg-slate-100" : "bg-blue-100"
             }`}
           >
             {React.cloneElement(icon, { className: iconClass })}

@@ -24,7 +24,23 @@
     );
   }
 
+  const accountPlanUtils = window.InvoiceAccountPlanUtils;
+  if (!accountPlanUtils) {
+    throw new Error(
+      "Missing /utils/accountPlan.js load. Ensure it is loaded before /features/manual/inspectorPanel.jsx."
+    );
+  }
+  const billingActions = window.InvoiceBillingActions;
+  if (!billingActions) {
+    throw new Error(
+      "Missing /utils/billingActions.js load. Ensure it is loaded before /features/manual/inspectorPanel.jsx."
+    );
+  }
+
   const { polishLineItemDescription } = formatUtils;
+  const { formatPlanSummary, getPlanUpgradeUrl, getPlanBillingPortalUrl, getPlanPrelimitWarning } =
+    accountPlanUtils;
+  const { hasStripeCheckout, hasStripePortal, startUpgradeCheckout, openBillingPortal } = billingActions;
   const { DEFAULT_ACCENT_COLOR, buildAccentPalette } = brandThemeUtils;
   const {
     STYLE_PRESETS,
@@ -432,6 +448,7 @@ function InspectorPanel({
   saveStatus,
   saveError,
   saveNeedsAuth,
+  accountPlan,
   onSaveAuthRetry,
   onGoToLauncherSignIn,
   savedInvoiceId,
@@ -463,13 +480,28 @@ function InspectorPanel({
   const [assistantUndoState, setAssistantUndoState] = useState(null);
   const [pendingAssistantEdit, setPendingAssistantEdit] = useState(null);
   const [previewTemplateId, setPreviewTemplateId] = useState(null);
+  const [showPrintActions, setShowPrintActions] = useState(false);
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [billingError, setBillingError] = useState("");
   const previewCloseButtonRef = useRef(null);
   const previewFocusReturnRef = useRef(null);
   const assistantRequestIdRef = useRef(0);
   const assistantQuickActions = [
-    { id: "formal-descriptions", label: "Formal descriptions", instruction: "Make the descriptions more formal." },
-    { id: "shorter-descriptions", label: "Shorter descriptions", instruction: "Make the descriptions shorter and clearer." },
-    { id: "navy-accent", label: "Navy accent", instruction: "Use a navy accent." },
+    {
+      id: "formal-descriptions",
+      label: "Formal descriptions",
+      instruction: "Make the descriptions more formal."
+    },
+    {
+      id: "simpler-descriptions",
+      label: "Simpler wording",
+      instruction: "Make the descriptions simpler and clearer."
+    },
+    {
+      id: "refine-notes",
+      label: "Refine notes",
+      instruction: "Make the notes more professional."
+    },
     {
       id: notesVisible ? "hide-notes" : "show-notes",
       label: notesVisible ? "Hide notes" : "Show notes",
@@ -484,7 +516,7 @@ function InspectorPanel({
   ];
   const styleOptions = STYLE_OPTIONS;
   const toneOptions = ["Formal", "Neutral", "Friendly"];
-  const accentSwatches = ["#093064", "#6993D2", "#ACCCF0", "#0f9d6e", "#be123c", "#111827"];
+  const accentSwatches = ["#093064", "#6993D2", "#ACCCF0", "#1d4ed8", "#be123c", "#111827"];
   const accent = buildAccentPalette(accentColor);
   const accentButtonStyle = {
     backgroundColor: accent.primary,
@@ -497,6 +529,17 @@ function InspectorPanel({
     color: accent.text
   };
   const invoiceStatus = savedInvoiceStatus || (savedInvoiceId ? "draft" : "");
+  const planLimitReached = !savedInvoiceId && Boolean(accountPlan?.upgradeRequired);
+  const planSummary = formatPlanSummary(accountPlan);
+  const planWarning = !planLimitReached ? getPlanPrelimitWarning(accountPlan) : "";
+  const planUpgradeUrl = getPlanUpgradeUrl(accountPlan);
+  const planBillingPortalUrl = getPlanBillingPortalUrl(accountPlan);
+  const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
+  const useStripePortalAction = accountPlan?.plan === "pro" && hasStripePortal(accountPlan);
+  const showUpgradeAction =
+    accountPlan?.plan === "free" && (Boolean(planUpgradeUrl) || useStripeUpgradeAction);
+  const showBillingPortalAction =
+    accountPlan?.plan === "pro" && (Boolean(planBillingPortalUrl) || useStripePortalAction);
   const invoiceStatusStyles = {
     draft: "bg-slate-100 text-slate-700",
     sent: "bg-blue-100 text-blue-700",
@@ -505,6 +548,33 @@ function InspectorPanel({
   const canMarkSent = invoiceStatus === "draft" || invoiceStatus === "paid";
   const canMarkPaid = invoiceStatus === "sent";
   const canMarkDraft = invoiceStatus === "sent" || invoiceStatus === "paid";
+  const handleUpgradeAction = async () => {
+    setBillingBusy(true);
+    setBillingError("");
+    try {
+      await startUpgradeCheckout(accountPlan, {
+        successPath: "/manual?billing=success",
+        cancelPath: "/manual?billing=cancelled"
+      });
+    } catch (billingActionError) {
+      setBillingError(billingActionError?.message || "Unable to open upgrade.");
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const handleBillingAction = async () => {
+    setBillingBusy(true);
+    setBillingError("");
+    try {
+      await openBillingPortal(accountPlan, { returnPath: "/manual" });
+    } catch (billingActionError) {
+      setBillingError(billingActionError?.message || "Unable to open billing settings.");
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
   const buildAssistantChangePreview = (beforeInvoice, afterInvoice, scope) => {
     if (scope === "notes") {
       const beforeText = (beforeInvoice?.notes ?? "").trim();
@@ -1226,10 +1296,10 @@ function InspectorPanel({
                   <input
                     type="color"
                     className="h-8 w-10 rounded border border-slate-200 bg-white p-1"
-                    value={accentColor ?? "#0f9d6e"}
+                    value={accentColor ?? "#6993d2"}
                     onChange={(event) => onAccentColorChange?.(event.target.value)}
                   />
-                  <span className="font-mono text-[11px] text-slate-500">{accentColor ?? "#0f9d6e"}</span>
+                  <span className="font-mono text-[11px] text-slate-500">{accentColor ?? "#6993d2"}</span>
                 </label>
               </div>
               <div className="space-y-2">
@@ -1484,8 +1554,8 @@ function InspectorPanel({
                   ))
                 ) : (
                   <p className="text-xs text-slate-500">
-                    Ask for changes like “Use the bold template with a navy accent.” or “Rename the
-                    logo line item to Brand refresh.”
+                    Ask for changes like “Make descriptions more formal.” or “Set payment link to
+                    https://pay.example.com/invoice/123”.
                   </p>
                 )}
               </div>
@@ -1521,7 +1591,7 @@ function InspectorPanel({
                         {entry.before}
                       </p>
                       <p className="text-xs text-slate-500">After</p>
-                      <p className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-medium text-slate-700">
+                      <p className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-xs font-medium text-slate-700">
                         {entry.after}
                       </p>
                     </div>
@@ -1531,7 +1601,7 @@ function InspectorPanel({
             ) : null}
             <textarea
               rows={4}
-              className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
               placeholder="Example: Use the bold template with a navy accent."
               value={assistantInstruction}
               onChange={(event) => setAssistantInstruction(event.target.value)}
@@ -1599,12 +1669,70 @@ function InspectorPanel({
               <p className="text-xs text-slate-500">
                 Store this invoice so you can reopen or duplicate it later.
               </p>
+              {planSummary ? (
+                <p className={`text-xs ${planLimitReached ? "font-semibold text-amber-700" : "text-slate-500"}`}>
+                  {planSummary}
+                </p>
+              ) : null}
+              {planWarning ? (
+                <p className="text-xs font-semibold text-amber-700">{planWarning}</p>
+              ) : null}
+              {showBillingPortalAction ? (
+                useStripePortalAction ? (
+                  <button
+                    type="button"
+                    className="inline-flex text-xs font-semibold text-slate-600 underline-offset-2 hover:text-slate-800 hover:underline disabled:cursor-not-allowed disabled:text-slate-400"
+                    onClick={handleBillingAction}
+                    disabled={billingBusy}
+                  >
+                    {billingBusy ? "Opening billing..." : "Manage billing"}
+                  </button>
+                ) : (
+                  <a
+                    href={planBillingPortalUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex text-xs font-semibold text-slate-600 underline-offset-2 hover:text-slate-800 hover:underline"
+                  >
+                    Manage billing
+                  </a>
+                )
+              ) : null}
+              {planLimitReached ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-2">
+                  <p className="text-xs font-semibold text-amber-900">
+                    Save limit reached. Update existing invoices or upgrade to save more.
+                  </p>
+                  {showUpgradeAction ? (
+                    useStripeUpgradeAction ? (
+                      <button
+                        type="button"
+                        className="mt-2 inline-flex rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={handleUpgradeAction}
+                        disabled={billingBusy}
+                      >
+                        {billingBusy ? "Opening..." : "Upgrade plan"}
+                      </button>
+                    ) : (
+                      <a
+                        href={planUpgradeUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 inline-flex rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs font-semibold text-amber-800"
+                      >
+                        Upgrade plan
+                      </a>
+                    )
+                  ) : null}
+                </div>
+              ) : null}
+              {billingError ? <p className="text-xs text-rose-600">{billingError}</p> : null}
               <button
                 type="button"
                 className="w-full rounded-lg px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                 style={accentButtonStyle}
                 onClick={onSaveInvoice}
-                disabled={Boolean(saveStatus && saveStatus !== "Saved")}
+                disabled={planLimitReached || Boolean(saveStatus && saveStatus !== "Saved")}
               >
                 {savedInvoiceId ? "Update saved invoice" : "Save invoice"}
               </button>
@@ -1659,7 +1787,7 @@ function InspectorPanel({
                   {canMarkPaid ? (
                     <button
                       type="button"
-                      className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:text-emerald-300"
+                      className="rounded-lg border border-blue-300 bg-blue-100 px-3 py-2 text-xs font-semibold text-blue-900 disabled:cursor-not-allowed disabled:text-blue-300"
                       onClick={() => onUpdateSavedInvoiceStatus("paid")}
                       disabled={statusUpdateLoading}
                     >
@@ -1692,15 +1820,28 @@ function InspectorPanel({
               </button>
             </div>
             <div className="space-y-2">
-              <p className="text-sm font-semibold text-slate-900">Print</p>
-              <p className="text-xs text-slate-500">Open the print dialog for this invoice.</p>
               <button
                 type="button"
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
-                onClick={onPrint}
+                className="inline-flex rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                onClick={() => setShowPrintActions((current) => !current)}
+                aria-expanded={showPrintActions}
+                aria-controls="manual-export-print-actions"
               >
-                Print
+                {showPrintActions ? "Hide print options" : "Need print options?"}
               </button>
+              {showPrintActions ? (
+                <div id="manual-export-print-actions" className="space-y-2">
+                  <p className="text-sm font-semibold text-slate-900">Print</p>
+                  <p className="text-xs text-slate-500">Open the print dialog for this invoice.</p>
+                  <button
+                    type="button"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
+                    onClick={onPrint}
+                  >
+                    Print
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
         ) : (

@@ -423,13 +423,13 @@ function ImportInvoice() {
       <main className="mx-auto max-w-3xl px-4 py-10">
         <button
           type="button"
-          className="text-sm font-semibold text-emerald-700"
+          className="text-sm font-semibold text-blue-800"
           onClick={() => navigate("/")}
         >
           Back to launcher
         </button>
         <div className="mt-4 space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">
+          <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">
             Import invoice
           </p>
           <h1 className="text-2xl font-semibold text-slate-900">Upload invoice files or photo notes</h1>
@@ -441,7 +441,7 @@ function ImportInvoice() {
         <div className="mt-6 space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div
             className={`relative rounded-2xl border-2 border-dashed px-6 py-8 text-center transition ${
-              dragActive ? "border-emerald-400 bg-emerald-50/60" : "border-slate-200 bg-slate-50/60"
+              dragActive ? "border-blue-400 bg-blue-100/60" : "border-slate-200 bg-slate-50/60"
             }`}
             onDragOver={(event) => {
               event.preventDefault();
@@ -461,7 +461,7 @@ function ImportInvoice() {
               onChange={handleFileChange}
             />
             <div className="mx-auto flex max-w-sm flex-col items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-emerald-600 shadow-sm">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-blue-800 shadow-sm">
                 <UploadIcon className="h-6 w-6" />
               </div>
               <div className="space-y-1">
@@ -557,7 +557,7 @@ function ImportInvoice() {
               {hasReviewedText ? (
                 <textarea
                   rows={6}
-                  className="w-full resize-none rounded-xl border border-amber-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  className="w-full resize-none rounded-xl border border-amber-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
                   placeholder="Review and edit extracted text if needed."
                   value={reviewedText}
                   onChange={(event) => setReviewedText(event.target.value)}
@@ -617,7 +617,7 @@ function ImportInvoice() {
               {hasReviewedText ? (
                 <textarea
                   rows={6}
-                  className="w-full resize-none rounded-xl border border-sky-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                  className="w-full resize-none rounded-xl border border-sky-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
                   placeholder="Review and edit extracted text if needed."
                   value={reviewedText}
                   onChange={(event) => setReviewedText(event.target.value)}
@@ -648,7 +648,7 @@ function ImportInvoice() {
             </p>
             <textarea
               rows={3}
-              className="mt-3 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+              className="mt-3 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
               placeholder="Example: This invoice includes a revised hourly rate."
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
@@ -665,7 +665,7 @@ function ImportInvoice() {
             {selectedFile && hasReviewedText ? (
               <button
                 type="button"
-                className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-800 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-blue-300"
                 onClick={handleBuildFromReviewedText}
                 disabled={
                   !selectedFile ||
@@ -680,7 +680,7 @@ function ImportInvoice() {
             ) : (
               <button
                 type="button"
-                className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-800 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-blue-300"
                 onClick={handleUpload}
                 disabled={!selectedFile || isUploading || isExtracting}
               >

@@ -1,0 +1,9 @@
+{
+  "appId": "com.notebill.app",
+  "appName": "NoteBill",
+  "webDir": "public",
+  "bundledWebRuntime": false,
+  "server": {
+    "cleartext": true
+  }
+}

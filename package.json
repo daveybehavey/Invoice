@@ -14,6 +14,11 @@
     "pretest": "npm run build:frontend",
     "test": "tsx --test --test-concurrency=1 src/*.test.ts src/**/*.test.ts",
     "test:friction": "node scripts/ai-intake-friction-pass.mjs",
+    "check:mobile-wrapper": "node scripts/check-mobile-wrapper-readiness.mjs",
+    "public:install-services": "bash scripts/install-notebill-user-services.sh",
+    "public:start": "bash scripts/start-notebill-public.sh",
+    "public:stop": "bash scripts/stop-notebill-public.sh",
+    "check:public-domain": "node scripts/check-public-domain-readiness.mjs",
     "check:persistence": "tsx scripts/check-persistence-readiness.ts",
     "migrate:invoices:postgres": "node -r dotenv/config scripts/migrate-saved-invoices-to-postgres.mjs"
   },
@@ -26,6 +31,7 @@
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",
     "pg": "^8.18.0",
+    "stripe": "^20.4.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {

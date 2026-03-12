@@ -136,13 +136,13 @@
         <main className="mx-auto max-w-4xl px-4 py-8 md:py-10">
           <button
             type="button"
-            className="text-sm font-semibold text-emerald-700"
+            className="text-sm font-semibold text-blue-800"
             onClick={() => navigate("/")}
           >
             Back to launcher
           </button>
           <div className="mt-4 space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Business identity</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">Business identity</p>
             <h1 className="text-2xl font-semibold text-slate-900 md:text-3xl">
               Set your default invoice branding
             </h1>
@@ -166,7 +166,7 @@
                 <textarea
                   id="business-from-details"
                   rows={5}
-                  className="w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none ring-emerald-200 focus:border-emerald-500 focus:ring-2"
+                  className="w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none ring-blue-200 focus:border-blue-700 focus:ring-2"
                   placeholder={"Acme Plumbing\n123 Main St\n(555) 555-1234\nbilling@acme.com"}
                   value={fromDetails}
                   onChange={(event) => setFromDetails(event.target.value)}
@@ -184,7 +184,7 @@
                         type="button"
                         className={`rounded-lg border px-3 py-2 text-sm font-semibold ${
                           selected
-                            ? "border-emerald-400 bg-emerald-50 text-emerald-700"
+                            ? "border-blue-300 bg-blue-100 text-blue-900"
                             : "border-slate-200 bg-white text-slate-700"
                         }`}
                         onClick={() => setStylePreset(option.id)}
@@ -199,7 +199,7 @@
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-slate-900">Accent color</label>
                 <div className="flex flex-wrap items-center gap-2">
-                  {["#0f9d6e", "#0f766e", "#1d4ed8", "#be123c", "#7c3aed", "#111827"].map(
+                  {["#093064", "#6993D2", "#ACCCF0", "#1d4ed8", "#be123c", "#111827"].map(
                     (swatch) => (
                       <button
                         key={swatch}
@@ -260,7 +260,7 @@
                   Reset
                 </button>
               </div>
-              {status ? <p className="text-xs text-emerald-700">{status}</p> : null}
+              {status ? <p className="text-xs text-blue-800">{status}</p> : null}
               {error ? <p className="text-xs text-rose-600">{error}</p> : null}
             </section>
 

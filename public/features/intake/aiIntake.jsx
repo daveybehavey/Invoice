@@ -7,6 +7,7 @@
       "Missing /utils/requestIdentity.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
     );
   }
+  const apiFetch = requestIdentity.apiFetch ?? window.fetch.bind(window);
 
   const formatUtils = window.InvoiceFormatUtils;
   if (!formatUtils) {
@@ -122,6 +123,22 @@
   const { ReviewSnapshotCard } = intakeReviewComponents;
   const { IntakeDecisionPanel } = intakeDecisionComponents;
 
+  const accountPlanUtils = window.InvoiceAccountPlanUtils;
+  if (!accountPlanUtils) {
+    throw new Error(
+      "Missing /utils/accountPlan.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+  const { formatPlanSummary, getPlanUpgradeUrl, getPlanPrelimitWarning } = accountPlanUtils;
+
+  const billingActions = window.InvoiceBillingActions;
+  if (!billingActions) {
+    throw new Error(
+      "Missing /utils/billingActions.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+  const { hasStripeCheckout, startUpgradeCheckout } = billingActions;
+
   const businessProfileUtils = window.InvoiceBusinessProfile;
   if (!businessProfileUtils) {
     throw new Error(
@@ -130,83 +147,24 @@
   }
 
   const { applyBusinessProfileToDraft } = businessProfileUtils;
+  const lineItemLibraryUtils = window.InvoiceLineItemLibrary;
+  const getLineItemLibrary = lineItemLibraryUtils?.getLineItemLibrary;
 
-  const initialIntakeMessages = [
-    {
-      id: "msg-1",
-      role: "ai",
-      text: "Paste your notes in any format. I will structure them into an invoice draft."
-    }
-  ];
+  const aiIntakeHelperUtils = window.InvoiceAIIntakeHelpers;
+  if (!aiIntakeHelperUtils) {
+    throw new Error(
+      "Missing /features/intake/aiIntakeHelpers.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
 
-  const readDraftFromStorage = (key) => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-    try {
-      const stored = window.localStorage.getItem(key);
-      return stored ? JSON.parse(stored) : null;
-    } catch (_error) {
-      return null;
-    }
-  };
-
-  const readStoredLaborRate = (storageKey = "invoiceLastLaborRate") => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-    const stored = Number.parseFloat(window.localStorage.getItem(storageKey) || "");
-    return Number.isFinite(stored) && stored > 0 ? stored : null;
-  };
-
-  const storeLaborRate = (rate, storageKey = "invoiceLastLaborRate") => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    if (Number.isFinite(rate) && rate > 0) {
-      window.localStorage.setItem(storageKey, String(rate));
-    }
-  };
-
-  const normalizePreviewText = (value) => (typeof value === "string" ? value.trim() : "");
-
-  const buildBillieChangePreview = (beforeInvoice, afterInvoice) => {
-    const entries = [];
-    const beforeLines = Array.isArray(beforeInvoice?.lineItems) ? beforeInvoice.lineItems : [];
-    const afterLines = Array.isArray(afterInvoice?.lineItems) ? afterInvoice.lineItems : [];
-
-    for (let index = 0; index < Math.max(beforeLines.length, afterLines.length); index += 1) {
-      const beforeLine = beforeLines[index];
-      const afterLine = afterLines[index];
-      if (!beforeLine || !afterLine) {
-        continue;
-      }
-      const beforeDescription = normalizePreviewText(beforeLine.description);
-      const afterDescription = normalizePreviewText(afterLine.description);
-      if (!beforeDescription || !afterDescription || beforeDescription === afterDescription) {
-        continue;
-      }
-      entries.push({
-        id: afterLine.id ?? beforeLine.id ?? `line-${index}`,
-        label: "Line item",
-        before: beforeDescription,
-        after: afterDescription
-      });
-    }
-
-    const beforeNotes = normalizePreviewText(beforeInvoice?.notes);
-    const afterNotes = normalizePreviewText(afterInvoice?.notes);
-    if (beforeNotes && afterNotes && beforeNotes !== afterNotes) {
-      entries.push({
-        id: "notes",
-        label: "Notes",
-        before: beforeNotes,
-        after: afterNotes
-      });
-    }
-
-    return entries.slice(0, 3);
-  };
+  const {
+    initialIntakeMessages,
+    readDraftFromStorage,
+    readStoredLaborRate,
+    storeLaborRate,
+    buildBillieChangePreview,
+    buildLaborQuickReplies
+  } = aiIntakeHelperUtils;
 
 function AIIntake() {
   const navigate = useNavigate();
@@ -220,6 +178,9 @@ function AIIntake() {
   const laborRateStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceLastLaborRate") ?? legacyLaborRateStorageKey;
   const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
+  const [accountPlan, setAccountPlan] = useState(null);
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [billingError, setBillingError] = useState("");
   const [messages, setMessages] = useState(initialIntakeMessages);
   const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -271,6 +232,7 @@ function AIIntake() {
     }
     return window.matchMedia("(max-width: 767px)").matches;
   });
+  const [wizardStepsExpanded, setWizardStepsExpanded] = useState(false);
   const [billieChipTrayExpanded, setBillieChipTrayExpanded] = useState(false);
 
   useEffect(() => {
@@ -293,6 +255,31 @@ function AIIntake() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    apiFetch("/api/account/plan")
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!active) {
+          return;
+        }
+        if (!response.ok) {
+          setAccountPlan(null);
+          return;
+        }
+        setAccountPlan(payload && typeof payload === "object" ? payload : null);
+      })
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+        setAccountPlan(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [authSession?.userId, authSession?.email]);
 
   const readinessDebugEnabled = isReadinessDebugEnabled();
   const [readinessPanelOpen, setReadinessPanelOpen] = useState(readinessDebugEnabled);
@@ -359,7 +346,6 @@ function AIIntake() {
     typeof finishedInvoice?.customerName === "string" ? finishedInvoice.customerName.trim() : "";
 
   useEffect(() => {
-    const apiFetch = requestIdentity.apiFetch ?? window.fetch.bind(window);
     if (!currentReviewClientName) {
       setRecentClientContext([]);
       return undefined;
@@ -888,6 +874,10 @@ function AIIntake() {
     { id: "confirm", label: "Generate" }
   ];
   const wizardStepIndex = wizardSteps.findIndex((step) => step.id === wizardStep);
+  const safeWizardStepIndex = wizardStepIndex >= 0 ? wizardStepIndex : 0;
+  const wizardStepLabel = wizardSteps[safeWizardStepIndex]?.label || "Paste";
+  const shouldShowWizardDetails = !isCompactViewport || wizardStepsExpanded;
+  const wizardProgressPercent = ((safeWizardStepIndex + 1) / wizardSteps.length) * 100;
   const scrollToSection = (ref) => {
     if (!ref?.current) {
       return;
@@ -920,13 +910,24 @@ function AIIntake() {
   const quickDecisionHeading = decisionApplyPending
     ? "Applying decision"
     : displayOpenDecisionCount > 0
-      ? "Choose Add or Skip"
+      ? "Needs your call"
       : "Tax choice";
   const quickReplyLabel = needsLaborHoursOnly
     ? "Suggested hours"
     : needsLaborPricing
       ? "Suggested rates"
       : "Quick replies";
+  const hasIntakeProgress =
+    messages.length > 1 ||
+    Boolean(inputValue.trim()) ||
+    Boolean(followUp) ||
+    intakePhase !== "collecting" ||
+    hasReviewCard;
+  const intakeHeaderStatus = hasReviewCard
+    ? "Draft in progress"
+    : intakePhase === "awaiting_follow_up"
+      ? "Waiting for your pricing input"
+      : "Ready for notes";
   const billieWorkspaceVisible = hasReviewCard && intakePhase !== "awaiting_follow_up";
   const billieActionChips = billieWorkspaceVisible
     ? [
@@ -972,6 +973,13 @@ function AIIntake() {
   const hasDecisionPrimaryPath = intakeReadiness.lockReason === "open_decisions";
   const primaryCtaLabel = hasDecisionPrimaryPath ? "Resolve decisions" : "Generate Invoice";
   const primaryCtaDisabled = hasDecisionPrimaryPath ? false : ctaDisabled;
+  const planSummary = formatPlanSummary(accountPlan);
+  const planLimitReached = Boolean(accountPlan?.upgradeRequired);
+  const planWarning = getPlanPrelimitWarning(accountPlan);
+  const upgradeUrl = getPlanUpgradeUrl(accountPlan);
+  const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
+  const showUpgradeAction = planLimitReached && (Boolean(upgradeUrl) || useStripeUpgradeAction);
+  const showIntakePlanBanner = hasReviewCard && planLimitReached;
   const reviewDetailsToggleLabel = reviewCardCollapsed ? "Show review details" : "Hide review details";
   const showContextDetailsToggle = hasReviewCard && hasVisibleDetails;
   const contextDetailsToggleLabel = assumptionsCollapsed
@@ -988,6 +996,32 @@ function AIIntake() {
       return;
     }
     handleGenerateInvoice();
+  };
+
+  const handleUpgradeAction = async () => {
+    if (!showUpgradeAction || billingBusy) {
+      return;
+    }
+    setBillingError("");
+    setBillingBusy(true);
+    try {
+      if (useStripeUpgradeAction) {
+        await startUpgradeCheckout(accountPlan, {
+          successPath: "/ai-intake?billing=success",
+          cancelPath: "/ai-intake?billing=cancelled"
+        });
+        return;
+      }
+      if (upgradeUrl) {
+        window.open(upgradeUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      throw new Error("Upgrade is not configured yet.");
+    } catch (error) {
+      setBillingError(error?.message || "Unable to open upgrade.");
+    } finally {
+      setBillingBusy(false);
+    }
   };
 
   const focusInputWithValue = (value) => {
@@ -1118,66 +1152,14 @@ function AIIntake() {
     });
   };
 
-  const quickReplies = (() => {
-    if (intakePhase === "awaiting_follow_up" && followUp?.type === "labor_pricing") {
-      const laborItems = followUp?.laborItems ?? [];
-      const missingCount = laborItems.filter((item) => typeof item.hours !== "number").length;
-      const targetCount = missingCount > 0 ? missingCount : laborItems.length;
-      const formatLabel = (hoursList) => `Use ${hoursList.map((hour) => `${hour}h`).join(", ")}`;
-      const formatValue = (hoursList) =>
-        `${hoursList
-          .map((hour) => `${hour} hour${hour === 1 ? "" : "s"}`)
-          .join(", ")}.`;
-      const buildHourSuggestions = (count) => {
-        if (count <= 0) {
-          return [];
-        }
-        if (count === 1) {
-          return [[1], [2], [3]];
-        }
-        if (count === 2) {
-          return [
-            [1, 1],
-            [2, 1],
-            [2, 2]
-          ];
-        }
-        if (count === 3) {
-          return [
-            [2, 1, 1],
-            [1, 1, 1],
-            [2, 2, 2]
-          ];
-        }
-        return [];
-      };
-
-      if (Number.isFinite(pendingLaborRate)) {
-        const suggestions = buildHourSuggestions(targetCount);
-        return suggestions.map((hoursList, index) => ({
-          id: `labor-hours-${index}`,
-          label: formatLabel(hoursList),
-          value: formatValue(hoursList)
-        }));
-      }
-
-      const commonRates = [85, 95, 120];
-      const savedRate =
-        Number.isFinite(savedLaborRate) && savedLaborRate > 0 ? Math.round(savedLaborRate * 100) / 100 : null;
-      const orderedRates = savedRate
-        ? [savedRate, ...commonRates.filter((rate) => Math.round(rate * 100) / 100 !== savedRate)]
-        : commonRates;
-      return orderedRates.slice(0, 4).map((rate, index) => ({
-        id: index === 0 && savedRate ? `labor-rate-saved-${rate}` : `labor-rate-${rate}`,
-        label:
-          index === 0 && savedRate
-            ? `Use last ($${formatRateToken(rate)}/hr)`
-            : `Use $${formatRateToken(rate)}/hr`,
-        value: `Hourly $${formatRateToken(rate)}/hr.`
-      }));
-    }
-    return [];
-  })();
+  const quickReplies = buildLaborQuickReplies({
+    intakePhase,
+    followUp,
+    pendingLaborRate,
+    savedLaborRate,
+    lineItemLibrary: typeof getLineItemLibrary === "function" ? getLineItemLibrary() : [],
+    formatRateToken
+  });
 
   const handleGenerateInvoice = () => {
     if (!finishedInvoice) {
@@ -1266,6 +1248,12 @@ function AIIntake() {
     mediaQuery.addListener(handleMediaChange);
     return () => mediaQuery.removeListener(handleMediaChange);
   }, []);
+
+  useEffect(() => {
+    if (!isCompactViewport) {
+      setWizardStepsExpanded(false);
+    }
+  }, [isCompactViewport]);
 
   useEffect(() => {
     if (!readinessDebugEnabled) {
@@ -1546,22 +1534,24 @@ function AIIntake() {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              className="text-sm font-semibold text-emerald-700"
+              className="text-sm font-semibold text-blue-800"
               onClick={() => navigate("/")}
             >
               Back
             </button>
-            <button
-              type="button"
-              className="text-sm font-semibold text-slate-600 hover:text-slate-900"
-              onClick={handleResetIntake}
-            >
-              New intake
-            </button>
+            {hasIntakeProgress ? (
+              <button
+                type="button"
+                className="text-sm font-semibold text-slate-600 hover:text-slate-900"
+                onClick={handleResetIntake}
+              >
+                New intake
+              </button>
+            ) : null}
           </div>
           <div className="text-right">
             <p className="text-sm font-semibold text-slate-900">Billie at NoteBill</p>
-            <p className="text-xs text-slate-500">Draft in progress</p>
+            <p className="text-xs text-slate-500">{intakeHeaderStatus}</p>
             <button
               type="button"
               className="mt-1 text-xs font-medium text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
@@ -1578,29 +1568,59 @@ function AIIntake() {
           <div className="flex-1 overflow-y-auto pb-4 pt-6">
             <div className="space-y-6">
               <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Intake steps
-                </p>
-                <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-                  {wizardSteps.map((step, index) => {
-                    const status =
-                      index < wizardStepIndex ? "complete" : index === wizardStepIndex ? "active" : "upcoming";
-                    const badgeClass =
-                      status === "complete"
-                        ? "bg-emerald-600 text-white"
-                        : status === "active"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-slate-100 text-slate-500";
-                    return (
-                      <div key={step.id} className="flex items-center gap-2">
-                        <span className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${badgeClass}`}>
-                          {index + 1}
-                        </span>
-                        <span className="text-xs font-semibold text-slate-700">{step.label}</span>
-                      </div>
-                    );
-                  })}
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Intake steps
+                  </p>
+                  {isCompactViewport ? (
+                    <button
+                      type="button"
+                      className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                      onClick={() => setWizardStepsExpanded((current) => !current)}
+                      aria-expanded={wizardStepsExpanded}
+                      aria-controls="intake-step-details"
+                    >
+                      {wizardStepsExpanded ? "Hide steps" : "Show steps"}
+                    </button>
+                  ) : null}
                 </div>
+                <p className="mt-2 text-sm font-semibold text-slate-700">
+                  Step {safeWizardStepIndex + 1} of {wizardSteps.length}: {wizardStepLabel}
+                </p>
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className="h-full rounded-full bg-blue-700 transition-all duration-300"
+                    style={{ width: `${wizardProgressPercent}%` }}
+                  />
+                </div>
+                {shouldShowWizardDetails ? (
+                  <div id="intake-step-details" className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                    {wizardSteps.map((step, index) => {
+                      const status =
+                        index < safeWizardStepIndex
+                          ? "complete"
+                          : index === safeWizardStepIndex
+                            ? "active"
+                            : "upcoming";
+                      const badgeClass =
+                        status === "complete"
+                          ? "bg-blue-800 text-white"
+                          : status === "active"
+                            ? "bg-blue-100 text-blue-900"
+                            : "bg-slate-100 text-slate-500";
+                      return (
+                        <div key={step.id} className="flex items-center gap-2">
+                          <span
+                            className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${badgeClass}`}
+                          >
+                            {index + 1}
+                          </span>
+                          <span className="text-xs font-semibold text-slate-700">{step.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
 
               {wizardStep === "paste" ? (
@@ -1612,7 +1632,7 @@ function AIIntake() {
                   <textarea
                     id="ai-intake-input"
                     rows={6}
-                    className="mt-4 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                    className="mt-4 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
                     placeholder="Example: Jan 10 fixed sink, 2h at $90/hr. Parts: washer $5. Not sure if cabinet adjustment should be billed."
                     value={inputValue}
                     onChange={(event) => setInputValue(event.target.value)}
@@ -1620,7 +1640,7 @@ function AIIntake() {
                   <div className="mt-4 flex flex-wrap items-center gap-3">
                     <button
                       type="button"
-                      className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                      className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-800 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-blue-300"
                       onClick={() => submitUserMessage(inputValue)}
                       disabled={!inputValue.trim() || isTyping}
                     >
@@ -1654,14 +1674,14 @@ function AIIntake() {
                     <textarea
                       id="ai-intake-input"
                       rows={2}
-                      className="flex-1 resize-none rounded-xl border border-amber-200 px-4 py-2 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      className="flex-1 resize-none rounded-xl border border-amber-200 px-4 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
                       placeholder="Reply with a rate and hours or a flat amount…"
                       value={inputValue}
                       onChange={(event) => setInputValue(event.target.value)}
                     />
                     <button
                       type="button"
-                      className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                      className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-800 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-blue-300"
                       onClick={() => submitUserMessage(inputValue)}
                       disabled={!inputValue.trim() || isTyping}
                     >
@@ -1806,7 +1826,7 @@ function AIIntake() {
                     <div
                       className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
                         message.role === "user"
-                          ? "bg-emerald-600 text-white"
+                          ? "bg-blue-800 text-white"
                           : "bg-white text-slate-800"
                       }`}
                     >
@@ -1884,19 +1904,28 @@ function AIIntake() {
             handlePrimaryCta={handlePrimaryCta}
             primaryCtaLabel={primaryCtaLabel}
             ctaHelper={ctaHelper}
+            planLimitReached={showIntakePlanBanner}
+            planSummary={planSummary}
+            planWarning={hasReviewCard && !showIntakePlanBanner ? planWarning : ""}
+            showUpgradeAction={showUpgradeAction}
+            useStripeUpgradeAction={useStripeUpgradeAction}
+            upgradeUrl={upgradeUrl}
+            billingBusy={billingBusy}
+            billingError={billingError}
+            handleUpgradeAction={handleUpgradeAction}
           />
         </div>
       </main>
 
       {decisionToast ? (
         <div className="pointer-events-none fixed left-0 right-0 top-20 z-40 flex justify-center px-4 md:bottom-24 md:top-auto">
-          <div className="max-w-3xl flex-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm">
+          <div className="max-w-3xl flex-1 rounded-xl border border-blue-300 bg-blue-100 px-4 py-2 text-sm font-semibold text-blue-900 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <span>{decisionToast}</span>
               {decisionUndoState ? (
                 <button
                   type="button"
-                  className="pointer-events-auto rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-400 hover:text-emerald-900"
+                  className="pointer-events-auto rounded-full border border-blue-300 bg-white px-3 py-1 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 hover:text-blue-950"
                   onClick={handleUndoDecision}
                 >
                   Undo
@@ -2088,7 +2117,7 @@ function AIIntake() {
                           <p className="text-sm text-slate-700">{entry.before}</p>
                         </div>
                         <div>
-                          <p className="text-[11px] font-semibold text-emerald-700">After</p>
+                          <p className="text-[11px] font-semibold text-blue-900">After</p>
                           <p className="text-sm font-semibold text-slate-900">{entry.after}</p>
                         </div>
                       </div>
@@ -2105,7 +2134,7 @@ function AIIntake() {
               <textarea
                 id="ai-intake-input"
                 rows={1}
-                className="max-h-32 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                className="max-h-32 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
                 placeholder={
                   intakeComplete
                     ? "Ask Billie to polish wording. Numbers stay locked."
@@ -2117,7 +2146,7 @@ function AIIntake() {
               </div>
               <button
                 type="submit"
-                className="inline-flex h-11 items-center justify-center rounded-xl bg-emerald-600 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-800 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-blue-300"
                 disabled={!inputValue.trim() || (isTyping && !canSendWhileTyping)}
               >
                 Ask Billie

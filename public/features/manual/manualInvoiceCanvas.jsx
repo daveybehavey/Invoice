@@ -71,18 +71,13 @@
   const { rememberClientDetails } = clientMemoryUtils;
   const { getLineItemLibrary, rememberLineItems } = lineItemLibraryUtils;
   const { readLogoFileForStorage } = logoImageUtils;
-
-  const readDraftFromStorage = (key) => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-    try {
-      const stored = window.localStorage.getItem(key);
-      return stored ? JSON.parse(stored) : null;
-    } catch (_error) {
-      return null;
-    }
-  };
+  const manualDraftStorageUtils = window.InvoiceManualDraftStorage;
+  if (!manualDraftStorageUtils) {
+    throw new Error(
+      "Missing /features/manual/manualDraftStorage.js load. Ensure it is loaded before /features/manual/manualInvoiceCanvas.jsx."
+    );
+  }
+  const { resolveInitialDraftMeta } = manualDraftStorageUtils;
 
 function ManualInvoiceCanvas() {
   const navigate = useNavigate();
@@ -91,19 +86,10 @@ function ManualInvoiceCanvas() {
   const draftStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? legacyDraftStorageKey;
   const initialDraftMetaRef = useRef(
-    (() => {
-      const scopedDraft = readDraftFromStorage(draftStorageKey);
-      if (scopedDraft) {
-        return { draft: scopedDraft, fromLegacy: false };
-      }
-      if (draftStorageKey !== legacyDraftStorageKey) {
-        const legacyDraft = readDraftFromStorage(legacyDraftStorageKey);
-        if (legacyDraft) {
-          return { draft: legacyDraft, fromLegacy: true };
-        }
-      }
-      return { draft: null, fromLegacy: false };
-    })()
+    resolveInitialDraftMeta({
+      draftStorageKey,
+      legacyDraftStorageKey
+    })
   );
   const initialDraftMeta = initialDraftMetaRef.current;
   const initialDraft = initialDraftMeta?.draft ?? null;
@@ -145,6 +131,7 @@ function ManualInvoiceCanvas() {
   const [saveError, setSaveError] = useState("");
   const [saveNeedsAuth, setSaveNeedsAuth] = useState(false);
   const [saveAuthRequiredPolicy, setSaveAuthRequiredPolicy] = useState(false);
+  const [accountPlan, setAccountPlan] = useState(null);
   const [savedInvoiceId, setSavedInvoiceId] = useState(() => initialDraft?.savedInvoiceId ?? "");
   const [savedInvoiceStatus, setSavedInvoiceStatus] = useState(
     () => initialDraft?.savedInvoiceStatus ?? (initialDraft?.savedInvoiceId ? "draft" : "")
@@ -592,7 +579,7 @@ function ManualInvoiceCanvas() {
       }
       clearStatusTimeoutRef.current = window.setTimeout(() => {
         setDraftStatus("");
-      }, 1800);
+      }, 2600);
     } catch (error) {
       setSaveError(error?.message || "Couldn't export PDF.");
       setSaveStatus("");
@@ -622,6 +609,12 @@ function ManualInvoiceCanvas() {
     if (saveAuthRequiredPolicy && !currentSession?.userId) {
       setSaveNeedsAuth(true);
       setSaveError("Sign in required to save invoices.");
+      setSaveStatus("");
+      return;
+    }
+    if (!savedInvoiceId && accountPlan?.upgradeRequired) {
+      setSaveNeedsAuth(false);
+      setSaveError("Free plan limit reached. Upgrade to save more invoices.");
       setSaveStatus("");
       return;
     }
@@ -668,15 +661,20 @@ function ManualInvoiceCanvas() {
       setSaveNeedsAuth(false);
       setSaveStatus("Saved");
       window.setTimeout(() => setSaveStatus(""), 1500);
+      void refreshAccountPlan();
     } catch (error) {
       console.error("Failed to save invoice", error);
       const status = Number(error?.status ?? error?.statusCode ?? 0);
       if (status === 401) {
         setSaveNeedsAuth(true);
         setSaveError("Sign in required to save invoices.");
+      } else if (status === 402) {
+        setSaveNeedsAuth(false);
+        setSaveError(error?.message || "Free plan save limit reached.");
+        void refreshAccountPlan();
       } else {
         setSaveNeedsAuth(false);
-        setSaveError("Save failed. Try again.");
+        setSaveError(error?.message || "Save failed. Try again.");
       }
       setSaveStatus("");
     }
@@ -767,9 +765,32 @@ function ManualInvoiceCanvas() {
     }
   };
 
+  const refreshAccountPlan = async (shouldApply = () => true) => {
+    try {
+      const response = await apiFetch("/api/account/plan");
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (shouldApply()) {
+          setAccountPlan(null);
+        }
+        return null;
+      }
+      if (shouldApply()) {
+        setAccountPlan(payload && typeof payload === "object" ? payload : null);
+      }
+      return payload;
+    } catch (_error) {
+      if (shouldApply()) {
+        setAccountPlan(null);
+      }
+      return null;
+    }
+  };
+
   const handleSaveAuthRetry = async () => {
     const session = await refreshAuthSessionState();
     const authRequired = await refreshSaveAuthPolicy();
+    await refreshAccountPlan();
     if (authRequired && !session?.userId) {
       setSaveNeedsAuth(true);
       setSaveError("Sign in required to save invoices.");
@@ -790,6 +811,7 @@ function ManualInvoiceCanvas() {
       }
     });
     void refreshSaveAuthPolicy(() => active);
+    void refreshAccountPlan(() => active);
     return () => {
       active = false;
     };
@@ -1061,7 +1083,7 @@ function ManualInvoiceCanvas() {
                     <input
                       type="number"
                       aria-label="Discount amount"
-                      className="w-20 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      className="w-20 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-900 focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
                       value={discountAmount}
                       min="0"
                       step="0.01"
@@ -1079,7 +1101,7 @@ function ManualInvoiceCanvas() {
                     <input
                       type="number"
                       aria-label="Tax rate"
-                      className="w-16 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                      className="w-16 rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-900 focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
                       value={taxRate}
                       onChange={(event) => setTaxRate(event.target.value)}
                     />
@@ -1188,6 +1210,7 @@ function ManualInvoiceCanvas() {
             saveStatus={saveStatus}
             saveError={saveError}
             saveNeedsAuth={saveNeedsAuth}
+            accountPlan={accountPlan}
             onSaveAuthRetry={handleSaveAuthRetry}
             onGoToLauncherSignIn={() => {
               persistDraft();
@@ -1294,6 +1317,7 @@ function ManualInvoiceCanvas() {
                 saveStatus={saveStatus}
                 saveError={saveError}
                 saveNeedsAuth={saveNeedsAuth}
+                accountPlan={accountPlan}
                 onSaveAuthRetry={handleSaveAuthRetry}
                 onGoToLauncherSignIn={() => {
                   persistDraft();

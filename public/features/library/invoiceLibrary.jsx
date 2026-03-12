@@ -22,13 +22,53 @@
 
   const { buildDraftFromFinishedInvoice } = intakeReadinessUtils;
   const { formatMoney } = formatUtils;
+  const accountPlanUtils = window.InvoiceAccountPlanUtils;
+  if (!accountPlanUtils) {
+    throw new Error(
+      "Missing /utils/accountPlan.js load. Ensure it is loaded before /features/library/invoiceLibrary.jsx."
+    );
+  }
+  const { formatPlanSummary, getPlanUpgradeUrl, getPlanBillingPortalUrl, getPlanPrelimitWarning } =
+    accountPlanUtils;
+  const billingActions = window.InvoiceBillingActions;
+  if (!billingActions) {
+    throw new Error(
+      "Missing /utils/billingActions.js load. Ensure it is loaded before /features/library/invoiceLibrary.jsx."
+    );
+  }
+  const { hasStripeCheckout, hasStripePortal, startUpgradeCheckout, openBillingPortal } = billingActions;
   const deleteSkipStorageKey = "invoiceDeleteSkipConfirm";
+  const followUpReminderStorageKey = "invoiceFollowUpReminder";
+
+  const readFollowUpReminderState = (storageKey) => {
+    if (typeof window === "undefined") {
+      return { dismissed: false, hiddenUntil: "" };
+    }
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) {
+        return { dismissed: false, hiddenUntil: "" };
+      }
+      const parsed = JSON.parse(raw);
+      return {
+        dismissed: Boolean(parsed?.dismissed),
+        hiddenUntil:
+          typeof parsed?.hiddenUntil === "string" && parsed.hiddenUntil.trim()
+            ? parsed.hiddenUntil
+            : ""
+      };
+    } catch (_error) {
+      return { dismissed: false, hiddenUntil: "" };
+    }
+  };
 
 function InvoiceLibrary() {
   const navigate = useNavigate();
   const legacyDraftStorageKey = "invoiceDraft";
   const draftStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? legacyDraftStorageKey;
+  const reminderStorageKey =
+    requestIdentity.getScopedStorageKey?.(followUpReminderStorageKey) ?? followUpReminderStorageKey;
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -36,6 +76,9 @@ function InvoiceLibrary() {
   const [authPolicyLoaded, setAuthPolicyLoaded] = useState(false);
   const [authRequiredByPolicy, setAuthRequiredByPolicy] = useState(false);
   const [authRequiredError, setAuthRequiredError] = useState(false);
+  const [accountPlan, setAccountPlan] = useState(null);
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [billingError, setBillingError] = useState("");
   const [actionId, setActionId] = useState("");
   const [showTrash, setShowTrash] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -52,6 +95,9 @@ function InvoiceLibrary() {
     return window.localStorage.getItem(deleteSkipStorageKey) === "true";
   });
   const [undoToast, setUndoToast] = useState(null);
+  const [followUpReminderState, setFollowUpReminderState] = useState(() =>
+    readFollowUpReminderState(reminderStorageKey)
+  );
   const undoTimeoutRef = useRef(null);
   const requiresSignIn = (authRequiredByPolicy || authRequiredError) && !authSession?.userId;
 
@@ -109,6 +155,13 @@ function InvoiceLibrary() {
     setSkipDeleteConfirm(value);
     if (typeof window !== "undefined") {
       window.localStorage.setItem(deleteSkipStorageKey, value ? "true" : "false");
+    }
+  };
+
+  const persistFollowUpReminderState = (nextState) => {
+    setFollowUpReminderState(nextState);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(reminderStorageKey, JSON.stringify(nextState));
     }
   };
 
@@ -170,6 +223,25 @@ function InvoiceLibrary() {
     }
   };
 
+  const loadAccountPlan = async (shouldApply = () => true) => {
+    try {
+      const payload = await requestJson("/api/account/plan", undefined, "Failed to load account plan.");
+      if (shouldApply()) {
+        setAccountPlan(payload && typeof payload === "object" ? payload : null);
+      }
+    } catch (planError) {
+      if (planError?.status === 401) {
+        if (shouldApply()) {
+          setAccountPlan(null);
+        }
+        return;
+      }
+      if (shouldApply()) {
+        setAccountPlan(null);
+      }
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     const loadAuthPolicy = async () => {
@@ -203,6 +275,7 @@ function InvoiceLibrary() {
 
     void syncSession();
     void loadAuthPolicy();
+    void loadAccountPlan(() => !cancelled);
 
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
@@ -227,6 +300,18 @@ function InvoiceLibrary() {
     setSelectionMode(false);
     setSelectedIds([]);
   }, [showTrash, authPolicyLoaded, authRequiredByPolicy, authSession?.userId, authRequiredError]);
+
+  useEffect(() => {
+    let active = true;
+    void loadAccountPlan(() => active);
+    return () => {
+      active = false;
+    };
+  }, [authSession?.userId, authPolicyLoaded]);
+
+  useEffect(() => {
+    setFollowUpReminderState(readFollowUpReminderState(reminderStorageKey));
+  }, [reminderStorageKey]);
 
   useEffect(() => {
     if (showTrash && statusFilter !== "all") {
@@ -479,6 +564,76 @@ function InvoiceLibrary() {
   const selectedCount = selectedIds.length;
   const visibleIds = filteredInvoices.map((invoice) => invoice.invoiceId);
   const allSelected = visibleIds.length > 0 && selectedCount === visibleIds.length;
+  const planSummary = formatPlanSummary(accountPlan);
+  const planLimitReached = Boolean(accountPlan?.upgradeRequired);
+  const planWarning = getPlanPrelimitWarning(accountPlan);
+  const upgradeUrl = getPlanUpgradeUrl(accountPlan);
+  const billingPortalUrl = getPlanBillingPortalUrl(accountPlan);
+  const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
+  const useStripePortalAction = accountPlan?.plan === "pro" && hasStripePortal(accountPlan);
+  const showUpgradeAction =
+    accountPlan?.plan === "free" && (Boolean(upgradeUrl) || useStripeUpgradeAction);
+  const showBillingPortalAction =
+    accountPlan?.plan === "pro" && (Boolean(billingPortalUrl) || useStripePortalAction);
+  const sentReminderThresholdDays = 14;
+  const sentReminderThresholdMs = sentReminderThresholdDays * 24 * 60 * 60 * 1000;
+  const sentFollowUpInvoices = invoices
+    .filter((invoice) => invoice?.status === "sent")
+    .filter((invoice) => {
+      const updatedAtMs = Date.parse(invoice?.updatedAt ?? "");
+      if (!Number.isFinite(updatedAtMs)) {
+        return false;
+      }
+      return Date.now() - updatedAtMs >= sentReminderThresholdMs;
+    })
+    .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+  const oldestSentReminder = sentFollowUpInvoices[0] ?? null;
+  const reminderHiddenUntilMs = Date.parse(followUpReminderState?.hiddenUntil ?? "");
+  const reminderIsSnoozed =
+    Number.isFinite(reminderHiddenUntilMs) && reminderHiddenUntilMs > Date.now();
+  const reminderIsDismissed = Boolean(followUpReminderState?.dismissed);
+  const showSentFollowUpReminder =
+    !requiresSignIn &&
+    !showTrash &&
+    sentFollowUpInvoices.length > 0 &&
+    !reminderIsSnoozed &&
+    !reminderIsDismissed;
+
+  const handleUpgradeAction = async () => {
+    setBillingBusy(true);
+    setBillingError("");
+    try {
+      await startUpgradeCheckout(accountPlan, {
+        successPath: "/invoices?billing=success",
+        cancelPath: "/invoices?billing=cancelled"
+      });
+    } catch (billingActionError) {
+      setBillingError(billingActionError?.message || "Unable to open upgrade.");
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const handleBillingAction = async () => {
+    setBillingBusy(true);
+    setBillingError("");
+    try {
+      await openBillingPortal(accountPlan, { returnPath: "/invoices" });
+    } catch (billingActionError) {
+      setBillingError(billingActionError?.message || "Unable to open billing settings.");
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const handleSnoozeFollowUpReminder = () => {
+    const hiddenUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    persistFollowUpReminderState({ dismissed: false, hiddenUntil });
+  };
+
+  const handleDismissFollowUpReminder = () => {
+    persistFollowUpReminderState({ dismissed: true, hiddenUntil: "" });
+  };
 
   const toggleSelection = (invoiceId) => {
     setSelectedIds((prev) =>
@@ -502,7 +657,7 @@ function InvoiceLibrary() {
           <div>
             <button
               type="button"
-              className="text-sm font-semibold text-emerald-700"
+              className="text-sm font-semibold text-blue-800"
               onClick={() => navigate("/")}
             >
               Back to launcher
@@ -513,17 +668,46 @@ function InvoiceLibrary() {
             </p>
             <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs">
               <span className="font-semibold text-slate-500">Account:</span>
-              <span className={authSession?.email ? "font-semibold text-emerald-700" : "font-semibold text-slate-700"}>
+              <span className={authSession?.email ? "font-semibold text-blue-800" : "font-semibold text-slate-700"}>
                 {authSession?.email ? authSession.email : "Local mode"}
               </span>
               <button
                 type="button"
-                className="font-semibold text-emerald-700 hover:text-emerald-800"
+                className="font-semibold text-blue-800 hover:text-blue-900"
                 onClick={() => navigate("/")}
               >
                 Manage
               </button>
+              {showBillingPortalAction ? (
+                useStripePortalAction ? (
+                  <button
+                    type="button"
+                    className="font-semibold text-blue-800 hover:text-blue-900 disabled:cursor-not-allowed disabled:text-blue-400"
+                    onClick={handleBillingAction}
+                    disabled={billingBusy}
+                  >
+                    {billingBusy ? "Opening..." : "Billing"}
+                  </button>
+                ) : (
+                  <a
+                    href={billingPortalUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-semibold text-blue-800 hover:text-blue-900"
+                  >
+                    Billing
+                  </a>
+                )
+              ) : null}
             </div>
+            {planSummary ? (
+              <p className={`mt-2 text-xs ${planLimitReached ? "font-semibold text-amber-700" : "text-slate-500"}`}>
+                {planSummary}
+              </p>
+            ) : null}
+            {planWarning && !planLimitReached ? (
+              <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
@@ -532,7 +716,7 @@ function InvoiceLibrary() {
                 className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
                   showTrash
                     ? "text-slate-500 hover:text-slate-700"
-                    : "bg-emerald-600 text-white"
+                    : "bg-blue-800 text-white"
                 }`}
                 onClick={() => setShowTrash(false)}
               >
@@ -602,7 +786,7 @@ function InvoiceLibrary() {
             </button>
             <button
               type="button"
-              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+              className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-900"
               onClick={() => navigate("/manual")}
             >
               Blank invoice
@@ -615,6 +799,82 @@ function InvoiceLibrary() {
             {error}
           </div>
         ) : null}
+        {billingError ? (
+          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {billingError}
+          </div>
+        ) : null}
+
+        {!requiresSignIn && planLimitReached ? (
+          <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-sm font-semibold text-amber-900">Free plan limit reached</p>
+            <p className="mt-1 text-sm text-amber-800">
+              You can open and export existing invoices. Save more drafts by upgrading your plan.
+            </p>
+            {showUpgradeAction ? (
+              useStripeUpgradeAction ? (
+                <button
+                  type="button"
+                  className="mt-3 inline-flex rounded-xl border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={handleUpgradeAction}
+                  disabled={billingBusy}
+                >
+                  {billingBusy ? "Opening..." : "Upgrade plan"}
+                </button>
+              ) : (
+                <a
+                  href={upgradeUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 inline-flex rounded-xl border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-400"
+                >
+                  Upgrade plan
+                </a>
+              )
+            ) : null}
+          </div>
+        ) : null}
+        {showSentFollowUpReminder ? (
+          <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-100 px-4 py-3">
+            <p className="text-sm font-semibold text-blue-900">Follow-up reminders</p>
+            <p className="mt-1 text-sm text-blue-900">
+              {sentFollowUpInvoices.length === 1
+                ? "1 sent invoice may need follow-up."
+                : `${sentFollowUpInvoices.length} sent invoices may need follow-up.`}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
+                onClick={() => {
+                  setStatusFilter("sent");
+                  setSelectedIds([]);
+                }}
+              >
+                Show sent invoices
+              </button>
+              <button
+                type="button"
+                className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
+                onClick={handleSnoozeFollowUpReminder}
+              >
+                Snooze 7 days
+              </button>
+              <button
+                type="button"
+                className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
+                onClick={handleDismissFollowUpReminder}
+              >
+                Dismiss
+              </button>
+              {oldestSentReminder ? (
+                <p className="text-xs text-blue-800">
+                  Oldest sent update: {formatDate(oldestSentReminder.updatedAt)}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
         {requiresSignIn ? (
           <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4">
@@ -625,7 +885,7 @@ function InvoiceLibrary() {
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+                className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-900"
                 onClick={() => navigate("/")}
               >
                 Go to launcher sign-in
@@ -657,7 +917,7 @@ function InvoiceLibrary() {
               </span>
               <button
                 type="button"
-                className="text-xs font-semibold text-emerald-700"
+                className="text-xs font-semibold text-blue-800"
                 onClick={toggleSelectAll}
               >
                 {allSelected ? "Clear all" : "Select all"}
@@ -668,7 +928,7 @@ function InvoiceLibrary() {
                 <>
                   <button
                     type="button"
-                    className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-emerald-300"
+                    className="rounded-xl bg-blue-800 px-3 py-2 text-xs font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-blue-300"
                     onClick={() => handleRestore(selectedIds)}
                     disabled={selectedCount === 0 || isDeleting}
                   >
@@ -739,7 +999,7 @@ function InvoiceLibrary() {
                   {statusFilter === "all" ? (
                     <button
                       type="button"
-                      className="mt-4 inline-flex h-10 items-center justify-center rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm"
+                      className="mt-4 inline-flex h-10 items-center justify-center rounded-xl bg-blue-800 px-4 text-sm font-semibold text-white shadow-sm"
                       onClick={() => navigate("/ai-intake")}
                     >
                       Create your first draft
@@ -773,7 +1033,7 @@ function InvoiceLibrary() {
                           <label className="mt-1 flex items-center gap-2 text-xs font-semibold text-slate-500">
                             <input
                               type="checkbox"
-                              className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                              className="h-4 w-4 rounded border-slate-300 text-blue-800 focus:ring-blue-700"
                               checked={isSelected}
                               onChange={() => toggleSelection(invoice.invoiceId)}
                             />
@@ -804,7 +1064,7 @@ function InvoiceLibrary() {
                         <>
                           <button
                             type="button"
-                            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+                            className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-900 disabled:cursor-not-allowed disabled:bg-blue-300"
                             onClick={() => handleRestore([invoice.invoiceId])}
                             disabled={actionId === invoice.invoiceId || isDeleting}
                           >
@@ -829,7 +1089,7 @@ function InvoiceLibrary() {
                         <>
                           <button
                             type="button"
-                            className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+                            className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-900 disabled:cursor-not-allowed disabled:bg-blue-300"
                             onClick={() => handleOpen(invoice.invoiceId)}
                             disabled={actionId === invoice.invoiceId}
                           >
@@ -848,7 +1108,7 @@ function InvoiceLibrary() {
                               href={invoice.paymentLinkUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-800"
+                              className="inline-flex items-center justify-center rounded-xl border border-blue-300 bg-blue-100 px-4 py-2 text-sm font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 hover:text-blue-950"
                             >
                               Open pay link
                             </a>
@@ -935,7 +1195,7 @@ function InvoiceLibrary() {
                 <label className="mt-4 flex items-center gap-2 text-xs font-semibold text-slate-500">
                   <input
                     type="checkbox"
-                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                    className="h-4 w-4 rounded border-slate-300 text-blue-800 focus:ring-blue-700"
                     checked={confirmSkipChecked}
                     onChange={(event) => setConfirmSkipChecked(event.target.checked)}
                   />
@@ -969,11 +1229,11 @@ function InvoiceLibrary() {
         ) : null}
         {undoToast ? (
           <div className="fixed bottom-6 left-0 right-0 z-40 flex justify-center px-4">
-            <div className="flex w-full max-w-3xl items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 shadow-lg">
+            <div className="flex w-full max-w-3xl items-center justify-between gap-3 rounded-2xl border border-blue-300 bg-blue-100 px-4 py-3 text-sm text-blue-900 shadow-lg">
               <span className="font-semibold">{undoToast.message}</span>
               <button
                 type="button"
-                className="rounded-xl border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-400"
+                className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
                 onClick={handleUndo}
                 disabled={isDeleting}
               >
