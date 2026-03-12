@@ -98,6 +98,13 @@ type RewordSingleLineResponse = {
   description: string;
 };
 
+type RewordDescriptionsResponse = {
+  lineItems: Array<{
+    id: string;
+    description: string;
+  }>;
+};
+
 type RewordFullInvoiceResponse = {
   lineItems: Array<{
     id: string;
@@ -579,6 +586,61 @@ export async function changeNotesWording(
   const updatedInvoice: FinishedInvoice = {
     ...invoice,
     notes: modelResponse.notes
+  };
+
+  return normalizeInvoice(FinishedInvoiceSchema.parse(updatedInvoice));
+}
+
+export async function changeDescriptionsWording(
+  invoice: FinishedInvoice,
+  tone?: string
+): Promise<FinishedInvoice> {
+  if (!Array.isArray(invoice.lineItems) || invoice.lineItems.length === 0) {
+    return normalizeInvoice(FinishedInvoiceSchema.parse(invoice));
+  }
+
+  if (invoice.lineItems.length === 1 && !(invoice.notes ?? "").trim()) {
+    const [singleLineItem] = invoice.lineItems;
+    if (singleLineItem?.id) {
+      return changeLineWording(invoice, singleLineItem.id, tone);
+    }
+  }
+
+  const lineItemSource = invoice.lineItems.map((lineItem, index) => ({
+    id: lineItem.id ?? `line-${index + 1}`,
+    description: lineItem.description
+  }));
+  const taskPrompt = [
+    "Rewrite invoice line-item descriptions only.",
+    "Keep the same meaning and professionalism for every line item.",
+    "Do not change notes, amounts, quantities, rates, dates, IDs, or totals.",
+    "Do not add, remove, merge, split, or reorder line items.",
+    `Tone preference: ${tone ?? "neutral professional"}.`,
+    'Return JSON with shape: {"lineItems":[{"id":"...","description":"..."}]}.',
+    `Line-item source JSON: ${JSON.stringify(lineItemSource)}`
+  ].join("\n");
+
+  const wordingTokenBudget = Math.min(
+    1600,
+    Math.max(500, invoice.lineItems.length * 160)
+  );
+  const modelResponse = await runJsonTask<RewordDescriptionsResponse>(taskPrompt, {
+    taskType: "wording",
+    maxCompletionTokens: wordingTokenBudget
+  });
+
+  const descriptionById = new Map(
+    modelResponse.lineItems.map((lineItem) => [lineItem.id, lineItem.description])
+  );
+  const updatedInvoice: FinishedInvoice = {
+    ...invoice,
+    lineItems: invoice.lineItems.map((lineItem, index) => ({
+      ...lineItem,
+      description: finalizeRewordedLineItemDescription(
+        lineItem.description,
+        descriptionById.get(lineItem.id ?? lineItemSource[index]?.id ?? "") ?? lineItem.description
+      )
+    }))
   };
 
   return normalizeInvoice(FinishedInvoiceSchema.parse(updatedInvoice));

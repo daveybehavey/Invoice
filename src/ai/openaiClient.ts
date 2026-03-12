@@ -46,6 +46,18 @@ function getDefaultModel(): string {
   return process.env.OPENAI_MODEL ?? "gpt-4.1-mini";
 }
 
+function getDefaultWordingModel(): string {
+  const configuredWordingModel = process.env.OPENAI_WORDING_MODEL?.trim();
+  if (configuredWordingModel) {
+    return configuredWordingModel;
+  }
+  const fallbackWordingModel = process.env.OPENAI_WORDING_MODEL_FALLBACK?.trim();
+  if (fallbackWordingModel) {
+    return fallbackWordingModel;
+  }
+  return "gpt-4.1-mini";
+}
+
 function getDefaultVisionModel(): string {
   return process.env.OPENAI_VISION_MODEL ?? "gpt-4.1-mini";
 }
@@ -55,10 +67,7 @@ export function resolveJsonTaskModel(options: JsonTaskOptions = {}): string {
     return options.model.trim();
   }
   if (options.taskType === "wording") {
-    const wordingModel = process.env.OPENAI_WORDING_MODEL?.trim();
-    if (wordingModel) {
-      return wordingModel;
-    }
+    return getDefaultWordingModel();
   }
   return getDefaultModel();
 }

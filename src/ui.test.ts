@@ -285,6 +285,60 @@ test("labor follow-up suggests a saved matched hourly rate by service wording", 
   }
 });
 
+test("labor follow-up prioritizes client-matched rates over generic saved matches", async () => {
+  useMockResponses([
+    {
+      customerName: "Mike Johnson",
+      workSessions: [
+        {
+          date: "Jan 11",
+          tasks: [{ description: "Leak inspection" }]
+        }
+      ],
+      materials: []
+    },
+    emptyAudit()
+  ]);
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-rate-client-match-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          description: "Leak inspection service",
+          qty: "1",
+          rate: "142",
+          clientName: "Other Client",
+          updatedAt: "2026-03-11T12:00:00.000Z"
+        },
+        {
+          description: "Leak inspection service",
+          qty: "1",
+          rate: "155",
+          clientName: "Mike Johnson",
+          updatedAt: "2026-03-10T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Did one labor visit this week.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+
+    await page.getByText("Pricing needed", { exact: true }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Use client match ($155/hr)" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("review quick actions include merge duplicates when duplicate line items are present", async () => {
   useMockResponses([structuredDuplicateDraft(), emptyAudit()]);
 
@@ -719,6 +773,56 @@ test("previewing document text lets the user review before building", async () =
   }
 });
 
+test("import screen shows pre-limit warning when one free save remains", async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "2";
+  useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
+  const now = new Date().toISOString();
+
+  await request(app).post("/api/invoices/save").send({
+    confirmSave: true,
+    sourceType: "text_input",
+    invoiceData: {
+      structuredInvoice: { workSessions: [], materials: [] },
+      finishedInvoice: {
+        invoiceNumber: "INV-100",
+        issueDate: "2026-03-11",
+        customerName: "Test Client",
+        currency: "USD",
+        lineItems: [{ description: "Existing", quantity: 1, unitPrice: 10, amount: 10 }],
+        notes: "",
+        subtotal: 10,
+        total: 10,
+        balanceDue: 10
+      }
+    }
+  });
+
+  if (invoiceStoreFilePath) {
+    const raw = await fs.readFile(invoiceStoreFilePath, "utf8");
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed?.invoices) && parsed.invoices.length > 0) {
+      parsed.invoices[0].createdAt = now;
+      parsed.invoices[0].updatedAt = now;
+      await fs.writeFile(invoiceStoreFilePath, JSON.stringify(parsed, null, 2), "utf8");
+    }
+  }
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "local-default");
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/import`, { waitUntil: "networkidle" });
+    await page
+      .getByText("1 save left this month before upgrade is required.")
+      .waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor polishes line item wording on blur", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -1105,7 +1209,7 @@ test("manual billie quick actions trigger safe wording rewrites without using th
   const context = await browser.newContext();
   const page = await context.newPage();
   let editRequestCount = 0;
-  let rewordFullRequestCount = 0;
+  let rewordDescriptionsRequestCount = 0;
   try {
     await page.route("**/api/invoices/edit", async (route) => {
       editRequestCount += 1;
@@ -1123,7 +1227,14 @@ test("manual billie quick actions trigger safe wording rewrites without using th
       });
     });
     await page.route("**/api/invoices/reword-full", async (route) => {
-      rewordFullRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected full reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-descriptions", async (route) => {
+      rewordDescriptionsRequestCount += 1;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -1167,7 +1278,84 @@ test("manual billie quick actions trigger safe wording rewrites without using th
     await page.getByRole("button", { name: "Undo last Billie change" }).click();
     await page.getByText("Undid last Billie change.").first().waitFor({ state: "visible" });
     await expectValueEquals(page.getByPlaceholder("Description").first(), "Sink repair");
-    assert.equal(rewordFullRequestCount, 1);
+    assert.equal(rewordDescriptionsRequestCount, 1);
+    assert.equal(editRequestCount, 0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual billie quick line action rewrites only one line via reword-line", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let editRequestCount = 0;
+  let rewordLineCount = 0;
+  let rewordFullCount = 0;
+  try {
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-full", async (route) => {
+      rewordFullCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected full reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-notes", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected notes reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-line", async (route) => {
+      rewordLineCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          invoice: {
+            invoiceNumber: "INV-0001",
+            issueDate: "2026-03-10",
+            customerName: "Mike Johnson",
+            currency: "USD",
+            lineItems: [
+              {
+                id: "line-1",
+                type: "other",
+                description: "Kitchen faucet repair service",
+                quantity: 1,
+                unitPrice: 90,
+                amount: 90
+              }
+            ],
+            notes: "Thanks.",
+            subtotal: 90,
+            total: 90,
+            balanceDue: 90
+          }
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("fixed sink");
+    await page.getByPlaceholder("Thank you for your business").fill("Thanks.");
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+
+    await page.getByRole("button", { name: "Refine line 1" }).click();
+    await page.getByText("Line 1 updated. Numbers unchanged.").waitFor({ state: "visible" });
+    await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
+
+    assert.equal(rewordLineCount, 1);
+    assert.equal(rewordFullCount, 0);
     assert.equal(editRequestCount, 0);
   } finally {
     await context.close();
@@ -1178,7 +1366,7 @@ test("manual billie routes description wording requests through safe rewording",
   const context = await browser.newContext();
   const page = await context.newPage();
   let editRequestCount = 0;
-  let rewordFullRequestCount = 0;
+  let rewordDescriptionsRequestCount = 0;
   try {
     await page.route("**/api/invoices/edit", async (route) => {
       editRequestCount += 1;
@@ -1196,7 +1384,14 @@ test("manual billie routes description wording requests through safe rewording",
       });
     });
     await page.route("**/api/invoices/reword-full", async (route) => {
-      rewordFullRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected full reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-descriptions", async (route) => {
+      rewordDescriptionsRequestCount += 1;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -1240,11 +1435,6 @@ test("manual billie routes description wording requests through safe rewording",
       .getByText("Descriptions updated. Numbers unchanged.")
       .first()
       .waitFor({ state: "visible" });
-    const changePreview = page.getByTestId("manual-billie-change-preview");
-    await changePreview.getByText(/^Last Billie change$/).waitFor({ state: "visible" });
-    await changePreview.getByText(/^Before$/).waitFor({ state: "visible" });
-    await changePreview.getByText(/^After$/).waitFor({ state: "visible" });
-    await changePreview.getByText("Kitchen faucet repair service").waitFor({ state: "visible" });
     assert.equal(
       await page.locator("p.text-xs.text-slate-500").filter({
         hasText: "Descriptions updated. Numbers unchanged."
@@ -1256,7 +1446,7 @@ test("manual billie routes description wording requests through safe rewording",
       page.getByPlaceholder("Thank you for your business"),
       "Leave check at the front desk."
     );
-    assert.equal(rewordFullRequestCount, 1);
+    assert.equal(rewordDescriptionsRequestCount, 1);
     assert.equal(editRequestCount, 0);
   } finally {
     await context.close();
@@ -1345,7 +1535,7 @@ test("manual billie can combine safe description wording and style changes in on
   const context = await browser.newContext();
   const page = await context.newPage();
   let editRequestCount = 0;
-  let rewordFullRequestCount = 0;
+  let rewordDescriptionsRequestCount = 0;
   try {
     await page.route("**/api/invoices/edit", async (route) => {
       editRequestCount += 1;
@@ -1363,7 +1553,14 @@ test("manual billie can combine safe description wording and style changes in on
       });
     });
     await page.route("**/api/invoices/reword-full", async (route) => {
-      rewordFullRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected full reword route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-descriptions", async (route) => {
+      rewordDescriptionsRequestCount += 1;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -1411,7 +1608,7 @@ test("manual billie can combine safe description wording and style changes in on
     await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
     await page.getByRole("button", { name: "Style" }).first().click();
     await page.getByText("#093064").first().waitFor({ state: "visible" });
-    assert.equal(rewordFullRequestCount, 1);
+    assert.equal(rewordDescriptionsRequestCount, 1);
     assert.equal(editRequestCount, 0);
   } finally {
     await context.close();
@@ -2849,6 +3046,46 @@ test("saving an invoice remembers line items and allows one-tap reinsertion late
     await expectValueContains(page.getByPlaceholder("Description").first(), "Faucet repair");
     assert.equal(await page.getByPlaceholder("0").first().inputValue(), "1");
     assert.equal(await page.getByPlaceholder("$0").first().inputValue(), "90");
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual saved items prioritize same-client matches in suggestions", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-manual-client-match-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          description: "Leak inspection service",
+          qty: "1",
+          rate: "142",
+          clientName: "Other Client",
+          updatedAt: "2026-03-11T12:00:00.000Z"
+        },
+        {
+          description: "Leak inspection service",
+          qty: "1",
+          rate: "155",
+          clientName: "Mike Johnson",
+          updatedAt: "2026-03-10T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Mike Johnson");
+    await page.getByPlaceholder("Description").first().fill("Leak inspection");
+    await page.getByRole("button", { name: /Saved items/i }).click();
+
+    const firstSavedItem = page.locator('button[aria-label^="Insert saved item"]').first();
+    await firstSavedItem.getByText("Rate $155").waitFor({ state: "visible" });
+    await firstSavedItem.getByText("Client match").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

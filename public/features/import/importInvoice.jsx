@@ -1,6 +1,6 @@
 (() => {
   const { useNavigate } = ReactRouterDOM;
-  const { useState, useRef } = React;
+  const { useEffect, useState, useRef } = React;
   const requestIdentity = window.InvoiceRequestIdentity;
   const apiFetch = requestIdentity?.apiFetch ?? window.fetch.bind(window);
 
@@ -29,6 +29,13 @@
   }
 
   const { applyBusinessProfileToDraft } = businessProfileUtils;
+  const accountPlanUtils = window.InvoiceAccountPlanUtils;
+  if (!accountPlanUtils) {
+    throw new Error(
+      "Missing /utils/accountPlan.js load. Ensure it is loaded before /features/import/importInvoice.jsx."
+    );
+  }
+  const { formatPlanSummary, getPlanPrelimitWarning, getPlanUpgradeUrl } = accountPlanUtils;
 
 function ImportInvoice() {
   const navigate = useNavigate();
@@ -96,6 +103,7 @@ function ImportInvoice() {
   const [isUploading, setIsUploading] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [accountPlan, setAccountPlan] = useState(null);
   const fileInputRef = useRef(null);
 
   const supportedExtensions = [".pdf", ".txt", ".md", ".csv", ".json", ".png", ".jpg", ".jpeg", ".webp"];
@@ -114,6 +122,33 @@ function ImportInvoice() {
   const requiresLowConfidenceConfirm = hasReviewedText && ocrConfidence === "low";
   const ocrActionHints = mapOcrWarningsToActions(ocrWarnings, ocrConfidence);
   const ocrDebugEnabled = isReadinessDebugEnabled();
+  const planSummary = formatPlanSummary(accountPlan);
+  const planLimitReached = Boolean(accountPlan?.upgradeRequired);
+  const planWarning = getPlanPrelimitWarning(accountPlan);
+  const upgradeUrl = getPlanUpgradeUrl(accountPlan);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch("/api/account/plan")
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error || "Failed to load account plan.");
+        }
+        if (cancelled) {
+          return;
+        }
+        setAccountPlan(payload);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAccountPlan(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const formatBytes = (bytes) => {
     if (!Number.isFinite(bytes)) {
@@ -437,6 +472,27 @@ function ImportInvoice() {
             PDF/text files can build directly or preview extracted text first. Photo notes require text review before parsing.
           </p>
         </div>
+        {planSummary ? (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+            <p className="text-sm font-semibold text-slate-900">{planSummary}</p>
+            {planWarning && !planLimitReached ? (
+              <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
+            ) : null}
+            {planLimitReached ? (
+              <p className="mt-1 text-xs text-rose-700">
+                New saves are locked on free plan this month. You can still import and edit.
+              </p>
+            ) : null}
+            {planLimitReached && upgradeUrl ? (
+              <a
+                className="mt-2 inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-blue-800 hover:border-blue-200"
+                href={upgradeUrl}
+              >
+                Upgrade plan
+              </a>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="mt-6 space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div

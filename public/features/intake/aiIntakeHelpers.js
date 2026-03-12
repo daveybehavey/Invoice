@@ -105,8 +105,20 @@
     return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : null;
   };
 
-  const buildLaborRateSuggestions = ({ laborItems, lineItemLibrary, savedLaborRate, maxSuggestions = 4 }) => {
+  const normalizeClientName = (value) =>
+    normalizePreviewText(value)
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+
+  const buildLaborRateSuggestions = ({
+    laborItems,
+    lineItemLibrary,
+    savedLaborRate,
+    currentClientName,
+    maxSuggestions = 4
+  }) => {
     const fallbackRates = [85, 95, 120];
+    const normalizedCurrentClient = normalizeClientName(currentClientName);
     const laborTokenSets = (Array.isArray(laborItems) ? laborItems : [])
       .map((item) => new Set(tokenize(item?.description)))
       .filter((tokenSet) => tokenSet.size > 0);
@@ -117,9 +129,24 @@
         if (!rate) {
           return null;
         }
+        const normalizedEntryClient = normalizeClientName(entry?.clientName);
+        const isClientMatch =
+          Boolean(normalizedCurrentClient) &&
+          Boolean(normalizedEntryClient) &&
+          normalizedCurrentClient === normalizedEntryClient;
         const entryTokens = tokenize(entry?.description);
         if (entryTokens.length === 0 || laborTokenSets.length === 0) {
-          return null;
+          if (!isClientMatch) {
+            return null;
+          }
+          return {
+            source: "client_match",
+            rate,
+            description: normalizePreviewText(entry?.description),
+            score: 0,
+            clientMatch: true,
+            updatedAt: typeof entry?.updatedAt === "string" ? entry.updatedAt : ""
+          };
         }
         const score = laborTokenSets.reduce((bestScore, tokenSet) => {
           let overlap = 0;
@@ -130,19 +157,23 @@
           });
           return Math.max(bestScore, overlap);
         }, 0);
-        if (score <= 0) {
+        if (score <= 0 && !isClientMatch) {
           return null;
         }
         return {
-          source: "matched",
+          source: isClientMatch ? "client_match" : "matched",
           rate,
           description: normalizePreviewText(entry?.description),
           score,
+          clientMatch: isClientMatch,
           updatedAt: typeof entry?.updatedAt === "string" ? entry.updatedAt : ""
         };
       })
       .filter(Boolean)
       .sort((left, right) => {
+        if (Boolean(right.clientMatch) !== Boolean(left.clientMatch)) {
+          return right.clientMatch ? 1 : -1;
+        }
         if (right.score !== left.score) {
           return right.score - left.score;
         }
@@ -190,6 +221,7 @@
     pendingLaborRate,
     savedLaborRate,
     lineItemLibrary,
+    currentClientName,
     formatRateToken
   }) => {
     if (intakePhase !== "awaiting_follow_up" || followUp?.type !== "labor_pricing") {
@@ -243,6 +275,7 @@
       laborItems,
       lineItemLibrary,
       savedLaborRate,
+      currentClientName,
       maxSuggestions: 4
     });
     return rateSuggestions
@@ -253,7 +286,9 @@
         }
         const source = suggestion?.source;
         const label =
-          source === "matched"
+          source === "client_match"
+            ? `Use client match ($${formatRateToken(safeRate)}/hr)`
+            : source === "matched"
             ? `Use saved match ($${formatRateToken(safeRate)}/hr)`
             : source === "last_used"
               ? `Use last ($${formatRateToken(safeRate)}/hr)`

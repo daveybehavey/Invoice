@@ -7,6 +7,7 @@ import multer from "multer";
 import { z } from "zod";
 import {
   ApplyDecisionRequestSchema,
+  ChangeDescriptionsWordingRequestSchema,
   ChangeNotesWordingRequestSchema,
   ChangeLineWordingRequestSchema,
   DiscountFollowUpRequestSchema,
@@ -22,6 +23,7 @@ import {
 import {
   applyDecisionActionToDraft,
   applyDiscountAfterFollowUp,
+  changeDescriptionsWording,
   changeNotesWording,
   applyInvoiceEditInstruction,
   changeLineWording,
@@ -554,6 +556,18 @@ app.post("/api/invoices/reword-notes", async (req: Request, res: Response, next:
     const invoice = FinishedInvoiceSchema.parse(parsedRequest.invoice);
 
     const updatedInvoice = await changeNotesWording(invoice, parsedRequest.tone);
+    res.json({ invoice: updatedInvoice });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/invoices/reword-descriptions", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = ChangeDescriptionsWordingRequestSchema.parse(req.body);
+    const invoice = FinishedInvoiceSchema.parse(parsedRequest.invoice);
+
+    const updatedInvoice = await changeDescriptionsWording(invoice, parsedRequest.tone);
     res.json({ invoice: updatedInvoice });
   } catch (error) {
     next(error);

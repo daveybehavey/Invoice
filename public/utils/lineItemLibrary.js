@@ -30,13 +30,21 @@
     return String(parsed);
   };
 
-  const buildLookupKey = (description, qty, rate) =>
-    [description.toLocaleLowerCase(), qty, rate].join("|");
+  const normalizeClientName = (value) => {
+    if (typeof value !== "string") {
+      return "";
+    }
+    return value.replace(/\s+/g, " ").trim();
+  };
+
+  const buildLookupKey = (description, qty, rate, clientName) =>
+    [description.toLocaleLowerCase(), qty, rate, clientName.toLocaleLowerCase()].join("|");
 
   const normalizeEntry = (value) => {
     const description = normalizeText(value?.description);
     const qty = normalizeNumericString(value?.qty ?? value?.quantity);
     const rate = normalizeNumericString(value?.rate ?? value?.unitPrice);
+    const clientName = normalizeClientName(value?.clientName);
     if (!description) {
       return null;
     }
@@ -44,7 +52,8 @@
       description,
       qty,
       rate,
-      lookupKey: buildLookupKey(description, qty, rate),
+      clientName,
+      lookupKey: buildLookupKey(description, qty, rate, clientName),
       updatedAt:
         typeof value?.updatedAt === "string" && value.updatedAt.trim()
           ? value.updatedAt
@@ -113,9 +122,15 @@
     return normalized;
   };
 
-  const rememberLineItems = (lineItems) => {
+  const rememberLineItems = (lineItems, options = {}) => {
+    const clientName = normalizeClientName(options?.clientName);
     const normalizedItems = (Array.isArray(lineItems) ? lineItems : [])
-      .map((item) => normalizeEntry(item))
+      .map((item) =>
+        normalizeEntry({
+          ...item,
+          clientName
+        })
+      )
       .filter(Boolean);
     if (normalizedItems.length === 0) {
       return getLineItemLibrary();

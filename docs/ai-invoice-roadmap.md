@@ -278,6 +278,26 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
 78. Cognitive-load trim pass (launcher + intake review)
    - Launcher account strip now tucks billing/upgrade links behind a single `Plan options` reveal to reduce top-row action noise.
    - Intake review summary now keeps the top card focused on capture/decision essentials; recent-client context remains in expanded details.
+79. Billie assistant modularization (phase 2)
+   - Extracted manual assistant command parsing + preview diff helpers into `/features/manual/assistantCommandHelpers.js`.
+   - Inspector panel now consumes one helper module for style/wording/tax/discount/payment/line commands.
+   - Reduced inline command-logic surface area to simplify further assistant iteration.
+80. Safe descriptions reword endpoint
+   - Added `POST /api/invoices/reword-descriptions` for descriptions-only wording edits.
+   - New pipeline path rewrites line-item wording only and preserves notes + all money fields.
+   - Added API/UI regression coverage for route behavior and assistant routing.
+81. Wording model fast-path defaults
+   - Added dedicated wording-model resolution (`OPENAI_WORDING_MODEL`, optional fallback override).
+   - Wording tasks now default to a fast wording model path without depending on the general parse model.
+   - Added config tests to guard wording-model selection behavior.
+82. Client-aware labor suggestions + import pre-limit parity
+   - Saved line-item memory now stores optional client context and prioritizes client matches during labor follow-up suggestions.
+   - Follow-up quick replies now surface `Use client match` when a same-client rate is known.
+   - Import screen now shows account-plan summary and pre-limit warnings, aligned with launcher/library/export freemium messaging.
+83. Manual editor saved-item recommendations (client/service ranking)
+   - Saved-item chips in manual editing now rank by current client match first, then service-term overlap, then recency.
+   - Added visual `Client match`/`Service match` badges so one-tap reuse is explicit and low-cognitive-load.
+   - Added UI coverage proving same-client saved rates rise to the top.
    - Preserves all existing actions while reducing first-screen scanning burden.
 79. Mobile intake progress simplification
    - Intake step card now shows a compact default state on mobile (`Step X of 4` + progress bar), with optional `Show steps`.

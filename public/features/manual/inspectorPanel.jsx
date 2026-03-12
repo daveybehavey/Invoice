@@ -60,359 +60,22 @@
     { id: "centered", label: "Centered" }
   ];
 
-  const resolveBillieStyleCommand = (instruction, options = {}) => {
-    const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
-    if (!normalized) {
-      return null;
-    }
-
-    const hasStyleContext = /\b(template|style|layout|look|accent|color)\b/.test(normalized);
-    const hasLogoInstruction = /\blogo\b/.test(normalized);
-    const result = {
-      stylePreset: null,
-      styleLabel: null,
-      accentColor: null,
-      accentLabel: null,
-      logoVisible: null,
-      notesVisible: null,
-      headerLayout: null,
-      headerLabel: null,
-      spacingDensity: null,
-      spacingLabel: null
-    };
-
-    if (hasStyleContext || /\bclassic\b/.test(normalized)) {
-      if (/\b(classic|default)\b/.test(normalized)) {
-        result.stylePreset = "default";
-        result.styleLabel = STYLE_PRESETS.default.label;
-      } else if (/\b(minimal|compact)\b/.test(normalized)) {
-        result.stylePreset = "compact";
-        result.styleLabel = STYLE_PRESETS.compact.label;
-      } else if (/\b(bold|spacious)\b/.test(normalized)) {
-        result.stylePreset = "spacious";
-        result.styleLabel = STYLE_PRESETS.spacious.label;
-      }
-    }
-
-    const matchedAccent = BILLIE_STYLE_ACCENTS.find((accent) =>
-      accent.matches.some((pattern) => pattern.test(normalized))
+  const manualAssistantHelpers = window.InvoiceManualAssistantHelpers;
+  if (!manualAssistantHelpers) {
+    throw new Error(
+      "Missing /features/manual/assistantCommandHelpers.js load. Ensure it is loaded before /features/manual/inspectorPanel.jsx."
     );
-    if (matchedAccent) {
-      result.accentColor = matchedAccent.value;
-      result.accentLabel = matchedAccent.label;
-    }
-
-    if (/\bheader\b/.test(normalized) && /\b(center|centered|stacked)\b/.test(normalized)) {
-      result.headerLayout = "centered";
-      result.headerLabel = "Centered";
-    } else if (/\bheader\b/.test(normalized) && /\bsplit\b/.test(normalized)) {
-      result.headerLayout = "split";
-      result.headerLabel = "Split";
-    }
-
-    const hasSpacingInstruction =
-      /\b(spacing|density|padding)\b/.test(normalized) || /breathing room/.test(normalized);
-    if (hasSpacingInstruction && /\b(tight|tighter|dense|denser)\b/.test(normalized)) {
-      result.spacingDensity = "tight";
-      result.spacingLabel = SPACING_DENSITY_PRESETS.tight.label;
-    } else if (
-      hasSpacingInstruction &&
-      (/\b(airy|airier|loose|looser)\b/.test(normalized) || /breathing room/.test(normalized))
-    ) {
-      result.spacingDensity = "airy";
-      result.spacingLabel = SPACING_DENSITY_PRESETS.airy.label;
-    } else if (hasSpacingInstruction && /\b(standard|balanced|normal)\b/.test(normalized)) {
-      result.spacingDensity = "balanced";
-      result.spacingLabel = SPACING_DENSITY_PRESETS.balanced.label;
-    }
-
-    if (hasLogoInstruction && /\b(hide|remove)\b/.test(normalized)) {
-      if (options.logoUrl) {
-        result.logoVisible = false;
-      } else {
-        return { responseText: "No uploaded logo yet. Add one from Style first." };
-      }
-    } else if (hasLogoInstruction && /\b(show|restore)\b/.test(normalized)) {
-      if (options.logoUrl) {
-        result.logoVisible = true;
-      } else {
-        return { responseText: "No uploaded logo yet. Add one from Style first." };
-      }
-    }
-
-    if (/\b(notes?|terms?)\b/.test(normalized) && /\b(hide|remove)\b/.test(normalized)) {
-      result.notesVisible = false;
-    } else if (/\b(notes?|terms?)\b/.test(normalized) && /\b(show|restore)\b/.test(normalized)) {
-      result.notesVisible = true;
-    }
-
-    if (
-      !result.stylePreset &&
-      !result.accentColor &&
-      result.logoVisible === null &&
-      result.notesVisible === null &&
-      !result.headerLayout &&
-      !result.spacingDensity
-    ) {
-      return null;
-    }
-
-    const parts = [];
-    if (result.styleLabel) {
-      parts.push(`template → ${result.styleLabel}`);
-    }
-    if (result.accentLabel) {
-      parts.push(`accent → ${result.accentLabel}`);
-    }
-    if (result.logoVisible !== null) {
-      parts.push(`logo → ${result.logoVisible ? "visible" : "hidden"}`);
-    }
-    if (result.notesVisible !== null) {
-      parts.push(`notes → ${result.notesVisible ? "visible" : "hidden"}`);
-    }
-    if (result.headerLabel) {
-      parts.push(`header → ${result.headerLabel}`);
-    }
-    if (result.spacingLabel) {
-      parts.push(`spacing → ${result.spacingLabel}`);
-    }
-
-    return {
-      ...result,
-      responseText: `Applied style updates: ${parts.join(", ")}.`
-    };
-  };
-
-  const resolveBillieWordingCommand = (instruction) => {
-    const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
-    if (!normalized) {
-      return null;
-    }
-
-    const hasWordingVerb =
-      /\b(rewrite|refine|polish|clean up|improve|make|shorten|simplify)\b/.test(normalized) ||
-      /\b(formal|professional|friendly|clearer|clear|concise|simpler|plain)\b/.test(normalized);
-    if (!hasWordingVerb) {
-      return null;
-    }
-
-    let scope = "full";
-    if (/\b(notes?|terms?)\b/.test(normalized)) {
-      scope = "notes";
-    } else if (/\b(descriptions?|line items?|items?)\b/.test(normalized)) {
-      scope = "descriptions";
-    }
-
-    let tone = "Neutral";
-    if (/\b(formal|professional|stronger)\b/.test(normalized)) {
-      tone = "Formal";
-    } else if (/\b(friendly|warmer|softer)\b/.test(normalized)) {
-      tone = "Friendly";
-    } else if (/\b(simpler|simple|plain|clearer|clear|concise|shorter)\b/.test(normalized)) {
-      tone = "Neutral";
-    }
-
-    const label =
-      scope === "notes" ? "notes" : scope === "descriptions" ? "descriptions" : "wording";
-    return { scope, tone, loadingText: `Billie is refining ${label}…` };
-  };
-  const resolveBillieTaxCommand = (instruction) => {
-    const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
-    if (!normalized || !/\btax\b/.test(normalized)) {
-      return null;
-    }
-    if (
-      /\b(no tax|remove tax|tax off|zero tax)\b/.test(normalized) ||
-      (/\btax\b/.test(normalized) && /\b0\s*%/.test(normalized))
-    ) {
-      return { taxRate: "0", responseText: "Applied tax → 0%." };
-    }
-    if (!/\b(set|make|use|apply|change|update|add)\b/.test(normalized)) {
-      return null;
-    }
-    const explicitRate = normalized.match(/(\d+(?:\.\d+)?)\s*%/);
-    if (!explicitRate) {
-      return null;
-    }
-    return {
-      taxRate: explicitRate[1],
-      responseText: `Applied tax → ${explicitRate[1]}%.`
-    };
-  };
-  const resolveBillieDiscountCommand = (instruction, options = {}) => {
-    const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
-    if (!normalized || !/\bdiscount\b|\boff\b/.test(normalized)) {
-      return null;
-    }
-
-    if (/\b(no discount|remove discount|delete discount|clear discount|discount off)\b/.test(normalized)) {
-      return { discountAmount: "0", responseText: "Applied discount → $0.00." };
-    }
-
-    const subtotal = Number.isFinite(options.subtotal) ? Number(options.subtotal) : 0;
-    const roundMoney = (value) => Math.round(value * 100) / 100;
-
-    const percentMatch = normalized.match(/(\d+(?:\.\d+)?)\s*%\s*(?:discount|off)\b/);
-    if (percentMatch) {
-      if (subtotal <= 0) {
-        return { responseText: "Add priced line items before applying a discount." };
-      }
-      const percent = Number.parseFloat(percentMatch[1]);
-      if (!Number.isFinite(percent) || percent < 0) {
-        return null;
-      }
-      const amount = roundMoney(Math.min(subtotal, subtotal * (percent / 100)));
-      return {
-        discountAmount: String(amount),
-        responseText: `Applied discount → $${amount.toFixed(2)} (${percentMatch[1]}%).`
-      };
-    }
-
-    const amountMatch =
-      normalized.match(/\$\s*(\d+(?:\.\d{1,2})?)/) ??
-      normalized.match(/\bdiscount\b[^0-9]{0,16}(\d+(?:\.\d{1,2})?)\b/) ??
-      normalized.match(/\b(\d+(?:\.\d{1,2})?)\s*dollars?\s+off\b/);
-    if (!amountMatch) {
-      return null;
-    }
-    if (subtotal <= 0) {
-      return { responseText: "Add priced line items before applying a discount." };
-    }
-    const amount = Number.parseFloat(amountMatch[1]);
-    if (!Number.isFinite(amount) || amount < 0) {
-      return null;
-    }
-    const cappedAmount = roundMoney(Math.min(subtotal, amount));
-    return {
-      discountAmount: String(cappedAmount),
-      responseText: `Applied discount → $${cappedAmount.toFixed(2)}.`
-    };
-  };
-  const resolveBilliePaymentLinkCommand = (instruction) => {
-    const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
-    if (!normalized) {
-      return null;
-    }
-    const mentionsPaymentLink =
-      /\b(payment|pay)\s*(link|url)\b/.test(normalized) ||
-      /\bpay online\b/.test(normalized) ||
-      /\bonline payment\b/.test(normalized);
-    if (!mentionsPaymentLink) {
-      return null;
-    }
-
-    if (/\b(clear|remove|delete|hide|no)\b/.test(normalized)) {
-      return {
-        paymentLinkUrl: "",
-        responseText: "Cleared payment link."
-      };
-    }
-
-    const urlMatch = instruction.match(/https?:\/\/[^\s)]+/i);
-    if (!urlMatch) {
-      return {
-        responseText: "Share the full payment URL, like https://pay.example.com/invoice/123."
-      };
-    }
-    const normalizedUrl = urlMatch[0].replace(/[.,!?]+$/g, "");
-    try {
-      const parsed = new URL(normalizedUrl);
-      if (!/^https?:$/i.test(parsed.protocol)) {
-        return {
-          responseText: "Use an http or https payment link."
-        };
-      }
-      return {
-        paymentLinkUrl: parsed.toString(),
-        responseText: `Applied payment link → ${parsed.toString()}.`
-      };
-    } catch (_error) {
-      return {
-        responseText: "That payment link doesn't look valid yet."
-      };
-    }
-  };
-  const resolveBillieLineValueCommand = (instruction, options = {}) => {
-    const normalized = typeof instruction === "string" ? instruction.trim().toLowerCase() : "";
-    const lineItems = Array.isArray(options.lineItems)
-      ? options.lineItems.filter((item) => {
-          const description = typeof item?.description === "string" ? item.description.trim() : "";
-          const quantity = `${item?.qty ?? ""}`.trim();
-          const rate = `${item?.rate ?? ""}`.trim();
-          return Boolean(description || quantity || rate);
-        })
-      : [];
-    if (!normalized || lineItems.length === 0) {
-      return null;
-    }
-
-    const hasValueIntent =
-      /\b(rate|price|qty|quantity|hours?|hrs?)\b/.test(normalized) ||
-      /@\s*\$?\d/.test(normalized) ||
-      /\bat\s+\$?\d/.test(normalized);
-    const hasChangeVerb = /\b(set|change|update|make|use)\b/.test(normalized);
-    if (!hasValueIntent || !hasChangeVerb) {
-      return null;
-    }
-
-    const resolveLineIndex = () => {
-      if (lineItems.length === 1) {
-        return 0;
-      }
-      const numberedMatch = normalized.match(/\b(?:line|item)\s+(\d+)\b/);
-      if (numberedMatch) {
-        const parsed = Number.parseInt(numberedMatch[1], 10);
-        return Number.isInteger(parsed) && parsed > 0 && parsed <= lineItems.length ? parsed - 1 : null;
-      }
-      if (/\bfirst\b/.test(normalized)) return 0;
-      if (/\bsecond\b/.test(normalized) && lineItems.length >= 2) return 1;
-      if (/\bthird\b/.test(normalized) && lineItems.length >= 3) return 2;
-      return null;
-    };
-
-    const targetIndex = resolveLineIndex();
-    if (targetIndex === null) {
-      return {
-        responseText: "Specify which line item to update, like “set line 2 rate to $150”."
-      };
-    }
-
-    const quantityMatch =
-      normalized.match(/\b(?:qty|quantity)\s*(?:to)?\s*(\d+(?:\.\d+)?)\b/) ??
-      normalized.match(/\b(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b/);
-    const rateMatch =
-      normalized.match(/\brate\s*(?:to|at)?\s*\$?\s*(\d+(?:\.\d+)?)\b/) ??
-      normalized.match(/@\s*\$?\s*(\d+(?:\.\d+)?)\s*(?:\/hr|per hour|hr|hour)?\b/) ??
-      normalized.match(/\bat\s+\$?\s*(\d+(?:\.\d+)?)\s*(?:\/hr|per hour|hr|hour)\b/);
-
-    const quantity = quantityMatch ? Number.parseFloat(quantityMatch[1]) : undefined;
-    const rate = rateMatch ? Number.parseFloat(rateMatch[1]) : undefined;
-    const updates = {};
-    if (Number.isFinite(quantity) && quantity >= 0) {
-      updates.qty = String(quantity);
-    }
-    if (Number.isFinite(rate) && rate >= 0) {
-      updates.rate = String(rate);
-    }
-    if (!("qty" in updates) && !("rate" in updates)) {
-      return null;
-    }
-
-    const responseParts = [];
-    if ("qty" in updates) {
-      responseParts.push(`qty ${updates.qty}`);
-    }
-    if ("rate" in updates) {
-      responseParts.push(`rate $${Number.parseFloat(updates.rate).toFixed(2)}`);
-    }
-
-    return {
-      targetLineId: lineItems[targetIndex]?.id,
-      targetLineIndex: targetIndex,
-      updates,
-      responseText: `Updated line ${targetIndex + 1} → ${responseParts.join(", ")}.`
-    };
-  };
+  }
+  const {
+    resolveBillieStyleCommand,
+    resolveBillieWordingCommand,
+    resolveBillieTaxCommand,
+    resolveBillieDiscountCommand,
+    resolveBilliePaymentLinkCommand,
+    resolveBillieLineValueCommand,
+    resolveBillieLineWordingCommand,
+    buildAssistantChangePreview
+  } = manualAssistantHelpers;
 
 function InspectorPanel({
   activeTab,
@@ -508,6 +171,20 @@ function InspectorPanel({
       instruction: notesVisible ? "Hide the notes on the invoice." : "Show the notes on the invoice."
     }
   ];
+  const assistantLineQuickActions = (Array.isArray(previewData?.lineItems) ? previewData.lineItems : [])
+    .map((item, index) => ({
+      id: item?.id ?? `line-${index + 1}`,
+      lineNumber: index + 1,
+      description: typeof item?.description === "string" ? item.description.trim() : ""
+    }))
+    .filter((item) => item.description.length > 0)
+    .slice(0, 3)
+    .map((item) => ({
+      id: `line-refine-${item.id}`,
+      label: `Refine line ${item.lineNumber}`,
+      instruction: `Refine line ${item.lineNumber} wording.`,
+      helperText: item.description
+    }));
   const tabs = [
     { id: "style", label: "Style", content: "Style controls coming soon" },
     { id: "tone", label: "Tone", content: "Tone controls coming soon" },
@@ -575,36 +252,6 @@ function InspectorPanel({
     }
   };
 
-  const buildAssistantChangePreview = (beforeInvoice, afterInvoice, scope) => {
-    if (scope === "notes") {
-      const beforeText = (beforeInvoice?.notes ?? "").trim();
-      const afterText = (afterInvoice?.notes ?? "").trim();
-      if (!beforeText || !afterText || beforeText === afterText) {
-        return [];
-      }
-      return [{ label: "Notes", before: beforeText, after: afterText }];
-    }
-
-    const beforeItems = Array.isArray(beforeInvoice?.lineItems) ? beforeInvoice.lineItems : [];
-    const afterItems = Array.isArray(afterInvoice?.lineItems) ? afterInvoice.lineItems : [];
-    const changes = [];
-    for (let index = 0; index < Math.min(beforeItems.length, afterItems.length); index += 1) {
-      const beforeText = (beforeItems[index]?.description ?? "").trim();
-      const afterText = (afterItems[index]?.description ?? "").trim();
-      if (!beforeText || !afterText || beforeText === afterText) {
-        continue;
-      }
-      changes.push({
-        label: `Line ${changes.length + 1}`,
-        before: beforeText,
-        after: afterText
-      });
-      if (changes.length >= 2) {
-        break;
-      }
-    }
-    return changes;
-  };
   const buildAssistantUndoState = () => ({
     invoice: {
       invoiceNumber: previewData?.invoiceNumber ?? "",
@@ -732,7 +379,11 @@ function InspectorPanel({
     }
 
     const routePath =
-      wordingCommand.scope === "notes" ? "/api/invoices/reword-notes" : "/api/invoices/reword-full";
+      wordingCommand.scope === "notes"
+        ? "/api/invoices/reword-notes"
+        : wordingCommand.scope === "descriptions"
+          ? "/api/invoices/reword-descriptions"
+          : "/api/invoices/reword-full";
     const requestBody =
       wordingCommand.scope === "notes"
         ? { invoice: payloadResult.invoice, tone: wordingCommand.tone }
@@ -795,6 +446,81 @@ function InspectorPanel({
       });
   };
 
+  const runAssistantLineRewrite = (instruction, lineWordingCommand, undoStateOverride = null) => {
+    const appendUserMessage = lineWordingCommand.appendUserMessage !== false;
+    const payloadResult = buildRewriteInvoicePayload?.();
+    if (!payloadResult || payloadResult.error) {
+      setAssistantError(payloadResult?.error ?? "Add at least one line item before editing.");
+      return;
+    }
+    if (!lineWordingCommand?.targetLineId) {
+      setAssistantError(lineWordingCommand?.responseText || "Pick a line item to refine.");
+      return;
+    }
+
+    assistantRequestIdRef.current += 1;
+    const requestId = assistantRequestIdRef.current;
+    setAssistantLoading(true);
+    setAssistantError("");
+    setAssistantStatus(lineWordingCommand.loadingText || "Billie is refining line wording…");
+    if (appendUserMessage) {
+      setAssistantMessages((prev) => [...prev, { role: "user", text: instruction }]);
+    }
+
+    apiFetch("/api/invoices/reword-line", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        invoice: payloadResult.invoice,
+        lineItemId: lineWordingCommand.targetLineId,
+        tone: lineWordingCommand.tone
+      })
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Rewrite failed");
+        }
+        return response.json();
+      })
+      .then((payload) => {
+        if (requestId !== assistantRequestIdRef.current) {
+          return;
+        }
+        if (!payload?.invoice) {
+          throw new Error("Rewrite failed");
+        }
+        setAssistantUndoState(undoStateOverride ?? buildAssistantUndoState());
+        setAssistantChangePreview(
+          buildAssistantChangePreview(
+            payloadResult.invoice,
+            payload.invoice,
+            "line_item",
+            lineWordingCommand.targetLineId
+          )
+        );
+        onApplyRewrite?.({
+          lineItems: payload.invoice.lineItems ?? [],
+          notes: payload.invoice.notes ?? "",
+          mode: "line_item"
+        });
+        setAssistantMessages((prev) => [
+          ...prev,
+          { role: "ai", text: lineWordingCommand.responseText || "Line updated. Numbers unchanged." }
+        ]);
+        setAssistantStatus("");
+        setAssistantInstruction("");
+        setAssistantLoading(false);
+      })
+      .catch(() => {
+        if (requestId !== assistantRequestIdRef.current) {
+          return;
+        }
+        setAssistantError("Rewrite failed. Try again.");
+        setAssistantStatus("");
+        setAssistantLoading(false);
+      });
+  };
+
   const applyAssistantStyleCommand = (styleCommand) => {
     if (!styleCommand) {
       return false;
@@ -839,16 +565,28 @@ function InspectorPanel({
       setAssistantError("Apply or discard the pending changes first.");
       return;
     }
-    const styleCommand = resolveBillieStyleCommand(instruction, { logoUrl, logoVisible });
+    const styleCommand = resolveBillieStyleCommand(instruction, {
+      logoUrl,
+      logoVisible,
+      stylePresets: STYLE_PRESETS,
+      spacingDensityPresets: SPACING_DENSITY_PRESETS,
+      styleAccents: BILLIE_STYLE_ACCENTS
+    });
     const taxCommand = resolveBillieTaxCommand(instruction);
     const discountCommand = resolveBillieDiscountCommand(instruction, { subtotal: previewData?.subtotal });
     const paymentLinkCommand = resolveBilliePaymentLinkCommand(instruction);
     const lineValueCommand = resolveBillieLineValueCommand(instruction, { lineItems: previewData?.lineItems });
+    const lineWordingCommand =
+      lineValueCommand || paymentLinkCommand
+        ? null
+        : resolveBillieLineWordingCommand(instruction, { lineItems: previewData?.lineItems });
     const wordingCommand =
-      lineValueCommand || paymentLinkCommand ? null : resolveBillieWordingCommand(instruction);
+      lineValueCommand || paymentLinkCommand || lineWordingCommand
+        ? null
+        : resolveBillieWordingCommand(instruction);
     if (
       (styleCommand || taxCommand || discountCommand || paymentLinkCommand || lineValueCommand) &&
-      wordingCommand
+      (wordingCommand || lineWordingCommand)
     ) {
       const undoState = buildAssistantUndoState();
       const localResponses = [];
@@ -901,10 +639,25 @@ function InspectorPanel({
       ) {
         setAssistantStatus("");
       }
-      runAssistantWordingRewrite(instruction, {
-        ...wordingCommand,
-        appendUserMessage: false
-      }, undoState);
+      if (lineWordingCommand) {
+        runAssistantLineRewrite(
+          instruction,
+          {
+            ...lineWordingCommand,
+            appendUserMessage: false
+          },
+          undoState
+        );
+        return;
+      }
+      runAssistantWordingRewrite(
+        instruction,
+        {
+          ...wordingCommand,
+          appendUserMessage: false
+        },
+        undoState
+      );
       return;
     }
     if (styleCommand || taxCommand || discountCommand || paymentLinkCommand || lineValueCommand) {
@@ -943,6 +696,10 @@ function InspectorPanel({
     }
     if (wordingCommand) {
       runAssistantWordingRewrite(instruction, wordingCommand);
+      return;
+    }
+    if (lineWordingCommand) {
+      runAssistantLineRewrite(instruction, lineWordingCommand);
       return;
     }
     const payloadResult = buildEditableInvoicePayload?.();
@@ -1532,6 +1289,28 @@ function InspectorPanel({
                 ))}
               </div>
             </div>
+            {assistantLineQuickActions.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Line actions
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {assistantLineQuickActions.map((action) => (
+                    <button
+                      key={action.id}
+                      type="button"
+                      className="rounded-full border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                      style={accentGhostButtonStyle}
+                      onClick={() => submitAssistantEdit(action.instruction)}
+                      disabled={assistantLoading || !!pendingAssistantEdit}
+                      title={action.helperText}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                 Conversation

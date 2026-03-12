@@ -1,6 +1,6 @@
 (() => {
   const { useNavigate } = ReactRouterDOM;
-  const { useEffect, useRef, useState } = React;
+  const { useEffect, useMemo, useRef, useState } = React;
   const requestIdentity = window.InvoiceRequestIdentity;
   if (!requestIdentity) {
     throw new Error(
@@ -78,6 +78,34 @@
     );
   }
   const { resolveInitialDraftMeta } = manualDraftStorageUtils;
+  const MATCH_STOP_WORDS = new Set([
+    "and",
+    "the",
+    "for",
+    "with",
+    "from",
+    "that",
+    "this",
+    "job",
+    "work",
+    "service",
+    "visit"
+  ]);
+  const normalizeMatchText = (value) =>
+    typeof value === "string" ? value.toLowerCase().replace(/\s+/g, " ").trim() : "";
+  const tokenizeMatchText = (value) =>
+    normalizeMatchText(value)
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 3 && !MATCH_STOP_WORDS.has(token));
+  const extractClientNameFromBillTo = (value) => {
+    if (typeof value !== "string") {
+      return "";
+    }
+    const [firstLine] = value.split("\n");
+    return firstLine?.trim() ?? "";
+  };
 
 function ManualInvoiceCanvas() {
   const navigate = useNavigate();
@@ -143,6 +171,45 @@ function ManualInvoiceCanvas() {
   const saveTimeoutRef = useRef(null);
   const clearStatusTimeoutRef = useRef(null);
   const draftStatusLabel = "Draft restored";
+  const rankedSavedLineItems = useMemo(() => {
+    const normalizedClientName = normalizeMatchText(extractClientNameFromBillTo(billToDetails));
+    const currentLineTokens = new Set(
+      (Array.isArray(lineItems) ? lineItems : [])
+        .flatMap((item) => tokenizeMatchText(item?.description))
+        .filter(Boolean)
+    );
+    return (Array.isArray(savedLineItemLibrary) ? savedLineItemLibrary : [])
+      .map((entry) => {
+        const normalizedEntryClient = normalizeMatchText(entry?.clientName);
+        const clientMatch =
+          Boolean(normalizedClientName) &&
+          Boolean(normalizedEntryClient) &&
+          normalizedClientName === normalizedEntryClient;
+        const serviceMatchScore = tokenizeMatchText(entry?.description).reduce(
+          (score, token) => (currentLineTokens.has(token) ? score + 1 : score),
+          0
+        );
+        const updatedAtTs = Number.parseInt(
+          String(Date.parse(typeof entry?.updatedAt === "string" ? entry.updatedAt : "")),
+          10
+        );
+        return {
+          entry,
+          clientMatch,
+          serviceMatchScore,
+          updatedAtTs: Number.isFinite(updatedAtTs) ? updatedAtTs : 0
+        };
+      })
+      .sort((left, right) => {
+        if (Boolean(right.clientMatch) !== Boolean(left.clientMatch)) {
+          return right.clientMatch ? 1 : -1;
+        }
+        if (right.serviceMatchScore !== left.serviceMatchScore) {
+          return right.serviceMatchScore - left.serviceMatchScore;
+        }
+        return right.updatedAtTs - left.updatedAtTs;
+      });
+  }, [billToDetails, lineItems, savedLineItemLibrary]);
 
   const activePreset = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.default;
   const activeSpacing = SPACING_DENSITY_PRESETS[spacingDensity] ?? SPACING_DENSITY_PRESETS.balanced;
@@ -657,7 +724,11 @@ function ManualInvoiceCanvas() {
       }
       setSavedInvoiceStatus(payload?.invoice?.status ?? "draft");
       rememberClientDetails(billToDetails);
-      setSavedLineItemLibrary(rememberLineItems(editableResult.invoice.lineItems));
+      setSavedLineItemLibrary(
+        rememberLineItems(editableResult.invoice.lineItems, {
+          clientName: billToDetails
+        })
+      );
       setSaveNeedsAuth(false);
       setSaveStatus("Saved");
       window.setTimeout(() => setSaveStatus(""), 1500);
@@ -1032,7 +1103,7 @@ function ManualInvoiceCanvas() {
               >
                 + Add line item
               </button>
-              {savedLineItemLibrary.length > 0 ? (
+              {rankedSavedLineItems.length > 0 ? (
                 <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
                   <button
                     type="button"
@@ -1040,11 +1111,11 @@ function ManualInvoiceCanvas() {
                     style={{ color: accent.primary }}
                     onClick={() => setShowSavedLineItems((value) => !value)}
                   >
-                    {showSavedLineItems ? "Hide saved items" : `Saved items (${savedLineItemLibrary.length})`}
+                    {showSavedLineItems ? "Hide saved items" : `Saved items (${rankedSavedLineItems.length})`}
                   </button>
                   {showSavedLineItems ? (
                     <div className="flex flex-wrap gap-2">
-                      {savedLineItemLibrary.slice(0, 8).map((entry) => (
+                      {rankedSavedLineItems.slice(0, 8).map(({ entry, clientMatch, serviceMatchScore }) => (
                         <button
                           key={entry.lookupKey}
                           type="button"
@@ -1058,6 +1129,15 @@ function ManualInvoiceCanvas() {
                               {[entry.qty ? `Qty ${entry.qty}` : "", entry.rate ? `Rate $${entry.rate}` : ""]
                                 .filter(Boolean)
                                 .join(" · ")}
+                            </span>
+                          ) : null}
+                          {clientMatch ? (
+                            <span className="mt-1 inline-flex rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                              Client match
+                            </span>
+                          ) : serviceMatchScore > 0 ? (
+                            <span className="mt-1 inline-flex rounded-full border border-blue-300 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+                              Service match
                             </span>
                           ) : null}
                         </button>

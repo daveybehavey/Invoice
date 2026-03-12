@@ -1157,6 +1157,11 @@ function AIIntake() {
     followUp,
     pendingLaborRate,
     savedLaborRate,
+    currentClientName:
+      finishedInvoice?.customerName ??
+      structuredInvoice?.customerName ??
+      followUp?.customerName ??
+      "",
     lineItemLibrary: typeof getLineItemLibrary === "function" ? getLineItemLibrary() : [],
     formatRateToken
   });
