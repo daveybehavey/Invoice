@@ -36,7 +36,13 @@
       "Missing /utils/billingActions.js load. Ensure it is loaded before /features/library/invoiceLibrary.jsx."
     );
   }
-  const { hasStripeCheckout, hasStripePortal, startUpgradeCheckout, openBillingPortal } = billingActions;
+  const {
+    hasStripeCheckout,
+    hasStripePortal,
+    startUpgradeCheckout,
+    openBillingPortal,
+    readBillingNoticeFromUrl
+  } = billingActions;
   const deleteSkipStorageKey = "invoiceDeleteSkipConfirm";
   const followUpReminderStorageKey = "invoiceFollowUpReminder";
   const recurringScheduleStorageKey = "invoiceRecurringSchedules";
@@ -140,6 +146,7 @@ function InvoiceLibrary() {
   const [authRequiredByPolicy, setAuthRequiredByPolicy] = useState(false);
   const [authRequiredError, setAuthRequiredError] = useState(false);
   const [accountPlan, setAccountPlan] = useState(null);
+  const [billingNotice, setBillingNotice] = useState(null);
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState("");
   const [deliveryNotice, setDeliveryNotice] = useState("");
@@ -394,6 +401,13 @@ function InvoiceLibrary() {
       }
     }
   };
+
+  useEffect(() => {
+    const notice = readBillingNoticeFromUrl();
+    if (notice) {
+      setBillingNotice(notice);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1201,6 +1215,17 @@ function InvoiceLibrary() {
         {billingError ? (
           <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
             {billingError}
+          </div>
+        ) : null}
+        {billingNotice ? (
+          <div
+            className={`mt-3 rounded-xl border px-4 py-3 text-sm font-medium ${
+              billingNotice.tone === "green"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                : "border-amber-200 bg-amber-50 text-amber-900"
+            }`}
+          >
+            {billingNotice.message}
           </div>
         ) : null}
         {deliveryNotice ? (

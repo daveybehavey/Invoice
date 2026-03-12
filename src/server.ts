@@ -339,6 +339,93 @@ app.get("/api/system/delivery", async (req: Request, res: Response, next: NextFu
   }
 });
 
+app.get("/api/system/launch", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const persistencePolicy = getSavedInvoicePersistencePolicy();
+    const authPolicy = getInvoiceAuthPolicy();
+    const migrationPolicy = await getSavedInvoiceMigrationPolicy();
+    const billingCapabilities = getStripeBillingCapabilities();
+    const billingEntitlements = await getBillingEntitlementsSummary();
+    const billingWarning = resolveBillingSystemWarning(billingCapabilities, billingEntitlements);
+    const deliveryCapabilities = getInvoiceEmailCapabilities();
+    const deliverySummary = await getInvoiceDeliveryStoreSummary();
+    const deliveryWarning = resolveDeliverySystemWarning(deliveryCapabilities, deliverySummary);
+    const publicBaseUrl = resolvePublicBaseUrl(req);
+    const publicBaseUrlReady = isConfiguredPublicBaseUrl(process.env.APP_BASE_URL);
+    const persistenceReady = persistencePolicy.productionReady && migrationPolicy.migrationReady;
+    const authReady = authPolicy.productionReady;
+    const billingReady = !billingWarning;
+    const deliveryReady = !deliveryWarning;
+    const checks = [
+      {
+        id: "persistence",
+        ok: persistenceReady,
+        detail: persistencePolicy.warning ?? migrationPolicy.warning ?? "Persistence policy ready."
+      },
+      {
+        id: "auth",
+        ok: authReady,
+        detail: authPolicy.warning ?? "Auth policy ready."
+      },
+      {
+        id: "billing",
+        ok: billingReady,
+        detail: billingWarning ?? "Billing ready."
+      },
+      {
+        id: "delivery",
+        ok: deliveryReady,
+        detail: deliveryWarning ?? "Delivery ready."
+      },
+      {
+        id: "public-base-url",
+        ok: publicBaseUrlReady,
+        detail: publicBaseUrlReady
+          ? `Using ${publicBaseUrl}`
+          : "APP_BASE_URL is missing or invalid for launch checks."
+      }
+    ];
+    const warningCount = checks.filter((check) => !check.ok).length;
+    res.json({
+      ready: warningCount === 0,
+      warningCount,
+      publicBaseUrl,
+      publicBaseUrlReady,
+      persistence: {
+        ready: persistenceReady,
+        backend: savedInvoiceRepository.backend,
+        configuredBackend: getSavedInvoiceBackend(),
+        configuredMode: getSavedInvoiceBackendMode(),
+        postgresRequired: persistencePolicy.requirePostgres,
+        migrationRequired: migrationPolicy.requireMigrationComplete,
+        warning: persistencePolicy.warning ?? migrationPolicy.warning ?? null
+      },
+      auth: {
+        ready: authReady,
+        required: authPolicy.requireAuth,
+        warning: authPolicy.warning ?? null
+      },
+      billing: {
+        ready: billingReady,
+        provider: billingCapabilities.provider,
+        warning: billingWarning,
+        capabilities: billingCapabilities,
+        entitlements: billingEntitlements
+      },
+      delivery: {
+        ready: deliveryReady,
+        provider: deliveryCapabilities.provider,
+        warning: deliveryWarning,
+        capabilities: deliveryCapabilities,
+        summary: deliverySummary
+      },
+      checks
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/telemetry/ocr-confidence", async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const snapshot = await getOcrMetricsSnapshot();
@@ -987,6 +1074,19 @@ function resolvePublicBaseUrl(req: Request): string {
     asOptionalString(req.headers["x-forwarded-protocol"]);
   const protocol = forwardedProto === "https" || forwardedProto === "http" ? forwardedProto : req.protocol;
   return `${protocol}://${hostHeader}`;
+}
+
+function isConfiguredPublicBaseUrl(value: string | undefined): boolean {
+  const normalized = asOptionalString(value);
+  if (!normalized) {
+    return false;
+  }
+  try {
+    const parsed = new URL(normalized);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch (_error) {
+    return false;
+  }
 }
 
 function resolveBillingSystemWarning(

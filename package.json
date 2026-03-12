@@ -18,6 +18,7 @@
     "public:install-services": "bash scripts/install-notebill-user-services.sh",
     "public:start": "bash scripts/start-notebill-public.sh",
     "public:stop": "bash scripts/stop-notebill-public.sh",
+    "check:launch": "node scripts/check-launch-readiness.mjs",
     "check:public-domain": "node scripts/check-public-domain-readiness.mjs",
     "check:persistence": "tsx scripts/check-persistence-readiness.ts",
     "migrate:invoices:postgres": "node -r dotenv/config scripts/migrate-saved-invoices-to-postgres.mjs"

@@ -290,6 +290,18 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added dedicated wording-model resolution (`OPENAI_WORDING_MODEL`, optional fallback override).
    - Wording tasks now default to a fast wording model path without depending on the general parse model.
    - Added config tests to guard wording-model selection behavior.
+82. Freemium billing-return consistency pass
+   - Added billing-return notices to AI intake, import, manual editor, and invoice library so checkout success/cancel states are visible outside the launcher.
+   - Import now uses Stripe Checkout directly when Stripe billing is configured instead of relying on static upgrade links only.
+   - Added UI coverage for route-specific billing completion notices and import Stripe upgrade entry.
+83. Launch readiness aggregation
+   - Added `GET /api/system/launch` to aggregate persistence, auth, billing, delivery, and public-base-url readiness in one payload.
+   - Added `npm run check:launch` for a single local launch-readiness check against `/health` + `/api/system/launch`.
+   - Added API coverage and documented the launch check in the public-domain runbook.
+84. Billie wording-model fallback polish
+   - Model-backed wording rewrites now fall back to `OPENAI_MODEL` when no wording-specific override is configured.
+   - Keeps one fast default path for Billie instead of silently dropping back to a slower hard-coded wording model.
+   - Added config tests to lock the fallback behavior.
 82. Client-aware labor suggestions + import pre-limit parity
    - Saved line-item memory now stores optional client context and prioritizes client matches during labor follow-up suggestions.
    - Follow-up quick replies now surface `Use client match` when a same-client rate is known.

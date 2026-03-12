@@ -47,7 +47,7 @@ test("resolveJsonTaskModel falls back to default model for wording tasks", () =>
   delete process.env.OPENAI_WORDING_MODEL;
   delete process.env.OPENAI_WORDING_MODEL_FALLBACK;
 
-  assert.equal(resolveJsonTaskModel({ taskType: "wording" }), "gpt-4.1-mini");
+  assert.equal(resolveJsonTaskModel({ taskType: "wording" }), "gpt-main");
 });
 
 test("resolveJsonTaskModel uses fallback wording model when configured", () => {
@@ -65,7 +65,7 @@ test("resolveJsonTaskConfig uses compact wording settings for wording tasks", ()
 
   const config = resolveJsonTaskConfig({ taskType: "wording" });
 
-  assert.equal(config.model, "gpt-4.1-mini");
+  assert.equal(config.model, "gpt-main");
   assert.equal(config.maxCompletionTokens, 400);
   assert.equal(config.temperature, 0.2);
   assert.deepEqual(config.responseFormat, { type: "json_object" });
@@ -88,7 +88,7 @@ test("resolveJsonTaskConfig can relax wording response format for retries", () =
     disableStructuredJsonResponse: true
   });
 
-  assert.equal(config.model, "gpt-4.1-mini");
+  assert.equal(config.model, "gpt-main");
   assert.equal(config.maxCompletionTokens, 900);
   assert.equal(config.responseFormat, undefined);
   assert.match(config.systemPrompt, /rewrite invoice wording only/i);

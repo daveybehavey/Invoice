@@ -562,6 +562,41 @@ test("system persistence migration endpoint reports file-store summary", async (
   );
 });
 
+test("launch diagnostics endpoint aggregates persistence, billing, delivery, and public URL readiness", async () => {
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+
+  const baseline = await request(app).get("/api/system/launch");
+  assert.equal(baseline.status, 200);
+  assert.equal(baseline.body.ready, false);
+  assert.equal(baseline.body.publicBaseUrl, "https://app.notebill.app");
+  assert.equal(baseline.body.persistence?.ready, true);
+  assert.equal(baseline.body.billing?.ready, false);
+  assert.equal(baseline.body.delivery?.ready, false);
+  assert.equal(baseline.body.publicBaseUrlReady, true);
+  assert.ok(Array.isArray(baseline.body.checks));
+  assert.ok(
+    baseline.body.checks.some((check: { id?: string; ok?: boolean }) => check.id === "billing" && check.ok === false)
+  );
+  assert.ok(
+    baseline.body.checks.some((check: { id?: string; ok?: boolean }) => check.id === "delivery" && check.ok === false)
+  );
+
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+  process.env.STRIPE_PRICE_ID = "price_test_placeholder";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_placeholder";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+
+  const configured = await request(app).get("/api/system/launch");
+  assert.equal(configured.status, 200);
+  assert.equal(configured.body.ready, true);
+  assert.equal(configured.body.billing?.ready, true);
+  assert.equal(configured.body.delivery?.ready, true);
+  assert.equal(configured.body.publicBaseUrlReady, true);
+  assert.equal(configured.body.warningCount, 0);
+});
+
 test("invoice library enforces auth when INVOICE_REQUIRE_AUTH is true", async () => {
   process.env.INVOICE_REQUIRE_AUTH = "true";
   try {

@@ -55,7 +55,7 @@ function getDefaultWordingModel(): string {
   if (fallbackWordingModel) {
     return fallbackWordingModel;
   }
-  return "gpt-4.1-mini";
+  return getDefaultModel();
 }
 
 function getDefaultVisionModel(): string {

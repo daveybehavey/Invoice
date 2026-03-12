@@ -36,6 +36,13 @@
     );
   }
   const { formatPlanSummary, getPlanPrelimitWarning, getPlanUpgradeUrl } = accountPlanUtils;
+  const billingActions = window.InvoiceBillingActions;
+  if (!billingActions) {
+    throw new Error(
+      "Missing /utils/billingActions.js load. Ensure it is loaded before /features/import/importInvoice.jsx."
+    );
+  }
+  const { hasStripeCheckout, startUpgradeCheckout, readBillingNoticeFromUrl } = billingActions;
 
 function ImportInvoice() {
   const navigate = useNavigate();
@@ -100,6 +107,8 @@ function ImportInvoice() {
   const [ocrConfidenceReasons, setOcrConfidenceReasons] = useState([]);
   const [lowConfidenceConfirmed, setLowConfidenceConfirmed] = useState(false);
   const [error, setError] = useState("");
+  const [billingNotice, setBillingNotice] = useState(null);
+  const [billingBusy, setBillingBusy] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -126,6 +135,14 @@ function ImportInvoice() {
   const planLimitReached = Boolean(accountPlan?.upgradeRequired);
   const planWarning = getPlanPrelimitWarning(accountPlan);
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
+  const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
+
+  useEffect(() => {
+    const notice = readBillingNoticeFromUrl();
+    if (notice) {
+      setBillingNotice(notice);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -149,6 +166,32 @@ function ImportInvoice() {
       cancelled = true;
     };
   }, []);
+
+  const handleUpgradeAction = async () => {
+    if (!planLimitReached || billingBusy) {
+      return;
+    }
+    setError("");
+    setBillingBusy(true);
+    try {
+      if (useStripeUpgradeAction) {
+        await startUpgradeCheckout(accountPlan, {
+          successPath: "/import?billing=success",
+          cancelPath: "/import?billing=cancelled"
+        });
+        return;
+      }
+      if (upgradeUrl) {
+        window.open(upgradeUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      throw new Error("Upgrade is not configured yet.");
+    } catch (upgradeError) {
+      setError(upgradeError?.message || "Unable to open upgrade.");
+    } finally {
+      setBillingBusy(false);
+    }
+  };
 
   const formatBytes = (bytes) => {
     if (!Number.isFinite(bytes)) {
@@ -483,14 +526,36 @@ function ImportInvoice() {
                 New saves are locked on free plan this month. You can still import and edit.
               </p>
             ) : null}
-            {planLimitReached && upgradeUrl ? (
-              <a
-                className="mt-2 inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-blue-800 hover:border-blue-200"
-                href={upgradeUrl}
-              >
-                Upgrade plan
-              </a>
+            {planLimitReached && (useStripeUpgradeAction || upgradeUrl) ? (
+              useStripeUpgradeAction ? (
+                <button
+                  type="button"
+                  className="mt-2 inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-blue-800 hover:border-blue-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={handleUpgradeAction}
+                  disabled={billingBusy}
+                >
+                  {billingBusy ? "Opening..." : "Upgrade plan"}
+                </button>
+              ) : (
+                <a
+                  className="mt-2 inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-blue-800 hover:border-blue-200"
+                  href={upgradeUrl}
+                >
+                  Upgrade plan
+                </a>
+              )
             ) : null}
+          </div>
+        ) : null}
+        {billingNotice ? (
+          <div
+            className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-medium ${
+              billingNotice.tone === "green"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                : "border-amber-200 bg-amber-50 text-amber-900"
+            }`}
+          >
+            {billingNotice.message}
           </div>
         ) : null}
 

@@ -39,8 +39,13 @@ npm run public:start
 ```bash
 systemctl --user status notebill-dev.service --no-pager
 systemctl --user status notebill-tunnel.service --no-pager
+npm run check:launch
 npm run check:public-domain
 ```
+
+`check:launch` verifies:
+- local `/health` is reachable
+- local `/api/system/launch` reports persistence/auth/billing/delivery/public-base-url readiness in one payload
 
 `check:public-domain` verifies:
 - both user services are active

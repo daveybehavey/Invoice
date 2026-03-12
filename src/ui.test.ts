@@ -903,6 +903,65 @@ test("import screen shows pre-limit warning when one free save remains", async (
   }
 });
 
+test("import screen shows billing completion notice and clears billing query param", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/import?billing=success`, { waitUntil: "networkidle" });
+    await page
+      .getByText("Upgrade started. Billie will unlock Pro as soon as Stripe confirms your subscription.")
+      .waitFor({ state: "visible" });
+    await waitForCondition(() => !new URL(page.url()).searchParams.has("billing"), {
+      timeoutMs: 2000,
+      message: "Billing query param should be removed after import notice renders."
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("import screen shows stripe upgrade button when checkout is configured", async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "1";
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_PRICE_ID = "price_test_placeholder";
+
+  await request(app).post("/api/invoices/save").send({
+    confirmSave: true,
+    sourceType: "text_input",
+    invoiceData: {
+      structuredInvoice: { workSessions: [], materials: [] },
+      finishedInvoice: {
+        invoiceNumber: "INV-IMPORT-UPGRADE-1",
+        issueDate: "2026-03-11",
+        customerName: "Import Upgrade Client",
+        currency: "USD",
+        lineItems: [{ description: "Existing", quantity: 1, unitPrice: 10, amount: 10 }],
+        notes: "",
+        subtotal: 10,
+        total: 10,
+        balanceDue: 10
+      }
+    }
+  });
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "local-default");
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/import`, { waitUntil: "networkidle" });
+    await page.getByText("Free plan · 1/1 saved this month (limit reached)").waitFor({
+      state: "visible"
+    });
+    await page.getByRole("button", { name: "Upgrade plan" }).waitFor({ state: "visible" });
+    assert.equal(await page.getByRole("link", { name: "Upgrade plan" }).count(), 0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor polishes line item wording on blur", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -2305,6 +2364,23 @@ test("launcher shows billing completion notice and clears billing query param", 
   }
 });
 
+test("ai intake shows billing completion notice and clears billing query param", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/ai-intake?billing=success`, { waitUntil: "networkidle" });
+    await page
+      .getByText("Upgrade started. Billie will unlock Pro as soon as Stripe confirms your subscription.")
+      .waitFor({ state: "visible" });
+    await waitForCondition(() => !new URL(page.url()).searchParams.has("billing"), {
+      timeoutMs: 2000,
+      message: "Billing query param should be removed after intake notice renders."
+    });
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher shows resume draft shortcut when a scoped draft exists", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {
@@ -2544,6 +2620,23 @@ test("invoice library shows free-plan limit banner when monthly cap is reached",
     const upgradeLink = page.getByRole("link", { name: "Upgrade plan" });
     await upgradeLink.waitFor({ state: "visible" });
     assert.equal(await upgradeLink.getAttribute("href"), "https://notebill.app/upgrade");
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library shows billing completion notice and clears billing query param", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices?billing=success`, { waitUntil: "networkidle" });
+    await page
+      .getByText("Upgrade started. Billie will unlock Pro as soon as Stripe confirms your subscription.")
+      .waitFor({ state: "visible" });
+    await waitForCondition(() => !new URL(page.url()).searchParams.has("billing"), {
+      timeoutMs: 2000,
+      message: "Billing query param should be removed after library notice renders."
+    });
   } finally {
     await context.close();
   }
@@ -3773,6 +3866,23 @@ test("manual editor save shows free-plan limit message from API", async () => {
     assert.equal(await upgradeLink.getAttribute("href"), "https://notebill.app/upgrade");
     await page.getByRole("button", { name: "Save invoice" }).waitFor({ state: "visible" });
     assert.equal(await page.getByRole("button", { name: "Save invoice" }).isDisabled(), true);
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor shows billing completion notice and clears billing query param", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual?billing=success`, { waitUntil: "networkidle" });
+    await page
+      .getByText("Upgrade started. Billie will unlock Pro as soon as Stripe confirms your subscription.")
+      .waitFor({ state: "visible" });
+    await waitForCondition(() => !new URL(page.url()).searchParams.has("billing"), {
+      timeoutMs: 2000,
+      message: "Billing query param should be removed after manual notice renders."
+    });
   } finally {
     await context.close();
   }

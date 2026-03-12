@@ -85,10 +85,18 @@
     );
   }
   const { rankSavedLineItems, buildLineRateSuggestionsByLineId } = smartRateSuggestionUtils;
+  const billingActions = window.InvoiceBillingActions;
+  if (!billingActions) {
+    throw new Error(
+      "Missing /utils/billingActions.js load. Ensure it is loaded before /features/manual/manualInvoiceCanvas.jsx."
+    );
+  }
+  const { readBillingNoticeFromUrl } = billingActions;
 
 function ManualInvoiceCanvas() {
   const navigate = useNavigate();
   const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
+  const [billingNotice, setBillingNotice] = useState(null);
   const legacyDraftStorageKey = "invoiceDraft";
   const draftStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? legacyDraftStorageKey;
@@ -168,6 +176,13 @@ function ManualInvoiceCanvas() {
       }),
     [billToDetails, lineItems, savedLineItemLibrary]
   );
+
+  useEffect(() => {
+    const notice = readBillingNoticeFromUrl();
+    if (notice) {
+      setBillingNotice(notice);
+    }
+  }, []);
 
   const activePreset = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.default;
   const activeSpacing = SPACING_DENSITY_PRESETS[spacingDensity] ?? SPACING_DENSITY_PRESETS.balanced;
@@ -873,6 +888,17 @@ function ManualInvoiceCanvas() {
   return (
     <div className="min-h-screen bg-slate-50" style={{ backgroundImage: `radial-gradient(circle at top, ${accent.muted} 0%, rgba(248,250,252,0) 46%)` }}>
       <main className="mx-auto flex w-full max-w-6xl flex-col px-4 py-8 pb-24 md:grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-6 md:pb-8">
+        {billingNotice ? (
+          <div
+            className={`mb-4 rounded-2xl border px-4 py-3 text-sm font-medium md:col-span-2 ${
+              billingNotice.tone === "green"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                : "border-amber-200 bg-amber-50 text-amber-900"
+            }`}
+          >
+            {billingNotice.message}
+          </div>
+        ) : null}
         <div className="mb-4 flex items-center justify-between gap-3 md:col-span-2 no-print">
           <button
             type="button"

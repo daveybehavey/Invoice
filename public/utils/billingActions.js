@@ -2,6 +2,33 @@
   const requestIdentity = window.InvoiceRequestIdentity;
   const apiFetch = requestIdentity?.apiFetch ?? window.fetch.bind(window);
 
+  const readBillingNoticeFromUrl = () => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const billingState = params.get("billing");
+    if (billingState !== "success" && billingState !== "cancelled") {
+      return null;
+    }
+    const notice =
+      billingState === "success"
+        ? {
+            tone: "green",
+            message: "Upgrade started. Billie will unlock Pro as soon as Stripe confirms your subscription."
+          }
+        : {
+            tone: "amber",
+            message: "Upgrade cancelled. You can keep using free mode or try again anytime."
+          };
+
+    params.delete("billing");
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash || ""}`;
+    window.history.replaceState({}, "", nextUrl);
+    return notice;
+  };
+
   const hasStripeCheckout = (plan) =>
     plan?.billing?.provider === "stripe" && Boolean(plan?.billing?.checkoutAvailable);
 
@@ -66,6 +93,7 @@
   };
 
   window.InvoiceBillingActions = {
+    readBillingNoticeFromUrl,
     hasStripeCheckout,
     hasStripePortal,
     startUpgradeCheckout,

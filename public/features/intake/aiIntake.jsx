@@ -137,7 +137,7 @@
       "Missing /utils/billingActions.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
     );
   }
-  const { hasStripeCheckout, startUpgradeCheckout } = billingActions;
+  const { hasStripeCheckout, startUpgradeCheckout, readBillingNoticeFromUrl } = billingActions;
 
   const businessProfileUtils = window.InvoiceBusinessProfile;
   if (!businessProfileUtils) {
@@ -179,6 +179,7 @@ function AIIntake() {
     requestIdentity.getScopedStorageKey?.("invoiceLastLaborRate") ?? legacyLaborRateStorageKey;
   const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
   const [accountPlan, setAccountPlan] = useState(null);
+  const [billingNotice, setBillingNotice] = useState(null);
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState("");
   const [messages, setMessages] = useState(initialIntakeMessages);
@@ -234,6 +235,13 @@ function AIIntake() {
   });
   const [wizardStepsExpanded, setWizardStepsExpanded] = useState(false);
   const [billieChipTrayExpanded, setBillieChipTrayExpanded] = useState(false);
+
+  useEffect(() => {
+    const notice = readBillingNoticeFromUrl();
+    if (notice) {
+      setBillingNotice(notice);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -1575,6 +1583,17 @@ function AIIntake() {
         <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-28">
           <div className="flex-1 overflow-y-auto pb-4 pt-6">
             <div className="space-y-6">
+              {billingNotice ? (
+                <div
+                  className={`rounded-2xl border px-4 py-3 text-sm font-medium ${
+                    billingNotice.tone === "green"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                      : "border-amber-200 bg-amber-50 text-amber-900"
+                  }`}
+                >
+                  {billingNotice.message}
+                </div>
+              ) : null}
               <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
