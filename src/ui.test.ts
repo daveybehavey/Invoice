@@ -2875,6 +2875,108 @@ test("invoice library recurring reminder opens invoice-again for the next due in
   }
 });
 
+test("invoice library shows draft recovery inbox for stale draft invoices", async () => {
+  const ownerId = "ui-library-draft-recovery-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const olderResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Library Draft Recovery A",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LIB-REC-OLD",
+          issueDate: "2026-03-01",
+          customerName: "Library Draft Recovery A",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-lib-rec-old",
+              type: "labor",
+              description: "Library draft old baseline",
+              quantity: 1,
+              unitPrice: 95,
+              amount: 95
+            }
+          ],
+          subtotal: 95,
+          total: 95,
+          balanceDue: 95
+        }
+      }
+    }
+  });
+  assert.equal(olderResponse.status(), 200);
+  const olderPayload = await olderResponse.json();
+  await mutateStoredInvoice(olderPayload?.invoice?.invoiceId, {
+    updatedAt: "2026-02-01T00:00:00.000Z"
+  });
+
+  const newerResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Library Draft Recovery B",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LIB-REC-NEW",
+          issueDate: "2026-03-08",
+          customerName: "Library Draft Recovery B",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-lib-rec-new",
+              type: "labor",
+              description: "Library draft new baseline",
+              quantity: 1,
+              unitPrice: 115,
+              amount: 115
+            }
+          ],
+          subtotal: 115,
+          total: 115,
+          balanceDue: 115
+        }
+      }
+    }
+  });
+  assert.equal(newerResponse.status(), 200);
+  const newerPayload = await newerResponse.json();
+  await mutateStoredInvoice(newerPayload?.invoice?.invoiceId, {
+    updatedAt: "2026-03-09T00:00:00.000Z"
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("Draft recovery inbox").waitFor({ state: "visible" });
+    await page.getByText("1 draft has been inactive for over a week.").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Resume oldest draft" }).click();
+    await page.waitForURL(/\/manual$/, { timeout: 15000 });
+    assert.equal(await page.getByLabel("Invoice #").inputValue(), "INV-LIB-REC-OLD");
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library invoice again opens a fresh draft with today's date and a new number", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

@@ -707,6 +707,8 @@ function InvoiceLibrary() {
     accountPlan?.plan === "pro" && (Boolean(billingPortalUrl) || useStripePortalAction);
   const sentReminderThresholdDays = 14;
   const sentReminderThresholdMs = sentReminderThresholdDays * 24 * 60 * 60 * 1000;
+  const staleDraftThresholdDays = 7;
+  const staleDraftThresholdMs = staleDraftThresholdDays * 24 * 60 * 60 * 1000;
   const recurringSchedulesByInvoiceId = recurringSchedules;
   const recurringReminderInvoices = invoices
     .filter((invoice) => invoice?.status !== "deleted")
@@ -732,6 +734,21 @@ function InvoiceLibrary() {
     !requiresSignIn &&
     !showTrash &&
     recurringReminderInvoices.length > 0;
+  const staleDraftInvoices = invoices
+    .filter((invoice) => invoice?.status === "draft")
+    .filter((invoice) => {
+      const updatedAtMs = Date.parse(invoice?.updatedAt ?? "");
+      if (!Number.isFinite(updatedAtMs)) {
+        return false;
+      }
+      return Date.now() - updatedAtMs >= staleDraftThresholdMs;
+    })
+    .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+  const oldestStaleDraft = staleDraftInvoices[0] ?? null;
+  const showDraftRecoveryReminder =
+    !requiresSignIn &&
+    !showTrash &&
+    staleDraftInvoices.length > 0;
   const sentFollowUpInvoices = invoices
     .filter((invoice) => invoice?.status === "sent")
     .filter((invoice) => {
@@ -988,6 +1005,43 @@ function InvoiceLibrary() {
                 </a>
               )
             ) : null}
+          </div>
+        ) : null}
+        {showDraftRecoveryReminder ? (
+          <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-100 px-4 py-3">
+            <p className="text-sm font-semibold text-emerald-900">Draft recovery inbox</p>
+            <p className="mt-1 text-sm text-emerald-900">
+              {staleDraftInvoices.length === 1
+                ? "1 draft has been inactive for over a week."
+                : `${staleDraftInvoices.length} drafts have been inactive for over a week.`}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {oldestStaleDraft ? (
+                <button
+                  type="button"
+                  className="rounded-xl border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-900 shadow-sm transition hover:border-emerald-400 disabled:cursor-not-allowed disabled:text-emerald-400"
+                  onClick={() => handleOpen(oldestStaleDraft.invoiceId)}
+                  disabled={actionId === oldestStaleDraft.invoiceId}
+                >
+                  {actionId === oldestStaleDraft.invoiceId ? "Opening…" : "Resume oldest draft"}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="rounded-xl border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-900 shadow-sm transition hover:border-emerald-400"
+                onClick={() => {
+                  setStatusFilter("draft");
+                  setSelectedIds([]);
+                }}
+              >
+                Show draft invoices
+              </button>
+              {oldestStaleDraft ? (
+                <p className="text-xs text-emerald-800">
+                  Oldest draft update: {formatDate(oldestStaleDraft.updatedAt)}
+                </p>
+              ) : null}
+            </div>
           </div>
         ) : null}
         {showRecurringReminder ? (

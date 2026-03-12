@@ -468,6 +468,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Invoice Library cards now support one-tap `Set monthly recurring` and `Pause recurring` actions per invoice.
    - Added a `Recurring reminders` panel that surfaces the next due recurring invoice with direct `Invoice again next due`.
    - Added UI coverage for recurring set/pause flow and due reminder open behavior.
+121. Invoice Library draft recovery inbox
+   - Added a stale-draft reminder panel for draft invoices untouched for 7+ days.
+   - Users can jump directly into the oldest stale draft with one tap or filter to all draft invoices.
+   - Added UI coverage for stale draft detection and resume-oldest behavior.
 
 ## Next (current priorities)
 1. Optional modularization continuation
