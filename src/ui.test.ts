@@ -2654,6 +2654,7 @@ test("invoice library surfaces follow-up reminders for stale sent invoices", asy
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     await page.getByText("Follow-up reminders").waitFor({ state: "visible" });
     await page.getByText("1 sent invoice may need follow-up.").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Invoice again oldest" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Show sent invoices" }).click();
     await page.getByText("INV-SENT-1").waitFor({ state: "visible" });
     assert.equal(await page.getByText("INV-DRAFT-1").count(), 0);

@@ -588,6 +588,7 @@ function InvoiceLibrary() {
     })
     .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
   const oldestSentReminder = sentFollowUpInvoices[0] ?? null;
+  const recurringCandidateInvoice = oldestSentReminder;
   const reminderHiddenUntilMs = Date.parse(followUpReminderState?.hiddenUntil ?? "");
   const reminderIsSnoozed =
     Number.isFinite(reminderHiddenUntilMs) && reminderHiddenUntilMs > Date.now();
@@ -853,6 +854,18 @@ function InvoiceLibrary() {
               >
                 Show sent invoices
               </button>
+              {recurringCandidateInvoice ? (
+                <button
+                  type="button"
+                  className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 disabled:cursor-not-allowed disabled:text-blue-400"
+                  onClick={() => handleInvoiceAgain(recurringCandidateInvoice.invoiceId)}
+                  disabled={actionId === recurringCandidateInvoice.invoiceId}
+                >
+                  {actionId === recurringCandidateInvoice.invoiceId
+                    ? "Opening…"
+                    : "Invoice again oldest"}
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"

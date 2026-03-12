@@ -460,6 +460,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Review details now include a compact `Service timeline` card grouped by session date.
    - Timeline rows show per-day item count, labor duration, and captured amount for faster trust checks.
    - Added UI coverage for timeline visibility on multi-day messy intake.
+119. Follow-up reminder "invoice again" shortcut
+   - Follow-up reminder banner in Invoice Library now includes a one-tap `Invoice again oldest` action.
+   - Users can jump from stale sent reminders directly into a fresh duplicate draft without searching the list first.
+   - Added UI coverage for reminder shortcut visibility.
 
 ## Next (current priorities)
 1. Optional modularization continuation
