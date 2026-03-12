@@ -106,6 +106,69 @@
     const [firstLine] = value.split("\n");
     return firstLine?.trim() ?? "";
   };
+  const parsePositiveRate = (value) => {
+    const parsed = Number.parseFloat(String(value ?? ""));
+    return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : null;
+  };
+
+  const resolveBestSavedRateSuggestion = ({ lineDescription, currentClientName, lineItemLibrary }) => {
+    const lineTokens = tokenizeMatchText(lineDescription);
+    if (!lineTokens.length) {
+      return null;
+    }
+    const lineTokenSet = new Set(lineTokens);
+    const normalizedClient = normalizeMatchText(currentClientName);
+    let bestMatch = null;
+    for (const entry of Array.isArray(lineItemLibrary) ? lineItemLibrary : []) {
+      const rate = parsePositiveRate(entry?.rate ?? entry?.unitPrice);
+      if (!rate) {
+        continue;
+      }
+      const normalizedEntryClient = normalizeMatchText(entry?.clientName);
+      const clientMatch =
+        Boolean(normalizedClient) &&
+        Boolean(normalizedEntryClient) &&
+        normalizedClient === normalizedEntryClient;
+      const overlap = tokenizeMatchText(entry?.description).reduce(
+        (score, token) => (lineTokenSet.has(token) ? score + 1 : score),
+        0
+      );
+      if (!clientMatch && overlap <= 0) {
+        continue;
+      }
+      const updatedAtTs = Number.parseInt(
+        String(Date.parse(typeof entry?.updatedAt === "string" ? entry.updatedAt : "")),
+        10
+      );
+      const candidate = {
+        rate,
+        clientMatch,
+        overlap,
+        description: typeof entry?.description === "string" ? entry.description.trim() : "",
+        updatedAtTs: Number.isFinite(updatedAtTs) ? updatedAtTs : 0
+      };
+      if (!bestMatch) {
+        bestMatch = candidate;
+        continue;
+      }
+      if (Boolean(candidate.clientMatch) !== Boolean(bestMatch.clientMatch)) {
+        if (candidate.clientMatch) {
+          bestMatch = candidate;
+        }
+        continue;
+      }
+      if (candidate.overlap !== bestMatch.overlap) {
+        if (candidate.overlap > bestMatch.overlap) {
+          bestMatch = candidate;
+        }
+        continue;
+      }
+      if (candidate.updatedAtTs > bestMatch.updatedAtTs) {
+        bestMatch = candidate;
+      }
+    }
+    return bestMatch;
+  };
 
 function ManualInvoiceCanvas() {
   const navigate = useNavigate();
@@ -209,6 +272,31 @@ function ManualInvoiceCanvas() {
         }
         return right.updatedAtTs - left.updatedAtTs;
       });
+  }, [billToDetails, lineItems, savedLineItemLibrary]);
+  const lineRateSuggestionsByLineId = useMemo(() => {
+    const currentClientName = extractClientNameFromBillTo(billToDetails);
+    const suggestions = {};
+    (Array.isArray(lineItems) ? lineItems : []).forEach((item) => {
+      if (!item?.id) {
+        return;
+      }
+      if (parsePositiveRate(item?.rate)) {
+        return;
+      }
+      const description = typeof item?.description === "string" ? item.description.trim() : "";
+      if (!description) {
+        return;
+      }
+      const suggestion = resolveBestSavedRateSuggestion({
+        lineDescription: description,
+        currentClientName,
+        lineItemLibrary: savedLineItemLibrary
+      });
+      if (suggestion) {
+        suggestions[item.id] = suggestion;
+      }
+    });
+    return suggestions;
   }, [billToDetails, lineItems, savedLineItemLibrary]);
 
   const activePreset = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.default;
@@ -359,6 +447,15 @@ function ManualInvoiceCanvas() {
       return prev.map((item, index) => (index === emptyIndex ? nextLineItem : item));
     });
     setTimedDraftStatus(`Inserted saved item: ${entry.description}`);
+  };
+
+  const handleApplySuggestedRate = (lineId, suggestion) => {
+    if (!lineId || !suggestion || !Number.isFinite(suggestion.rate)) {
+      return;
+    }
+    handleLineItemChange(lineId, "rate", String(suggestion.rate));
+    const matchLabel = suggestion.clientMatch ? "client match" : "service match";
+    setTimedDraftStatus(`Applied suggested rate $${suggestion.rate.toFixed(2)}/hr (${matchLabel})`);
   };
 
   const handleLogoChange = async (event) => {
@@ -1047,51 +1144,64 @@ function ManualInvoiceCanvas() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {lineItems.map((item) => (
-                      <tr key={item.id} className="odd:bg-slate-50/70">
-                        <td className="py-3 pr-3 pl-2 align-top">
-                          <input
-                            type="text"
-                            className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
-                            placeholder="Description"
-                            value={item.description}
-                            onChange={(event) =>
-                              handleLineItemChange(item.id, "description", event.target.value)
-                            }
-                            onBlur={() => handleLineItemDescriptionBlur(item.id)}
-                          />
-                        </td>
-                        <td className="py-3 pr-3 align-top">
-                          <input
-                            type="number"
-                            className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
-                            placeholder="0"
-                            value={item.qty}
-                            onChange={(event) =>
-                              handleLineItemChange(item.id, "qty", event.target.value)
-                            }
-                          />
-                        </td>
-                        <td className="py-3 pr-3 align-top">
-                          <input
-                            type="number"
-                            className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
-                            placeholder="$0"
-                            value={item.rate}
-                            onChange={(event) =>
-                              handleLineItemChange(item.id, "rate", event.target.value)
-                            }
-                          />
-                        </td>
-                        <td className="py-3 pr-2 text-right align-top text-slate-600 tabular-nums">
-                          {item.qty !== "" && item.rate !== "" ? (
-                            formatMoney(getLineAmount(item))
-                          ) : (
-                            <span className="text-xs font-semibold text-amber-600">Needs value</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    {lineItems.map((item, index) => {
+                      const rateSuggestion = item?.id ? lineRateSuggestionsByLineId[item.id] : null;
+                      return (
+                        <tr key={item.id} className="odd:bg-slate-50/70">
+                          <td className="py-3 pr-3 pl-2 align-top">
+                            <input
+                              type="text"
+                              className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
+                              placeholder="Description"
+                              value={item.description}
+                              onChange={(event) =>
+                                handleLineItemChange(item.id, "description", event.target.value)
+                              }
+                              onBlur={() => handleLineItemDescriptionBlur(item.id)}
+                            />
+                          </td>
+                          <td className="py-3 pr-3 align-top">
+                            <input
+                              type="number"
+                              className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
+                              placeholder="0"
+                              value={item.qty}
+                              onChange={(event) =>
+                                handleLineItemChange(item.id, "qty", event.target.value)
+                              }
+                            />
+                          </td>
+                          <td className="py-3 pr-3 align-top">
+                            <input
+                              type="number"
+                              className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
+                              placeholder="$0"
+                              value={item.rate}
+                              onChange={(event) =>
+                                handleLineItemChange(item.id, "rate", event.target.value)
+                              }
+                            />
+                            {rateSuggestion ? (
+                              <button
+                                type="button"
+                                className="mt-1 inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 transition hover:border-blue-300 hover:text-blue-900"
+                                onClick={() => handleApplySuggestedRate(item.id, rateSuggestion)}
+                                aria-label={`Apply suggested rate $${rateSuggestion.rate.toFixed(2)} to line ${index + 1}`}
+                              >
+                                {`Use suggested $${rateSuggestion.rate.toFixed(2)}/hr`}
+                              </button>
+                            ) : null}
+                          </td>
+                          <td className="py-3 pr-2 text-right align-top text-slate-600 tabular-nums">
+                            {item.qty !== "" && item.rate !== "" ? (
+                              formatMoney(getLineAmount(item))
+                            ) : (
+                              <span className="text-xs font-semibold text-amber-600">Needs value</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

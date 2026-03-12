@@ -440,6 +440,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Diagnostics now includes a top-level health snapshot card for persistence readiness, billing readiness, OCR low-confidence rate, and friction failed-check rate.
    - Keeps rollout status and quality signals visible in one quick-scan panel.
    - Added UI coverage for health snapshot visibility.
+114. Manual smart-rate quick apply (client/service match)
+   - Manual line items now show a one-tap `Use suggested $X/hr` action when rate is blank and a saved match exists.
+   - Suggestions prioritize same-client history first, then service wording overlap, then recency.
+   - Added UI coverage for apply-flow behavior and visible rate-fill confirmation.
 
 ## Next (current priorities)
 1. Optional modularization continuation

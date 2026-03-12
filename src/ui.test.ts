@@ -3091,6 +3091,51 @@ test("manual saved items prioritize same-client matches in suggestions", async (
   }
 });
 
+test("manual line items offer one-tap suggested rate from saved client history", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-manual-rate-suggestion-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          description: "Leak inspection service",
+          qty: "1",
+          rate: "142",
+          clientName: "Other Client",
+          updatedAt: "2026-03-12T12:00:00.000Z"
+        },
+        {
+          description: "Leak inspection service",
+          qty: "1",
+          rate: "155",
+          clientName: "Mike Johnson",
+          updatedAt: "2026-03-11T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Mike Johnson");
+    await page.getByPlaceholder("Description").first().fill("Leak inspection of roof flashing");
+
+    await page
+      .getByRole("button", { name: /Apply suggested rate \$155\.00 to line 1/i })
+      .waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /Apply suggested rate \$155\.00 to line 1/i }).click();
+
+    assert.equal(await page.getByPlaceholder("$0").first().inputValue(), "155");
+    await page.getByText("Applied suggested rate $155.00/hr (client match)").waitFor({
+      state: "visible"
+    });
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor save shows sign-in guidance when auth is required", async () => {
   process.env.INVOICE_REQUIRE_AUTH = "true";
   const context = await browser.newContext();
