@@ -2727,6 +2727,102 @@ test("invoice library follow-up reminder supports snooze and persists it", async
   }
 });
 
+test("invoice library follow-up reminder can resend oldest without prompting", async () => {
+  const ownerId = "ui-reminder-resend-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const sentSeedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Reminder Resend Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REM-RESEND-1",
+          issueDate: "2026-02-01",
+          customerName: "Reminder Resend Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-rem-resend-1",
+              type: "labor",
+              description: "Reminder resend baseline",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          subtotal: 120,
+          total: 120,
+          balanceDue: 120
+        }
+      }
+    }
+  });
+  const sentSeedPayload = await sentSeedResponse.json();
+  const invoiceId = sentSeedPayload?.invoice?.invoiceId as string;
+  await mutateStoredInvoice(invoiceId, {
+    status: "sent",
+    updatedAt: "2026-01-15T00:00:00.000Z"
+  });
+  const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      recipientEmail: "resend@example.com"
+    }
+  });
+  assert.equal(sendResponse.status(), 200);
+  await mutateStoredInvoice(invoiceId, {
+    status: "sent",
+    updatedAt: "2026-01-15T00:00:00.000Z"
+  });
+
+  const page = await context.newPage();
+  let dialogTriggered = false;
+  page.on("dialog", async (dialog) => {
+    dialogTriggered = true;
+    await dialog.dismiss();
+  });
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Resend oldest" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Resend oldest" }).click();
+    const startedAt = Date.now();
+    let sendCount = 0;
+    while (Date.now() - startedAt < 5000) {
+      const response = await context.request.get(`${baseUrl}/api/invoices`, {
+        headers: {
+          "x-invoice-user-id": ownerId
+        }
+      });
+      const payload = await response.json();
+      sendCount = payload?.invoices?.[0]?.delivery?.sendCount ?? 0;
+      if (sendCount > 1) {
+        break;
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 75);
+      });
+    }
+    assert.equal(sendCount > 1, true);
+    assert.equal(dialogTriggered, false);
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library supports recurring monthly reminders with pause", async () => {
   const ownerId = "ui-recurring-owner";
   const context = await browser.newContext();
@@ -3032,9 +3128,9 @@ test("invoice library send action records delivery and supports mark opened", as
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Send invoice INV-SEND-1" }).click();
-    await page.getByText(/Sent to client@example.com/i).waitFor({ state: "visible" });
+    await page.getByText(/(Sent to|Prepared for) client@example.com/i).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Mark opened INV-SEND-1" }).click();
-    await page.getByText(/Opened/i).waitFor({ state: "visible" });
+    await page.getByText("Marked as opened.").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -3721,7 +3817,7 @@ test("manual export panel can mark a saved invoice as sent then paid", async () 
   }
 });
 
-test("diagnostics route shows OCR, friction, persistence, and billing panels", async () => {
+test("diagnostics route shows OCR, friction, persistence, billing, and delivery panels", async () => {
   if (flowFrictionReportFilePath) {
     await fs.writeFile(
       flowFrictionReportFilePath,
@@ -3750,6 +3846,7 @@ test("diagnostics route shows OCR, friction, persistence, and billing panels", a
     await page.getByRole("heading", { name: "Flow friction checks" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Persistence migration" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Billing diagnostics" }).waitFor({ state: "visible" });
+    await page.getByRole("heading", { name: "Delivery diagnostics" }).waitFor({ state: "visible" });
     await page.getByText("No legacy file-store invoices detected.").waitFor({ state: "visible" });
     await page.getByText("single primary action on paste").waitFor({ state: "visible" });
   } finally {

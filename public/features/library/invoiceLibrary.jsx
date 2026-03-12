@@ -142,6 +142,7 @@ function InvoiceLibrary() {
   const [accountPlan, setAccountPlan] = useState(null);
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState("");
+  const [deliveryNotice, setDeliveryNotice] = useState("");
   const [actionId, setActionId] = useState("");
   const [showTrash, setShowTrash] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -591,18 +592,21 @@ function InvoiceLibrary() {
     }
   };
 
-  const handleSendInvoice = async (invoice) => {
+  const handleSendInvoice = async (invoice, options = {}) => {
     if (!invoice?.invoiceId) {
       return;
     }
     if (typeof window === "undefined") {
       return;
     }
-    const suggestedEmail = invoice?.delivery?.recipientEmail ?? "";
-    const recipientInput = window.prompt(
-      "Send invoice to which email?",
-      typeof suggestedEmail === "string" ? suggestedEmail : ""
-    );
+    const suggestedEmail =
+      typeof options?.recipientEmail === "string" && options.recipientEmail.trim()
+        ? options.recipientEmail.trim()
+        : invoice?.delivery?.recipientEmail ?? "";
+    const recipientInput =
+      options?.skipPrompt === true
+        ? suggestedEmail
+        : window.prompt("Send invoice to which email?", typeof suggestedEmail === "string" ? suggestedEmail : "");
     if (recipientInput === null) {
       return;
     }
@@ -613,6 +617,7 @@ function InvoiceLibrary() {
     }
     setActionId(invoice.invoiceId);
     setError("");
+    setDeliveryNotice("");
     try {
       const payload = await requestJson(
         `/api/invoices/${invoice.invoiceId}/send`,
@@ -636,6 +641,13 @@ function InvoiceLibrary() {
             : candidate
         )
       );
+      if (payload?.mode === "provider") {
+        setDeliveryNotice(`Invoice emailed to ${recipientEmail}.`);
+      } else {
+        setDeliveryNotice(
+          payload?.warning || "Delivery was recorded. Configure an email provider to send automatically."
+        );
+      }
     } catch (sendError) {
       handleLibraryError(sendError, "Failed to send invoice.");
     } finally {
@@ -649,6 +661,7 @@ function InvoiceLibrary() {
     }
     setActionId(invoiceId);
     setError("");
+    setDeliveryNotice("");
     try {
       const payload = await requestJson(
         `/api/invoices/${invoiceId}/delivery/opened`,
@@ -670,6 +683,7 @@ function InvoiceLibrary() {
             : candidate
         )
       );
+      setDeliveryNotice("Marked as opened.");
     } catch (deliveryError) {
       handleLibraryError(deliveryError, "Failed to update delivery status.");
     } finally {
@@ -897,6 +911,8 @@ function InvoiceLibrary() {
     .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
   const oldestSentReminder = sentFollowUpInvoices[0] ?? null;
   const recurringCandidateInvoice = oldestSentReminder;
+  const oldestSentRecipient = oldestSentReminder?.delivery?.recipientEmail ?? "";
+  const canQuickResendOldest = Boolean(oldestSentReminder?.invoiceId && isValidEmail(oldestSentRecipient));
   const reminderHiddenUntilMs = Date.parse(followUpReminderState?.hiddenUntil ?? "");
   const reminderIsSnoozed =
     Number.isFinite(reminderHiddenUntilMs) && reminderHiddenUntilMs > Date.now();
@@ -1113,6 +1129,11 @@ function InvoiceLibrary() {
             {billingError}
           </div>
         ) : null}
+        {deliveryNotice ? (
+          <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+            {deliveryNotice}
+          </div>
+        ) : null}
 
         {!requiresSignIn && planLimitReached ? (
           <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
@@ -1246,6 +1267,21 @@ function InvoiceLibrary() {
                   {actionId === recurringCandidateInvoice.invoiceId
                     ? "Opening…"
                     : "Invoice again oldest"}
+                </button>
+              ) : null}
+              {canQuickResendOldest ? (
+                <button
+                  type="button"
+                  className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 disabled:cursor-not-allowed disabled:text-blue-400"
+                  onClick={() =>
+                    handleSendInvoice(oldestSentReminder, {
+                      skipPrompt: true,
+                      recipientEmail: oldestSentRecipient
+                    })
+                  }
+                  disabled={actionId === oldestSentReminder.invoiceId}
+                >
+                  {actionId === oldestSentReminder.invoiceId ? "Resending…" : "Resend oldest"}
                 </button>
               ) : null}
               <button
@@ -1421,6 +1457,7 @@ function InvoiceLibrary() {
                 const deliverySentAt = hasDelivery ? formatDateTime(delivery.sentAt) : "";
                 const deliveryOpenedAt = delivery?.openedAt ? formatDateTime(delivery.openedAt) : "";
                 const deliveryOpened = delivery?.status === "opened";
+                const providerDelivery = delivery?.mode === "provider";
                 const isDeleted = invoice.status === "deleted";
                 const isSelected = selectedIds.includes(invoice.invoiceId);
                 const isStatusBusy = statusActionId.startsWith(`${invoice.invoiceId}:`);
@@ -1457,7 +1494,9 @@ function InvoiceLibrary() {
                           </p>
                           {hasDelivery ? (
                             <p className="mt-1 text-xs text-blue-800">
-                              Sent to {delivery.recipientEmail}
+                              {providerDelivery
+                                ? `Sent to ${delivery.recipientEmail}`
+                                : `Prepared for ${delivery.recipientEmail} (tracking only)`}
                               {deliveryOpened
                                 ? ` · Opened ${deliveryOpenedAt || "recently"}`
                                 : ` · Sent ${deliverySentAt || "recently"}`}

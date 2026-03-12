@@ -1,5 +1,6 @@
 import "dotenv/config";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import cors from "cors";
 import express, { NextFunction, Request, Response } from "express";
@@ -51,11 +52,14 @@ import {
 } from "./services/savedInvoiceRepository.js";
 import { getOcrMetricsSnapshot, trackOcrConfidenceMetric } from "./services/ocrMetricsStore.js";
 import {
+  getInvoiceDeliveryStoreSummary,
   getInvoiceDeliverySummary,
   getInvoiceDeliverySummariesByInvoiceIds,
+  markInvoiceDeliveryOpenedByTrackingToken,
   markInvoiceDeliveryOpened,
   recordInvoiceDeliverySend
 } from "./services/invoiceDeliveryStore.js";
+import { getInvoiceEmailCapabilities, sendInvoiceEmail } from "./services/invoiceEmailDelivery.js";
 import {
   exportOcrMetricsSnapshot,
   isOcrMetricsExportConfigured
@@ -87,6 +91,7 @@ const imageUpload = multer({
 });
 const port = Number(process.env.PORT ?? 3000);
 const publicDir = path.resolve(process.cwd(), "public");
+const TRANSPARENT_GIF_BUFFER = Buffer.from("R0lGODlhAQABAIABAP///wAAACwAAAAAAQABAAACAkQBADs=", "base64");
 
 app.use(cors());
 app.post(
@@ -294,6 +299,22 @@ app.get("/api/system/billing", async (_req: Request, res: Response, next: NextFu
       provider: capabilities.provider,
       capabilities,
       entitlements,
+      warning
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/system/delivery", async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const capabilities = getInvoiceEmailCapabilities();
+    const summary = await getInvoiceDeliveryStoreSummary();
+    const warning = resolveDeliverySystemWarning(capabilities, summary);
+    res.json({
+      provider: capabilities.provider,
+      capabilities,
+      summary,
       warning
     });
   } catch (error) {
@@ -717,19 +738,54 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
       throw new HttpStatusError(400, "Restore this invoice before sending.");
     }
 
+    const trackingToken = randomUUID();
+    const openTrackingPixelUrl = `${resolvePublicBaseUrl(req)}/api/invoices/${invoiceId}/delivery/opened/pixel?token=${encodeURIComponent(trackingToken)}`;
+    const sendResult = await sendInvoiceEmail({
+      recipientEmail: parsedRequest.recipientEmail,
+      invoice: existingInvoice.invoiceData.finishedInvoice,
+      invoiceId,
+      openTrackingPixelUrl
+    });
+
     const delivery = await recordInvoiceDeliverySend({
       ownerId,
       invoiceId,
-      recipientEmail: parsedRequest.recipientEmail
+      recipientEmail: parsedRequest.recipientEmail,
+      trackingToken,
+      mode: sendResult.mode,
+      provider: sendResult.provider,
+      providerMessageId: sendResult.providerMessageId
     });
     const invoice =
       existingInvoice.status === "sent"
         ? existingInvoice
         : await savedInvoiceRepository.updateSavedInvoiceStatus(invoiceId, "sent", ownerId);
-    res.json({ invoice, delivery, mode: "record_only" });
+    res.json({
+      invoice,
+      delivery,
+      mode: sendResult.mode,
+      provider: sendResult.provider,
+      warning: sendResult.warning ?? null
+    });
   } catch (error) {
     next(error);
   }
+});
+
+app.get("/api/invoices/:id/delivery/opened/pixel", async (req: Request, res: Response) => {
+  const invoiceId = req.params.id;
+  const trackingToken = asOptionalString(req.query.token);
+  if (!trackingToken) {
+    sendTrackingPixelResponse(res);
+    return;
+  }
+  try {
+    await markInvoiceDeliveryOpenedByTrackingToken({ invoiceId, trackingToken });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("Failed to mark delivery opened from pixel route", error);
+  }
+  sendTrackingPixelResponse(res);
 });
 
 app.post("/api/invoices/:id/delivery/opened", async (req: Request, res: Response, next: NextFunction) => {
@@ -864,6 +920,19 @@ function resolveBillingSystemWarning(
   }
   if (entitlements.missingIdentityCount > 0) {
     return "Some subscriptions are missing owner/user/email metadata. Plan sync may be incomplete.";
+  }
+  return null;
+}
+
+function resolveDeliverySystemWarning(
+  capabilities: ReturnType<typeof getInvoiceEmailCapabilities>,
+  summary: Awaited<ReturnType<typeof getInvoiceDeliveryStoreSummary>>
+): string | null {
+  if (!capabilities.configured) {
+    return "Invoice email provider is not configured; send actions are tracking-only.";
+  }
+  if (summary.sentCount > 0 && summary.providerSendCount === 0) {
+    return "All sends are currently tracking-only. Configure provider to send actual email.";
   }
   return null;
 }
@@ -1018,6 +1087,15 @@ function evaluatePersistenceMigrationStatus(
     message:
       "Legacy file-store invoices are present. Run migration before enforcing Postgres-only persistence."
   };
+}
+
+function sendTrackingPixelResponse(res: Response): void {
+  res.setHeader("Content-Type", "image/gif");
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Content-Length", String(TRANSPARENT_GIF_BUFFER.byteLength));
+  res.status(200).send(TRANSPARENT_GIF_BUFFER);
 }
 
 class HttpStatusError extends Error {

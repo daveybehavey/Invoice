@@ -14,6 +14,10 @@ const DeliveryEntrySchema = z.object({
   recipientEmail: z.string().email(),
   sentAt: z.string().datetime(),
   openedAt: z.string().datetime().optional(),
+  trackingToken: z.string().min(8).optional(),
+  mode: z.enum(["record_only", "provider"]).default("record_only"),
+  provider: z.enum(["none", "resend"]).default("none"),
+  providerMessageId: z.string().min(1).optional(),
   sendCount: z.number().int().nonnegative().default(1),
   openCount: z.number().int().nonnegative().default(0)
 });
@@ -26,6 +30,9 @@ export const DeliverySummarySchema = z.object({
   recipientEmail: z.string().email(),
   sentAt: z.string().datetime(),
   openedAt: z.string().datetime().optional(),
+  mode: z.enum(["record_only", "provider"]).default("record_only"),
+  provider: z.enum(["none", "resend"]).default("none"),
+  providerMessageId: z.string().min(1).optional(),
   sendCount: z.number().int().nonnegative(),
   openCount: z.number().int().nonnegative(),
   status: z.enum(["sent", "opened"])
@@ -41,6 +48,10 @@ export async function recordInvoiceDeliverySend(input: {
   ownerId: string;
   invoiceId: string;
   recipientEmail: string;
+  trackingToken?: string;
+  mode?: "record_only" | "provider";
+  provider?: "none" | "resend";
+  providerMessageId?: string;
 }): Promise<DeliverySummary> {
   return withMutationLock(async () => {
     const store = await readStore();
@@ -56,6 +67,10 @@ export async function recordInvoiceDeliverySend(input: {
           invoiceId: input.invoiceId,
           recipientEmail: normalizedEmail,
           sentAt: now,
+          trackingToken: input.trackingToken,
+          mode: input.mode ?? "record_only",
+          provider: input.provider ?? "none",
+          providerMessageId: input.providerMessageId,
           sendCount: 1,
           openCount: 0
         })
@@ -66,6 +81,10 @@ export async function recordInvoiceDeliverySend(input: {
         ...existing,
         recipientEmail: normalizedEmail,
         sentAt: now,
+        trackingToken: input.trackingToken ?? existing.trackingToken,
+        mode: input.mode ?? existing.mode ?? "record_only",
+        provider: input.provider ?? existing.provider ?? "none",
+        providerMessageId: input.providerMessageId ?? existing.providerMessageId,
         sendCount: (existing.sendCount ?? 0) + 1
       });
     }
@@ -91,6 +110,30 @@ export async function markInvoiceDeliveryOpened(input: {
     );
     if (index === -1) {
       throw new Error("No delivery record found for this invoice.");
+    }
+    const now = new Date().toISOString();
+    const existing = store.entries[index];
+    store.entries[index] = DeliveryEntrySchema.parse({
+      ...existing,
+      openedAt: existing.openedAt || now,
+      openCount: (existing.openCount ?? 0) + 1
+    });
+    await writeStore(store);
+    return toSummary(store.entries[index]);
+  });
+}
+
+export async function markInvoiceDeliveryOpenedByTrackingToken(input: {
+  invoiceId: string;
+  trackingToken: string;
+}): Promise<DeliverySummary | null> {
+  return withMutationLock(async () => {
+    const store = await readStore();
+    const index = store.entries.findIndex(
+      (entry) => entry.invoiceId === input.invoiceId && entry.trackingToken === input.trackingToken
+    );
+    if (index === -1) {
+      return null;
     }
     const now = new Date().toISOString();
     const existing = store.entries[index];
@@ -133,6 +176,50 @@ export async function getInvoiceDeliverySummariesByInvoiceIds(input: {
   }, {});
 }
 
+export async function getInvoiceDeliveryStoreSummary(): Promise<{
+  entryCount: number;
+  sentCount: number;
+  openedCount: number;
+  providerSendCount: number;
+  recordOnlyCount: number;
+  lastSentAt: string | null;
+  lastOpenedAt: string | null;
+}> {
+  const store = await readStore();
+  let lastSentAt: string | null = null;
+  let lastOpenedAt: string | null = null;
+  return store.entries.reduce(
+    (summary, entry) => {
+      summary.entryCount += 1;
+      summary.sentCount += entry.sendCount ?? 0;
+      summary.openedCount += entry.openCount ?? 0;
+      if ((entry.mode ?? "record_only") === "provider") {
+        summary.providerSendCount += entry.sendCount ?? 0;
+      } else {
+        summary.recordOnlyCount += entry.sendCount ?? 0;
+      }
+      if (!lastSentAt || Date.parse(entry.sentAt) > Date.parse(lastSentAt)) {
+        lastSentAt = entry.sentAt;
+      }
+      if (entry.openedAt && (!lastOpenedAt || Date.parse(entry.openedAt) > Date.parse(lastOpenedAt))) {
+        lastOpenedAt = entry.openedAt;
+      }
+      summary.lastSentAt = lastSentAt;
+      summary.lastOpenedAt = lastOpenedAt;
+      return summary;
+    },
+    {
+      entryCount: 0,
+      sentCount: 0,
+      openedCount: 0,
+      providerSendCount: 0,
+      recordOnlyCount: 0,
+      lastSentAt: null as string | null,
+      lastOpenedAt: null as string | null
+    }
+  );
+}
+
 async function withMutationLock<T>(mutation: () => Promise<T>): Promise<T> {
   const runMutation = mutationQueue.then(mutation, mutation);
   mutationQueue = runMutation.then(
@@ -147,6 +234,9 @@ function toSummary(entry: DeliveryEntry): DeliverySummary {
     recipientEmail: entry.recipientEmail,
     sentAt: entry.sentAt,
     openedAt: entry.openedAt,
+    mode: entry.mode ?? "record_only",
+    provider: entry.provider ?? "none",
+    providerMessageId: entry.providerMessageId,
     sendCount: entry.sendCount ?? 0,
     openCount: entry.openCount ?? 0,
     status: entry.openedAt ? "opened" : "sent"

@@ -92,6 +92,9 @@ beforeEach(async () => {
   delete process.env.STRIPE_SECRET_KEY;
   delete process.env.STRIPE_PRICE_ID;
   delete process.env.STRIPE_WEBHOOK_SECRET;
+  delete process.env.INVOICE_EMAIL_PROVIDER;
+  delete process.env.RESEND_API_KEY;
+  delete process.env.INVOICE_FROM_EMAIL;
   delete process.env.APP_BASE_URL;
 });
 
@@ -2120,9 +2123,12 @@ test("send endpoint records delivery and marks invoice as sent", async () => {
     .send({ recipientEmail: "CLIENT@Example.com" });
   assert.equal(sendResponse.status, 200);
   assert.equal(sendResponse.body.mode, "record_only");
+  assert.equal(sendResponse.body.provider, "none");
   assert.equal(sendResponse.body.invoice.status, "sent");
   assert.equal(sendResponse.body.delivery.recipientEmail, "client@example.com");
   assert.equal(sendResponse.body.delivery.status, "sent");
+  assert.equal(sendResponse.body.delivery.mode, "record_only");
+  assert.equal(sendResponse.body.delivery.provider, "none");
   assert.equal(sendResponse.body.delivery.sendCount, 1);
 
   const listResponse = await request(app).get("/api/invoices").set("x-invoice-user-id", ownerId);
@@ -2185,6 +2191,142 @@ test("delivery opened endpoint updates tracked delivery status", async () => {
   assert.equal(openResponse.body.delivery.status, "opened");
   assert.equal(openResponse.body.delivery.openCount, 1);
   assert.equal(typeof openResponse.body.delivery.openedAt, "string");
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.status, 200);
+  assert.equal(getResponse.body.invoice.delivery.status, "opened");
+  assert.equal(getResponse.body.invoice.delivery.openCount, 1);
+});
+
+test("send endpoint uses resend provider when configured", async () => {
+  const ownerId = "delivery-provider-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: "email_123" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Delivery Provider Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-PROVIDER-1",
+          issueDate: "2026-03-11",
+          customerName: "Delivery Provider Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-delivery-provider-1",
+              type: "labor",
+              description: "Delivery provider baseline",
+              quantity: 1,
+              unitPrice: 160,
+              amount: 160
+            }
+          ],
+          subtotal: 160,
+          total: 160,
+          balanceDue: 160
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "provider@example.com" });
+  assert.equal(sendResponse.status, 200);
+  assert.equal(sendResponse.body.mode, "provider");
+  assert.equal(sendResponse.body.provider, "resend");
+  assert.equal(sendResponse.body.delivery.mode, "provider");
+  assert.equal(sendResponse.body.delivery.provider, "resend");
+
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.url, "https://api.resend.com/emails");
+  const fetchInit = fetchCalls[0]?.init as RequestInit | undefined;
+  assert.equal(fetchInit?.method, "POST");
+  const body = JSON.parse(String(fetchInit?.body ?? "{}"));
+  assert.equal(body.from, "billing@notebill.app");
+  assert.equal(Array.isArray(body.to), true);
+  assert.equal(body.to[0], "provider@example.com");
+  assert.match(String(body.html), /delivery\/opened\/pixel\?token=/);
+});
+
+test("delivery pixel endpoint marks matching token as opened", async () => {
+  const ownerId = "delivery-pixel-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Delivery Pixel Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-PIXEL-1",
+          issueDate: "2026-03-11",
+          customerName: "Delivery Pixel Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-delivery-pixel-1",
+              type: "labor",
+              description: "Delivery pixel baseline",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          subtotal: 120,
+          total: 120,
+          balanceDue: 120
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "pixel@example.com" });
+  assert.equal(sendResponse.status, 200);
+
+  const rawStore = await fs.readFile(invoiceDeliveryStoreFilePath, "utf8");
+  const parsedStore = JSON.parse(rawStore);
+  const trackingToken = parsedStore?.entries?.[0]?.trackingToken;
+  assert.equal(typeof trackingToken, "string");
+  assert.ok(trackingToken.length > 0);
+
+  const pixelResponse = await request(app).get(
+    `/api/invoices/${invoiceId}/delivery/opened/pixel?token=${encodeURIComponent(trackingToken)}`
+  );
+  assert.equal(pixelResponse.status, 200);
+  assert.match(String(pixelResponse.headers["content-type"] || ""), /^image\/gif/);
 
   const getResponse = await request(app)
     .get(`/api/invoices/${invoiceId}`)
@@ -2327,6 +2469,63 @@ test("billing diagnostics endpoint reports stripe readiness + entitlement counts
   assert.equal(afterWebhook.body.entitlements?.missingIdentityCount, 0);
   assert.equal(afterWebhook.body.entitlements?.byStatus?.active, 1);
   assert.equal(afterWebhook.body.warning, null);
+});
+
+test("delivery diagnostics endpoint reports provider readiness + send summary", async () => {
+  const baseline = await request(app).get("/api/system/delivery");
+  assert.equal(baseline.status, 200);
+  assert.equal(baseline.body.provider, "none");
+  assert.equal(baseline.body.capabilities?.configured, false);
+  assert.equal(baseline.body.summary?.sentCount, 0);
+  assert.match(String(baseline.body.warning || ""), /tracking-only/i);
+
+  const ownerId = "delivery-diagnostics-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Delivery Diagnostics Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-DIAG-1",
+          issueDate: "2026-03-11",
+          customerName: "Delivery Diagnostics Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-delivery-diag-1",
+              type: "labor",
+              description: "Delivery diagnostics baseline",
+              quantity: 1,
+              unitPrice: 115,
+              amount: 115
+            }
+          ],
+          subtotal: 115,
+          total: 115,
+          balanceDue: 115
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "diag-delivery@example.com" });
+
+  const afterSend = await request(app).get("/api/system/delivery");
+  assert.equal(afterSend.status, 200);
+  assert.equal(afterSend.body.summary?.sentCount, 1);
+  assert.equal(afterSend.body.summary?.recordOnlyCount, 1);
+  assert.equal(afterSend.body.summary?.providerSendCount, 0);
 });
 
 test("checkout session endpoint returns a setup error when stripe is not configured", async () => {

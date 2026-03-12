@@ -476,6 +476,14 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Invoice Library now supports `Send invoice`/`Resend invoice` with recipient email capture.
    - Added delivery state tracking (`sent/opened`, timestamps, counts) plus one-tap `Mark opened`.
    - API list/get responses now include per-invoice delivery summaries for status visibility.
+123. Provider-backed email delivery + tracking-pixel opens
+   - Added optional provider send path (`INVOICE_EMAIL_PROVIDER=resend`) with fallback to tracking-only mode when provider config is missing.
+   - Send flow now stores provider metadata (`mode`, `provider`, `messageId`) and supports open tracking via signed token pixel route.
+   - Added delivery diagnostics endpoint/panel (`GET /api/system/delivery`) for provider readiness + send/open telemetry.
+124. Follow-up reminder quick resend action
+   - Follow-up reminder banner now supports one-tap `Resend oldest` when a prior recipient email is known.
+   - Resend action bypasses extra prompts and reuses tracked recipient delivery context.
+   - Added UI coverage ensuring reminder resend runs without dialog prompts and increments delivery send counts.
 
 ## Next (current priorities)
 1. Optional modularization continuation

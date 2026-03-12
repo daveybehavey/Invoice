@@ -32,6 +32,7 @@
     const [systemInfo, setSystemInfo] = useState(null);
     const [migrationInfo, setMigrationInfo] = useState(null);
     const [billingInfo, setBillingInfo] = useState(null);
+    const [deliveryInfo, setDeliveryInfo] = useState(null);
     const [exporting, setExporting] = useState(false);
     const [exportResult, setExportResult] = useState(null);
 
@@ -49,7 +50,8 @@
           trendResponse,
           systemResponse,
           migrationResponse,
-          billingResponse
+          billingResponse,
+          deliveryResponse
         ] =
           await Promise.all([
           apiFetch("/api/telemetry/ocr-confidence"),
@@ -57,16 +59,26 @@
           apiFetch("/api/telemetry/intake-trends"),
           apiFetch("/api/system/persistence"),
           apiFetch("/api/system/persistence/migration"),
-          apiFetch("/api/system/billing")
+          apiFetch("/api/system/billing"),
+          apiFetch("/api/system/delivery")
         ]);
-        const [ocrPayload, frictionPayload, trendPayload, systemPayload, migrationPayload, billingPayload] =
+        const [
+          ocrPayload,
+          frictionPayload,
+          trendPayload,
+          systemPayload,
+          migrationPayload,
+          billingPayload,
+          deliveryPayload
+        ] =
           await Promise.all([
           ocrResponse.json(),
           frictionResponse.json(),
           trendResponse.json(),
           systemResponse.json(),
           migrationResponse.json(),
-          billingResponse.json()
+          billingResponse.json(),
+          deliveryResponse.json()
         ]);
         if (!ocrResponse.ok) {
           throw new Error(ocrPayload?.error || "Failed to load OCR telemetry.");
@@ -86,12 +98,16 @@
         if (!billingResponse.ok) {
           throw new Error(billingPayload?.error || "Failed to load billing diagnostics.");
         }
+        if (!deliveryResponse.ok) {
+          throw new Error(deliveryPayload?.error || "Failed to load delivery diagnostics.");
+        }
         setOcrSnapshot(ocrPayload);
         setFrictionSnapshot(frictionPayload);
         setTrendSnapshot(trendPayload);
         setSystemInfo(systemPayload);
         setMigrationInfo(migrationPayload);
         setBillingInfo(billingPayload);
+        setDeliveryInfo(deliveryPayload);
       } catch (loadError) {
         console.error("Failed to load intake diagnostics", loadError);
         setError(loadError?.message || "Failed to load diagnostics.");
@@ -181,6 +197,7 @@
         billingInfo?.capabilities?.portalAvailable &&
         billingInfo?.capabilities?.webhookAvailable
     );
+    const deliveryReady = Boolean(deliveryInfo?.capabilities?.configured);
     const migrationBacklog = Boolean(migrationInfo?.migrationStatus?.backlogDetected);
     const ocrLowRatePct = `${(trend24h.lowRate * 100).toFixed(1)}%`;
     const frictionFailedRatePct = `${(frictionTrend24h.failedRate * 100).toFixed(1)}%`;
@@ -254,6 +271,11 @@
                 label="Billing readiness"
                 value={billingReady ? "Ready" : "Needs setup"}
                 tone={billingReady ? "green" : "amber"}
+              />
+              <StatusPill
+                label="Delivery readiness"
+                value={deliveryReady ? "Ready" : "Tracking only"}
+                tone={deliveryReady ? "green" : "amber"}
               />
               <StatusPill
                 label="OCR low-confidence (24h)"
@@ -333,6 +355,34 @@
             </p>
             {billingInfo?.warning ? (
               <p className="mt-2 text-xs text-amber-700">{billingInfo.warning}</p>
+            ) : null}
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Delivery diagnostics</h2>
+            <p className="mt-2 text-xs text-slate-500">
+              Provider: {deliveryInfo?.provider || "n/a"}
+              {" · "}
+              Configured: {deliveryInfo?.capabilities?.configured ? "yes" : "no"}
+              {" · "}
+              From: {deliveryInfo?.capabilities?.fromEmail || "n/a"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Sent count: {deliveryInfo?.summary?.sentCount ?? 0}
+              {" · "}
+              Opened count: {deliveryInfo?.summary?.openedCount ?? 0}
+              {" · "}
+              Provider sends: {deliveryInfo?.summary?.providerSendCount ?? 0}
+              {" · "}
+              Tracking-only sends: {deliveryInfo?.summary?.recordOnlyCount ?? 0}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Last sent: {deliveryInfo?.summary?.lastSentAt || "n/a"}
+              {" · "}
+              Last opened: {deliveryInfo?.summary?.lastOpenedAt || "n/a"}
+            </p>
+            {deliveryInfo?.warning ? (
+              <p className="mt-2 text-xs text-amber-700">{deliveryInfo.warning}</p>
             ) : null}
           </div>
 
