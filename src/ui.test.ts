@@ -2727,6 +2727,154 @@ test("invoice library follow-up reminder supports snooze and persists it", async
   }
 });
 
+test("invoice library supports recurring monthly reminders with pause", async () => {
+  const ownerId = "ui-recurring-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Recurring Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-RECUR-1",
+          issueDate: "2026-03-01",
+          customerName: "Recurring Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-recur-1",
+              type: "labor",
+              description: "Recurring baseline",
+              quantity: 1,
+              unitPrice: 125,
+              amount: 125
+            }
+          ],
+          subtotal: 125,
+          total: 125,
+          balanceDue: 125
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const setRecurringButton = page.getByRole("button", {
+      name: "Set monthly recurring for INV-RECUR-1"
+    });
+    await setRecurringButton.waitFor({ state: "visible" });
+    await setRecurringButton.click();
+
+    await page.getByText("Recurring reminders").waitFor({ state: "visible" });
+    await page.getByText(/Next recurring invoice is due/i).waitFor({ state: "visible" });
+    await page.getByText("Recurring monthly").waitFor({ state: "visible" });
+    await page
+      .getByRole("button", { name: "Pause recurring for INV-RECUR-1" })
+      .waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Pause recurring for INV-RECUR-1" }).click();
+    await page.getByText("Recurring reminders").waitFor({ state: "hidden" });
+    await page
+      .getByRole("button", { name: "Set monthly recurring for INV-RECUR-1" })
+      .waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library recurring reminder opens invoice-again for the next due invoice", async () => {
+  const ownerId = "ui-recurring-open-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Recurring Open Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-RECUR-OPEN-1",
+          issueDate: "2026-02-01",
+          customerName: "Recurring Open Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-recur-open-1",
+              type: "labor",
+              description: "Recurring open baseline",
+              quantity: 1,
+              unitPrice: 140,
+              amount: 140
+            }
+          ],
+          subtotal: 140,
+          total: 140,
+          balanceDue: 140
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const invoiceId = seedPayload?.invoice?.invoiceId as string;
+  assert.equal(typeof invoiceId, "string");
+
+  await context.addInitScript(
+    ({ initOwnerId, initInvoiceId }) => {
+      const key = `invoiceRecurringSchedules::owner:${initOwnerId}`;
+      window.localStorage.setItem(
+        key,
+        JSON.stringify({
+          entries: {
+            [initInvoiceId]: {
+              intervalDays: 30,
+              nextDueAt: "2026-01-01T00:00:00.000Z"
+            }
+          }
+        })
+      );
+    },
+    { initOwnerId: ownerId, initInvoiceId: invoiceId }
+  );
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("Recurring reminders").waitFor({ state: "visible" });
+    await page.getByText("1 recurring invoice is due.").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Invoice again next due" }).click();
+    await page.waitForURL(/\/manual$/, { timeout: 15000 });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Recurring Open Client");
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library invoice again opens a fresh draft with today's date and a new number", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

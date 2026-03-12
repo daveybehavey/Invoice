@@ -39,6 +39,56 @@
   const { hasStripeCheckout, hasStripePortal, startUpgradeCheckout, openBillingPortal } = billingActions;
   const deleteSkipStorageKey = "invoiceDeleteSkipConfirm";
   const followUpReminderStorageKey = "invoiceFollowUpReminder";
+  const recurringScheduleStorageKey = "invoiceRecurringSchedules";
+  const recurringIntervalOptions = [7, 14, 30];
+  const recurringIntervalLabels = {
+    7: "weekly",
+    14: "biweekly",
+    30: "monthly"
+  };
+  const recurringDayMs = 24 * 60 * 60 * 1000;
+
+  const normalizeRecurringInterval = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return 30;
+    }
+    const rounded = Math.round(parsed);
+    return recurringIntervalOptions.includes(rounded) ? rounded : 30;
+  };
+
+  const parseRecurringTimestamp = (value) => {
+    const parsed = Date.parse(value ?? "");
+    return Number.isFinite(parsed) ? parsed : Date.now();
+  };
+
+  const readRecurringSchedules = (storageKey) => {
+    if (typeof window === "undefined") {
+      return {};
+    }
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) {
+        return {};
+      }
+      const parsed = JSON.parse(raw);
+      const entries = parsed?.entries && typeof parsed.entries === "object" ? parsed.entries : {};
+      return Object.entries(entries).reduce((result, [invoiceId, entry]) => {
+        if (!invoiceId || !entry || typeof entry !== "object") {
+          return result;
+        }
+        const intervalDays = normalizeRecurringInterval(entry.intervalDays);
+        const nextDueAt = new Date(parseRecurringTimestamp(entry.nextDueAt)).toISOString();
+        result[invoiceId] = {
+          intervalDays,
+          nextDueAt
+        };
+        return result;
+      }, {});
+    } catch (_error) {
+      return {};
+    }
+  };
 
   const readFollowUpReminderState = (storageKey) => {
     if (typeof window === "undefined") {
@@ -69,6 +119,8 @@ function InvoiceLibrary() {
     requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? legacyDraftStorageKey;
   const reminderStorageKey =
     requestIdentity.getScopedStorageKey?.(followUpReminderStorageKey) ?? followUpReminderStorageKey;
+  const recurringStorageKey =
+    requestIdentity.getScopedStorageKey?.(recurringScheduleStorageKey) ?? recurringScheduleStorageKey;
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -97,6 +149,9 @@ function InvoiceLibrary() {
   const [undoToast, setUndoToast] = useState(null);
   const [followUpReminderState, setFollowUpReminderState] = useState(() =>
     readFollowUpReminderState(reminderStorageKey)
+  );
+  const [recurringSchedules, setRecurringSchedules] = useState(() =>
+    readRecurringSchedules(recurringStorageKey)
   );
   const undoTimeoutRef = useRef(null);
   const requiresSignIn = (authRequiredByPolicy || authRequiredError) && !authSession?.userId;
@@ -163,6 +218,52 @@ function InvoiceLibrary() {
     if (typeof window !== "undefined") {
       window.localStorage.setItem(reminderStorageKey, JSON.stringify(nextState));
     }
+  };
+
+  const persistRecurringSchedules = (nextEntries) => {
+    setRecurringSchedules(nextEntries);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(recurringStorageKey, JSON.stringify({ entries: nextEntries }));
+    }
+  };
+
+  const setRecurringSchedule = (invoiceId, intervalDays = 30) => {
+    const normalizedInterval = normalizeRecurringInterval(intervalDays);
+    const nextDueAt = new Date(Date.now() + normalizedInterval * recurringDayMs).toISOString();
+    persistRecurringSchedules({
+      ...recurringSchedules,
+      [invoiceId]: {
+        intervalDays: normalizedInterval,
+        nextDueAt
+      }
+    });
+  };
+
+  const removeRecurringSchedule = (invoiceId) => {
+    if (!invoiceId || !recurringSchedules[invoiceId]) {
+      return;
+    }
+    const nextEntries = { ...recurringSchedules };
+    delete nextEntries[invoiceId];
+    persistRecurringSchedules(nextEntries);
+  };
+
+  const advanceRecurringSchedule = (invoiceId) => {
+    const existing = recurringSchedules[invoiceId];
+    if (!existing) {
+      return;
+    }
+    const intervalDays = normalizeRecurringInterval(existing.intervalDays);
+    const existingDueMs = parseRecurringTimestamp(existing.nextDueAt);
+    const baseMs = Math.max(Date.now(), existingDueMs);
+    const nextDueAt = new Date(baseMs + intervalDays * recurringDayMs).toISOString();
+    persistRecurringSchedules({
+      ...recurringSchedules,
+      [invoiceId]: {
+        intervalDays,
+        nextDueAt
+      }
+    });
   };
 
   const clearUndoToast = () => {
@@ -314,6 +415,26 @@ function InvoiceLibrary() {
   }, [reminderStorageKey]);
 
   useEffect(() => {
+    setRecurringSchedules(readRecurringSchedules(recurringStorageKey));
+  }, [recurringStorageKey]);
+
+  useEffect(() => {
+    if (showTrash || invoices.length === 0) {
+      return;
+    }
+    const visibleIds = new Set(invoices.map((invoice) => invoice.invoiceId));
+    const staleIds = Object.keys(recurringSchedules).filter((invoiceId) => !visibleIds.has(invoiceId));
+    if (staleIds.length === 0) {
+      return;
+    }
+    const nextEntries = { ...recurringSchedules };
+    staleIds.forEach((invoiceId) => {
+      delete nextEntries[invoiceId];
+    });
+    persistRecurringSchedules(nextEntries);
+  }, [invoices, showTrash, recurringSchedules]);
+
+  useEffect(() => {
     if (showTrash && statusFilter !== "all") {
       setStatusFilter("all");
     }
@@ -338,7 +459,13 @@ function InvoiceLibrary() {
     };
   }, []);
 
-  const openSavedInvoice = async (invoiceId, endpoint, method = "GET", draftOptions = {}) => {
+  const openSavedInvoice = async (
+    invoiceId,
+    endpoint,
+    method = "GET",
+    draftOptions = {},
+    options = {}
+  ) => {
     setActionId(invoiceId);
     try {
       const payload = await requestJson(
@@ -359,6 +486,9 @@ function InvoiceLibrary() {
         ...draftOptions
       });
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+      if (typeof options?.onLoaded === "function") {
+        options.onLoaded(savedInvoice);
+      }
       navigate("/manual");
     } catch (openError) {
       handleLibraryError(openError, "Failed to open invoice.");
@@ -368,12 +498,12 @@ function InvoiceLibrary() {
   };
 
   const handleOpen = (invoiceId) => openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`);
-  const handleInvoiceAgain = (invoiceId) =>
+  const handleInvoiceAgain = (invoiceId, options = {}) =>
     openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`, "GET", {
       freshDraft: true,
       savedInvoiceId: "",
       savedInvoiceStatus: ""
-    });
+    }, options);
 
   const handleStatusUpdate = async (invoiceId, status) => {
     const statusActionKey = `${invoiceId}:${status}`;
@@ -577,6 +707,31 @@ function InvoiceLibrary() {
     accountPlan?.plan === "pro" && (Boolean(billingPortalUrl) || useStripePortalAction);
   const sentReminderThresholdDays = 14;
   const sentReminderThresholdMs = sentReminderThresholdDays * 24 * 60 * 60 * 1000;
+  const recurringSchedulesByInvoiceId = recurringSchedules;
+  const recurringReminderInvoices = invoices
+    .filter((invoice) => invoice?.status !== "deleted")
+    .map((invoice) => {
+      const recurringEntry = recurringSchedulesByInvoiceId[invoice.invoiceId];
+      if (!recurringEntry) {
+        return null;
+      }
+      return {
+        ...invoice,
+        recurringEntry,
+        nextDueMs: parseRecurringTimestamp(recurringEntry.nextDueAt)
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.nextDueMs - right.nextDueMs);
+  const dueRecurringInvoices = recurringReminderInvoices.filter(
+    (invoice) => invoice.nextDueMs <= Date.now()
+  );
+  const recurringDueCount = dueRecurringInvoices.length;
+  const nextRecurringCandidate = (dueRecurringInvoices[0] ?? recurringReminderInvoices[0]) || null;
+  const showRecurringReminder =
+    !requiresSignIn &&
+    !showTrash &&
+    recurringReminderInvoices.length > 0;
   const sentFollowUpInvoices = invoices
     .filter((invoice) => invoice?.status === "sent")
     .filter((invoice) => {
@@ -835,6 +990,43 @@ function InvoiceLibrary() {
             ) : null}
           </div>
         ) : null}
+        {showRecurringReminder ? (
+          <div className="mt-6 rounded-2xl border border-indigo-200 bg-indigo-100 px-4 py-3">
+            <p className="text-sm font-semibold text-indigo-900">Recurring reminders</p>
+            <p className="mt-1 text-sm text-indigo-900">
+              {recurringDueCount > 0
+                ? recurringDueCount === 1
+                  ? "1 recurring invoice is due."
+                  : `${recurringDueCount} recurring invoices are due.`
+                : nextRecurringCandidate
+                  ? `Next recurring invoice is due ${formatDate(nextRecurringCandidate.recurringEntry?.nextDueAt)}.`
+                  : "Recurring schedules are active."}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {nextRecurringCandidate ? (
+                <button
+                  type="button"
+                  className="rounded-xl border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-900 shadow-sm transition hover:border-indigo-400 disabled:cursor-not-allowed disabled:text-indigo-400"
+                  onClick={() =>
+                    handleInvoiceAgain(nextRecurringCandidate.invoiceId, {
+                      onLoaded: () => advanceRecurringSchedule(nextRecurringCandidate.invoiceId)
+                    })
+                  }
+                  disabled={actionId === nextRecurringCandidate.invoiceId}
+                >
+                  {actionId === nextRecurringCandidate.invoiceId
+                    ? "Opening…"
+                    : "Invoice again next due"}
+                </button>
+              ) : null}
+              {nextRecurringCandidate ? (
+                <p className="text-xs text-indigo-800">
+                  Next due invoice: {nextRecurringCandidate.invoiceNumber || "Draft invoice"}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         {showSentFollowUpReminder ? (
           <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-100 px-4 py-3">
             <p className="text-sm font-semibold text-blue-900">Follow-up reminders</p>
@@ -1024,11 +1216,16 @@ function InvoiceLibrary() {
           ) : null}
 
           {!loading && filteredInvoices.length > 0
-            ? filteredInvoices.map((invoice) => {
+              ? filteredInvoices.map((invoice) => {
                 const statusClass = statusStyles[invoice.status] ?? statusStyles.draft;
                 const totalLabel = Number.isFinite(invoice.total)
                   ? formatMoney(invoice.total)
                   : "—";
+                const recurringEntry = recurringSchedulesByInvoiceId[invoice.invoiceId] ?? null;
+                const recurringIntervalLabel = recurringEntry
+                  ? recurringIntervalLabels[normalizeRecurringInterval(recurringEntry.intervalDays)] || "monthly"
+                  : "";
+                const recurringNextDue = recurringEntry ? formatDate(recurringEntry.nextDueAt) : "";
                 const isDeleted = invoice.status === "deleted";
                 const isSelected = selectedIds.includes(invoice.invoiceId);
                 const isStatusBusy = statusActionId.startsWith(`${invoice.invoiceId}:`);
@@ -1069,9 +1266,17 @@ function InvoiceLibrary() {
                         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusClass}`}>
                           {invoice.status}
                         </span>
+                        {recurringEntry ? (
+                          <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-900">
+                            Recurring {recurringIntervalLabel}
+                          </span>
+                        ) : null}
                         <span className="text-sm font-semibold text-slate-900">{totalLabel}</span>
                       </div>
                     </div>
+                    {recurringEntry ? (
+                      <p className="mt-3 text-xs text-indigo-900">Next due {recurringNextDue || "soon"}</p>
+                    ) : null}
                     <div className="mt-4 flex flex-wrap gap-2">
                       {isDeleted || showTrash ? (
                         <>
@@ -1126,6 +1331,27 @@ function InvoiceLibrary() {
                               Open pay link
                             </a>
                           ) : null}
+                          {recurringEntry ? (
+                            <button
+                              type="button"
+                              className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition hover:border-indigo-300 hover:text-indigo-800 disabled:cursor-not-allowed disabled:text-indigo-300"
+                              onClick={() => removeRecurringSchedule(invoice.invoiceId)}
+                              disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                              aria-label={`Pause recurring for ${invoice.invoiceNumber || "Draft invoice"}`}
+                            >
+                              Pause recurring
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition hover:border-indigo-300 hover:text-indigo-800 disabled:cursor-not-allowed disabled:text-indigo-300"
+                              onClick={() => setRecurringSchedule(invoice.invoiceId, 30)}
+                              disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                              aria-label={`Set monthly recurring for ${invoice.invoiceNumber || "Draft invoice"}`}
+                            >
+                              Set monthly recurring
+                            </button>
+                          )}
                           {showMarkSent ? (
                             <button
                               type="button"

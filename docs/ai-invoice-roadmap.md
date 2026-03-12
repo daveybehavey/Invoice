@@ -464,6 +464,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Follow-up reminder banner in Invoice Library now includes a one-tap `Invoice again oldest` action.
    - Users can jump from stale sent reminders directly into a fresh duplicate draft without searching the list first.
    - Added UI coverage for reminder shortcut visibility.
+120. Recurring reminder baseline (monthly + invoice-again)
+   - Invoice Library cards now support one-tap `Set monthly recurring` and `Pause recurring` actions per invoice.
+   - Added a `Recurring reminders` panel that surfaces the next due recurring invoice with direct `Invoice again next due`.
+   - Added UI coverage for recurring set/pause flow and due reminder open behavior.
 
 ## Next (current priorities)
 1. Optional modularization continuation
