@@ -2784,6 +2784,10 @@ test("invoice library supports recurring monthly reminders with pause", async ()
     await page.getByText(/Next recurring invoice is due/i).waitFor({ state: "visible" });
     await page.getByText("Recurring monthly").waitFor({ state: "visible" });
     await page
+      .locator('select[aria-label="Recurring cadence for INV-RECUR-1"]')
+      .selectOption("7");
+    await page.getByText("Recurring weekly").waitFor({ state: "visible" });
+    await page
       .getByRole("button", { name: "Pause recurring for INV-RECUR-1" })
       .waitFor({ state: "visible" });
 

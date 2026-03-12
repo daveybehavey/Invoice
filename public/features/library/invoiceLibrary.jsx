@@ -54,7 +54,18 @@
       return 30;
     }
     const rounded = Math.round(parsed);
-    return recurringIntervalOptions.includes(rounded) ? rounded : 30;
+    if (rounded < 1) {
+      return 30;
+    }
+    return Math.min(rounded, 365);
+  };
+
+  const formatRecurringCadence = (intervalDays) => {
+    const normalized = normalizeRecurringInterval(intervalDays);
+    if (recurringIntervalLabels[normalized]) {
+      return recurringIntervalLabels[normalized];
+    }
+    return `${normalized}-day`;
   };
 
   const parseRecurringTimestamp = (value) => {
@@ -237,6 +248,26 @@ function InvoiceLibrary() {
         nextDueAt
       }
     });
+  };
+
+  const setCustomRecurringSchedule = (invoiceId, currentIntervalDays = 30) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const input = window.prompt(
+      "Set recurring interval in days (1-365).",
+      String(normalizeRecurringInterval(currentIntervalDays))
+    );
+    if (input === null) {
+      return;
+    }
+    const parsed = Number.parseInt(input.trim(), 10);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 365) {
+      setError("Recurring interval must be between 1 and 365 days.");
+      return;
+    }
+    setError("");
+    setRecurringSchedule(invoiceId, parsed);
   };
 
   const removeRecurringSchedule = (invoiceId) => {
@@ -1277,7 +1308,7 @@ function InvoiceLibrary() {
                   : "—";
                 const recurringEntry = recurringSchedulesByInvoiceId[invoice.invoiceId] ?? null;
                 const recurringIntervalLabel = recurringEntry
-                  ? recurringIntervalLabels[normalizeRecurringInterval(recurringEntry.intervalDays)] || "monthly"
+                  ? formatRecurringCadence(recurringEntry.intervalDays)
                   : "";
                 const recurringNextDue = recurringEntry ? formatDate(recurringEntry.nextDueAt) : "";
                 const isDeleted = invoice.status === "deleted";
@@ -1386,15 +1417,60 @@ function InvoiceLibrary() {
                             </a>
                           ) : null}
                           {recurringEntry ? (
-                            <button
-                              type="button"
-                              className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition hover:border-indigo-300 hover:text-indigo-800 disabled:cursor-not-allowed disabled:text-indigo-300"
-                              onClick={() => removeRecurringSchedule(invoice.invoiceId)}
-                              disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
-                              aria-label={`Pause recurring for ${invoice.invoiceNumber || "Draft invoice"}`}
-                            >
-                              Pause recurring
-                            </button>
+                            <>
+                              <label className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-800">
+                                Cadence
+                                <select
+                                  className="rounded-md border border-indigo-200 bg-white px-2 py-1 text-xs font-semibold text-indigo-900"
+                                  value={String(normalizeRecurringInterval(recurringEntry.intervalDays))}
+                                  onChange={(event) =>
+                                    setRecurringSchedule(invoice.invoiceId, Number(event.target.value))
+                                  }
+                                  disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                                  aria-label={`Recurring cadence for ${invoice.invoiceNumber || "Draft invoice"}`}
+                                >
+                                  {recurringIntervalOptions.map((intervalDays) => (
+                                    <option key={intervalDays} value={intervalDays}>
+                                      {intervalDays === 7
+                                        ? "Weekly"
+                                        : intervalDays === 14
+                                          ? "Biweekly"
+                                          : "Monthly"}
+                                    </option>
+                                  ))}
+                                  {!recurringIntervalOptions.includes(
+                                    normalizeRecurringInterval(recurringEntry.intervalDays)
+                                  ) ? (
+                                    <option value={normalizeRecurringInterval(recurringEntry.intervalDays)}>
+                                      {normalizeRecurringInterval(recurringEntry.intervalDays)} days
+                                    </option>
+                                  ) : null}
+                                </select>
+                              </label>
+                              <button
+                                type="button"
+                                className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition hover:border-indigo-300 hover:text-indigo-800 disabled:cursor-not-allowed disabled:text-indigo-300"
+                                onClick={() =>
+                                  setCustomRecurringSchedule(
+                                    invoice.invoiceId,
+                                    recurringEntry.intervalDays
+                                  )
+                                }
+                                disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                                aria-label={`Set custom recurring cadence for ${invoice.invoiceNumber || "Draft invoice"}`}
+                              >
+                                Custom days
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition hover:border-indigo-300 hover:text-indigo-800 disabled:cursor-not-allowed disabled:text-indigo-300"
+                                onClick={() => removeRecurringSchedule(invoice.invoiceId)}
+                                disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                                aria-label={`Pause recurring for ${invoice.invoiceNumber || "Draft invoice"}`}
+                              >
+                                Pause recurring
+                              </button>
+                            </>
                           ) : (
                             <button
                               type="button"
