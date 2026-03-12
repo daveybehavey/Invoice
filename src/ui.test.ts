@@ -3846,6 +3846,8 @@ test("diagnostics route shows OCR, friction, persistence, billing, and delivery 
     await page.getByRole("heading", { name: "Persistence migration" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Billing diagnostics" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Delivery diagnostics" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Preview due reminders" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Run reminders now" }).waitFor({ state: "visible" });
     await page.getByText("No legacy file-store invoices detected.").waitFor({ state: "visible" });
     await page.getByText("single primary action on paste").waitFor({ state: "visible" });
   } finally {

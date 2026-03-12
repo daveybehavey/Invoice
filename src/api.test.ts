@@ -2671,6 +2671,64 @@ test("reminder run endpoint previews and sends due reminders with overrides", as
   assert.equal(getResponse.body.invoice?.delivery?.sendCount, 2);
 });
 
+test("delivery diagnostics endpoint scopes reminder preview by request owner", async () => {
+  const ownerId = "delivery-reminder-diagnostics-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Reminder Diagnostics Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REMINDER-DIAG-1",
+          issueDate: "2026-03-11",
+          customerName: "Reminder Diagnostics Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-reminder-diag-1",
+              type: "labor",
+              description: "Reminder diagnostics baseline",
+              quantity: 1,
+              unitPrice: 80,
+              amount: 80
+            }
+          ],
+          subtotal: 80,
+          total: 80,
+          balanceDue: 80
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "owner-reminder@example.com" });
+  assert.equal(sendResponse.status, 200);
+
+  await mutateDeliveryStoreEntry(invoiceId, (entry) => ({
+    ...entry,
+    sentAt: "2026-01-01T00:00:00.000Z"
+  }));
+
+  const diagnosticsResponse = await request(app)
+    .get("/api/system/delivery")
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(diagnosticsResponse.status, 200);
+  assert.equal(diagnosticsResponse.body.reminders?.ownerId, ownerId);
+  assert.equal(diagnosticsResponse.body.reminders?.dueCount, 1);
+  assert.equal(diagnosticsResponse.body.reminders?.due?.[0]?.invoiceId, invoiceId);
+});
+
 test("checkout session endpoint returns a setup error when stripe is not configured", async () => {
   const response = await request(app).post("/api/billing/checkout-session").send({});
   assert.equal(response.status, 400);

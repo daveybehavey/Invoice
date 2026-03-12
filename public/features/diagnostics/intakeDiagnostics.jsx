@@ -35,6 +35,8 @@
     const [deliveryInfo, setDeliveryInfo] = useState(null);
     const [exporting, setExporting] = useState(false);
     const [exportResult, setExportResult] = useState(null);
+    const [reminderActionBusy, setReminderActionBusy] = useState(false);
+    const [reminderActionResult, setReminderActionResult] = useState(null);
 
     const loadDiagnostics = useCallback(async ({ silent = false } = {}) => {
       if (silent) {
@@ -158,6 +160,69 @@
         });
       } finally {
         setExporting(false);
+      }
+    };
+
+    const handlePreviewReminders = async () => {
+      setReminderActionBusy(true);
+      setReminderActionResult(null);
+      try {
+        const response = await apiFetch("/api/invoices/reminders/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dryRun: true })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload?.error || "Failed to preview due reminders.");
+        }
+        setReminderActionResult({
+          mode: "preview",
+          dueCount: Number(payload?.dueCount ?? 0),
+          scannedCount: Number(payload?.scannedCount ?? 0),
+          sentCount: 0,
+          skippedCount: 0
+        });
+      } catch (reminderError) {
+        console.error("Failed to preview reminders", reminderError);
+        setReminderActionResult({
+          mode: "preview",
+          error: reminderError?.message || "Failed to preview due reminders."
+        });
+      } finally {
+        setReminderActionBusy(false);
+      }
+    };
+
+    const handleRunRemindersNow = async () => {
+      setReminderActionBusy(true);
+      setReminderActionResult(null);
+      try {
+        const response = await apiFetch("/api/invoices/reminders/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload?.error || "Failed to run reminders.");
+        }
+        setReminderActionResult({
+          mode: "run",
+          dueCount: Number(payload?.dueCount ?? 0),
+          scannedCount: Number(payload?.scannedCount ?? 0),
+          sentCount: Number(payload?.sentCount ?? 0),
+          skippedCount: Number(payload?.skippedCount ?? 0)
+        });
+        await loadDiagnostics({ silent: true });
+      } catch (reminderError) {
+        console.error("Failed to run reminders", reminderError);
+        setReminderActionResult({
+          mode: "run",
+          error: reminderError?.message || "Failed to run reminders."
+        });
+      } finally {
+        setReminderActionBusy(false);
       }
     };
 
@@ -388,6 +453,33 @@
               {" · "}
               Owner: {deliveryInfo?.reminders?.ownerId || "n/a"}
             </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handlePreviewReminders}
+                disabled={loading || refreshing || reminderActionBusy}
+              >
+                {reminderActionBusy ? "Working..." : "Preview due reminders"}
+              </button>
+              <button
+                type="button"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleRunRemindersNow}
+                disabled={loading || refreshing || reminderActionBusy}
+              >
+                {reminderActionBusy ? "Working..." : "Run reminders now"}
+              </button>
+            </div>
+            {reminderActionResult ? (
+              <p className={`mt-2 text-xs ${reminderActionResult?.error ? "text-rose-700" : "text-slate-600"}`}>
+                {reminderActionResult?.error
+                  ? reminderActionResult.error
+                  : reminderActionResult.mode === "preview"
+                    ? `Preview: ${reminderActionResult.dueCount} due from ${reminderActionResult.scannedCount} sent invoices.`
+                    : `Run complete: ${reminderActionResult.sentCount} sent, ${reminderActionResult.skippedCount} failed/skipped, ${reminderActionResult.dueCount} due.`}
+              </p>
+            ) : null}
             {deliveryInfo?.warning ? (
               <p className="mt-2 text-xs text-amber-700">{deliveryInfo.warning}</p>
             ) : null}

@@ -311,13 +311,13 @@ app.get("/api/system/billing", async (_req: Request, res: Response, next: NextFu
   }
 });
 
-app.get("/api/system/delivery", async (_req: Request, res: Response, next: NextFunction) => {
+app.get("/api/system/delivery", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const capabilities = getInvoiceEmailCapabilities();
     const summary = await getInvoiceDeliveryStoreSummary();
-    const defaultOwnerId = asOptionalString(process.env.INVOICE_DEFAULT_USER_ID) ?? "local-default";
+    const ownerId = getRequestOwnerId(req);
     const reminderPreview = await listDueInvoiceReminderCandidates({
-      ownerId: defaultOwnerId,
+      ownerId,
       repository: savedInvoiceRepository
     });
     const warning = resolveDeliverySystemWarning(capabilities, summary);
@@ -326,7 +326,7 @@ app.get("/api/system/delivery", async (_req: Request, res: Response, next: NextF
       capabilities,
       summary,
       reminders: {
-        ownerId: defaultOwnerId,
+        ownerId,
         settings: reminderPreview.settings,
         scannedCount: reminderPreview.scannedCount,
         dueCount: reminderPreview.due.length,

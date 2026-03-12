@@ -492,6 +492,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added reminder APIs (`POST /api/invoices/:id/send-reminder`, `POST /api/invoices/reminders/run`) with dry-run support and deterministic due/cooldown rules.
    - Follow-up reminder banner now sends true reminder emails (or tracked reminders in record-only mode) instead of generic resends.
    - Delivery diagnostics now includes reminder candidate preview counts (`due now`, `scanned sent invoices`) for fast operational checks.
+127. Reminder operations controls in diagnostics
+   - Delivery diagnostics now supports one-tap `Preview due reminders` and `Run reminders now` actions.
+   - Reminder preview is now owner-scoped from request identity (instead of static local-default owner) to match account context.
+   - Added API/UI regression coverage for owner-scoped reminder visibility and diagnostics control rendering.
 
 ## Next (current priorities)
 1. Optional modularization continuation
