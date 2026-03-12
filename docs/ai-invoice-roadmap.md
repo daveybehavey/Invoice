@@ -456,6 +456,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Line-item memory now tracks `usageCount` per saved entry and increments on repeated saves.
    - Intake and manual smart-rate suggestion ranking now uses client match + service overlap + usage frequency before recency.
    - Added UI coverage proving labor follow-up picks the higher-usage client match when wording overlap is tied.
+118. Multi-day service timeline preview
+   - Review details now include a compact `Service timeline` card grouped by session date.
+   - Timeline rows show per-day item count, labor duration, and captured amount for faster trust checks.
+   - Added UI coverage for timeline visibility on multi-day messy intake.
 
 ## Next (current priorities)
 1. Optional modularization continuation

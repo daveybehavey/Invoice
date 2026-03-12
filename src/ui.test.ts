@@ -511,6 +511,30 @@ test("review details shows before-and-after transparency preview", async () => {
   }
 });
 
+test("review details shows a service timeline for multi-day jobs", async () => {
+  useMockResponses([structuredInvoiceForTimeline(), emptyAudit()]);
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 28 inspected leak. Jan 30 repaired leak. Feb 2 tightened cabinet door.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+
+    await page.getByRole("button", { name: "Show review details" }).click();
+    const timelineCard = page.locator("div.rounded-xl").filter({ hasText: /Service timeline/i });
+    await timelineCard.getByText(/Service timeline/i).waitFor({ state: "visible" });
+    await timelineCard.getByText("Jan 28").waitFor({ state: "visible" });
+    await timelineCard.getByText("Jan 30").waitFor({ state: "visible" });
+    await timelineCard.getByText("Feb 2").waitFor({ state: "visible" });
+    await timelineCard.getByText(/task captured|item/i).first().waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("billie workspace keeps secondary chips behind a mobile more toggle", async () => {
   useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
 
@@ -3520,6 +3544,27 @@ function structuredInvoiceForImport() {
       }
     ],
     materials: []
+  };
+}
+
+function structuredInvoiceForTimeline() {
+  return {
+    customerName: "Mike Johnson",
+    workSessions: [
+      {
+        date: "Jan 28",
+        tasks: [{ description: "Leak inspection", hours: 0.5, rate: 0, amount: 0 }]
+      },
+      {
+        date: "Jan 30",
+        tasks: [{ description: "Leak repair", hours: 2, rate: 80, amount: 160 }]
+      },
+      {
+        date: "Feb 2",
+        tasks: [{ description: "Cabinet door adjustment", hours: 0.5, rate: 80, amount: 40 }]
+      }
+    ],
+    materials: [{ description: "Washer kit", quantity: 1, unitCost: 6, amount: 6 }]
   };
 }
 

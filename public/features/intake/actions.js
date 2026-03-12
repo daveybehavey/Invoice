@@ -416,7 +416,8 @@
           latestState.openDecisions,
           latestState.unparsedLines,
           lastTranscriptRef.current,
-          latestState.outputQuality ?? null
+          latestState.outputQuality ?? null,
+          latestState.structuredInvoice ?? null
         )
       );
       if (payload?.followUp) {

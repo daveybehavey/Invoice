@@ -97,6 +97,89 @@
       };
     });
 
+    const timelineEntriesFromSourceSessions = (() => {
+      const sessions = Array.isArray(payload?.sourceTimelineSessions)
+        ? payload.sourceTimelineSessions
+        : [];
+      return sessions
+        .map((session) => {
+          const date = typeof session?.date === "string" ? session.date.trim() : "";
+          if (!date) {
+            return null;
+          }
+          const taskCount = Number.isFinite(session?.taskCount)
+            ? Math.max(0, Math.floor(session.taskCount))
+            : 0;
+          const taskDescriptions = Array.isArray(session?.taskDescriptions)
+            ? session.taskDescriptions.filter(Boolean).slice(0, 2)
+            : [];
+          return {
+            date,
+            summary:
+              taskCount > 0 ? `${taskCount} task${taskCount === 1 ? "" : "s"} captured` : "",
+            preview: taskDescriptions.join(", ")
+          };
+        })
+        .filter(Boolean);
+    })();
+
+    const timelineEntriesFromLineItems = (() => {
+      const groupedByDate = new Map();
+      lineItems.forEach((item) => {
+        const rawDate =
+          typeof item?.sourceSessionDate === "string" ? item.sourceSessionDate.trim() : "";
+        if (!rawDate) {
+          return;
+        }
+        const current = groupedByDate.get(rawDate) ?? {
+          date: rawDate,
+          lineCount: 0,
+          laborHours: 0,
+          amount: 0,
+          hasAmount: false,
+          previews: []
+        };
+        current.lineCount += 1;
+        if (item.type === "labor" && Number.isFinite(item.quantity)) {
+          current.laborHours += Number(item.quantity);
+        }
+        if (Number.isFinite(item.amount)) {
+          current.amount += Number(item.amount);
+          current.hasAmount = true;
+        }
+        const normalizedDescription = formatDisplayDescription(item.description);
+        if (normalizedDescription && current.previews.length < 2) {
+          current.previews.push(normalizedDescription);
+        }
+        groupedByDate.set(rawDate, current);
+      });
+      return Array.from(groupedByDate.values())
+        .sort((left, right) => {
+          const leftTime = Date.parse(left.date);
+          const rightTime = Date.parse(right.date);
+          if (Number.isFinite(leftTime) && Number.isFinite(rightTime)) {
+            return leftTime - rightTime;
+          }
+          return left.date.localeCompare(right.date);
+        })
+        .map((entry) => {
+          const summaryParts = [
+            `${entry.lineCount} item${entry.lineCount === 1 ? "" : "s"}`,
+            entry.laborHours > 0 ? formatLaborDuration(entry.laborHours) : "",
+            entry.hasAmount ? formatMoney(entry.amount) : ""
+          ].filter(Boolean);
+          return {
+            date: entry.date,
+            summary: summaryParts.join(" • "),
+            preview: entry.previews.join(", ")
+          };
+        });
+    })();
+    const timelineEntries =
+      timelineEntriesFromSourceSessions.length > 0
+        ? timelineEntriesFromSourceSessions
+        : timelineEntriesFromLineItems;
+
     const remainingPreviewCount = Math.max(0, lineItems.length - previewItems.length);
     const capturedPreviewSummary = previewItems
       .slice(0, 2)
@@ -208,6 +291,7 @@
     const hasReviewSecondaryContent =
       hasStructuredSections ||
       previewItems.length > 0 ||
+      timelineEntries.length > 0 ||
       shouldShowSuggestedEdits ||
       pendingDecisionCount > 0 ||
       qualityBlockerCount > 0 ||
@@ -216,6 +300,7 @@
 
     return {
       sections,
+      timelineEntries,
       quickFixes,
       pendingDecisionCount,
       previewItems,

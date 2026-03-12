@@ -552,7 +552,8 @@ function AIIntake() {
           restoredDecisions,
           restoredUnparsed,
           lastTranscriptRef.current,
-          decisionUndoState.outputQuality ?? null
+          decisionUndoState.outputQuality ?? null,
+          decisionUndoState.structuredInvoice ?? null
         )
       );
     }
@@ -624,7 +625,8 @@ function AIIntake() {
         restoredDecisions,
         restoredUnparsed,
         lastTranscriptRef.current,
-        restoredQuality
+        restoredQuality,
+        structuredInvoice
       )
     );
     setBillieUndoState(null);
@@ -1447,7 +1449,8 @@ function AIIntake() {
         nextOpenDecisions,
         nextUnparsedLines,
         seedTranscript,
-        nextSeedQuality
+        nextSeedQuality,
+        payload?.structuredInvoice ?? null
       )
     );
   }, [importSeedStorageKey, legacyImportSeedStorageKey]);
@@ -1753,6 +1756,7 @@ function AIIntake() {
                   );
                   const {
                     sections,
+                    timelineEntries,
                     quickFixes,
                     pendingDecisionCount,
                     foundText,
@@ -1789,6 +1793,7 @@ function AIIntake() {
                       showReviewExpandedSections={showReviewExpandedSections}
                       payload={payload}
                       sections={sections}
+                      timelineEntries={timelineEntries}
                       quickFixes={quickFixes}
                       pendingDecisionCount={pendingDecisionCount}
                       foundText={foundText}

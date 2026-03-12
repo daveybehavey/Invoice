@@ -335,7 +335,8 @@
                   nextOpenDecisions,
                   nextUnparsedLines,
                   transcript,
-                  nextOutputQuality
+                  nextOutputQuality,
+                  payload.structuredInvoice ?? structuredInvoice
                 )
               );
           maybeRunDeepAudit({
@@ -363,7 +364,8 @@
               [],
               nextUnparsedLines,
               transcript,
-              nextOutputQuality
+              nextOutputQuality,
+              payload.structuredInvoice ?? structuredInvoice
             )
           );
           maybeRunDeepAudit({
@@ -556,7 +558,8 @@
               nextOpenDecisions,
               nextUnparsedLines,
               transcript || lastTranscriptRef.current,
-              nextOutputQuality
+              nextOutputQuality,
+              payload?.structuredInvoice ?? structuredInvoice
             )
           );
         } else {
@@ -577,7 +580,8 @@
               [],
               nextUnparsedLines,
               transcript || lastTranscriptRef.current,
-              nextOutputQuality
+              nextOutputQuality,
+              payload?.structuredInvoice ?? structuredInvoice
             )
           );
         }
@@ -773,7 +777,8 @@
                   nextOpenDecisions,
                   nextUnparsedLines,
                   transcript ?? lastTranscriptRef.current,
-                  nextOutputQuality
+                  nextOutputQuality,
+                  payload.structuredInvoice ?? structuredInvoice
                 )
               );
           maybeRunDeepAudit({
@@ -801,7 +806,8 @@
               [],
               nextUnparsedLines,
               transcript ?? lastTranscriptRef.current,
-              nextOutputQuality
+              nextOutputQuality,
+              payload.structuredInvoice ?? structuredInvoice
             )
           );
           maybeRunDeepAudit({

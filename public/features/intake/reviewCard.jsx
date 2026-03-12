@@ -10,6 +10,7 @@
     showReviewExpandedSections,
     payload,
     sections,
+    timelineEntries,
     quickFixes,
     pendingDecisionCount,
     foundText,
@@ -252,6 +253,25 @@
                   {remainingPreviewCount > 0 ? (
                     <p className="text-xs text-slate-400">+{remainingPreviewCount} more</p>
                   ) : null}
+                </div>
+              </div>
+            ) : null}
+            {showReviewSecondary && Array.isArray(timelineEntries) && timelineEntries.length > 0 ? (
+              <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Service timeline
+                </p>
+                <div className="mt-2 space-y-2">
+                  {timelineEntries.map((entry, index) => (
+                    <div
+                      key={`timeline-${entry.date}-${index}`}
+                      className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2"
+                    >
+                      <p className="text-xs font-semibold text-slate-700">{entry.date}</p>
+                      {entry.summary ? <p className="mt-1 text-xs text-slate-600">{entry.summary}</p> : null}
+                      {entry.preview ? <p className="mt-1 text-xs text-slate-500">{entry.preview}</p> : null}
+                    </div>
+                  ))}
                 </div>
               </div>
             ) : null}

@@ -191,11 +191,36 @@
     decisions = [],
     unparsed = [],
     transcript = "",
-    qualityGate = null
+    qualityGate = null,
+    structuredSource = null
   ) => {
     if (!invoice) {
       return null;
     }
+    const sourceTimelineSessions = Array.isArray(structuredSource?.workSessions)
+      ? structuredSource.workSessions
+          .map((session, index) => {
+            const sessionDate =
+              typeof session?.date === "string" ? session.date.trim() : "";
+            if (!sessionDate) {
+              return null;
+            }
+            const tasks = Array.isArray(session?.tasks) ? session.tasks : [];
+            const taskDescriptions = tasks
+              .map((task) =>
+                typeof task?.description === "string" ? formatDisplayDescription(task.description) : ""
+              )
+              .filter(Boolean)
+              .slice(0, 3);
+            return {
+              id: `session-${index}`,
+              date: sessionDate,
+              taskCount: tasks.length,
+              taskDescriptions
+            };
+          })
+          .filter(Boolean)
+      : [];
     const orderedLineItems = orderLineItemsForTranscript(invoice.lineItems ?? [], transcript);
     return {
       id: `review-${Date.now()}`,
@@ -203,6 +228,7 @@
       servicePeriodStart: invoice.servicePeriodStart ?? "",
       servicePeriodEnd: invoice.servicePeriodEnd ?? "",
       sourceText: typeof transcript === "string" ? transcript : "",
+      sourceTimelineSessions,
       notes: invoice.notes ?? "",
       lineItems: orderedLineItems.map((item, index) => ({
         id: item.id ?? `review-line-${index}`,
@@ -210,7 +236,8 @@
         description: formatDisplayDescription(item.description),
         quantity: item.quantity,
         unitPrice: item.unitPrice,
-        amount: item.amount
+        amount: item.amount,
+        sourceSessionDate: item.sourceSessionDate
       })),
       decisions: decisions.map((decision) => ({
         id: decision.id,
