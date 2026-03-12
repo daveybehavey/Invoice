@@ -143,6 +143,7 @@ function InvoiceLibrary() {
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState("");
   const [deliveryNotice, setDeliveryNotice] = useState("");
+  const [sendComposer, setSendComposer] = useState(null);
   const [actionId, setActionId] = useState("");
   const [showTrash, setShowTrash] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -486,6 +487,16 @@ function InvoiceLibrary() {
   }, [invoices, showTrash, recurringSchedules]);
 
   useEffect(() => {
+    if (!sendComposer) {
+      return;
+    }
+    const exists = invoices.some((invoice) => invoice.invoiceId === sendComposer.invoiceId);
+    if (!exists) {
+      setSendComposer(null);
+    }
+  }, [invoices, sendComposer]);
+
+  useEffect(() => {
     if (showTrash && statusFilter !== "all") {
       setStatusFilter("all");
     }
@@ -498,6 +509,7 @@ function InvoiceLibrary() {
     setSelectionMode(false);
     setSelectedIds([]);
     setDeleteTarget(null);
+    setSendComposer(null);
     clearUndoToast();
   }, [requiresSignIn]);
 
@@ -596,21 +608,7 @@ function InvoiceLibrary() {
     if (!invoice?.invoiceId) {
       return;
     }
-    if (typeof window === "undefined") {
-      return;
-    }
-    const suggestedEmail =
-      typeof options?.recipientEmail === "string" && options.recipientEmail.trim()
-        ? options.recipientEmail.trim()
-        : invoice?.delivery?.recipientEmail ?? "";
-    const recipientInput =
-      options?.skipPrompt === true
-        ? suggestedEmail
-        : window.prompt("Send invoice to which email?", typeof suggestedEmail === "string" ? suggestedEmail : "");
-    if (recipientInput === null) {
-      return;
-    }
-    const recipientEmail = recipientInput.trim().toLowerCase();
+    const recipientEmail = String(options?.recipientEmail ?? "").trim().toLowerCase();
     if (!recipientEmail || !isValidEmail(recipientEmail)) {
       setError("Enter a valid recipient email.");
       return;
@@ -648,11 +646,40 @@ function InvoiceLibrary() {
           payload?.warning || "Delivery was recorded. Configure an email provider to send automatically."
         );
       }
+      setSendComposer((current) =>
+        current && current.invoiceId === invoice.invoiceId ? null : current
+      );
     } catch (sendError) {
       handleLibraryError(sendError, "Failed to send invoice.");
     } finally {
       setActionId("");
     }
+  };
+
+  const startSendComposer = (invoice) => {
+    if (!invoice?.invoiceId) {
+      return;
+    }
+    setSendComposer({
+      invoiceId: invoice.invoiceId,
+      recipientEmail: (invoice?.delivery?.recipientEmail ?? "").trim().toLowerCase()
+    });
+    setError("");
+    setDeliveryNotice("");
+  };
+
+  const cancelSendComposer = () => {
+    setSendComposer(null);
+  };
+
+  const submitSendComposer = async (invoiceId) => {
+    const targetInvoice = invoices.find((invoice) => invoice.invoiceId === invoiceId);
+    if (!targetInvoice || !sendComposer || sendComposer.invoiceId !== invoiceId) {
+      return;
+    }
+    const recipientEmail = String(sendComposer.recipientEmail ?? "").trim().toLowerCase();
+    await handleSendInvoice(targetInvoice, { recipientEmail });
+    setSendComposer(null);
   };
 
   const handleMarkDeliveryOpened = async (invoiceId) => {
@@ -1458,6 +1485,9 @@ function InvoiceLibrary() {
                 const deliveryOpenedAt = delivery?.openedAt ? formatDateTime(delivery.openedAt) : "";
                 const deliveryOpened = delivery?.status === "opened";
                 const providerDelivery = delivery?.mode === "provider";
+                const deliveryRecipient = typeof delivery?.recipientEmail === "string" ? delivery.recipientEmail : "";
+                const canInstantResend = Boolean(hasDelivery && isValidEmail(deliveryRecipient));
+                const showSendComposer = sendComposer?.invoiceId === invoice.invoiceId;
                 const isDeleted = invoice.status === "deleted";
                 const isSelected = selectedIds.includes(invoice.invoiceId);
                 const isStatusBusy = statusActionId.startsWith(`${invoice.invoiceId}:`);
@@ -1566,7 +1596,13 @@ function InvoiceLibrary() {
                           <button
                             type="button"
                             className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm transition hover:border-blue-300 hover:text-blue-800 disabled:cursor-not-allowed disabled:text-blue-300"
-                            onClick={() => handleSendInvoice(invoice)}
+                            onClick={() => {
+                              if (canInstantResend) {
+                                void handleSendInvoice(invoice, { recipientEmail: deliveryRecipient });
+                                return;
+                              }
+                              startSendComposer(invoice);
+                            }}
                             disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
                             aria-label={`${hasDelivery ? "Resend invoice" : "Send invoice"} ${invoice.invoiceNumber || "Draft invoice"}`}
                           >
@@ -1710,6 +1746,46 @@ function InvoiceLibrary() {
                         </>
                       )}
                     </div>
+                    {showSendComposer ? (
+                      <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                          Recipient email
+                        </p>
+                        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <input
+                            type="email"
+                            value={sendComposer?.recipientEmail ?? ""}
+                            onChange={(event) =>
+                              setSendComposer((current) =>
+                                current && current.invoiceId === invoice.invoiceId
+                                  ? { ...current, recipientEmail: event.target.value }
+                                  : current
+                              )
+                            }
+                            className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+                            placeholder="client@example.com"
+                          />
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              className="rounded-lg bg-blue-800 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-900 disabled:cursor-not-allowed disabled:bg-blue-300"
+                              onClick={() => void submitSendComposer(invoice.invoiceId)}
+                              disabled={actionId === invoice.invoiceId}
+                            >
+                              {actionId === invoice.invoiceId ? "Sending…" : "Send now"}
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300"
+                              onClick={cancelSendComposer}
+                              disabled={actionId === invoice.invoiceId}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })

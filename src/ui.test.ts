@@ -3122,12 +3122,11 @@ test("invoice library send action records delivery and supports mark opened", as
   assert.equal(seedResponse.status(), 200);
 
   const page = await context.newPage();
-  page.on("dialog", async (dialog) => {
-    await dialog.accept("client@example.com");
-  });
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Send invoice INV-SEND-1" }).click();
+    await page.getByPlaceholder("client@example.com").fill("client@example.com");
+    await page.getByRole("button", { name: "Send now" }).click();
     await page.getByText(/(Sent to|Prepared for) client@example.com/i).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Mark opened INV-SEND-1" }).click();
     await page.getByText("Marked as opened.").waitFor({ state: "visible" });

@@ -484,6 +484,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Follow-up reminder banner now supports one-tap `Resend oldest` when a prior recipient email is known.
    - Resend action bypasses extra prompts and reuses tracked recipient delivery context.
    - Added UI coverage ensuring reminder resend runs without dialog prompts and increments delivery send counts.
+125. Send flow UX pass (inline recipient composer)
+   - Replaced browser prompt-based send flow with inline recipient composer directly on invoice cards.
+   - First send now captures recipient inline; resends reuse known recipient without extra prompts.
+   - Keeps delivery guardrails intact while reducing send-flow cognitive load on desktop/mobile.
 
 ## Next (current priorities)
 1. Optional modularization continuation
