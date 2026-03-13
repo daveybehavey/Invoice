@@ -235,6 +235,10 @@ function AIIntake() {
   });
   const [wizardStepsExpanded, setWizardStepsExpanded] = useState(false);
   const [billieChipTrayExpanded, setBillieChipTrayExpanded] = useState(false);
+  const [voiceNoteBusy, setVoiceNoteBusy] = useState(false);
+  const [voiceNoteError, setVoiceNoteError] = useState("");
+  const [voiceNoteNotice, setVoiceNoteNotice] = useState("");
+  const audioUploadInputRef = useRef(null);
 
   useEffect(() => {
     const notice = readBillingNoticeFromUrl();
@@ -1192,6 +1196,45 @@ function AIIntake() {
     }
   };
 
+  const triggerVoiceNoteUpload = () => {
+    audioUploadInputRef.current?.click();
+  };
+
+  const handleVoiceNoteSelected = async (event) => {
+    const file = event?.target?.files?.[0];
+    if (!file) {
+      return;
+    }
+    setVoiceNoteBusy(true);
+    setVoiceNoteError("");
+    setVoiceNoteNotice("");
+    try {
+      const formData = new FormData();
+      formData.append("audioFile", file);
+      const response = await apiFetch("/api/invoices/transcribe-audio", {
+        method: "POST",
+        body: formData
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Could not transcribe that audio note.");
+      }
+      const transcript = typeof payload?.extractedText === "string" ? payload.extractedText.trim() : "";
+      if (!transcript) {
+        throw new Error("No transcript returned for that audio note.");
+      }
+      setInputValue((current) => [current.trim(), transcript].filter(Boolean).join("\n\n"));
+      setVoiceNoteNotice(`Added transcript from ${file.name}. Review it, then build the invoice.`);
+    } catch (error) {
+      setVoiceNoteError(error?.message || "Could not transcribe that audio note.");
+    } finally {
+      setVoiceNoteBusy(false);
+      if (event?.target) {
+        event.target.value = "";
+      }
+    }
+  };
+
   const handleResetIntake = () => {
     requestIdRef.current += 1;
     setMessages(initialIntakeMessages);
@@ -1656,6 +1699,28 @@ function AIIntake() {
                   <p className="mt-1 text-sm text-slate-600">
                     Paste messy notes as-is: dates, hours, rates, parts, and unsure items.
                   </p>
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <input
+                      ref={audioUploadInputRef}
+                      type="file"
+                      accept="audio/*"
+                      className="hidden"
+                      onChange={handleVoiceNoteSelected}
+                    />
+                    <button
+                      type="button"
+                      className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={triggerVoiceNoteUpload}
+                      disabled={voiceNoteBusy || isTyping}
+                    >
+                      {voiceNoteBusy ? "Transcribing voice note..." : "Add voice note"}
+                    </button>
+                    <p className="text-xs text-slate-500">
+                      Upload or record an audio note. Billie will turn it into editable text first.
+                    </p>
+                  </div>
+                  {voiceNoteNotice ? <p className="mt-3 text-xs font-semibold text-blue-800">{voiceNoteNotice}</p> : null}
+                  {voiceNoteError ? <p className="mt-3 text-xs font-semibold text-rose-600">{voiceNoteError}</p> : null}
                   <textarea
                     id="ai-intake-input"
                     rows={6}

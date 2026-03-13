@@ -100,36 +100,45 @@
   }
 
   function LauncherCard({ title, description, icon, onClick, disabled, badge }) {
-    const iconClass = disabled ? "h-6 w-6 text-slate-400" : "h-6 w-6 text-blue-800";
+    const iconClass = disabled ? "h-6 w-6 text-slate-400" : "h-6 w-6 text-[#093064]";
     return (
       <button
         type="button"
         className={`${cardBase} ${
-          disabled ? "cursor-not-allowed border-slate-200 bg-slate-50" : "border-slate-200"
+          disabled
+            ? "cursor-not-allowed border-slate-200 bg-slate-50"
+            : "rounded-[28px] border-[#6993d2]/25 bg-[linear-gradient(180deg,#ffffff_0%,#f4f8fd_100%)] shadow-[0_18px_50px_rgba(9,48,100,0.08)] hover:-translate-y-0.5 hover:border-[#6993d2]/45 hover:shadow-[0_24px_60px_rgba(9,48,100,0.12)]"
         }`}
         onClick={disabled ? undefined : onClick}
         disabled={disabled}
         aria-disabled={disabled}
       >
-        <div className="flex items-start gap-4">
+        <div className="flex items-start justify-between gap-4">
           <div
             className={`flex h-11 w-11 items-center justify-center rounded-lg ${
-              disabled ? "bg-slate-100" : "bg-blue-100"
+              disabled ? "bg-slate-100" : "bg-[#acd0f4]"
             }`}
           >
             {React.cloneElement(icon, { className: iconClass })}
           </div>
-          <div className="space-y-1">
+          <div className="min-w-0 flex-1 space-y-1 text-left">
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+              <h2 className="text-base font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+                {title}
+              </h2>
               {badge ? (
-                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-600">
+                <span className="rounded-full bg-[#093064] px-2 py-0.5 text-xs font-semibold text-white">
                   {badge}
                 </span>
               ) : null}
             </div>
-            <p className="text-sm text-slate-600">{description}</p>
+            <p className="max-w-md text-sm text-slate-600">{description}</p>
           </div>
+          {!disabled ? (
+            <div className="mt-0.5 hidden rounded-full border border-[#6993d2]/30 bg-white/80 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#093064] sm:block">
+              Open
+            </div>
+          ) : null}
         </div>
       </button>
     );

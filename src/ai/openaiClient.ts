@@ -1,9 +1,10 @@
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { parseJsonFromModel } from "../lib/json.js";
 import { loadSystemPrompt } from "../prompt/systemPrompt.js";
 
 type JsonTaskRunner = <T>(userTaskPrompt: string, options?: JsonTaskOptions) => Promise<T>;
 type ImageOcrRunner = (input: ImageOcrTaskInput) => Promise<ImageOcrTaskResult>;
+type AudioTranscriptionRunner = (input: AudioTranscriptionTaskInput) => Promise<AudioTranscriptionTaskResult>;
 type JsonTaskType = "default" | "wording";
 type JsonTaskOptions = {
   taskType?: JsonTaskType;
@@ -28,10 +29,19 @@ type ImageOcrTaskResult = {
   extractedText: string;
   warnings?: string[];
 };
+type AudioTranscriptionTaskInput = {
+  mimeType: string;
+  fileName: string;
+  fileData: Buffer;
+};
+type AudioTranscriptionTaskResult = {
+  transcript: string;
+};
 
 let openAIClient: OpenAI | null = null;
 let jsonTaskRunnerForTests: JsonTaskRunner | null = null;
 let imageOcrRunnerForTests: ImageOcrRunner | null = null;
+let audioTranscriptionRunnerForTests: AudioTranscriptionRunner | null = null;
 
 const WORDING_SYSTEM_PROMPT = [
   "You rewrite invoice wording only.",
@@ -60,6 +70,10 @@ function getDefaultWordingModel(): string {
 
 function getDefaultVisionModel(): string {
   return process.env.OPENAI_VISION_MODEL ?? "gpt-4.1-mini";
+}
+
+function getDefaultAudioModel(): string {
+  return process.env.OPENAI_AUDIO_MODEL ?? "gpt-4o-mini-transcribe";
 }
 
 export function resolveJsonTaskModel(options: JsonTaskOptions = {}): string {
@@ -214,10 +228,32 @@ export async function runImageOcrTask(input: ImageOcrTaskInput): Promise<ImageOc
   return { extractedText, warnings };
 }
 
+export async function runAudioTranscriptionTask(
+  input: AudioTranscriptionTaskInput
+): Promise<AudioTranscriptionTaskResult> {
+  if (audioTranscriptionRunnerForTests) {
+    return audioTranscriptionRunnerForTests(input);
+  }
+  const file = await toFile(input.fileData, input.fileName, { type: input.mimeType });
+  const response = await getClient().audio.transcriptions.create({
+    model: getDefaultAudioModel(),
+    file
+  });
+  const transcript = typeof response.text === "string" ? response.text.trim() : "";
+  if (!transcript) {
+    throw new Error("Model returned an empty transcription.");
+  }
+  return { transcript };
+}
+
 export function setJsonTaskRunnerForTests(runner: JsonTaskRunner | null): void {
   jsonTaskRunnerForTests = runner;
 }
 
 export function setImageOcrRunnerForTests(runner: ImageOcrRunner | null): void {
   imageOcrRunnerForTests = runner;
+}
+
+export function setAudioTranscriptionRunnerForTests(runner: AudioTranscriptionRunner | null): void {
+  audioTranscriptionRunnerForTests = runner;
 }

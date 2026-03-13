@@ -520,6 +520,21 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Delivery diagnostics now supports one-tap `Preview due reminders` and `Run reminders now` actions.
    - Reminder preview is now owner-scoped from request identity (instead of static local-default owner) to match account context.
    - Added API/UI regression coverage for owner-scoped reminder visibility and diagnostics control rendering.
+128. Billie safe-wording fast path
+   - Formal/neutral description cleanup now uses a deterministic fast path when notes are blank, instead of always waiting on a model round-trip.
+   - Common “make this cleaner/more formal” Billie flows now feel materially faster without touching money or structure.
+129. Hosted invoice payment-link generation
+   - Saved invoices can now create Stripe-hosted payment links directly from the manual editor/export tools.
+   - Send flow auto-generates and persists a payment link before delivery when Stripe invoice payments are configured.
+130. Stripe payment-to-paid webhook baseline
+   - Added `payment_intent.succeeded` handling for hosted invoice-payment links.
+   - Matching saved invoices are now marked `paid` and their `balanceDue` is cleared when Stripe confirms payment.
+131. Voice-note intake baseline
+   - Intake now accepts uploaded/recorded audio notes, transcribes them, and appends the transcript into editable intake text before parsing.
+   - Keeps the same review + decision guardrails as typed input instead of creating a separate audio-only flow.
+132. Mobile/store packaging hardening baseline
+   - Added installed Capacitor toolchain, stronger manifest metadata, safer Capacitor transport defaults, and a stricter `npm run check:mobile-wrapper`.
+   - Packaging docs now include the real pre-store checklist instead of only a placeholder baseline.
 
 ## Next (current priorities)
 1. Optional modularization continuation

@@ -153,6 +153,9 @@ function ManualInvoiceCanvas() {
   );
   const [statusUpdateLoading, setStatusUpdateLoading] = useState(false);
   const [statusUpdateError, setStatusUpdateError] = useState("");
+  const [paymentLinkBusy, setPaymentLinkBusy] = useState(false);
+  const [paymentLinkError, setPaymentLinkError] = useState("");
+  const [assistantCommandRequest, setAssistantCommandRequest] = useState(null);
   const [savedLineItemLibrary, setSavedLineItemLibrary] = useState(() => getLineItemLibrary());
   const [showSavedLineItems, setShowSavedLineItems] = useState(false);
   const saveTimeoutRef = useRef(null);
@@ -773,6 +776,47 @@ function ManualInvoiceCanvas() {
     }
   };
 
+  const handleGeneratePaymentLink = async () => {
+    if (!savedInvoiceId) {
+      setPaymentLinkError("Save invoice first to create a payment link.");
+      return;
+    }
+    setPaymentLinkBusy(true);
+    setPaymentLinkError("");
+    setSaveError("");
+    try {
+      const response = await apiFetch(`/api/invoices/${savedInvoiceId}/payment-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const requestError = new Error(payload?.error || "Couldn't create payment link.");
+        requestError.status = response.status;
+        throw requestError;
+      }
+      const nextPaymentLink = payload?.paymentLinkUrl ?? payload?.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl ?? "";
+      setPaymentLinkUrl(nextPaymentLink);
+      setSaveStatus(nextPaymentLink ? "Payment link ready" : "Payment link unchanged");
+      window.setTimeout(() => setSaveStatus(""), 1500);
+    } catch (error) {
+      setPaymentLinkError(error?.message || "Couldn't create payment link.");
+    } finally {
+      setPaymentLinkBusy(false);
+    }
+  };
+
+  const handleBillieLineRefine = (lineNumber, description) => {
+    setActiveInspectorTab("assistant");
+    setInspectorOpen(true);
+    setAssistantCommandRequest({
+      id: `${Date.now()}-${lineNumber}`,
+      instruction: `Refine line ${lineNumber} wording.`,
+      description
+    });
+  };
+
   const isMobileInspectorOpen = inspectorOpen;
   const invoiceInteractionClass = isMobileInspectorOpen
     ? "pointer-events-none select-none opacity-60 md:pointer-events-auto md:opacity-100"
@@ -1058,6 +1102,20 @@ function ManualInvoiceCanvas() {
                               }
                               onBlur={() => handleLineItemDescriptionBlur(item.id)}
                             />
+                            {item.description?.trim() ? (
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold"
+                                  style={accentGhostButtonStyle}
+                                  onClick={() => handleBillieLineRefine(index + 1, item.description)}
+                                  aria-label={`Billie polish line ${index + 1}`}
+                                >
+                                  Billie polish
+                                </button>
+                                <span className="text-[11px] text-slate-400">line {index + 1}</span>
+                              </div>
+                            ) : null}
                           </td>
                           <td className="py-3 pr-3 align-top">
                             <input
@@ -1299,6 +1357,7 @@ function ManualInvoiceCanvas() {
             onDiscountAmountChange={setDiscountAmount}
             paymentLinkUrl={paymentLinkUrl}
             onPaymentLinkChange={setPaymentLinkUrl}
+            onGeneratePaymentLink={handleGeneratePaymentLink}
             onUpdateLineItemValues={handleUpdateLineItemValues}
             onPrint={handlePrint}
             onDownloadPdf={handleDownloadPdf}
@@ -1306,6 +1365,8 @@ function ManualInvoiceCanvas() {
             saveStatus={saveStatus}
             saveError={saveError}
             saveNeedsAuth={saveNeedsAuth}
+            paymentLinkBusy={paymentLinkBusy}
+            paymentLinkError={paymentLinkError}
             accountPlan={accountPlan}
             onSaveAuthRetry={handleSaveAuthRetry}
             onGoToLauncherSignIn={() => {
@@ -1324,6 +1385,10 @@ function ManualInvoiceCanvas() {
             onApplyRewrite={applyRewriteChanges}
             buildEditableInvoicePayload={buildEditableInvoicePayload}
             onApplyAiEdit={applyAiEdit}
+            assistantCommandRequest={assistantCommandRequest}
+            onAssistantCommandHandled={(requestId) =>
+              setAssistantCommandRequest((current) => (current?.id === requestId ? null : current))
+            }
           />
         </div>
       </main>
@@ -1406,6 +1471,7 @@ function ManualInvoiceCanvas() {
                 onDiscountAmountChange={setDiscountAmount}
                 paymentLinkUrl={paymentLinkUrl}
                 onPaymentLinkChange={setPaymentLinkUrl}
+                onGeneratePaymentLink={handleGeneratePaymentLink}
                 onUpdateLineItemValues={handleUpdateLineItemValues}
                 onPrint={handlePrint}
                 onDownloadPdf={handleDownloadPdf}
@@ -1413,6 +1479,8 @@ function ManualInvoiceCanvas() {
                 saveStatus={saveStatus}
                 saveError={saveError}
                 saveNeedsAuth={saveNeedsAuth}
+                paymentLinkBusy={paymentLinkBusy}
+                paymentLinkError={paymentLinkError}
                 accountPlan={accountPlan}
                 onSaveAuthRetry={handleSaveAuthRetry}
                 onGoToLauncherSignIn={() => {
@@ -1431,6 +1499,10 @@ function ManualInvoiceCanvas() {
                 onApplyRewrite={applyRewriteChanges}
                 buildEditableInvoicePayload={buildEditableInvoicePayload}
                 onApplyAiEdit={applyAiEdit}
+                assistantCommandRequest={assistantCommandRequest}
+                onAssistantCommandHandled={(requestId) =>
+                  setAssistantCommandRequest((current) => (current?.id === requestId ? null : current))
+                }
               />
             </div>
           </div>

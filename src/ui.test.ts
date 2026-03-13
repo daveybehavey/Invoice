@@ -215,6 +215,40 @@ test("mobile intake steps start compact and can expand on demand", async () => {
   }
 });
 
+test("voice-note upload appends transcript into intake notes before build", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/transcribe-audio", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          sourceType: "audio",
+          extractedText: "Feb 12 repaired ridge vent, 1.5 hours at $110/hr."
+        })
+      });
+    });
+
+    await openIntake(page);
+    await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+      name: "voice-note.webm",
+      mimeType: "audio/webm",
+      buffer: Buffer.from("fake-audio")
+    });
+
+    await page
+      .getByText("Added transcript from voice-note.webm. Review it, then build the invoice.")
+      .waitFor({ state: "visible" });
+    await expectValueContains(
+      page.getByPlaceholder(/Example: Jan 10 fixed sink/i),
+      "Feb 12 repaired ridge vent, 1.5 hours at $110/hr."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("labor follow-up shows last used hourly rate quick reply", async () => {
   useMockResponses([
     structuredLaborFollowUpDraft(),
@@ -3921,6 +3955,45 @@ test("manual export panel can mark a saved invoice as sent then paid", async () 
     assert.equal(Array.isArray(listPayload.invoices), true);
     assert.equal(listPayload.invoices.length, 1);
     assert.equal(listPayload.invoices[0].status, "paid");
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual export panel can create a hosted payment link for a saved invoice", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-manual-payment-link-owner");
+  });
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/*/payment-link", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          paymentLinkUrl: "https://pay.stripe.test/plink_manual_123"
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("Skylight repair");
+    await page.getByPlaceholder("0").first().fill("1");
+    await page.getByPlaceholder("$0").first().fill("260");
+
+    await page.getByRole("button", { name: "Export" }).last().click();
+    await page.getByText("Save to library").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Save invoice" }).click();
+    await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Create payment link" }).click();
+    await expectValueEquals(
+      page.locator("#payment-link-url"),
+      "https://pay.stripe.test/plink_manual_123"
+    );
+    await page.getByRole("link", { name: "Open payment link" }).first().waitFor({ state: "visible" });
+    await page.getByText("Payment link ready").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

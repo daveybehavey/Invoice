@@ -1,12 +1,18 @@
 {
+  "id": "/",
   "name": "NoteBill",
   "short_name": "NoteBill",
   "description": "Turn messy notes into send-ready invoices with Billie.",
+  "lang": "en-US",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "browser"],
+  "orientation": "portrait-primary",
   "background_color": "#f8fafc",
   "theme_color": "#093064",
+  "categories": ["business", "finance", "productivity"],
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "/icons/notebill-192.png",

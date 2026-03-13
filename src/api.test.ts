@@ -30,9 +30,14 @@ process.env.INVOICE_DELIVERY_STORE_FILE = path.join(
   `invoice-delivery-store-${randomUUID()}.json`
 );
 
-const [{ app }, { setImageOcrRunnerForTests, setJsonTaskRunnerForTests }] = await Promise.all([
+const [
+  { app },
+  { setAudioTranscriptionRunnerForTests, setImageOcrRunnerForTests, setJsonTaskRunnerForTests },
+  { setInvoicePaymentLinkCreatorForTests }
+] = await Promise.all([
   import("./server.js"),
-  import("./ai/openaiClient.js")
+  import("./ai/openaiClient.js"),
+  import("./services/stripeBilling.js")
 ]);
 
 const storeFilePath = process.env.INVOICE_STORE_FILE;
@@ -104,12 +109,16 @@ beforeEach(async () => {
 afterEach(() => {
   setJsonTaskRunnerForTests(null);
   setImageOcrRunnerForTests(null);
+  setAudioTranscriptionRunnerForTests(null);
+  setInvoicePaymentLinkCreatorForTests(null);
   (globalThis as { fetch?: typeof fetch }).fetch = nativeFetch;
 });
 
 after(async () => {
   setJsonTaskRunnerForTests(null);
   setImageOcrRunnerForTests(null);
+  setAudioTranscriptionRunnerForTests(null);
+  setInvoicePaymentLinkCreatorForTests(null);
   await fs.rm(storeFilePath, { force: true });
   await fs.rm(ocrMetricsStoreFilePath, { force: true });
   await fs.rm(flowFrictionReportFilePath, { force: true });
@@ -422,6 +431,23 @@ test("extract-upload-text returns extracted text for document uploads", async ()
   assert.equal(response.status, 200);
   assert.equal(response.body.sourceType, "document");
   assert.match(response.body.extractedText, /Jan 30 faucet repair/i);
+});
+
+test("transcribe-audio returns transcript text for uploaded voice notes", async () => {
+  setAudioTranscriptionRunnerForTests(async () => ({
+    transcript: "Jan 30 repaired flashing, 2 hours at $95 per hour."
+  }));
+
+  const response = await request(app)
+    .post("/api/invoices/transcribe-audio")
+    .attach("audioFile", Buffer.from("fake-audio"), {
+      filename: "voice-note.webm",
+      contentType: "audio/webm"
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.sourceType, "audio");
+  assert.match(response.body.extractedText, /repaired flashing/i);
 });
 
 test("extract-notes returns low OCR confidence for tiny extracted text", async () => {
@@ -2219,6 +2245,132 @@ test("send endpoint records delivery and marks invoice as sent", async () => {
   assert.equal(listResponse.body.invoices[0].delivery.status, "sent");
 });
 
+test("payment-link endpoint creates and persists a Stripe payment link for a saved invoice", async () => {
+  const ownerId = "payment-link-owner";
+  setInvoicePaymentLinkCreatorForTests(async () => ({
+    url: "https://pay.stripe.test/plink_123",
+    paymentLinkId: "plink_123"
+  }));
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Payment Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PAY-1",
+          issueDate: "2026-03-11",
+          customerName: "Payment Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-pay-1",
+              type: "labor",
+              description: "Roof repair visit",
+              quantity: 1,
+              unitPrice: 220,
+              amount: 220
+            }
+          ],
+          subtotal: 220,
+          total: 220,
+          balanceDue: 220
+        }
+      }
+    });
+
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.paymentLinkUrl, "https://pay.stripe.test/plink_123");
+  assert.equal(
+    response.body.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl,
+    "https://pay.stripe.test/plink_123"
+  );
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.status, 200);
+  assert.equal(
+    getResponse.body.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl,
+    "https://pay.stripe.test/plink_123"
+  );
+});
+
+test("send endpoint auto-creates a payment link before delivery when Stripe payments are configured", async () => {
+  const ownerId = "payment-send-owner";
+  let createCount = 0;
+  setInvoicePaymentLinkCreatorForTests(async () => {
+    createCount += 1;
+    return {
+      url: "https://pay.stripe.test/plink_send_123",
+      paymentLinkId: "plink_send_123"
+    };
+  });
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Auto Pay Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-AUTO-PAY-1",
+          issueDate: "2026-03-11",
+          customerName: "Auto Pay Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-auto-pay-1",
+              type: "labor",
+              description: "Auto pay baseline",
+              quantity: 1,
+              unitPrice: 180,
+              amount: 180
+            }
+          ],
+          subtotal: 180,
+          total: 180,
+          balanceDue: 180
+        }
+      }
+    });
+
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "pay@example.com" });
+
+  assert.equal(response.status, 200);
+  assert.equal(createCount, 1);
+  assert.equal(
+    response.body.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl,
+    "https://pay.stripe.test/plink_send_123"
+  );
+  assert.equal(response.body.invoice?.status, "sent");
+});
+
 test("delivery opened endpoint updates tracked delivery status", async () => {
   const ownerId = "delivery-open-owner";
   const saveResponse = await request(app)
@@ -2936,6 +3088,87 @@ test("stripe webhook checkout event grants pro access for matching signed-in use
   const planAfter = await request(app).get("/api/account/plan").set("authorization", `Bearer ${token}`);
   assert.equal(planAfter.status, 200);
   assert.equal(planAfter.body.plan, "pro");
+});
+
+test("stripe payment-intent webhook marks a saved invoice paid and clears balance due", async () => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+
+  const ownerId = "invoice-payment-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Paid Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PAID-1",
+          issueDate: "2026-03-12",
+          customerName: "Paid Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-paid-1",
+              type: "labor",
+              description: "Repair visit",
+              quantity: 1,
+              unitPrice: 240,
+              amount: 240
+            }
+          ],
+          subtotal: 240,
+          total: 240,
+          balanceDue: 240
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const webhookPayload = JSON.stringify({
+    id: "evt_test_payment_intent_succeeded",
+    object: "event",
+    type: "payment_intent.succeeded",
+    data: {
+      object: {
+        id: "pi_test_invoice_paid_123",
+        object: "payment_intent",
+        metadata: {
+          paymentKind: "saved_invoice_payment",
+          invoiceId,
+          ownerId,
+          invoiceNumber: "INV-PAID-1"
+        }
+      }
+    }
+  });
+  const signature = Stripe.webhooks.generateTestHeaderString({
+    payload: webhookPayload,
+    secret: process.env.STRIPE_WEBHOOK_SECRET
+  });
+
+  const webhookResponse = await request(app)
+    .post("/api/billing/stripe/webhook")
+    .set("Content-Type", "application/json")
+    .set("stripe-signature", signature)
+    .send(webhookPayload);
+  assert.equal(webhookResponse.status, 200);
+  assert.equal(webhookResponse.body.ok, true);
+  assert.equal(webhookResponse.body.handled, true);
+  assert.equal(webhookResponse.body.eventType, "payment_intent.succeeded");
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.status, 200);
+  assert.equal(getResponse.body.invoice?.status, "paid");
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.balanceDue, 0);
 });
 
 test("stripe webhook endpoint requires signature header", async () => {

@@ -27,9 +27,9 @@ function LauncherAccountStrip({
   onSignOut
 }) {
   return (
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+    <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-white/50 bg-white/80 px-4 py-3 shadow-[0_18px_40px_rgba(9,48,100,0.08)] backdrop-blur">
       <div className="min-w-0 flex-1">
-        <p className="text-sm text-slate-600">
+        <p className="text-sm font-semibold text-slate-700">
           {authSession?.email ? `Signed in as ${authSession.email}` : "Not signed in (local mode)"}
         </p>
         {planSummary ? (
@@ -43,7 +43,7 @@ function LauncherAccountStrip({
         {hasPlanActions ? (
           <button
             type="button"
-            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-60"
+            className="rounded-full border border-[#6993d2]/25 bg-[#f4f8fd] px-3 py-1.5 text-sm font-semibold text-[#093064] disabled:opacity-60"
             onClick={onTogglePlanActions}
             aria-expanded={showPlanActions}
             aria-controls="launcher-plan-actions"
@@ -54,7 +54,7 @@ function LauncherAccountStrip({
         {authSession?.email ? (
           <button
             type="button"
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-60"
+            className="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-60"
             onClick={onSignOut}
             disabled={authBusy}
           >
@@ -63,7 +63,7 @@ function LauncherAccountStrip({
         ) : (
           <button
             type="button"
-            className="rounded-lg border border-blue-300 bg-blue-100 px-3 py-1.5 text-sm font-semibold text-blue-900 disabled:opacity-60"
+            className="rounded-full border border-[#6993d2]/35 bg-[#acd0f4] px-3 py-1.5 text-sm font-semibold text-[#093064] disabled:opacity-60"
             onClick={onOpenSignIn}
             disabled={authBusy}
           >
@@ -77,7 +77,7 @@ function LauncherAccountStrip({
             useStripeUpgradeAction ? (
               <button
                 type="button"
-                className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-full border border-[#6993d2]/35 bg-[#093064] px-3 py-1.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={onOpenUpgrade}
                 disabled={billingBusy}
               >
@@ -88,7 +88,7 @@ function LauncherAccountStrip({
                 href={upgradeUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-800"
+                className="rounded-full border border-[#6993d2]/35 bg-[#093064] px-3 py-1.5 text-sm font-semibold text-white"
               >
                 Upgrade
               </a>
@@ -98,7 +98,7 @@ function LauncherAccountStrip({
             useStripePortalAction ? (
               <button
                 type="button"
-                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={onOpenBillingPortal}
                 disabled={billingBusy}
               >
@@ -126,15 +126,15 @@ function LauncherDraftRecoverySection({ drafts, loading, busyInvoiceId, onResume
     return null;
   }
   return (
-    <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 md:p-6">
+    <section className="mt-5 rounded-[28px] border border-[#6993d2]/15 bg-white/90 p-5 shadow-[0_18px_40px_rgba(9,48,100,0.06)] backdrop-blur md:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Draft recovery</p>
-          <p className="mt-1 text-sm text-slate-600">Resume unfinished invoices in one tap.</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Draft recovery</p>
+          <p className="mt-1 text-sm text-slate-600">Pick up where you left off without digging through the library.</p>
         </div>
         <button
           type="button"
-          className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700"
+          className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
           onClick={onOpenLibrary}
         >
           Open library
@@ -144,7 +144,7 @@ function LauncherDraftRecoverySection({ drafts, loading, busyInvoiceId, onResume
         {drafts.map((draft) => (
           <div
             key={draft.invoiceId}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-3"
           >
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-slate-900">
@@ -156,7 +156,7 @@ function LauncherDraftRecoverySection({ drafts, loading, busyInvoiceId, onResume
             </div>
             <button
               type="button"
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-300"
+              className="rounded-full border border-[#6993d2]/25 bg-white px-3 py-1.5 text-xs font-semibold text-[#093064] hover:border-[#6993d2]/50"
               aria-label={`Resume ${draft.invoiceNumber || "draft invoice"}`}
               onClick={() => onResumeDraft(draft.invoiceId)}
               disabled={busyInvoiceId === draft.invoiceId}
@@ -178,41 +178,82 @@ function LauncherStartSection({
   onToggleAlternateStarts
 }) {
   return (
-    <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-4 md:p-6">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Start here</p>
-      <p className="mt-1 text-sm text-slate-600">Paste notes. Confirm decisions. Generate invoice.</p>
-      <div className="mt-4">
-        {primaryOption ? (
-          <LauncherCard
-            key={primaryOption.key}
-            title={primaryOption.title}
-            description={primaryOption.description}
-            icon={primaryOption.icon}
-            onClick={primaryOption.onClick}
-            disabled={primaryOption.disabled}
-            badge="Recommended"
-          />
-        ) : null}
-      </div>
-      {hasResumeDraft ? (
-        <button
-          type="button"
-          className="mt-3 inline-flex rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:border-slate-300"
-          onClick={onResumeDraft}
-        >
-          Resume last draft
-        </button>
-      ) : null}
-      <div className="mt-3">
-        <button
-          type="button"
-          className="inline-flex rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:border-slate-300"
-          onClick={onToggleAlternateStarts}
-          aria-expanded={showAlternateStarts}
-          aria-controls="alternate-start-options"
-        >
-          {showAlternateStarts ? "Hide other starts" : "Other starts"}
-        </button>
+    <section
+      className="mt-6 overflow-hidden rounded-[32px] border border-[#6993d2]/20 bg-white shadow-[0_25px_70px_rgba(9,48,100,0.12)]"
+      style={{
+        backgroundImage:
+          "radial-gradient(circle at top left, rgba(172,204,240,0.9), rgba(255,255,255,0) 42%), linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%)"
+      }}
+    >
+      <div className="grid gap-4 p-4 md:grid-cols-[minmax(0,1.3fr)_minmax(280px,0.9fr)] md:gap-5 md:p-7">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Start here</p>
+          <h2 className="mt-2 text-[1.75rem] text-slate-900 md:text-4xl" style={{ fontFamily: "'Fraunces', serif" }}>
+            Invoices from notes, not forms.
+          </h2>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 md:mt-3 md:text-base">
+            Billie does the heavy lift. You stay in control of prices, tax, and what actually gets sent.
+          </p>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3 md:mt-5 md:gap-3">
+            {[
+              ["1", "Paste", "Drop in notes, photos, or messy job details."],
+              ["2", "Review", "Confirm the money decisions that matter."],
+              ["3", "Send", "Export, save, or send the polished invoice."]
+            ].map(([step, title, copy]) => (
+              <div
+                key={step}
+                className="rounded-2xl border border-white/70 bg-white/75 p-3 shadow-sm backdrop-blur"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#093064] text-xs font-bold text-white">
+                    {step}
+                  </span>
+                  <p className="text-sm font-semibold text-slate-900">{title}</p>
+                </div>
+                <p className="mt-2 hidden text-xs leading-5 text-slate-600 sm:block">{copy}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-[28px] border border-[#6993d2]/25 bg-white/90 p-4 shadow-[0_18px_40px_rgba(9,48,100,0.08)] backdrop-blur md:p-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#6993d2]">Recommended path</p>
+          <div className="mt-3">
+            {primaryOption ? (
+              <LauncherCard
+                key={primaryOption.key}
+                title={primaryOption.title}
+                description={primaryOption.description}
+                icon={primaryOption.icon}
+                onClick={primaryOption.onClick}
+                disabled={primaryOption.disabled}
+                badge="Recommended"
+              />
+            ) : null}
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {hasResumeDraft ? (
+              <button
+                type="button"
+                className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:border-slate-300"
+                onClick={onResumeDraft}
+              >
+                Resume last draft
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="inline-flex rounded-full border border-[#6993d2]/25 bg-[#f4f8fd] px-3 py-1.5 text-sm font-semibold text-[#093064] hover:border-[#6993d2]/45"
+              onClick={onToggleAlternateStarts}
+              aria-expanded={showAlternateStarts}
+              aria-controls="alternate-start-options"
+            >
+              {showAlternateStarts ? "Hide other starts" : "Need a different start?"}
+            </button>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-slate-500">
+            Best for messy notes, text dumps, or talking through a job the way you naturally would.
+          </p>
+        </div>
       </div>
     </section>
   );
@@ -223,22 +264,33 @@ function LauncherAlternateStartsSection({ showAlternateStarts, quickStartOptions
     return null;
   }
   return (
-    <section id="alternate-start-options" className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 md:p-6">
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Other ways to start</p>
-      <div className="mt-3 flex flex-wrap gap-2">
+    <section
+      id="alternate-start-options"
+      className="mt-5 rounded-[28px] border border-[#6993d2]/15 bg-white/90 p-5 shadow-[0_18px_40px_rgba(9,48,100,0.06)] backdrop-blur md:p-6"
+    >
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Other ways to start</p>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
         {quickStartOptions.map((option) => (
           <button
             key={option.key}
             type="button"
-            className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
+            className="rounded-[24px] border border-slate-200 bg-slate-50/90 p-4 text-left transition hover:-translate-y-0.5 hover:border-[#6993d2]/40 hover:bg-white"
             onClick={option.onClick}
             disabled={option.disabled}
           >
-            {option.title}
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-[#acd0f4] text-[#093064]">
+                {React.cloneElement(option.icon, { className: "h-5 w-5" })}
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-slate-900">{option.title}</p>
+                <p className="mt-1 text-xs leading-5 text-slate-600 sm:block">{option.description}</p>
+              </div>
+            </div>
           </button>
         ))}
       </div>
-      <p className="mt-2 text-xs text-slate-500">
+      <p className="mt-3 text-xs text-slate-500">
         Use these only when you already have a file or need a blank draft.
       </p>
     </section>
@@ -247,12 +299,15 @@ function LauncherAlternateStartsSection({ showAlternateStarts, quickStartOptions
 
 function LauncherManageSection({ showManageOptions, onToggleManageOptions, manageOptions }) {
   return (
-    <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 md:p-6">
+    <section className="mt-5 rounded-[28px] border border-[#6993d2]/15 bg-white/90 p-5 shadow-[0_18px_40px_rgba(9,48,100,0.06)] backdrop-blur md:p-6">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Manage</p>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Manage</p>
+          <p className="mt-1 text-sm text-slate-600">Library, branding, and the parts you touch less often.</p>
+        </div>
         <button
           type="button"
-          className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700"
+          className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
           onClick={onToggleManageOptions}
           aria-expanded={showManageOptions}
           aria-controls="launcher-manage-options"
@@ -261,16 +316,24 @@ function LauncherManageSection({ showManageOptions, onToggleManageOptions, manag
         </button>
       </div>
       {showManageOptions ? (
-        <div id="launcher-manage-options" className="mt-3 flex flex-wrap gap-2">
+        <div id="launcher-manage-options" className="mt-4 grid gap-3 md:grid-cols-2">
           {manageOptions.map((option) => (
             <button
               key={option.key}
               type="button"
-              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
+              className="rounded-[22px] border border-slate-200 bg-slate-50/90 p-4 text-left text-sm font-semibold text-slate-700 transition hover:border-[#6993d2]/40 hover:bg-white"
               onClick={option.onClick}
               disabled={option.disabled}
             >
-              {option.title}
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-[#f4f8fd] text-[#093064]">
+                  {React.cloneElement(option.icon, { className: "h-5 w-5" })}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">{option.title}</p>
+                  <p className="mt-1 text-xs font-normal leading-5 text-slate-600 sm:block">{option.description}</p>
+                </div>
+              </div>
             </button>
           ))}
         </div>
@@ -294,7 +357,9 @@ function LauncherAuthModal({
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 px-4">
       <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
-        <h2 className="text-lg font-semibold text-slate-900">Sign in</h2>
+        <h2 className="text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+          Sign in
+        </h2>
         <p className="mt-1 text-sm text-slate-600">
           Enter your email to keep invoices scoped to your account.
         </p>

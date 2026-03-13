@@ -15,6 +15,9 @@
     "test": "tsx --test --test-concurrency=1 src/*.test.ts src/**/*.test.ts",
     "test:friction": "node scripts/ai-intake-friction-pass.mjs",
     "check:mobile-wrapper": "node scripts/check-mobile-wrapper-readiness.mjs",
+    "cap:sync": "npm run build:frontend && npx cap sync",
+    "cap:open:ios": "npx cap open ios",
+    "cap:open:android": "npx cap open android",
     "public:install-services": "bash scripts/install-notebill-user-services.sh",
     "public:start": "bash scripts/start-notebill-public.sh",
     "public:stop": "bash scripts/stop-notebill-public.sh",
@@ -26,6 +29,7 @@
     "migrate:invoices:postgres": "node -r dotenv/config scripts/migrate-saved-invoices-to-postgres.mjs"
   },
   "dependencies": {
+    "@capacitor/core": "^8.2.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
@@ -38,6 +42,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.2.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/multer": "^1.4.12",

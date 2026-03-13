@@ -9,6 +9,7 @@ export type StripeBillingCapabilities = {
   checkoutAvailable: boolean;
   portalAvailable: boolean;
   webhookAvailable: boolean;
+  invoicePaymentAvailable: boolean;
   hasSecretKey: boolean;
   hasPublishableKey: boolean;
   hasCheckoutPrice: boolean;
@@ -33,6 +34,28 @@ type BillingPortalSessionInput = {
   returnPath?: string;
 };
 
+type InvoicePaymentLinkInput = {
+  invoiceId: string;
+  ownerId: string;
+  baseUrl: string;
+  invoiceNumber?: string;
+  customerName?: string;
+  total: number;
+  currency?: string;
+  successPath?: string;
+};
+
+type InvoicePaymentLinkResult = {
+  url: string;
+  paymentLinkId: string;
+};
+
+type InvoicePaymentWebhookEffect = {
+  invoiceId: string;
+  ownerId: string;
+  paymentIntentId: string;
+};
+
 const STRIPE_API_VERSION: Stripe.LatestApiVersion = "2026-02-25.clover";
 
 let cachedStripeClient:
@@ -40,6 +63,9 @@ let cachedStripeClient:
       secretKey: string;
       client: Stripe;
     }
+  | null = null;
+let invoicePaymentLinkCreatorForTests:
+  | ((input: InvoicePaymentLinkInput) => Promise<InvoicePaymentLinkResult>)
   | null = null;
 
 export function getStripeBillingCapabilities(): StripeBillingCapabilities {
@@ -54,6 +80,7 @@ export function getStripeBillingCapabilities(): StripeBillingCapabilities {
     checkoutAvailable: Boolean(secretKey && checkoutPriceId),
     portalAvailable: Boolean(secretKey),
     webhookAvailable: Boolean(secretKey && webhookSecret),
+    invoicePaymentAvailable: Boolean(secretKey),
     hasSecretKey: Boolean(secretKey),
     hasPublishableKey: Boolean(publishableKey),
     hasCheckoutPrice: Boolean(checkoutPriceId),
@@ -63,6 +90,74 @@ export function getStripeBillingCapabilities(): StripeBillingCapabilities {
     liveMode:
       secretKeyMode === "live" &&
       (publishableKeyMode === "none" || publishableKeyMode === "live")
+  };
+}
+
+export async function createStripeInvoicePaymentLink(
+  input: InvoicePaymentLinkInput
+): Promise<InvoicePaymentLinkResult> {
+  if (invoicePaymentLinkCreatorForTests) {
+    return invoicePaymentLinkCreatorForTests(input);
+  }
+  const capabilities = getStripeBillingCapabilities();
+  if (!capabilities.hasSecretKey) {
+    throw new Error("Stripe billing is not configured (missing STRIPE_SECRET_KEY).");
+  }
+  const stripe = getStripeClient();
+  if (!stripe) {
+    throw new Error("Stripe billing is not configured.");
+  }
+
+  const amountCents = Math.round(Number(input.total) * 100);
+  if (!Number.isFinite(amountCents) || amountCents <= 0) {
+    throw new Error("Invoice total must be greater than 0 before creating a payment link.");
+  }
+
+  const invoiceNumber = normalizeText(input.invoiceNumber) || input.invoiceId;
+  const customerName = normalizeText(input.customerName);
+  const successPath = normalizePathWithFallback(
+    input.successPath,
+    `/manual?payment=success&invoiceId=${encodeURIComponent(input.invoiceId)}`
+  );
+  const paymentLink = await stripe.paymentLinks.create({
+    line_items: [
+      {
+        price_data: {
+          currency: normalizeCurrency(input.currency),
+          unit_amount: amountCents,
+          product_data: {
+            name: `Invoice ${invoiceNumber}`,
+            description: customerName ? `Payment for ${customerName}` : undefined
+          }
+        },
+        quantity: 1
+      }
+    ],
+    after_completion: {
+      type: "redirect",
+      redirect: {
+        url: `${input.baseUrl}${successPath}`
+      }
+    },
+    metadata: {
+      paymentKind: "saved_invoice_payment",
+      invoiceId: input.invoiceId,
+      ownerId: input.ownerId,
+      invoiceNumber
+    },
+    payment_intent_data: {
+      metadata: {
+        paymentKind: "saved_invoice_payment",
+        invoiceId: input.invoiceId,
+        ownerId: input.ownerId,
+        invoiceNumber
+      }
+    }
+  });
+
+  return {
+    url: paymentLink.url,
+    paymentLinkId: paymentLink.id
   };
 }
 
@@ -145,7 +240,12 @@ export async function createStripeBillingPortalSession(
 export async function processStripeWebhookEvent(input: {
   rawBody: Buffer | string;
   signature: string;
-}): Promise<{ eventId: string; eventType: string; handled: boolean }> {
+}): Promise<{
+  eventId: string;
+  eventType: string;
+  handled: boolean;
+  invoicePayment?: InvoicePaymentWebhookEffect;
+}> {
   const stripe = getStripeClient();
   if (!stripe) {
     throw new Error("Stripe billing is not configured (missing STRIPE_SECRET_KEY).");
@@ -169,6 +269,16 @@ export async function processStripeWebhookEvent(input: {
   ) {
     await handleSubscriptionEvent(event.data.object as Stripe.Subscription);
     return { eventId: event.id, eventType: event.type, handled: true };
+  }
+
+  if (event.type === "payment_intent.succeeded") {
+    const invoicePayment = handlePaymentIntentSucceededEvent(event.data.object as Stripe.PaymentIntent);
+    return {
+      eventId: event.id,
+      eventType: event.type,
+      handled: Boolean(invoicePayment),
+      invoicePayment: invoicePayment ?? undefined
+    };
   }
 
   return { eventId: event.id, eventType: event.type, handled: false };
@@ -226,6 +336,25 @@ async function handleSubscriptionEvent(subscription: Stripe.Subscription): Promi
   });
 }
 
+function handlePaymentIntentSucceededEvent(
+  paymentIntent: Stripe.PaymentIntent
+): InvoicePaymentWebhookEffect | null {
+  const metadata = paymentIntent.metadata ?? {};
+  if (normalizeText(metadata.paymentKind) !== "saved_invoice_payment") {
+    return null;
+  }
+  const invoiceId = normalizeText(metadata.invoiceId);
+  const ownerId = normalizeText(metadata.ownerId);
+  if (!invoiceId || !ownerId) {
+    return null;
+  }
+  return {
+    invoiceId,
+    ownerId,
+    paymentIntentId: paymentIntent.id
+  };
+}
+
 async function findStripeCustomerByEmail(stripe: Stripe, email: string): Promise<Stripe.Customer | null> {
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) {
@@ -277,4 +406,15 @@ function normalizeText(value: string | undefined): string {
 
 function normalizeEmail(value: string | undefined | null): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function normalizeCurrency(value: string | undefined): string {
+  const normalized = normalizeText(value).toLowerCase();
+  return normalized || "usd";
+}
+
+export function setInvoicePaymentLinkCreatorForTests(
+  creator: ((input: InvoicePaymentLinkInput) => Promise<InvoicePaymentLinkResult>) | null
+): void {
+  invoicePaymentLinkCreatorForTests = creator;
 }

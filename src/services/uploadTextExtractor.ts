@@ -1,5 +1,5 @@
 import pdfParse from "pdf-parse";
-import { runImageOcrTask } from "../ai/openaiClient.js";
+import { runAudioTranscriptionTask, runImageOcrTask } from "../ai/openaiClient.js";
 
 export type UploadedFile = {
   mimetype: string;
@@ -11,6 +11,7 @@ const IMAGE_MIME_TYPES = new Set([
   "image/jpeg",
   "image/webp"
 ]);
+const AUDIO_MIME_PREFIX = "audio/";
 
 export type ImageOcrExtraction = {
   text: string;
@@ -115,4 +116,25 @@ export async function extractUploadedImageText(file: UploadedFile): Promise<Imag
     confidence,
     confidenceReasons: Array.from(confidenceReasons)
   };
+}
+
+export async function extractUploadedAudioText(
+  file: UploadedFile & { originalname?: string }
+): Promise<string> {
+  if (!file.buffer.length) {
+    throw new Error("Uploaded audio file is empty.");
+  }
+  if (!file.mimetype.startsWith(AUDIO_MIME_PREFIX)) {
+    throw new Error(`Unsupported audio type: ${file.mimetype}. Upload an audio note.`);
+  }
+  const transcription = await runAudioTranscriptionTask({
+    mimeType: file.mimetype,
+    fileName: file.originalname ?? "voice-note.webm",
+    fileData: file.buffer
+  });
+  const transcript = transcription.transcript.trim();
+  if (!transcript) {
+    throw new Error("Could not transcribe the uploaded audio note.");
+  }
+  return transcript;
 }

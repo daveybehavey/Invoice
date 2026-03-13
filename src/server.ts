@@ -37,6 +37,7 @@ import { buildPdfFilename, createInvoicePdfBuffer } from "./services/invoicePdf.
 import {
   createStripeBillingPortalSession,
   createStripeCheckoutSession,
+  createStripeInvoicePaymentLink,
   getStripeBillingCapabilities,
   processStripeWebhookEvent
 } from "./services/stripeBilling.js";
@@ -76,7 +77,11 @@ import {
 import { getSavedInvoiceStoreSummary } from "./services/savedInvoiceStore.js";
 import { getFlowFrictionSnapshot } from "./services/flowFrictionReport.js";
 import { getIntakeTelemetryTrends } from "./services/intakeTelemetryTrends.js";
-import { extractUploadedImageText, extractUploadedInvoiceText } from "./services/uploadTextExtractor.js";
+import {
+  extractUploadedAudioText,
+  extractUploadedImageText,
+  extractUploadedInvoiceText
+} from "./services/uploadTextExtractor.js";
 import {
   createAuthSessionForEmail,
   getAuthSessionFromRequest,
@@ -117,6 +122,9 @@ app.post(
           ? req.body
           : Buffer.from(typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {}), "utf8");
       const result = await processStripeWebhookEvent({ rawBody, signature });
+      if (result.invoicePayment) {
+        await markSavedInvoicePaidFromStripePayment(result.invoicePayment);
+      }
       res.json({ ok: true, handled: result.handled, eventType: result.eventType });
     } catch (error) {
       next(error);
@@ -624,6 +632,25 @@ app.post(
   }
 );
 
+app.post(
+  "/api/invoices/transcribe-audio",
+  importUpload.single("audioFile"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) {
+        throw new Error("Upload an audio note first.");
+      }
+      const transcript = await extractUploadedAudioText(req.file);
+      res.json({
+        sourceType: "audio",
+        extractedText: transcript
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 app.post("/api/invoices/from-input/labor-pricing", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = LaborPricingFollowUpRequestSchema.parse(req.body);
@@ -890,12 +917,17 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
     if (existingInvoice.status === "deleted") {
       throw new HttpStatusError(400, "Restore this invoice before sending.");
     }
+    const invoiceWithPaymentLink = await ensureSavedInvoicePaymentLink({
+      ownerId,
+      invoice: existingInvoice,
+      baseUrl: resolvePublicBaseUrl(req)
+    });
 
     const trackingToken = randomUUID();
     const openTrackingPixelUrl = `${resolvePublicBaseUrl(req)}/api/invoices/${invoiceId}/delivery/opened/pixel?token=${encodeURIComponent(trackingToken)}`;
     const sendResult = await sendInvoiceEmail({
       recipientEmail: parsedRequest.recipientEmail,
-      invoice: existingInvoice.invoiceData.finishedInvoice,
+      invoice: invoiceWithPaymentLink.invoiceData.finishedInvoice,
       invoiceId,
       openTrackingPixelUrl
     });
@@ -910,8 +942,8 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
       providerMessageId: sendResult.providerMessageId
     });
     const invoice =
-      existingInvoice.status === "sent"
-        ? existingInvoice
+      invoiceWithPaymentLink.status === "sent"
+        ? invoiceWithPaymentLink
         : await savedInvoiceRepository.updateSavedInvoiceStatus(invoiceId, "sent", ownerId);
     res.json({
       invoice,
@@ -919,6 +951,43 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
       mode: sendResult.mode,
       provider: sendResult.provider,
       warning: sendResult.warning ?? null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/invoices/:id/payment-link", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invoiceId = z.string().uuid().parse(req.params.id);
+    const parsedRequest = z
+      .object({
+        refresh: z.boolean().optional()
+      })
+      .default({})
+      .parse(req.body ?? {});
+    const ownerId = getRequestOwnerId(req);
+    const savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
+    if (savedInvoice.status === "deleted") {
+      throw new HttpStatusError(400, "Restore this invoice before creating a payment link.");
+    }
+    if (!getStripeBillingCapabilities().invoicePaymentAvailable) {
+      throw new HttpStatusError(400, "Stripe invoice payments are not configured yet.");
+    }
+    const invoice = parsedRequest.refresh
+      ? await createAndPersistSavedInvoicePaymentLink({
+          ownerId,
+          invoice: savedInvoice,
+          baseUrl: resolvePublicBaseUrl(req)
+        })
+      : await ensureSavedInvoicePaymentLink({
+          ownerId,
+          invoice: savedInvoice,
+          baseUrl: resolvePublicBaseUrl(req)
+        });
+    res.json({
+      invoice,
+      paymentLinkUrl: invoice.invoiceData.finishedInvoice.paymentLinkUrl ?? ""
     });
   } catch (error) {
     next(error);
@@ -1314,6 +1383,89 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
     return false;
   }
   return undefined;
+}
+
+async function ensureSavedInvoicePaymentLink(input: {
+  ownerId: string;
+  invoice: Awaited<ReturnType<typeof savedInvoiceRepository.getSavedInvoiceById>>;
+  baseUrl: string;
+}) {
+  const existingPaymentLink = input.invoice.invoiceData.finishedInvoice.paymentLinkUrl?.trim();
+  if (existingPaymentLink) {
+    return input.invoice;
+  }
+  const capabilities = getStripeBillingCapabilities();
+  if (!capabilities.invoicePaymentAvailable) {
+    return input.invoice;
+  }
+  return createAndPersistSavedInvoicePaymentLink(input);
+}
+
+async function createAndPersistSavedInvoicePaymentLink(input: {
+  ownerId: string;
+  invoice: Awaited<ReturnType<typeof savedInvoiceRepository.getSavedInvoiceById>>;
+  baseUrl: string;
+}) {
+  const finishedInvoice = input.invoice.invoiceData.finishedInvoice;
+  const total = Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0);
+  if (!Number.isFinite(total) || total <= 0) {
+    throw new HttpStatusError(400, "Invoice total must be greater than 0 before creating a payment link.");
+  }
+
+  const paymentLink = await createStripeInvoicePaymentLink({
+    invoiceId: input.invoice.invoiceId,
+    ownerId: input.ownerId,
+    baseUrl: input.baseUrl,
+    invoiceNumber: finishedInvoice.invoiceNumber,
+    customerName: finishedInvoice.customerName,
+    total,
+    currency: finishedInvoice.currency
+  });
+
+  return savedInvoiceRepository.saveInvoiceDocument({
+    ownerId: input.ownerId,
+    invoiceId: input.invoice.invoiceId,
+    sourceType: input.invoice.sourceType,
+    invoiceData: {
+      ...input.invoice.invoiceData,
+      finishedInvoice: {
+        ...finishedInvoice,
+        paymentLinkUrl: paymentLink.url
+      }
+    }
+  });
+}
+
+async function markSavedInvoicePaidFromStripePayment(input: {
+  invoiceId: string;
+  ownerId: string;
+  paymentIntentId: string;
+}): Promise<void> {
+  let savedInvoice;
+  try {
+    savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(input.invoiceId, input.ownerId);
+  } catch (_error) {
+    return;
+  }
+  if (savedInvoice.status === "deleted") {
+    return;
+  }
+  const currentInvoice = savedInvoice.invoiceData.finishedInvoice;
+  await savedInvoiceRepository.saveInvoiceDocument({
+    ownerId: input.ownerId,
+    invoiceId: input.invoiceId,
+    sourceType: savedInvoice.sourceType,
+    invoiceData: {
+      ...savedInvoice.invoiceData,
+      finishedInvoice: {
+        ...currentInvoice,
+        balanceDue: 0
+      }
+    }
+  });
+  if (savedInvoice.status !== "paid") {
+    await savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "paid", input.ownerId);
+  }
 }
 
 function evaluatePersistenceMigrationStatus(

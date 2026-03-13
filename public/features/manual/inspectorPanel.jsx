@@ -100,6 +100,7 @@ function InspectorPanel({
   onTaxRateChange,
   onDiscountAmountChange,
   onPaymentLinkChange,
+  onGeneratePaymentLink,
   onUpdateLineItemValues,
   stylePreset,
   onStylePresetChange,
@@ -111,6 +112,8 @@ function InspectorPanel({
   saveStatus,
   saveError,
   saveNeedsAuth,
+  paymentLinkBusy,
+  paymentLinkError,
   accountPlan,
   onSaveAuthRetry,
   onGoToLauncherSignIn,
@@ -125,7 +128,9 @@ function InspectorPanel({
   buildRewriteInvoicePayload,
   onApplyRewrite,
   buildEditableInvoicePayload,
-  onApplyAiEdit
+  onApplyAiEdit,
+  assistantCommandRequest,
+  onAssistantCommandHandled
 }) {
   const [toneAction, setToneAction] = useState(null);
   const [selectedTone, setSelectedTone] = useState(null);
@@ -149,6 +154,7 @@ function InspectorPanel({
   const previewCloseButtonRef = useRef(null);
   const previewFocusReturnRef = useRef(null);
   const assistantRequestIdRef = useRef(0);
+  const handledAssistantCommandRef = useRef("");
   const assistantQuickActions = [
     {
       id: "formal-descriptions",
@@ -933,6 +939,18 @@ function InspectorPanel({
   const previewBillToDetails = previewData?.billToDetails?.trim() || "Add client details";
   const previewNotes = previewData?.notes?.trim() || "Add payment terms or a note.";
   const previewPaymentLink = previewData?.paymentLinkUrl?.trim() || "";
+
+  useEffect(() => {
+    const requestId = assistantCommandRequest?.id;
+    const instruction = assistantCommandRequest?.instruction;
+    if (!requestId || !instruction || handledAssistantCommandRef.current === requestId) {
+      return;
+    }
+    handledAssistantCommandRef.current = requestId;
+    onTabChange?.("assistant");
+    submitAssistantEdit(instruction);
+    onAssistantCommandHandled?.(requestId);
+  }, [assistantCommandRequest, onAssistantCommandHandled, onTabChange]);
   const previewAccent = buildAccentPalette(previewData?.accentColor ?? accentColor ?? DEFAULT_ACCENT_COLOR);
 
   return (
@@ -1435,9 +1453,22 @@ function InspectorPanel({
             >
               Draft edit
             </button>
-            {assistantLoading ? <p className="text-xs text-slate-500">Applying changes...</p> : null}
+            {assistantLoading && assistantStatus ? (
+              <div
+                className="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold"
+                style={{ borderColor: accent.border, backgroundColor: accent.soft, color: accent.text }}
+              >
+                <span
+                  className="inline-flex h-2.5 w-2.5 animate-pulse rounded-full"
+                  style={{ backgroundColor: accent.primary }}
+                />
+                <span>{assistantStatus}</span>
+              </div>
+            ) : assistantLoading ? (
+              <p className="text-xs text-slate-500">Applying changes...</p>
+            ) : null}
             {assistantError ? <p className="text-xs text-rose-600">{assistantError}</p> : null}
-            {assistantStatus ? <p className="text-xs text-slate-500">{assistantStatus}</p> : null}
+            {assistantStatus && !assistantLoading ? <p className="text-xs text-slate-500">{assistantStatus}</p> : null}
           </div>
         ) : activeTab === "export" ? (
           <div className="space-y-4">
@@ -1590,6 +1621,49 @@ function InspectorPanel({
                   ) : null}
                 </div>
                 {statusUpdateError ? <p className="text-xs text-rose-600">{statusUpdateError}</p> : null}
+              </div>
+            ) : null}
+            {savedInvoiceId ? (
+              <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Online payment</p>
+                    <p className="text-xs text-slate-500">
+                      Create a Stripe checkout link and include it in sends and exports.
+                    </p>
+                  </div>
+                  {previewPaymentLink ? (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                      Link ready
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                    style={accentButtonStyle}
+                    onClick={onGeneratePaymentLink}
+                    disabled={paymentLinkBusy}
+                  >
+                    {paymentLinkBusy
+                      ? "Creating link..."
+                      : previewPaymentLink
+                        ? "Refresh payment link"
+                        : "Create payment link"}
+                  </button>
+                  {previewPaymentLink ? (
+                    <a
+                      href={previewPaymentLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
+                    >
+                      Open payment link
+                    </a>
+                  ) : null}
+                </div>
+                {paymentLinkError ? <p className="text-xs text-rose-600">{paymentLinkError}</p> : null}
               </div>
             ) : null}
             <div className="space-y-2">

@@ -4,6 +4,9 @@
   "webDir": "public",
   "bundledWebRuntime": false,
   "server": {
-    "cleartext": true
+    "androidScheme": "https"
+  },
+  "ios": {
+    "contentInset": "always"
   }
 }
