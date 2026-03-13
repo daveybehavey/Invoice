@@ -19,6 +19,28 @@ This is the final web-launch gate for `notebill.app`.
   - `INVOICE_FROM_EMAIL`
   - `INVOICE_LAUNCH_TEST_EMAIL`
 
+## Stripe bootstrap helper
+
+When live Stripe keys are present but you still need a live checkout price + webhook secret, run:
+
+```bash
+npm run setup:stripe-launch
+```
+
+This will:
+
+- create or reuse a managed live `NoteBill Pro` product/price
+- create a fresh managed live webhook endpoint for `https://app.notebill.app/api/billing/stripe/webhook` based on `APP_BASE_URL`
+- write `STRIPE_PRICE_ID` and `STRIPE_WEBHOOK_SECRET` back into `.env`
+- set `INVOICE_EMAIL_PROVIDER=resend` automatically when `RESEND_API_KEY` is already present
+
+Default launch price is `1900 USD / month`. Override with:
+
+- `STRIPE_LAUNCH_PRODUCT_NAME`
+- `STRIPE_LAUNCH_PRICE_AMOUNT_CENTS`
+- `STRIPE_LAUNCH_PRICE_CURRENCY`
+- `STRIPE_LAUNCH_PRICE_INTERVAL`
+
 ## Launch validation commands
 
 ```bash

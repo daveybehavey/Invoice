@@ -26,7 +26,8 @@
     "check:release": "npm run check:launch && npm run check:public-domain",
     "check:public-domain": "node scripts/check-public-domain-readiness.mjs",
     "check:persistence": "tsx scripts/check-persistence-readiness.ts",
-    "migrate:invoices:postgres": "node -r dotenv/config scripts/migrate-saved-invoices-to-postgres.mjs"
+    "migrate:invoices:postgres": "node -r dotenv/config scripts/migrate-saved-invoices-to-postgres.mjs",
+    "setup:stripe-launch": "node scripts/bootstrap-stripe-launch.mjs"
   },
   "dependencies": {
     "@capacitor/core": "^8.2.0",
