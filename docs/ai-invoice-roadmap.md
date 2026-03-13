@@ -302,6 +302,18 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Model-backed wording rewrites now fall back to `OPENAI_MODEL` when no wording-specific override is configured.
    - Keeps one fast default path for Billie instead of silently dropping back to a slower hard-coded wording model.
    - Added config tests to lock the fallback behavior.
+85. Launch billing mode hardening
+   - Stripe diagnostics now expose test/live key mode so launch checks can catch test billing before public cutover.
+   - Added launch-policy awareness for live billing mode in `/api/system/billing` and `/api/system/launch`.
+   - Prevents false-positive launch readiness when Stripe is configured but still running on test keys.
+86. Launch email verification tooling
+   - Added provider-backed launch test email support with `npm run send:launch-email-test`.
+   - Delivery diagnostics now include launch-test recipient readiness alongside provider configuration.
+   - Gives one explicit pre-launch check that email delivery is truly working, not just tracking-only.
+87. Release checklist + combined launch tooling
+   - Added a dedicated web-launch checklist doc for NoteBill cutover.
+   - Added `npm run check:release` to run launch and public-domain checks together.
+   - Tightened launch runbook so the remaining launch steps are operational, not conceptual.
 82. Client-aware labor suggestions + import pre-limit parity
    - Saved line-item memory now stores optional client context and prioritizes client matches during labor follow-up suggestions.
    - Follow-up quick replies now surface `Use client match` when a same-client rate is known.

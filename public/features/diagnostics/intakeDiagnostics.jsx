@@ -33,10 +33,13 @@
     const [migrationInfo, setMigrationInfo] = useState(null);
     const [billingInfo, setBillingInfo] = useState(null);
     const [deliveryInfo, setDeliveryInfo] = useState(null);
+    const [launchInfo, setLaunchInfo] = useState(null);
     const [exporting, setExporting] = useState(false);
     const [exportResult, setExportResult] = useState(null);
     const [reminderActionBusy, setReminderActionBusy] = useState(false);
     const [reminderActionResult, setReminderActionResult] = useState(null);
+    const [launchEmailBusy, setLaunchEmailBusy] = useState(false);
+    const [launchEmailResult, setLaunchEmailResult] = useState(null);
 
     const loadDiagnostics = useCallback(async ({ silent = false } = {}) => {
       if (silent) {
@@ -53,7 +56,8 @@
           systemResponse,
           migrationResponse,
           billingResponse,
-          deliveryResponse
+          deliveryResponse,
+          launchResponse
         ] =
           await Promise.all([
           apiFetch("/api/telemetry/ocr-confidence"),
@@ -62,7 +66,8 @@
           apiFetch("/api/system/persistence"),
           apiFetch("/api/system/persistence/migration"),
           apiFetch("/api/system/billing"),
-          apiFetch("/api/system/delivery")
+          apiFetch("/api/system/delivery"),
+          apiFetch("/api/system/launch")
         ]);
         const [
           ocrPayload,
@@ -71,7 +76,8 @@
           systemPayload,
           migrationPayload,
           billingPayload,
-          deliveryPayload
+          deliveryPayload,
+          launchPayload
         ] =
           await Promise.all([
           ocrResponse.json(),
@@ -80,7 +86,8 @@
           systemResponse.json(),
           migrationResponse.json(),
           billingResponse.json(),
-          deliveryResponse.json()
+          deliveryResponse.json(),
+          launchResponse.json()
         ]);
         if (!ocrResponse.ok) {
           throw new Error(ocrPayload?.error || "Failed to load OCR telemetry.");
@@ -103,6 +110,9 @@
         if (!deliveryResponse.ok) {
           throw new Error(deliveryPayload?.error || "Failed to load delivery diagnostics.");
         }
+        if (!launchResponse.ok) {
+          throw new Error(launchPayload?.error || "Failed to load launch diagnostics.");
+        }
         setOcrSnapshot(ocrPayload);
         setFrictionSnapshot(frictionPayload);
         setTrendSnapshot(trendPayload);
@@ -110,6 +120,7 @@
         setMigrationInfo(migrationPayload);
         setBillingInfo(billingPayload);
         setDeliveryInfo(deliveryPayload);
+        setLaunchInfo(launchPayload);
       } catch (loadError) {
         console.error("Failed to load intake diagnostics", loadError);
         setError(loadError?.message || "Failed to load diagnostics.");
@@ -226,6 +237,37 @@
       }
     };
 
+    const handleSendLaunchTestEmail = async () => {
+      setLaunchEmailBusy(true);
+      setLaunchEmailResult(null);
+      try {
+        const response = await apiFetch("/api/system/delivery/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload?.error || "Failed to send launch test email.");
+        }
+        setLaunchEmailResult({
+          ok: true,
+          recipientEmail: payload?.recipientEmail || "configured recipient",
+          mode: payload?.mode || "provider",
+          warning: payload?.warning || ""
+        });
+        await loadDiagnostics({ silent: true });
+      } catch (launchEmailError) {
+        console.error("Failed to send launch test email", launchEmailError);
+        setLaunchEmailResult({
+          ok: false,
+          error: launchEmailError?.message || "Failed to send launch test email."
+        });
+      } finally {
+        setLaunchEmailBusy(false);
+      }
+    };
+
     const ocrTotals = {
       total: Number(ocrSnapshot?.totalEvents ?? 0),
       high: Number(ocrSnapshot?.byConfidence?.high ?? 0),
@@ -260,9 +302,11 @@
     const billingReady = Boolean(
       billingInfo?.capabilities?.checkoutAvailable &&
         billingInfo?.capabilities?.portalAvailable &&
-        billingInfo?.capabilities?.webhookAvailable
+        billingInfo?.capabilities?.webhookAvailable &&
+        !billingInfo?.warning
     );
-    const deliveryReady = Boolean(deliveryInfo?.capabilities?.configured);
+    const deliveryReady = Boolean(deliveryInfo?.capabilities?.configured && !deliveryInfo?.warning);
+    const launchReady = Boolean(launchInfo?.ready);
     const migrationBacklog = Boolean(migrationInfo?.migrationStatus?.backlogDetected);
     const ocrLowRatePct = `${(trend24h.lowRate * 100).toFixed(1)}%`;
     const frictionFailedRatePct = `${(frictionTrend24h.failedRate * 100).toFixed(1)}%`;
@@ -343,6 +387,11 @@
                 tone={deliveryReady ? "green" : "amber"}
               />
               <StatusPill
+                label="Launch gate"
+                value={launchReady ? "Ready" : `${launchInfo?.warningCount ?? 0} warning${launchInfo?.warningCount === 1 ? "" : "s"}`}
+                tone={launchReady ? "green" : "amber"}
+              />
+              <StatusPill
                 label="OCR low-confidence (24h)"
                 value={ocrLowRatePct}
                 tone={trend24h.lowRate <= 0.2 ? "green" : trend24h.lowRate <= 0.35 ? "amber" : "red"}
@@ -365,6 +414,47 @@
               </p>
             ) : null}
           </section>
+
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Launch readiness</h2>
+            <p className="mt-2 text-xs text-slate-500">
+              Public base URL: {launchInfo?.publicBaseUrl || "n/a"}
+              {" · "}
+              Warnings: {launchInfo?.warningCount ?? 0}
+            </p>
+            <div className="mt-3 space-y-2">
+              {(launchInfo?.checks ?? []).map((check) => (
+                <div
+                  key={check.id}
+                  className={`rounded-xl border px-3 py-2 text-xs ${
+                    check.ok
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : "border-amber-200 bg-amber-50 text-amber-800"
+                  }`}
+                >
+                  <p className="font-semibold uppercase tracking-wide">{check.id}</p>
+                  <p className="mt-1">{check.detail}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleSendLaunchTestEmail}
+                disabled={loading || refreshing || launchEmailBusy || !deliveryInfo?.capabilities?.configured}
+              >
+                {launchEmailBusy ? "Sending..." : "Send launch test email"}
+              </button>
+            </div>
+            {launchEmailResult ? (
+              <p className={`mt-2 text-xs ${launchEmailResult.ok ? "text-emerald-700" : "text-rose-700"}`}>
+                {launchEmailResult.ok
+                  ? `Launch test email sent to ${launchEmailResult.recipientEmail} (${launchEmailResult.mode}).`
+                  : launchEmailResult.error}
+              </p>
+            ) : null}
+          </div>
 
           <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Persistence migration</h2>
@@ -408,6 +498,13 @@
               Webhook: {billingInfo?.capabilities?.webhookAvailable ? "ready" : "not ready"}
             </p>
             <p className="mt-1 text-xs text-slate-500">
+              Secret key mode: {billingInfo?.capabilities?.secretKeyMode || "n/a"}
+              {" · "}
+              Publishable key mode: {billingInfo?.capabilities?.publishableKeyMode || "n/a"}
+              {" · "}
+              Launch requires live mode: {billingInfo?.launchPolicy?.requireLiveMode ? "yes" : "no"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
               Entitlements: {billingInfo?.entitlements?.activeSubscriptionCount ?? 0} active /{" "}
               {billingInfo?.entitlements?.subscriptionCount ?? 0} subscriptions
               {" · "}
@@ -431,6 +528,11 @@
               Configured: {deliveryInfo?.capabilities?.configured ? "yes" : "no"}
               {" · "}
               From: {deliveryInfo?.capabilities?.fromEmail || "n/a"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              From domain: {deliveryInfo?.capabilities?.fromDomain || "n/a"}
+              {" · "}
+              Launch test recipient: {deliveryInfo?.capabilities?.launchTestRecipientConfigured ? "set" : "not set"}
             </p>
             <p className="mt-1 text-xs text-slate-500">
               Sent count: {deliveryInfo?.summary?.sentCount ?? 0}

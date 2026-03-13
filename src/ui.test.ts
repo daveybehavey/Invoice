@@ -3926,7 +3926,7 @@ test("manual export panel can mark a saved invoice as sent then paid", async () 
   }
 });
 
-test("diagnostics route shows OCR, friction, persistence, billing, and delivery panels", async () => {
+test("diagnostics route shows launch, billing, delivery, and telemetry panels", async () => {
   if (flowFrictionReportFilePath) {
     await fs.writeFile(
       flowFrictionReportFilePath,
@@ -3953,9 +3953,11 @@ test("diagnostics route shows OCR, friction, persistence, billing, and delivery 
     await page.getByRole("heading", { name: "OCR confidence" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Trend baseline" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Flow friction checks" }).waitFor({ state: "visible" });
+    await page.getByRole("heading", { name: "Launch readiness" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Persistence migration" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Billing diagnostics" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Delivery diagnostics" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Send launch test email" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Preview due reminders" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Run reminders now" }).waitFor({ state: "visible" });
     await page.getByText("No legacy file-store invoices detected.").waitFor({ state: "visible" });

@@ -59,7 +59,11 @@ import {
   markInvoiceDeliveryOpened,
   recordInvoiceDeliverySend
 } from "./services/invoiceDeliveryStore.js";
-import { getInvoiceEmailCapabilities, sendInvoiceEmail } from "./services/invoiceEmailDelivery.js";
+import {
+  getInvoiceEmailCapabilities,
+  sendInvoiceEmail,
+  sendLaunchTestEmail
+} from "./services/invoiceEmailDelivery.js";
 import {
   listDueInvoiceReminderCandidates,
   runDueInvoiceReminders,
@@ -299,12 +303,19 @@ app.get("/api/system/billing", async (_req: Request, res: Response, next: NextFu
   try {
     const capabilities = getStripeBillingCapabilities();
     const entitlements = await getBillingEntitlementsSummary();
-    const warning = resolveBillingSystemWarning(capabilities, entitlements);
+    const requireLiveMode = resolveLaunchRequireLiveBilling(
+      process.env.INVOICE_LAUNCH_REQUIRE_LIVE_BILLING,
+      process.env.NODE_ENV
+    );
+    const warning = resolveBillingSystemWarning(capabilities, entitlements, { requireLiveMode });
     res.json({
       provider: capabilities.provider,
       capabilities,
       entitlements,
-      warning
+      warning,
+      launchPolicy: {
+        requireLiveMode
+      }
     });
   } catch (error) {
     next(error);
@@ -339,6 +350,37 @@ app.get("/api/system/delivery", async (req: Request, res: Response, next: NextFu
   }
 });
 
+app.post("/api/system/delivery/test", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const authSession = getAuthSessionFromRequest(req);
+    const allowCustomRecipient = (process.env.NODE_ENV ?? "development").trim().toLowerCase() !== "production";
+    const recipientEmail =
+      (allowCustomRecipient ? asOptionalString(req.body?.recipientEmail) : null) ??
+      asOptionalString(authSession?.email) ??
+      asOptionalString(process.env.INVOICE_LAUNCH_TEST_EMAIL);
+    if (!recipientEmail) {
+      throw new HttpStatusError(
+        400,
+        "Missing launch test recipient. Set INVOICE_LAUNCH_TEST_EMAIL or sign in with an email-backed session."
+      );
+    }
+    const result = await sendLaunchTestEmail({
+      recipientEmail,
+      appBaseUrl: process.env.APP_BASE_URL
+    });
+    res.json({
+      ok: true,
+      recipientEmail: result.recipientEmail,
+      mode: result.mode,
+      provider: result.provider,
+      providerMessageId: result.providerMessageId ?? null,
+      warning: result.warning ?? null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/system/launch", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const persistencePolicy = getSavedInvoicePersistencePolicy();
@@ -346,7 +388,13 @@ app.get("/api/system/launch", async (req: Request, res: Response, next: NextFunc
     const migrationPolicy = await getSavedInvoiceMigrationPolicy();
     const billingCapabilities = getStripeBillingCapabilities();
     const billingEntitlements = await getBillingEntitlementsSummary();
-    const billingWarning = resolveBillingSystemWarning(billingCapabilities, billingEntitlements);
+    const requireLiveBilling = resolveLaunchRequireLiveBilling(
+      process.env.INVOICE_LAUNCH_REQUIRE_LIVE_BILLING,
+      process.env.NODE_ENV
+    );
+    const billingWarning = resolveBillingSystemWarning(billingCapabilities, billingEntitlements, {
+      requireLiveMode: requireLiveBilling
+    });
     const deliveryCapabilities = getInvoiceEmailCapabilities();
     const deliverySummary = await getInvoiceDeliveryStoreSummary();
     const deliveryWarning = resolveDeliverySystemWarning(deliveryCapabilities, deliverySummary);
@@ -409,6 +457,7 @@ app.get("/api/system/launch", async (req: Request, res: Response, next: NextFunc
         ready: billingReady,
         provider: billingCapabilities.provider,
         warning: billingWarning,
+        requireLiveMode: requireLiveBilling,
         capabilities: billingCapabilities,
         entitlements: billingEntitlements
       },
@@ -1095,10 +1144,25 @@ function resolveBillingSystemWarning(
     subscriptionCount: number;
     activeSubscriptionCount: number;
     missingIdentityCount: number;
+  },
+  policy?: {
+    requireLiveMode?: boolean;
   }
 ): string | null {
   if (!capabilities.hasSecretKey) {
     return "Stripe is not configured (missing STRIPE_SECRET_KEY).";
+  }
+  if (
+    capabilities.hasPublishableKey &&
+    capabilities.publishableKeyMode !== "none" &&
+    capabilities.secretKeyMode !== "unknown" &&
+    capabilities.publishableKeyMode !== "unknown" &&
+    capabilities.publishableKeyMode !== capabilities.secretKeyMode
+  ) {
+    return "Stripe publishable and secret keys are using different modes.";
+  }
+  if (policy?.requireLiveMode && capabilities.secretKeyMode !== "live") {
+    return "Stripe billing is still using test-mode or unknown keys; live launch requires live billing keys.";
   }
   if (!capabilities.hasCheckoutPrice) {
     return "Stripe checkout is disabled (missing STRIPE_PRICE_ID).";
@@ -1117,13 +1181,10 @@ function resolveBillingSystemWarning(
 
 function resolveDeliverySystemWarning(
   capabilities: ReturnType<typeof getInvoiceEmailCapabilities>,
-  summary: Awaited<ReturnType<typeof getInvoiceDeliveryStoreSummary>>
+  _summary: Awaited<ReturnType<typeof getInvoiceDeliveryStoreSummary>>
 ): string | null {
   if (!capabilities.configured) {
     return "Invoice email provider is not configured; send actions are tracking-only.";
-  }
-  if (summary.sentCount > 0 && summary.providerSendCount === 0) {
-    return "All sends are currently tracking-only. Configure provider to send actual email.";
   }
   return null;
 }
@@ -1231,6 +1292,14 @@ function resolveInvoiceRequireAuth(value: string | undefined, nodeEnv: string): 
     return parsed;
   }
   return nodeEnv.toLowerCase() === "production";
+}
+
+function resolveLaunchRequireLiveBilling(value: string | undefined, nodeEnv: string | undefined): boolean {
+  const parsed = parseBooleanEnv(value);
+  if (parsed !== undefined) {
+    return parsed;
+  }
+  return (nodeEnv ?? "development").trim().toLowerCase() === "production";
 }
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {

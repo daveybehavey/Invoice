@@ -19,6 +19,8 @@
     "public:start": "bash scripts/start-notebill-public.sh",
     "public:stop": "bash scripts/stop-notebill-public.sh",
     "check:launch": "node scripts/check-launch-readiness.mjs",
+    "send:launch-email-test": "tsx scripts/send-launch-test-email.ts",
+    "check:release": "npm run check:launch && npm run check:public-domain",
     "check:public-domain": "node scripts/check-public-domain-readiness.mjs",
     "check:persistence": "tsx scripts/check-persistence-readiness.ts",
     "migrate:invoices:postgres": "node -r dotenv/config scripts/migrate-saved-invoices-to-postgres.mjs"

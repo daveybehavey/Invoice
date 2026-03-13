@@ -6,6 +6,9 @@ export type InvoiceEmailCapabilities = {
   provider: InvoiceEmailProvider;
   configured: boolean;
   fromEmail: string | null;
+  fromAddress: string | null;
+  fromDomain: string | null;
+  launchTestRecipientConfigured: boolean;
 };
 
 export type InvoiceEmailSendResult = {
@@ -13,6 +16,11 @@ export type InvoiceEmailSendResult = {
   provider: InvoiceEmailProvider;
   providerMessageId?: string;
   warning?: string;
+};
+
+type SendLaunchTestEmailInput = {
+  recipientEmail: string;
+  appBaseUrl?: string;
 };
 
 type SendInvoiceEmailInput = {
@@ -29,18 +37,27 @@ const DEFAULT_FROM_EMAIL = "NoteBill <invoices@notebill.app>";
 export function getInvoiceEmailCapabilities(): InvoiceEmailCapabilities {
   const provider = resolveInvoiceEmailProvider();
   const fromEmail = resolveInvoiceFromEmail();
+  const fromAddress = resolveInvoiceFromAddress(fromEmail);
+  const fromDomain = fromAddress ? fromAddress.split("@")[1] ?? null : null;
+  const launchTestRecipientConfigured = Boolean(getOptionalEnv(process.env.INVOICE_LAUNCH_TEST_EMAIL));
   if (provider === "resend") {
     const apiKey = getOptionalEnv(process.env.RESEND_API_KEY);
     return {
       provider,
-      configured: Boolean(apiKey && fromEmail),
-      fromEmail
+      configured: Boolean(apiKey && fromAddress),
+      fromEmail,
+      fromAddress,
+      fromDomain,
+      launchTestRecipientConfigured
     };
   }
   return {
     provider: "none",
     configured: false,
-    fromEmail
+    fromEmail,
+    fromAddress,
+    fromDomain,
+    launchTestRecipientConfigured
   };
 }
 
@@ -60,6 +77,46 @@ export async function sendInvoiceEmail(input: SendInvoiceEmailInput): Promise<In
     mode: "record_only",
     provider: "none",
     warning: "Email provider is not configured; delivery is tracked without sending."
+  };
+}
+
+export async function sendLaunchTestEmail(
+  input: SendLaunchTestEmailInput
+): Promise<InvoiceEmailSendResult & { recipientEmail: string }> {
+  const recipientEmail = input.recipientEmail.trim().toLowerCase();
+  if (!isValidEmailAddress(recipientEmail)) {
+    throw new Error("Launch test recipient email is invalid.");
+  }
+  const result = await sendInvoiceEmail({
+    recipientEmail,
+    invoiceId: "launch-test",
+    openTrackingPixelUrl: buildLaunchTestPixelUrl(input.appBaseUrl),
+    messageType: "invoice",
+    invoice: {
+      invoiceNumber: "NOTEBILL-LAUNCH",
+      issueDate: new Date().toISOString().slice(0, 10),
+      customerName: "Launch verification",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "launch-test-line",
+          type: "other",
+          description: "NoteBill launch test message",
+          quantity: 1,
+          unitPrice: 0,
+          amount: 0
+        }
+      ],
+      notes:
+        "This is a launch-readiness verification email. If you received it, NoteBill email delivery is configured.",
+      subtotal: 0,
+      total: 0,
+      balanceDue: 0
+    }
+  });
+  return {
+    ...result,
+    recipientEmail
   };
 }
 
@@ -238,6 +295,23 @@ function resolveInvoiceFromEmail(): string | null {
   return DEFAULT_FROM_EMAIL;
 }
 
+function resolveInvoiceFromAddress(fromEmail: string | null): string | null {
+  if (!fromEmail) {
+    return null;
+  }
+  const match = fromEmail.match(/<([^>]+)>/);
+  const candidate = (match?.[1] ?? fromEmail).trim().toLowerCase();
+  return isValidEmailAddress(candidate) ? candidate : null;
+}
+
+function buildLaunchTestPixelUrl(appBaseUrl?: string): string {
+  const baseUrl = getOptionalEnv(appBaseUrl) ?? getOptionalEnv(process.env.APP_BASE_URL);
+  if (!baseUrl) {
+    return "https://app.notebill.app/api/invoices/launch-test/delivery/opened?token=launch-test";
+  }
+  return `${baseUrl.replace(/\/+$/, "")}/api/invoices/launch-test/delivery/opened?token=launch-test`;
+}
+
 function formatCurrency(value: unknown, currency: unknown): string {
   const amount = typeof value === "number" && Number.isFinite(value) ? value : 0;
   const currencyCode =
@@ -255,6 +329,10 @@ function toOptionalTrimmedString(value: unknown): string | undefined {
   }
   const trimmed = value.trim();
   return trimmed.length ? trimmed : undefined;
+}
+
+function isValidEmailAddress(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function getOptionalEnv(value: string | undefined): string | null {

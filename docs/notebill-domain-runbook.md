@@ -40,17 +40,26 @@ npm run public:start
 systemctl --user status notebill-dev.service --no-pager
 systemctl --user status notebill-tunnel.service --no-pager
 npm run check:launch
+npm run send:launch-email-test
+npm run check:release
 npm run check:public-domain
 ```
 
 `check:launch` verifies:
 - local `/health` is reachable
 - local `/api/system/launch` reports persistence/auth/billing/delivery/public-base-url readiness in one payload
+- Stripe launch policy surfaces test-vs-live billing mode when enabled
 
 `check:public-domain` verifies:
 - both user services are active
 - local app responds on `localhost:3000`
 - all three public URLs return HTTP success
+
+`send:launch-email-test`:
+- sends one provider-backed launch verification email to `INVOICE_LAUNCH_TEST_EMAIL`
+- fails fast when delivery is still tracking-only or email provider config is incomplete
+
+`check:release` runs `check:launch` and `check:public-domain` together.
 
 ## Stop Services
 

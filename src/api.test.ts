@@ -90,11 +90,14 @@ beforeEach(async () => {
   delete process.env.INVOICE_UPGRADE_URL;
   delete process.env.INVOICE_BILLING_PORTAL_URL;
   delete process.env.STRIPE_SECRET_KEY;
+  delete process.env.STRIPE_PUBLISHABLE_KEY;
   delete process.env.STRIPE_PRICE_ID;
   delete process.env.STRIPE_WEBHOOK_SECRET;
+  delete process.env.INVOICE_LAUNCH_REQUIRE_LIVE_BILLING;
   delete process.env.INVOICE_EMAIL_PROVIDER;
   delete process.env.RESEND_API_KEY;
   delete process.env.INVOICE_FROM_EMAIL;
+  delete process.env.INVOICE_LAUNCH_TEST_EMAIL;
   delete process.env.APP_BASE_URL;
 });
 
@@ -2548,6 +2551,26 @@ test("billing diagnostics endpoint reports stripe readiness + entitlement counts
   assert.equal(afterWebhook.body.warning, null);
 });
 
+test("billing diagnostics flags test-mode keys when live launch billing is required", async () => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_PUBLISHABLE_KEY = "pk_test_placeholder";
+  process.env.STRIPE_PRICE_ID = "price_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+  process.env.INVOICE_LAUNCH_REQUIRE_LIVE_BILLING = "true";
+
+  const response = await request(app).get("/api/system/billing");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.capabilities?.secretKeyMode, "test");
+  assert.equal(response.body.capabilities?.publishableKeyMode, "test");
+  assert.equal(response.body.launchPolicy?.requireLiveMode, true);
+  assert.match(String(response.body.warning || ""), /live billing keys/i);
+
+  const launchResponse = await request(app).get("/api/system/launch");
+  assert.equal(launchResponse.status, 200);
+  assert.equal(launchResponse.body.billing?.ready, false);
+  assert.match(String(launchResponse.body.billing?.warning || ""), /live billing keys/i);
+});
+
 test("delivery diagnostics endpoint reports provider readiness + send summary", async () => {
   const baseline = await request(app).get("/api/system/delivery");
   assert.equal(baseline.status, 200);
@@ -2604,6 +2627,50 @@ test("delivery diagnostics endpoint reports provider readiness + send summary", 
   assert.equal(afterSend.body.summary?.recordOnlyCount, 1);
   assert.equal(afterSend.body.summary?.providerSendCount, 0);
   assert.equal(afterSend.body.reminders?.dueCount, 0);
+});
+
+test("delivery diagnostics exposes launch test recipient readiness", async () => {
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "NoteBill <billing@notebill.app>";
+  process.env.INVOICE_LAUNCH_TEST_EMAIL = "launch-test@example.com";
+
+  const response = await request(app).get("/api/system/delivery");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.capabilities?.configured, true);
+  assert.equal(response.body.capabilities?.fromDomain, "notebill.app");
+  assert.equal(response.body.capabilities?.launchTestRecipientConfigured, true);
+  assert.equal(response.body.warning, null);
+});
+
+test("delivery test endpoint sends a provider-backed launch verification email when configured", async () => {
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "NoteBill <billing@notebill.app>";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: "email_launch_test_123" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const response = await request(app).post("/api/system/delivery/test").send({
+    recipientEmail: "qa-launch@example.com"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.ok, true);
+  assert.equal(response.body.mode, "provider");
+  assert.equal(response.body.provider, "resend");
+  assert.equal(response.body.recipientEmail, "qa-launch@example.com");
+  assert.equal(fetchCalls.length, 1);
+  const fetchInit = fetchCalls[0]?.init as RequestInit | undefined;
+  const body = JSON.parse(String(fetchInit?.body ?? "{}"));
+  assert.equal(body.to[0], "qa-launch@example.com");
+  assert.match(String(body.subject), /Invoice NOTEBILL-LAUNCH/);
 });
 
 test("send-reminder endpoint reuses tracked recipient and bumps delivery/send timestamps", async () => {

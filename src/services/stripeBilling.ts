@@ -10,8 +10,12 @@ export type StripeBillingCapabilities = {
   portalAvailable: boolean;
   webhookAvailable: boolean;
   hasSecretKey: boolean;
+  hasPublishableKey: boolean;
   hasCheckoutPrice: boolean;
   hasWebhookSecret: boolean;
+  secretKeyMode: "live" | "test" | "unknown" | "none";
+  publishableKeyMode: "live" | "test" | "unknown" | "none";
+  liveMode: boolean;
 };
 
 type CheckoutSessionInput = {
@@ -40,16 +44,25 @@ let cachedStripeClient:
 
 export function getStripeBillingCapabilities(): StripeBillingCapabilities {
   const secretKey = getOptionalEnv(process.env.STRIPE_SECRET_KEY);
+  const publishableKey = getOptionalEnv(process.env.STRIPE_PUBLISHABLE_KEY);
   const checkoutPriceId = getOptionalEnv(process.env.STRIPE_PRICE_ID);
   const webhookSecret = getOptionalEnv(process.env.STRIPE_WEBHOOK_SECRET);
+  const secretKeyMode = detectStripeKeyMode(secretKey, "sk_");
+  const publishableKeyMode = detectStripeKeyMode(publishableKey, "pk_");
   return {
     provider: secretKey ? "stripe" : "none",
     checkoutAvailable: Boolean(secretKey && checkoutPriceId),
     portalAvailable: Boolean(secretKey),
     webhookAvailable: Boolean(secretKey && webhookSecret),
     hasSecretKey: Boolean(secretKey),
+    hasPublishableKey: Boolean(publishableKey),
     hasCheckoutPrice: Boolean(checkoutPriceId),
-    hasWebhookSecret: Boolean(webhookSecret)
+    hasWebhookSecret: Boolean(webhookSecret),
+    secretKeyMode,
+    publishableKeyMode,
+    liveMode:
+      secretKeyMode === "live" &&
+      (publishableKeyMode === "none" || publishableKeyMode === "live")
   };
 }
 
@@ -240,6 +253,22 @@ function normalizePathWithFallback(value: string | undefined, fallback: string):
 function getOptionalEnv(value: string | undefined): string | null {
   const trimmed = typeof value === "string" ? value.trim() : "";
   return trimmed.length ? trimmed : null;
+}
+
+function detectStripeKeyMode(
+  value: string | null,
+  expectedPrefix: "sk_" | "pk_"
+): "live" | "test" | "unknown" | "none" {
+  if (!value) {
+    return "none";
+  }
+  if (value.startsWith(`${expectedPrefix}live_`)) {
+    return "live";
+  }
+  if (value.startsWith(`${expectedPrefix}test_`)) {
+    return "test";
+  }
+  return "unknown";
 }
 
 function normalizeText(value: string | undefined): string {
