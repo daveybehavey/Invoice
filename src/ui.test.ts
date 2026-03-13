@@ -1464,6 +1464,112 @@ test("manual billie quick actions trigger safe wording rewrites without using th
   }
 });
 
+test("manual billie workspace quick actions can refine descriptions without opening a separate chat flow", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let editRequestCount = 0;
+  let rewordDescriptionsRequestCount = 0;
+  try {
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-descriptions", async (route) => {
+      rewordDescriptionsRequestCount += 1;
+      const body = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          invoice: {
+            ...body.invoice,
+            lineItems: body.invoice.lineItems.map((lineItem: Record<string, unknown>, index: number) =>
+              index === 0
+                ? {
+                    ...lineItem,
+                    description: "Kitchen faucet repair service"
+                  }
+                : lineItem
+            )
+          }
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("fixed sink");
+
+    const workspace = page.locator('[data-testid="manual-billie-workspace"]');
+    await workspace.waitFor({ state: "visible" });
+    await workspace.getByRole("button", { name: "Formal descriptions" }).click();
+
+    await workspace.getByText("Descriptions updated. Numbers unchanged.").waitFor({ state: "visible" });
+    await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
+    assert.equal(rewordDescriptionsRequestCount, 1);
+    assert.equal(editRequestCount, 0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual billie workspace freeform composer submits safe instructions and clears after apply", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  let editRequestCount = 0;
+  let rewordDescriptionsRequestCount = 0;
+  try {
+    await page.route("**/api/invoices/edit", async (route) => {
+      editRequestCount += 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Unexpected edit route call." })
+      });
+    });
+    await page.route("**/api/invoices/reword-descriptions", async (route) => {
+      rewordDescriptionsRequestCount += 1;
+      const body = route.request().postDataJSON();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          invoice: {
+            ...body.invoice,
+            lineItems: body.invoice.lineItems.map((lineItem: Record<string, unknown>, index: number) =>
+              index === 0
+                ? {
+                    ...lineItem,
+                    description: "Roof leak repair service"
+                  }
+                : lineItem
+            )
+          }
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Description").first().fill("fixed roof leak");
+
+    const workspace = page.locator('[data-testid="manual-billie-workspace"]');
+    const composer = workspace.getByPlaceholder(/Ask Billie to refine wording/i);
+    await composer.fill("Make the descriptions more formal.");
+    await workspace.getByRole("button", { name: "Ask Billie" }).click();
+
+    await workspace.getByText("Descriptions updated. Numbers unchanged.").waitFor({ state: "visible" });
+    await expectValueEquals(page.getByPlaceholder("Description").first(), "Roof leak repair service");
+    await expectValueEquals(composer, "");
+    assert.equal(rewordDescriptionsRequestCount, 1);
+    assert.equal(editRequestCount, 0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual billie quick line action rewrites only one line via reword-line", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();

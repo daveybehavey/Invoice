@@ -130,7 +130,9 @@ function InspectorPanel({
   buildEditableInvoicePayload,
   onApplyAiEdit,
   assistantCommandRequest,
-  onAssistantCommandHandled
+  onAssistantCommandHandled,
+  onAssistantRuntimeChange,
+  acceptAssistantCommands = true
 }) {
   const [toneAction, setToneAction] = useState(null);
   const [selectedTone, setSelectedTone] = useState(null);
@@ -943,14 +945,45 @@ function InspectorPanel({
   useEffect(() => {
     const requestId = assistantCommandRequest?.id;
     const instruction = assistantCommandRequest?.instruction;
-    if (!requestId || !instruction || handledAssistantCommandRef.current === requestId) {
+    const commandSource = assistantCommandRequest?.source ?? "assistant";
+    if (
+      !acceptAssistantCommands ||
+      !requestId ||
+      !instruction ||
+      handledAssistantCommandRef.current === requestId
+    ) {
       return;
     }
     handledAssistantCommandRef.current = requestId;
-    onTabChange?.("assistant");
+    if (commandSource !== "workspace") {
+      onTabChange?.("assistant");
+    }
     submitAssistantEdit(instruction);
     onAssistantCommandHandled?.(requestId);
-  }, [assistantCommandRequest, onAssistantCommandHandled, onTabChange]);
+  }, [acceptAssistantCommands, assistantCommandRequest, onAssistantCommandHandled, onTabChange]);
+
+  useEffect(() => {
+    const latestAssistantMessage =
+      [...assistantMessages].reverse().find((message) => message.role === "ai")?.text ?? "";
+    onAssistantRuntimeChange?.({
+      loading: assistantLoading,
+      status: assistantStatus,
+      error: assistantError,
+      latestMessage: latestAssistantMessage,
+      hasPendingEdit: Boolean(pendingAssistantEdit),
+      canUndo: Boolean(assistantUndoState),
+      changePreviewCount: assistantChangePreview.length
+    });
+  }, [
+    assistantLoading,
+    assistantStatus,
+    assistantError,
+    assistantMessages,
+    pendingAssistantEdit,
+    assistantUndoState,
+    assistantChangePreview,
+    onAssistantRuntimeChange
+  ]);
   const previewAccent = buildAccentPalette(previewData?.accentColor ?? accentColor ?? DEFAULT_ACCENT_COLOR);
 
   return (

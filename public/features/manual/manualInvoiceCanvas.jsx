@@ -156,6 +156,17 @@ function ManualInvoiceCanvas() {
   const [paymentLinkBusy, setPaymentLinkBusy] = useState(false);
   const [paymentLinkError, setPaymentLinkError] = useState("");
   const [assistantCommandRequest, setAssistantCommandRequest] = useState(null);
+  const [billieWorkspaceInstruction, setBillieWorkspaceInstruction] = useState("");
+  const [billieWorkspaceError, setBillieWorkspaceError] = useState("");
+  const [assistantWorkspaceRuntime, setAssistantWorkspaceRuntime] = useState({
+    loading: false,
+    status: "",
+    error: "",
+    latestMessage: "",
+    hasPendingEdit: false,
+    canUndo: false,
+    changePreviewCount: 0
+  });
   const [savedLineItemLibrary, setSavedLineItemLibrary] = useState(() => getLineItemLibrary());
   const [showSavedLineItems, setShowSavedLineItems] = useState(false);
   const saveTimeoutRef = useRef(null);
@@ -810,12 +821,51 @@ function ManualInvoiceCanvas() {
   const handleBillieLineRefine = (lineNumber, description) => {
     setActiveInspectorTab("assistant");
     setInspectorOpen(true);
+    setBillieWorkspaceError("");
     setAssistantCommandRequest({
       id: `${Date.now()}-${lineNumber}`,
       instruction: `Refine line ${lineNumber} wording.`,
       description
     });
   };
+
+  const submitBillieWorkspaceInstruction = (instruction) => {
+    const trimmedInstruction = `${instruction ?? ""}`.trim();
+    if (!trimmedInstruction) {
+      setBillieWorkspaceError("Add an instruction for Billie.");
+      return;
+    }
+    setBillieWorkspaceError("");
+    setBillieWorkspaceInstruction("");
+    setAssistantCommandRequest({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      instruction: trimmedInstruction,
+      source: "workspace"
+    });
+  };
+
+  const billieWorkspaceActions = [
+    {
+      id: "formal-descriptions",
+      label: "Formal descriptions",
+      instruction: "Make the descriptions more formal."
+    },
+    {
+      id: "simpler-descriptions",
+      label: "Simpler wording",
+      instruction: "Make the descriptions simpler and clearer."
+    },
+    {
+      id: "stronger-descriptions",
+      label: "Stronger wording",
+      instruction: "Make the descriptions stronger and more decisive."
+    },
+    {
+      id: "refine-notes",
+      label: "Refine notes",
+      instruction: "Make the notes more professional."
+    }
+  ];
 
   const isMobileInspectorOpen = inspectorOpen;
   const invoiceInteractionClass = isMobileInspectorOpen
@@ -829,6 +879,7 @@ function ManualInvoiceCanvas() {
   ];
   const activeMobileTabLabel =
     mobileInspectorTabs.find((tab) => tab.id === activeInspectorTab)?.label ?? "Tools";
+  const billieWorkspaceExpanded = activeInspectorTab !== "assistant" && !inspectorOpen;
 
   const refreshAuthSessionState = async (shouldApply = () => true) => {
     try {
@@ -962,6 +1013,105 @@ function ManualInvoiceCanvas() {
             {authSession?.email ? `Account: ${authSession.email}` : "Account: local mode"}
           </button>
         </div>
+        <section
+          className="mb-4 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm md:col-span-2 no-print"
+          data-testid="manual-billie-workspace"
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-2xl space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                Work with Billie
+              </p>
+              <div className="space-y-1">
+                <h2 className="text-lg font-semibold text-slate-900">Refine the invoice without leaving the draft.</h2>
+                <p className="text-sm text-slate-600">
+                  Ask Billie to polish wording or safe presentation details. Money changes stay guarded.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="inline-flex rounded-full border px-3 py-2 text-sm font-semibold"
+              style={accentGhostButtonStyle}
+              onClick={() => {
+                setActiveInspectorTab("assistant");
+                setInspectorOpen(true);
+              }}
+            >
+              {billieWorkspaceExpanded ? "Open full Billie tools" : "Billie tools open"}
+            </button>
+          </div>
+          {billieWorkspaceExpanded ? (
+            <>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {billieWorkspaceActions.map((action) => (
+                  <button
+                    key={action.id}
+                    type="button"
+                    className="rounded-full border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                    style={accentGhostButtonStyle}
+                    onClick={() => submitBillieWorkspaceInstruction(action.instruction)}
+                    disabled={assistantWorkspaceRuntime.loading || assistantWorkspaceRuntime.hasPendingEdit}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-start">
+                <textarea
+                  rows={2}
+                  className="min-h-[88px] flex-1 resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  placeholder="Ask Billie to refine wording, notes, or safe presentation changes…"
+                  value={billieWorkspaceInstruction}
+                  onChange={(event) => {
+                    setBillieWorkspaceInstruction(event.target.value);
+                    if (billieWorkspaceError) {
+                      setBillieWorkspaceError("");
+                    }
+                  }}
+                  disabled={assistantWorkspaceRuntime.loading || assistantWorkspaceRuntime.hasPendingEdit}
+                />
+                <button
+                  type="button"
+                  className="inline-flex min-w-[132px] items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                  style={accentButtonStyle}
+                  onClick={() => submitBillieWorkspaceInstruction(billieWorkspaceInstruction)}
+                  disabled={assistantWorkspaceRuntime.loading || assistantWorkspaceRuntime.hasPendingEdit}
+                >
+                  Ask Billie
+                </button>
+              </div>
+            </>
+          ) : null}
+          <div className="mt-3 min-h-[20px]">
+            {assistantWorkspaceRuntime.loading ? (
+              <div
+                className="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold"
+                style={{ borderColor: accent.border, backgroundColor: accent.soft, color: accent.text }}
+              >
+                <span
+                  className="inline-flex h-2.5 w-2.5 animate-pulse rounded-full"
+                  style={{ backgroundColor: accent.primary }}
+                />
+                <span>{assistantWorkspaceRuntime.status || "Billie is working..."}</span>
+              </div>
+            ) : billieWorkspaceError || assistantWorkspaceRuntime.error ? (
+              <p className="text-xs font-medium text-rose-600">
+                {billieWorkspaceError || assistantWorkspaceRuntime.error}
+              </p>
+            ) : billieWorkspaceExpanded && assistantWorkspaceRuntime.latestMessage ? (
+              <p className="text-sm font-medium text-slate-700">
+                {assistantWorkspaceRuntime.latestMessage}
+              </p>
+            ) : (
+              <p className="text-xs text-slate-500">
+                {billieWorkspaceExpanded
+                  ? "Billie updates the draft live and keeps numbers unchanged unless you make an explicit money decision."
+                  : "Billie tools are open. Use the detailed panel for history, previews, and undo."}
+              </p>
+            )}
+          </div>
+        </section>
         <div
           className={`printable-invoice relative w-full overflow-hidden rounded-2xl border ${activeSpacing.shellPaddingClass} ${activePreset.shellClass} ${invoiceInteractionClass}`}
           style={{ borderColor: accent.border }}
@@ -1389,6 +1539,8 @@ function ManualInvoiceCanvas() {
             onAssistantCommandHandled={(requestId) =>
               setAssistantCommandRequest((current) => (current?.id === requestId ? null : current))
             }
+            onAssistantRuntimeChange={setAssistantWorkspaceRuntime}
+            acceptAssistantCommands
           />
         </div>
       </main>
@@ -1503,6 +1655,8 @@ function ManualInvoiceCanvas() {
                 onAssistantCommandHandled={(requestId) =>
                   setAssistantCommandRequest((current) => (current?.id === requestId ? null : current))
                 }
+                onAssistantRuntimeChange={setAssistantWorkspaceRuntime}
+                acceptAssistantCommands={false}
               />
             </div>
           </div>
