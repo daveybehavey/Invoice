@@ -11,6 +11,20 @@ export type InvoiceEmailCapabilities = {
   launchTestRecipientConfigured: boolean;
 };
 
+export type InvoiceEmailVerification = {
+  checked: boolean;
+  ready: boolean;
+  domainId: string | null;
+  domainStatus: string | null;
+  sendingCapability: string | null;
+  warning: string | null;
+};
+
+export type InvoiceEmailDiagnostics = {
+  capabilities: InvoiceEmailCapabilities;
+  verification: InvoiceEmailVerification;
+};
+
 export type InvoiceEmailSendResult = {
   mode: "record_only" | "provider";
   provider: InvoiceEmailProvider;
@@ -32,7 +46,22 @@ type SendInvoiceEmailInput = {
 };
 
 const RESEND_API_URL = "https://api.resend.com/emails";
+const RESEND_DOMAINS_API_URL = "https://api.resend.com/domains";
 const DEFAULT_FROM_EMAIL = "NoteBill <invoices@notebill.app>";
+const RESEND_REQUEST_TIMEOUT_MS = 12_000;
+const RESEND_VERIFICATION_CACHE_TTL_MS = 60_000;
+
+const resendVerificationCache = new Map<
+  string,
+  {
+    expiresAt: number;
+    result: InvoiceEmailVerification;
+  }
+>();
+
+export function resetInvoiceEmailVerificationCacheForTests(): void {
+  resendVerificationCache.clear();
+}
 
 export function getInvoiceEmailCapabilities(): InvoiceEmailCapabilities {
   const provider = resolveInvoiceEmailProvider();
@@ -58,6 +87,15 @@ export function getInvoiceEmailCapabilities(): InvoiceEmailCapabilities {
     fromAddress,
     fromDomain,
     launchTestRecipientConfigured
+  };
+}
+
+export async function getInvoiceEmailDiagnostics(): Promise<InvoiceEmailDiagnostics> {
+  const capabilities = getInvoiceEmailCapabilities();
+  const verification = await getInvoiceEmailVerification(capabilities);
+  return {
+    capabilities,
+    verification
   };
 }
 
@@ -132,7 +170,7 @@ async function sendViaResend(input: SendInvoiceEmailInput, fromEmail: string): P
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     controller.abort(new Error("timeout"));
-  }, 12_000);
+  }, RESEND_REQUEST_TIMEOUT_MS);
   try {
     const response = await fetch(RESEND_API_URL, {
       method: "POST",
@@ -156,6 +194,122 @@ async function sendViaResend(input: SendInvoiceEmailInput, fromEmail: string): P
     };
   } catch (error) {
     throw new Error(`Failed to send email via Resend: ${getErrorMessage(error)}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function getInvoiceEmailVerification(
+  capabilities: InvoiceEmailCapabilities
+): Promise<InvoiceEmailVerification> {
+  if (!capabilities.configured || capabilities.provider !== "resend") {
+    return {
+      checked: false,
+      ready: false,
+      domainId: null,
+      domainStatus: null,
+      sendingCapability: null,
+      warning: null
+    };
+  }
+
+  const apiKey = getOptionalEnv(process.env.RESEND_API_KEY);
+  const fromDomain = capabilities.fromDomain;
+  if (!apiKey || !fromDomain) {
+    return {
+      checked: false,
+      ready: false,
+      domainId: null,
+      domainStatus: null,
+      sendingCapability: null,
+      warning: null
+    };
+  }
+
+  const cacheKey = `${fromDomain}::${apiKey}`;
+  const cached = resendVerificationCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && cached.expiresAt > now) {
+    return cached.result;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error("timeout"));
+  }, RESEND_REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(RESEND_DOMAINS_API_URL, {
+      method: "GET",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json"
+      }
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(resolveResendErrorMessage(payload, response.status));
+    }
+
+    const domains = Array.isArray((payload as { data?: unknown }).data) ? (payload as { data: unknown[] }).data : [];
+    const matchingDomain = domains.find((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return false;
+      }
+      const name = "name" in entry && typeof entry.name === "string" ? entry.name.trim().toLowerCase() : "";
+      return name === fromDomain.toLowerCase();
+    }) as
+      | {
+          id?: unknown;
+          name?: unknown;
+          status?: unknown;
+          capabilities?: { sending?: unknown };
+        }
+      | undefined;
+
+    if (!matchingDomain) {
+      const result = {
+        checked: true,
+        ready: false,
+        domainId: null,
+        domainStatus: null,
+        sendingCapability: null,
+        warning: `Resend domain ${fromDomain} is not configured.`
+      } satisfies InvoiceEmailVerification;
+      resendVerificationCache.set(cacheKey, { expiresAt: now + RESEND_VERIFICATION_CACHE_TTL_MS, result });
+      return result;
+    }
+
+    const domainStatus = typeof matchingDomain.status === "string" ? matchingDomain.status.trim().toLowerCase() : null;
+    const sendingCapability =
+      matchingDomain.capabilities && typeof matchingDomain.capabilities.sending === "string"
+        ? matchingDomain.capabilities.sending.trim().toLowerCase()
+        : null;
+    const ready = domainStatus === "verified" && sendingCapability === "enabled";
+    const result = {
+      checked: true,
+      ready,
+      domainId: typeof matchingDomain.id === "string" ? matchingDomain.id : null,
+      domainStatus,
+      sendingCapability,
+      warning: ready
+        ? null
+        : `Resend domain ${fromDomain} is not verified for sending${domainStatus ? ` (status: ${domainStatus})` : ""}.`
+    } satisfies InvoiceEmailVerification;
+    resendVerificationCache.set(cacheKey, { expiresAt: now + RESEND_VERIFICATION_CACHE_TTL_MS, result });
+    return result;
+  } catch (error) {
+    const result = {
+      checked: true,
+      ready: false,
+      domainId: null,
+      domainStatus: null,
+      sendingCapability: null,
+      warning: `Unable to verify Resend domain readiness: ${getErrorMessage(error)}`
+    } satisfies InvoiceEmailVerification;
+    resendVerificationCache.set(cacheKey, { expiresAt: now + RESEND_VERIFICATION_CACHE_TTL_MS, result });
+    return result;
   } finally {
     clearTimeout(timeout);
   }

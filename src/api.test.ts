@@ -33,11 +33,13 @@ process.env.INVOICE_DELIVERY_STORE_FILE = path.join(
 const [
   { app },
   { setAudioTranscriptionRunnerForTests, setImageOcrRunnerForTests, setJsonTaskRunnerForTests },
-  { setInvoicePaymentLinkCreatorForTests }
+  { setInvoicePaymentLinkCreatorForTests },
+  { resetInvoiceEmailVerificationCacheForTests }
 ] = await Promise.all([
   import("./server.js"),
   import("./ai/openaiClient.js"),
-  import("./services/stripeBilling.js")
+  import("./services/stripeBilling.js"),
+  import("./services/invoiceEmailDelivery.js")
 ]);
 
 const storeFilePath = process.env.INVOICE_STORE_FILE;
@@ -67,6 +69,7 @@ if (!invoiceDeliveryStoreFilePath) {
 const nativeFetch = globalThis.fetch;
 
 beforeEach(async () => {
+  resetInvoiceEmailVerificationCacheForTests();
   await fs.mkdir(path.dirname(storeFilePath), { recursive: true });
   await fs.writeFile(storeFilePath, '{\n  "invoices": []\n}\n', "utf8");
   await fs.mkdir(path.dirname(ocrMetricsStoreFilePath), { recursive: true });
@@ -107,6 +110,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  resetInvoiceEmailVerificationCacheForTests();
   setJsonTaskRunnerForTests(null);
   setImageOcrRunnerForTests(null);
   setAudioTranscriptionRunnerForTests(null);
@@ -616,12 +620,27 @@ test("launch diagnostics endpoint aggregates persistence, billing, delivery, and
   process.env.INVOICE_EMAIL_PROVIDER = "resend";
   process.env.RESEND_API_KEY = "re_test_placeholder";
   process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown) => {
+    if (String(input) === "https://api.resend.com/domains") {
+      return new Response(
+        JSON.stringify({
+          data: [{ id: "dom_test_123", name: "notebill.app", status: "verified", capabilities: { sending: "enabled" } }]
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    }
+    throw new Error(`Unexpected fetch in launch diagnostics test: ${String(input)}`);
+  }) as typeof fetch;
 
   const configured = await request(app).get("/api/system/launch");
   assert.equal(configured.status, 200);
   assert.equal(configured.body.ready, true);
   assert.equal(configured.body.billing?.ready, true);
   assert.equal(configured.body.delivery?.ready, true);
+  assert.equal(configured.body.delivery?.verification?.ready, true);
   assert.equal(configured.body.publicBaseUrlReady, true);
   assert.equal(configured.body.warningCount, 0);
 });
@@ -2786,13 +2805,59 @@ test("delivery diagnostics exposes launch test recipient readiness", async () =>
   process.env.RESEND_API_KEY = "re_test_key";
   process.env.INVOICE_FROM_EMAIL = "NoteBill <billing@notebill.app>";
   process.env.INVOICE_LAUNCH_TEST_EMAIL = "launch-test@example.com";
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown) => {
+    if (String(input) === "https://api.resend.com/domains") {
+      return new Response(
+        JSON.stringify({
+          data: [{ id: "dom_test_123", name: "notebill.app", status: "verified", capabilities: { sending: "enabled" } }]
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    }
+    throw new Error(`Unexpected fetch in delivery diagnostics test: ${String(input)}`);
+  }) as typeof fetch;
 
   const response = await request(app).get("/api/system/delivery");
   assert.equal(response.status, 200);
   assert.equal(response.body.capabilities?.configured, true);
   assert.equal(response.body.capabilities?.fromDomain, "notebill.app");
   assert.equal(response.body.capabilities?.launchTestRecipientConfigured, true);
+  assert.equal(response.body.verification?.ready, true);
   assert.equal(response.body.warning, null);
+});
+
+test("delivery diagnostics warns when resend domain is not verified", async () => {
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "NoteBill <billing@notebill.app>";
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown) => {
+    if (String(input) === "https://api.resend.com/domains") {
+      return new Response(
+        JSON.stringify({
+          data: [{ id: "dom_test_123", name: "notebill.app", status: "pending", capabilities: { sending: "disabled" } }]
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    }
+    throw new Error(`Unexpected fetch in resend verification test: ${String(input)}`);
+  }) as typeof fetch;
+
+  const deliveryResponse = await request(app).get("/api/system/delivery");
+  assert.equal(deliveryResponse.status, 200);
+  assert.equal(deliveryResponse.body.verification?.ready, false);
+  assert.match(String(deliveryResponse.body.warning || ""), /not verified for sending/i);
+
+  const launchResponse = await request(app).get("/api/system/launch");
+  assert.equal(launchResponse.status, 200);
+  assert.equal(launchResponse.body.delivery?.ready, false);
+  assert.match(String(launchResponse.body.delivery?.warning || ""), /not verified for sending/i);
 });
 
 test("delivery test endpoint sends a provider-backed launch verification email when configured", async () => {

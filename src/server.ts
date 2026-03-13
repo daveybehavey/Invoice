@@ -61,7 +61,7 @@ import {
   recordInvoiceDeliverySend
 } from "./services/invoiceDeliveryStore.js";
 import {
-  getInvoiceEmailCapabilities,
+  getInvoiceEmailDiagnostics,
   sendInvoiceEmail,
   sendLaunchTestEmail
 } from "./services/invoiceEmailDelivery.js";
@@ -332,17 +332,18 @@ app.get("/api/system/billing", async (_req: Request, res: Response, next: NextFu
 
 app.get("/api/system/delivery", async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const capabilities = getInvoiceEmailCapabilities();
+    const deliveryDiagnostics = await getInvoiceEmailDiagnostics();
     const summary = await getInvoiceDeliveryStoreSummary();
     const ownerId = getRequestOwnerId(req);
     const reminderPreview = await listDueInvoiceReminderCandidates({
       ownerId,
       repository: savedInvoiceRepository
     });
-    const warning = resolveDeliverySystemWarning(capabilities, summary);
+    const warning = resolveDeliverySystemWarning(deliveryDiagnostics, summary);
     res.json({
-      provider: capabilities.provider,
-      capabilities,
+      provider: deliveryDiagnostics.capabilities.provider,
+      capabilities: deliveryDiagnostics.capabilities,
+      verification: deliveryDiagnostics.verification,
       summary,
       reminders: {
         ownerId,
@@ -403,9 +404,9 @@ app.get("/api/system/launch", async (req: Request, res: Response, next: NextFunc
     const billingWarning = resolveBillingSystemWarning(billingCapabilities, billingEntitlements, {
       requireLiveMode: requireLiveBilling
     });
-    const deliveryCapabilities = getInvoiceEmailCapabilities();
+    const deliveryDiagnostics = await getInvoiceEmailDiagnostics();
     const deliverySummary = await getInvoiceDeliveryStoreSummary();
-    const deliveryWarning = resolveDeliverySystemWarning(deliveryCapabilities, deliverySummary);
+    const deliveryWarning = resolveDeliverySystemWarning(deliveryDiagnostics, deliverySummary);
     const publicBaseUrl = resolvePublicBaseUrl(req);
     const publicBaseUrlReady = isConfiguredPublicBaseUrl(process.env.APP_BASE_URL);
     const persistenceReady = persistencePolicy.productionReady && migrationPolicy.migrationReady;
@@ -471,9 +472,10 @@ app.get("/api/system/launch", async (req: Request, res: Response, next: NextFunc
       },
       delivery: {
         ready: deliveryReady,
-        provider: deliveryCapabilities.provider,
+        provider: deliveryDiagnostics.capabilities.provider,
         warning: deliveryWarning,
-        capabilities: deliveryCapabilities,
+        capabilities: deliveryDiagnostics.capabilities,
+        verification: deliveryDiagnostics.verification,
         summary: deliverySummary
       },
       checks
@@ -1249,11 +1251,14 @@ function resolveBillingSystemWarning(
 }
 
 function resolveDeliverySystemWarning(
-  capabilities: ReturnType<typeof getInvoiceEmailCapabilities>,
+  deliveryDiagnostics: Awaited<ReturnType<typeof getInvoiceEmailDiagnostics>>,
   _summary: Awaited<ReturnType<typeof getInvoiceDeliveryStoreSummary>>
 ): string | null {
-  if (!capabilities.configured) {
+  if (!deliveryDiagnostics.capabilities.configured) {
     return "Invoice email provider is not configured; send actions are tracking-only.";
+  }
+  if (deliveryDiagnostics.verification.warning) {
+    return deliveryDiagnostics.verification.warning;
   }
   return null;
 }

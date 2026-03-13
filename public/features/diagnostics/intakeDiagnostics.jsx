@@ -535,6 +535,15 @@
               Launch test recipient: {deliveryInfo?.capabilities?.launchTestRecipientConfigured ? "set" : "not set"}
             </p>
             <p className="mt-1 text-xs text-slate-500">
+              Domain verification: {deliveryInfo?.verification?.checked
+                ? deliveryInfo?.verification?.ready
+                  ? "verified"
+                  : deliveryInfo?.verification?.domainStatus || "not ready"
+                : "not checked"}
+              {" · "}
+              Sending capability: {deliveryInfo?.verification?.sendingCapability || "n/a"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
               Sent count: {deliveryInfo?.summary?.sentCount ?? 0}
               {" · "}
               Opened count: {deliveryInfo?.summary?.openedCount ?? 0}
