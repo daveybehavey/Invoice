@@ -981,14 +981,14 @@ function ManualInvoiceCanvas() {
   }, [draftStorageKey, legacyDraftStorageKey, initialDraftMeta, initialDraft]);
 
   return (
-    <div className="min-h-screen bg-slate-50" style={{ backgroundImage: `radial-gradient(circle at top, ${accent.muted} 0%, rgba(248,250,252,0) 46%)` }}>
-      <main className="mx-auto flex w-full max-w-6xl flex-col px-4 py-8 pb-24 md:grid md:grid-cols-[minmax(0,1fr)_300px] md:gap-6 md:pb-8">
+    <div className="nb-page nb-page--manual min-h-screen" style={{ backgroundImage: `radial-gradient(circle at top, ${accent.muted} 0%, rgba(248,250,252,0) 46%)` }}>
+      <main className="nb-page-shell nb-page-shell--wide mx-auto flex w-full flex-col pb-24 md:grid md:grid-cols-[minmax(0,1fr)_320px] md:gap-6 md:pb-8">
         {billingNotice ? (
           <div
-            className={`mb-4 rounded-2xl border px-4 py-3 text-sm font-medium md:col-span-2 ${
+            className={`nb-banner mb-4 text-sm font-medium md:col-span-2 ${
               billingNotice.tone === "green"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                : "border-amber-200 bg-amber-50 text-amber-900"
+                ? "nb-banner--success"
+                : "nb-banner--warning"
             }`}
           >
             {billingNotice.message}
@@ -997,7 +997,7 @@ function ManualInvoiceCanvas() {
         <div className="mb-4 flex items-center justify-between gap-3 md:col-span-2 no-print">
           <button
             type="button"
-            className="text-sm font-semibold text-slate-700"
+            className="nb-btn-ghost"
             onClick={() => {
               persistDraft();
               navigate("/");
@@ -1014,7 +1014,7 @@ function ManualInvoiceCanvas() {
           </button>
         </div>
         <section
-          className="mb-4 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm md:col-span-2 no-print"
+          className="nb-assistant-panel mb-4 rounded-[30px] p-4 md:col-span-2 no-print"
           data-testid="manual-billie-workspace"
         >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1025,13 +1025,13 @@ function ManualInvoiceCanvas() {
               <div className="space-y-1">
                 <h2 className="text-lg font-semibold text-slate-900">Refine the invoice without leaving the draft.</h2>
                 <p className="text-sm text-slate-600">
-                  Ask Billie to polish wording or safe presentation details. Money changes stay guarded.
+                  Ask Billie to polish wording and presentation while keeping money changes guarded.
                 </p>
               </div>
             </div>
             <button
               type="button"
-              className="inline-flex rounded-full border px-3 py-2 text-sm font-semibold"
+              className="nb-btn-ghost inline-flex rounded-full px-3 py-2 text-sm font-semibold"
               style={accentGhostButtonStyle}
               onClick={() => {
                 setActiveInspectorTab("assistant");
@@ -1060,7 +1060,7 @@ function ManualInvoiceCanvas() {
               <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-start">
                 <textarea
                   rows={2}
-                  className="min-h-[88px] flex-1 resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className="nb-textarea min-h-[88px] flex-1 resize-none px-3 py-3"
                   placeholder="Ask Billie to refine wording, notes, or safe presentation changes…"
                   value={billieWorkspaceInstruction}
                   onChange={(event) => {
@@ -1073,7 +1073,7 @@ function ManualInvoiceCanvas() {
                 />
                 <button
                   type="button"
-                  className="inline-flex min-w-[132px] items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                  className="nb-btn-primary inline-flex min-w-[132px] items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                   style={accentButtonStyle}
                   onClick={() => submitBillieWorkspaceInstruction(billieWorkspaceInstruction)}
                   disabled={assistantWorkspaceRuntime.loading || assistantWorkspaceRuntime.hasPendingEdit}
@@ -1113,7 +1113,7 @@ function ManualInvoiceCanvas() {
           </div>
         </section>
         <div
-          className={`printable-invoice relative w-full overflow-hidden rounded-2xl border ${activeSpacing.shellPaddingClass} ${activePreset.shellClass} ${invoiceInteractionClass}`}
+          className={`printable-invoice relative w-full overflow-hidden rounded-[32px] border ${activeSpacing.shellPaddingClass} ${activePreset.shellClass} ${invoiceInteractionClass}`}
           style={{ borderColor: accent.border }}
           data-spacing-density={spacingDensity}
         >

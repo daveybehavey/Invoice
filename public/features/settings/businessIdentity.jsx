@@ -132,18 +132,18 @@
     };
 
     return (
-      <div className="min-h-screen bg-slate-50">
-        <main className="mx-auto max-w-4xl px-4 py-8 md:py-10">
+      <div className="nb-page nb-page--quiet min-h-screen">
+        <main className="nb-page-shell nb-page-shell--medium max-w-4xl py-8 md:py-10">
           <button
             type="button"
-            className="text-sm font-semibold text-blue-800"
+            className="nb-btn-ghost"
             onClick={() => navigate("/")}
           >
             Back to launcher
           </button>
           <div className="mt-4 space-y-2">
             <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">Business identity</p>
-            <h1 className="text-2xl font-semibold text-slate-900 md:text-3xl">
+            <h1 className="nb-section-title text-2xl md:text-3xl">
               Set your default invoice branding
             </h1>
             <p className="text-sm text-slate-600">
@@ -155,7 +155,7 @@
           </div>
 
           <div className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-            <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 md:p-5">
+            <section className="nb-surface nb-surface--elevated space-y-4 rounded-[28px] p-4 md:p-5">
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-slate-900" htmlFor="business-from-details">
                   From details
@@ -166,7 +166,7 @@
                 <textarea
                   id="business-from-details"
                   rows={5}
-                  className="w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 outline-none ring-blue-200 focus:border-blue-700 focus:ring-2"
+                  className="nb-textarea w-full resize-y rounded-xl px-3 py-2"
                   placeholder={"Acme Plumbing\n123 Main St\n(555) 555-1234\nbilling@acme.com"}
                   value={fromDetails}
                   onChange={(event) => setFromDetails(event.target.value)}

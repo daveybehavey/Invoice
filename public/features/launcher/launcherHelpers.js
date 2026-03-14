@@ -14,40 +14,40 @@
   const buildLauncherOptions = ({ navigate, icons }) => [
     {
       key: "ai",
-      title: "Let Billie Build",
-      description: "Paste notes or describe the job for Billie.",
+      title: "Start with Billie",
+      description: "Paste the rough job notes and let Billie build the first draft.",
       icon: icons.sparkles,
       onClick: () => navigate("/ai-intake"),
       disabled: false
     },
     {
       key: "import",
-      title: "Import Existing Invoice",
-      description: "Upload a PDF or text invoice to edit.",
+      title: "Import a Draft",
+      description: "Bring in a PDF, image, or text invoice and keep editing.",
       icon: icons.upload,
       onClick: () => navigate("/import"),
       disabled: false
     },
     {
       key: "manual",
-      title: "Build It Yourself",
-      description: "Start with a clean, editable invoice.",
+      title: "Blank Invoice",
+      description: "Start from scratch with a clean invoice canvas.",
       icon: icons.pencil,
       onClick: () => navigate("/manual"),
       disabled: false
     },
     {
       key: "library",
-      title: "Invoice Library",
-      description: "Reopen saved invoices and drafts.",
+      title: "Library",
+      description: "Reopen saved invoices, drafts, and follow-up work.",
       icon: icons.archive,
       onClick: () => navigate("/invoices"),
       disabled: false
     },
     {
       key: "identity",
-      title: "Business Identity",
-      description: "Set your logo, style, and default From details.",
+      title: "Branding",
+      description: "Set your logo, colors, and business defaults once.",
       icon: icons.swatch,
       onClick: () => navigate("/settings/business"),
       disabled: false

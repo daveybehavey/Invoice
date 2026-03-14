@@ -437,7 +437,7 @@ function Launcher() {
 
   return (
     <div
-      className="min-h-screen overflow-hidden bg-[#eef4fb] text-slate-900"
+      className="nb-page nb-page--launcher min-h-screen overflow-hidden text-slate-900"
       style={{
         backgroundImage:
           "radial-gradient(circle at top left, rgba(172,204,240,0.88), rgba(238,244,251,0) 30%), radial-gradient(circle at top right, rgba(105,147,210,0.18), rgba(238,244,251,0) 28%), linear-gradient(180deg, #f8fbff 0%, #eef4fb 48%, #f7fbff 100%)"
@@ -446,8 +446,8 @@ function Launcher() {
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[linear-gradient(120deg,rgba(9,48,100,0.04),rgba(9,48,100,0)_36%)]" />
       <div className="pointer-events-none absolute left-[-120px] top-[120px] h-[240px] w-[240px] rounded-full bg-[#acd0f4]/40 blur-3xl" />
       <div className="pointer-events-none absolute right-[-80px] top-[80px] h-[220px] w-[220px] rounded-full bg-[#6993d2]/20 blur-3xl" />
-      <main className="relative mx-auto max-w-xl px-4 py-6 md:max-w-6xl md:px-6 md:py-14">
-        <section className="overflow-hidden rounded-[36px] border border-white/70 bg-white/72 shadow-[0_28px_90px_rgba(9,48,100,0.12)] backdrop-blur">
+      <main className="nb-page-shell nb-page-shell--wide relative max-w-xl md:max-w-6xl md:py-14">
+        <section className="nb-surface nb-surface--elevated overflow-hidden rounded-[36px] border-white/70 bg-white/72 p-0">
           <div className="grid gap-6 p-4 md:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)] md:gap-8 md:p-8 lg:p-10">
             <div>
               <div className="flex flex-wrap items-center gap-3">
@@ -460,28 +460,28 @@ function Launcher() {
               </div>
               <div className="mt-5 max-w-3xl">
                 <h1
-                  className="text-[2rem] leading-[1.02] text-slate-900 md:text-6xl"
+                  className="nb-title text-[2rem] leading-[1.02] text-slate-900 md:text-6xl"
                   style={{ fontFamily: "'Fraunces', serif" }}
                 >
-                  Turn rough job notes into a polished invoice without thinking like an accountant.
+                  From rough notes to a finished invoice.
                 </h1>
-                <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 md:mt-4 md:text-base md:leading-7">
-                  Paste what happened, let Billie organize it, then make the money decisions that matter.
-                  The draft stays visible the whole time so nothing feels hidden.
+                <p className="nb-copy mt-3 max-w-2xl md:mt-4 md:leading-7">
+                  Paste what happened. Billie shapes the draft. You only step in for pricing, tax,
+                  and the few choices that actually matter.
                 </p>
               </div>
               <div className="mt-5 grid gap-2 sm:grid-cols-3 md:mt-6 md:gap-3">
                 {[
-                  ["Messy In", "Notes, screenshots, PDFs, photos, or half-finished thoughts."],
-                  ["Clear Review", "Open decisions are obvious. Totals stay deterministic."],
-                  ["Send-Ready", "Export a client-facing invoice that already reads cleanly."]
+                  ["Messy input", "Notes, screenshots, PDFs, photos, or half-finished thoughts."],
+                  ["Clear review", "Billie surfaces the choices that need your approval."],
+                  ["Ready to send", "Export an invoice that already reads cleanly."]
                 ].map(([title, copy]) => (
                   <div
                     key={title}
-                    className="rounded-[20px] border border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(244,248,253,0.94))] px-3 py-3 shadow-[0_10px_30px_rgba(9,48,100,0.05)] md:rounded-[22px] md:px-4 md:py-4"
+                    className="nb-subcard rounded-[20px] border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(244,248,253,0.94))] px-3 py-3 shadow-[0_10px_30px_rgba(9,48,100,0.05)] md:rounded-[22px] md:px-4 md:py-4"
                   >
                     <p className="text-sm font-semibold text-[#093064]">{title}</p>
-                    <p className="mt-1 hidden text-xs leading-5 text-slate-600 sm:block md:mt-2">{copy}</p>
+                    <p className="mt-1 hidden text-xs leading-5 text-slate-600 sm:block md:mt-1.5">{copy}</p>
                   </div>
                 ))}
               </div>
@@ -508,10 +508,10 @@ function Launcher() {
               />
               {billingNotice ? (
                 <p
-                  className={`mt-3 rounded-2xl border px-4 py-3 text-sm ${
+                  className={`nb-banner mt-3 ${
                     billingNotice.tone === "green"
-                      ? "border-emerald-200 bg-emerald-50/90 text-emerald-800"
-                      : "border-amber-200 bg-amber-50/90 text-amber-800"
+                      ? "nb-banner--success"
+                      : "nb-banner--warning"
                   }`}
                 >
                   {billingNotice.message}
@@ -521,7 +521,7 @@ function Launcher() {
               {billingError ? <p className="mt-3 text-sm text-rose-600">{billingError}</p> : null}
               <div className="mt-4 rounded-[24px] border border-[#6993d2]/18 bg-[#093064] px-4 py-4 text-white shadow-[0_14px_40px_rgba(9,48,100,0.18)] md:hidden">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#acd0f4]">Built for real work</p>
-                <p className="mt-2 text-base font-semibold text-white">Billie organizes the draft. You approve money.</p>
+                <p className="mt-2 text-base font-semibold text-white">Billie organizes the draft. You approve the money.</p>
                 <p className="mt-2 text-sm leading-6 text-slate-200">
                   One clear start, visible draft changes, no silent total edits.
                 </p>
@@ -536,13 +536,13 @@ function Launcher() {
                   className="mt-4 text-3xl leading-tight text-white"
                   style={{ fontFamily: "'Fraunces', serif" }}
                 >
-                  Simple enough to use from the truck, clean enough to send to a client.
+                  Fast enough to use between jobs. Clean enough to send the same day.
                 </h2>
                 <div className="mt-6 space-y-3">
                   {[
-                    "Billie helps with structure and wording, but never makes silent money decisions.",
-                    "You can start from messy notes or import an existing invoice when needed.",
-                    "The invoice stays visible, so you always know what changed."
+                    "Billie cleans up structure and wording, but never makes silent money decisions.",
+                    "Start from rough notes, a file import, or a blank invoice when you need more control.",
+                    "The invoice stays visible while you work, so changes never feel hidden."
                   ].map((item) => (
                     <div key={item} className="flex items-start gap-3 rounded-2xl bg-white/8 px-3 py-3">
                       <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#acd0f4] text-xs font-bold text-[#093064]">
@@ -555,9 +555,9 @@ function Launcher() {
               </div>
               <div className="mt-6 rounded-[24px] border border-white/10 bg-white/8 p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#acd0f4]">Best first step</p>
-                <p className="mt-2 text-lg font-semibold text-white">Start with Billie.</p>
+                <p className="mt-2 text-lg font-semibold text-white">Paste the rough version first.</p>
                 <p className="mt-2 text-sm leading-6 text-slate-200">
-                  Most people only need one path: paste the messy version and let the draft take shape in front of them.
+                  Most people only need one path: start with Billie, approve the money details, then send.
                 </p>
               </div>
             </aside>
@@ -620,17 +620,19 @@ function Launcher() {
 function Placeholder({ title, description }) {
   const navigate = useNavigate();
   return (
-    <div className="min-h-screen bg-slate-50">
-      <main className="mx-auto max-w-xl px-4 py-10">
+    <div className="nb-page nb-page--quiet">
+      <main className="nb-page-shell nb-page-shell--medium max-w-xl py-10">
         <button
           type="button"
-          className="text-sm font-semibold text-blue-800"
+          className="nb-btn-ghost"
           onClick={() => navigate("/")}
         >
           Back to launcher
         </button>
-        <h1 className="mt-4 text-2xl font-semibold text-slate-900">{title}</h1>
-        <p className="mt-2 text-sm text-slate-600">{description}</p>
+        <div className="nb-surface nb-surface--elevated mt-4">
+          <h1 className="nb-section-title">{title}</h1>
+          <p className="mt-2 text-sm text-slate-600">{description}</p>
+        </div>
       </main>
     </div>
   );

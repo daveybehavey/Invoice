@@ -1,6 +1,6 @@
 (() => {
   const cardBase =
-    "w-full rounded-xl border bg-white p-5 text-left shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 active:scale-[0.99]";
+    "w-full text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6993d2]/30 active:scale-[0.99]";
 
   function SparklesIcon({ className }) {
     return (
@@ -106,8 +106,8 @@
         type="button"
         className={`${cardBase} ${
           disabled
-            ? "cursor-not-allowed border-slate-200 bg-slate-50"
-            : "rounded-[28px] border-[#6993d2]/25 bg-[linear-gradient(180deg,#ffffff_0%,#f4f8fd_100%)] shadow-[0_18px_50px_rgba(9,48,100,0.08)] hover:-translate-y-0.5 hover:border-[#6993d2]/45 hover:shadow-[0_24px_60px_rgba(9,48,100,0.12)]"
+            ? "nb-surface cursor-not-allowed opacity-70"
+            : "nb-surface nb-surface--elevated rounded-[30px] hover:-translate-y-0.5"
         }`}
         onClick={disabled ? undefined : onClick}
         disabled={disabled}
@@ -115,8 +115,8 @@
       >
         <div className="flex items-start justify-between gap-4">
           <div
-            className={`flex h-11 w-11 items-center justify-center rounded-lg ${
-              disabled ? "bg-slate-100" : "bg-[#acd0f4]"
+            className={`flex h-11 w-11 items-center justify-center rounded-[18px] ${
+              disabled ? "bg-slate-100" : "bg-[#e8f0fb]"
             }`}
           >
             {React.cloneElement(icon, { className: iconClass })}
@@ -127,7 +127,7 @@
                 {title}
               </h2>
               {badge ? (
-                <span className="rounded-full bg-[#093064] px-2 py-0.5 text-xs font-semibold text-white">
+                <span className="nb-chip border-0 bg-[#093064] px-2 py-0.5 text-[10px] text-white">
                   {badge}
                 </span>
               ) : null}
@@ -135,13 +135,36 @@
             <p className="max-w-md text-sm text-slate-600">{description}</p>
           </div>
           {!disabled ? (
-            <div className="mt-0.5 hidden rounded-full border border-[#6993d2]/30 bg-white/80 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#093064] sm:block">
+            <div className="mt-0.5 hidden rounded-full border border-[#6993d2]/18 bg-white/82 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#093064] sm:block">
               Open
             </div>
           ) : null}
         </div>
       </button>
     );
+  }
+
+  function SurfacePanel({ className = "", muted = false, elevated = false, children, ...props }) {
+    const toneClass = elevated ? "nb-surface nb-surface--elevated" : muted ? "nb-surface nb-surface--muted" : "nb-surface";
+    return (
+      <section className={`${toneClass} ${className}`.trim()} {...props}>
+        {children}
+      </section>
+    );
+  }
+
+  function StatusChip({ children, className = "", tone = "default" }) {
+    const toneClass =
+      tone === "success"
+        ? "nb-chip nb-chip--success"
+        : tone === "warning"
+          ? "nb-chip nb-chip--warning"
+          : tone === "danger"
+            ? "nb-chip nb-chip--danger"
+            : tone === "soft"
+              ? "nb-chip nb-chip--soft"
+              : "nb-chip";
+    return <span className={`${toneClass} ${className}`.trim()}>{children}</span>;
   }
 
   window.InvoiceUIPrimitives = {
@@ -151,6 +174,8 @@
     UploadIcon,
     ArchiveIcon,
     SwatchIcon,
-    LauncherCard
+    LauncherCard,
+    SurfacePanel,
+    StatusChip
   };
 })();

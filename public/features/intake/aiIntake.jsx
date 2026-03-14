@@ -1587,9 +1587,9 @@ function AIIntake() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-50">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-4">
+    <div className="nb-page nb-page--intake flex min-h-screen flex-col">
+      <header className="nb-page-header">
+        <div className="nb-page-header__inner max-w-6xl">
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -1623,21 +1623,21 @@ function AIIntake() {
       </header>
 
       <main className="flex flex-1 flex-col">
-        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pb-28">
-          <div className="flex-1 overflow-y-auto pb-4 pt-6">
-            <div className="space-y-6">
+        <div className="nb-page-shell nb-page-shell--wide flex w-full flex-1 flex-col pb-28">
+          <div className="nb-page-grid flex-1 pt-6">
+            <div className="min-w-0 space-y-6">
               {billingNotice ? (
                 <div
-                  className={`rounded-2xl border px-4 py-3 text-sm font-medium ${
+                  className={`nb-banner font-medium ${
                     billingNotice.tone === "green"
-                      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                      : "border-amber-200 bg-amber-50 text-amber-900"
+                      ? "nb-banner--success"
+                      : "nb-banner--warning"
                   }`}
                 >
                   {billingNotice.message}
                 </div>
               ) : null}
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="nb-surface nb-surface--muted rounded-[28px]">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                     Intake steps
@@ -1657,10 +1657,10 @@ function AIIntake() {
                 <p className="mt-2 text-sm font-semibold text-slate-700">
                   Step {safeWizardStepIndex + 1} of {wizardSteps.length}: {wizardStepLabel}
                 </p>
-                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
                   <div
-                    className="h-full rounded-full bg-blue-700 transition-all duration-300"
-                    style={{ width: `${wizardProgressPercent}%` }}
+                    className="h-full rounded-full transition-all duration-300"
+                    style={{ backgroundColor: "#093064", width: `${wizardProgressPercent}%` }}
                   />
                 </div>
                 {shouldShowWizardDetails ? (
@@ -1694,10 +1694,10 @@ function AIIntake() {
               </div>
 
               {wizardStep === "paste" ? (
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="nb-surface nb-surface--elevated rounded-[30px] p-5">
                   <p className="text-sm font-semibold text-slate-900">Paste your notes</p>
                   <p className="mt-1 text-sm text-slate-600">
-                    Paste messy notes as-is: dates, hours, rates, parts, and unsure items.
+                    Paste them as-is: dates, hours, rates, parts, and anything still uncertain.
                   </p>
                   <div className="mt-4 flex flex-wrap items-center gap-3">
                     <input
@@ -1709,7 +1709,7 @@ function AIIntake() {
                     />
                     <button
                       type="button"
-                      className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="nb-btn-secondary inline-flex h-10 px-4 disabled:cursor-not-allowed disabled:opacity-60"
                       onClick={triggerVoiceNoteUpload}
                       disabled={voiceNoteBusy || isTyping}
                     >
@@ -1724,7 +1724,7 @@ function AIIntake() {
                   <textarea
                     id="ai-intake-input"
                     rows={6}
-                    className="mt-4 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    className="nb-textarea mt-4 resize-none"
                     placeholder="Example: Jan 10 fixed sink, 2h at $90/hr. Parts: washer $5. Not sure if cabinet adjustment should be billed."
                     value={inputValue}
                     onChange={(event) => setInputValue(event.target.value)}
@@ -1732,7 +1732,7 @@ function AIIntake() {
                   <div className="mt-4 flex flex-wrap items-center gap-3">
                     <button
                       type="button"
-                      className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-800 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-blue-300"
+                      className="nb-btn-primary inline-flex h-11 px-5 disabled:cursor-not-allowed disabled:bg-blue-300"
                       onClick={() => submitUserMessage(inputValue)}
                       disabled={!inputValue.trim() || isTyping}
                     >
@@ -1744,7 +1744,7 @@ function AIIntake() {
               ) : null}
 
               {intakePhase === "awaiting_follow_up" && followUp ? (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+                <div className="nb-banner nb-banner--warning rounded-[28px] p-5 shadow-sm">
                   <p className="text-sm font-semibold text-amber-900">Pricing needed</p>
                   <p className="mt-1 text-sm text-amber-900">{followUp.message}</p>
                   {quickReplies.length > 0 ? (
@@ -1766,14 +1766,14 @@ function AIIntake() {
                     <textarea
                       id="ai-intake-input"
                       rows={2}
-                      className="flex-1 resize-none rounded-xl border border-amber-200 px-4 py-2 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      className="nb-textarea flex-1 resize-none border-amber-200 bg-white/88 py-2"
                       placeholder="Reply with a rate and hours or a flat amount…"
                       value={inputValue}
                       onChange={(event) => setInputValue(event.target.value)}
                     />
                     <button
                       type="button"
-                      className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-800 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-blue-300"
+                      className="nb-btn-primary inline-flex h-11 px-5 disabled:cursor-not-allowed disabled:bg-blue-300"
                       onClick={() => submitUserMessage(inputValue)}
                       disabled={!inputValue.trim() || isTyping}
                     >
@@ -1790,7 +1790,7 @@ function AIIntake() {
                     message.payload.context === "intake" && message.payload.mode !== "fast";
                   return (
                     <div key={message.id} className="flex justify-start">
-                      <div className="w-full rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm shadow-sm">
+                      <div className="nb-banner nb-banner--warning w-full p-4 text-sm shadow-sm">
                         <p className="text-sm font-semibold text-amber-900">
                           {isLaborTimeout ? "Still checking labor pricing..." : "Still working..."}
                         </p>
@@ -1918,10 +1918,10 @@ function AIIntake() {
                     className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                   >
                     <div
-                      className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
+                          className={`max-w-[85%] rounded-[24px] px-4 py-3 text-sm leading-relaxed shadow-sm ${
                         message.role === "user"
-                          ? "bg-blue-800 text-white"
-                          : "bg-white text-slate-800"
+                          ? "bg-[#093064] text-white"
+                          : "nb-surface nb-surface--quiet text-slate-800"
                       }`}
                     >
                       {message.text}
@@ -1931,7 +1931,7 @@ function AIIntake() {
               })}
               {isTyping && billieStatus?.kind !== "working" ? (
                 <div className="flex justify-start">
-                  <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500 shadow-sm">
+                  <div className="nb-surface nb-surface--quiet rounded-[24px] px-4 py-3 text-sm text-slate-500">
                     <span>Billie is typing</span>
                     <span className="ml-1 inline-flex w-4 justify-start" aria-hidden="true">
                       <span className="typing-dot">.</span>
@@ -1943,83 +1943,85 @@ function AIIntake() {
               ) : null}
               <div ref={listEndRef} />
             </div>
+            <div className="nb-sticky-panel mt-6 xl:mt-0">
+              <IntakeDecisionPanel
+                showAssumptionsCard={showAssumptionsCard}
+                hasReviewCard={hasReviewCard}
+                openDecisionCount={displayOpenDecisionCount}
+                canGenerateInvoice={canGenerateInvoice}
+                showContextDetailsToggle={showContextDetailsToggle}
+                isCompactViewport={isCompactViewport}
+                setAssumptionsCollapsed={setAssumptionsCollapsed}
+                contextDetailsToggleLabel={contextDetailsToggleLabel}
+                summaryTimeLabel={summaryTimeLabel}
+                showConfirmDetails={showConfirmDetails}
+                showQuickDecisions={showQuickDecisions}
+                hasVisibleDetails={hasVisibleDetails}
+                hasDecisions={hasDecisions}
+                decisionsRef={decisionsRef}
+                quickDecisionHeading={quickDecisionHeading}
+                decisionProgressLabel={decisionProgressLabel}
+                showDecisionWhy={showDecisionWhy}
+                setShowDecisionWhy={setShowDecisionWhy}
+                isTyping={isTyping}
+                decisionApplyPending={decisionApplyPending}
+                decisionApplyLabel={optimisticDecisionState?.label ?? "Billie: Applying decision..."}
+                visibleDecisionItems={visibleDecisionItems}
+                buildDecisionActions={buildDecisionActions}
+                decisionIncludeButtonClass={decisionIncludeButtonClass}
+                decisionExcludeButtonClass={decisionExcludeButtonClass}
+                handleDecisionAction={handleDecisionAction}
+                hasMoreDecisions={hasMoreDecisions}
+                showAllDecisions={showAllDecisions}
+                clampedDecisionIndex={clampedDecisionIndex}
+                decisionItems={visibleDecisionSource}
+                setDecisionFocusIndex={setDecisionFocusIndex}
+                setShowAllDecisions={setShowAllDecisions}
+                taxAssumptionPresent={taxAssumptionPresent}
+                pendingTaxRate={pendingTaxRate}
+                setPendingTaxRate={setPendingTaxRate}
+                appendAiMessage={appendAiMessage}
+                suggestedTaxRate={suggestedTaxRate}
+                focusInputWithValue={focusInputWithValue}
+                showAssumptionDetails={showAssumptionDetails}
+                unparsedRef={unparsedRef}
+                auditStatus={auditStatus}
+                auditSummary={auditSummary}
+                auditSummaryTimeLabel={auditSummaryTimeLabel}
+                handleManualDeepAudit={handleManualDeepAudit}
+                structuredInvoice={structuredInvoice}
+                unparsedItems={unparsedItems}
+                submitUserMessage={submitUserMessage}
+                assumptionItems={assumptionItems}
+                auditAssumptionItems={auditAssumptionItems}
+                primaryCtaDisabled={primaryCtaDisabled}
+                handlePrimaryCta={handlePrimaryCta}
+                primaryCtaLabel={primaryCtaLabel}
+                ctaHelper={ctaHelper}
+                planLimitReached={showIntakePlanBanner}
+                planSummary={planSummary}
+                planWarning={hasReviewCard && !showIntakePlanBanner ? planWarning : ""}
+                showUpgradeAction={showUpgradeAction}
+                useStripeUpgradeAction={useStripeUpgradeAction}
+                upgradeUrl={upgradeUrl}
+                billingBusy={billingBusy}
+                billingError={billingError}
+                handleUpgradeAction={handleUpgradeAction}
+              />
+            </div>
           </div>
-          <IntakeDecisionPanel
-            showAssumptionsCard={showAssumptionsCard}
-            hasReviewCard={hasReviewCard}
-            openDecisionCount={displayOpenDecisionCount}
-            canGenerateInvoice={canGenerateInvoice}
-            showContextDetailsToggle={showContextDetailsToggle}
-            isCompactViewport={isCompactViewport}
-            setAssumptionsCollapsed={setAssumptionsCollapsed}
-            contextDetailsToggleLabel={contextDetailsToggleLabel}
-            summaryTimeLabel={summaryTimeLabel}
-            showConfirmDetails={showConfirmDetails}
-            showQuickDecisions={showQuickDecisions}
-            hasVisibleDetails={hasVisibleDetails}
-            hasDecisions={hasDecisions}
-            decisionsRef={decisionsRef}
-            quickDecisionHeading={quickDecisionHeading}
-            decisionProgressLabel={decisionProgressLabel}
-            showDecisionWhy={showDecisionWhy}
-            setShowDecisionWhy={setShowDecisionWhy}
-            isTyping={isTyping}
-            decisionApplyPending={decisionApplyPending}
-            decisionApplyLabel={optimisticDecisionState?.label ?? "Billie: Applying decision..."}
-            visibleDecisionItems={visibleDecisionItems}
-            buildDecisionActions={buildDecisionActions}
-            decisionIncludeButtonClass={decisionIncludeButtonClass}
-            decisionExcludeButtonClass={decisionExcludeButtonClass}
-            handleDecisionAction={handleDecisionAction}
-            hasMoreDecisions={hasMoreDecisions}
-            showAllDecisions={showAllDecisions}
-            clampedDecisionIndex={clampedDecisionIndex}
-            decisionItems={visibleDecisionSource}
-            setDecisionFocusIndex={setDecisionFocusIndex}
-            setShowAllDecisions={setShowAllDecisions}
-            taxAssumptionPresent={taxAssumptionPresent}
-            pendingTaxRate={pendingTaxRate}
-            setPendingTaxRate={setPendingTaxRate}
-            appendAiMessage={appendAiMessage}
-            suggestedTaxRate={suggestedTaxRate}
-            focusInputWithValue={focusInputWithValue}
-            showAssumptionDetails={showAssumptionDetails}
-            unparsedRef={unparsedRef}
-            auditStatus={auditStatus}
-            auditSummary={auditSummary}
-            auditSummaryTimeLabel={auditSummaryTimeLabel}
-            handleManualDeepAudit={handleManualDeepAudit}
-            structuredInvoice={structuredInvoice}
-            unparsedItems={unparsedItems}
-            submitUserMessage={submitUserMessage}
-            assumptionItems={assumptionItems}
-            auditAssumptionItems={auditAssumptionItems}
-            primaryCtaDisabled={primaryCtaDisabled}
-            handlePrimaryCta={handlePrimaryCta}
-            primaryCtaLabel={primaryCtaLabel}
-            ctaHelper={ctaHelper}
-            planLimitReached={showIntakePlanBanner}
-            planSummary={planSummary}
-            planWarning={hasReviewCard && !showIntakePlanBanner ? planWarning : ""}
-            showUpgradeAction={showUpgradeAction}
-            useStripeUpgradeAction={useStripeUpgradeAction}
-            upgradeUrl={upgradeUrl}
-            billingBusy={billingBusy}
-            billingError={billingError}
-            handleUpgradeAction={handleUpgradeAction}
-          />
         </div>
       </main>
 
       {decisionToast ? (
         <div className="pointer-events-none fixed left-0 right-0 top-20 z-40 flex justify-center px-4 md:bottom-24 md:top-auto">
-          <div className="max-w-3xl flex-1 rounded-xl border border-blue-300 bg-blue-100 px-4 py-2 text-sm font-semibold text-blue-900 shadow-sm">
+          <div className="nb-banner nb-banner--info max-w-3xl flex-1 font-semibold">
             <div className="flex items-center justify-between gap-3">
               <span>{decisionToast}</span>
               {decisionUndoState ? (
                 <button
                   type="button"
-                  className="pointer-events-auto rounded-full border border-blue-300 bg-white px-3 py-1 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 hover:text-blue-950"
+                  className="nb-btn-secondary pointer-events-auto rounded-full border-blue-300 bg-white px-3 py-1 text-xs text-blue-900 hover:border-blue-400 hover:text-blue-950"
                   onClick={handleUndoDecision}
                 >
                   Undo
@@ -2098,9 +2100,9 @@ function AIIntake() {
       {(showChatInput || billieWorkspaceVisible) && intakePhase !== "awaiting_follow_up" ? (
         <form
           onSubmit={handleSend}
-          className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white"
+          className="fixed bottom-0 left-0 right-0 border-t border-[rgba(9,48,100,0.08)] bg-white/84 backdrop-blur"
         >
-          <div className="mx-auto max-w-3xl space-y-2 px-4 py-3">
+          <div className="mx-auto max-w-6xl space-y-2 px-4 py-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -2142,7 +2144,7 @@ function AIIntake() {
                 {billieUndoState ? (
                   <button
                     type="button"
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                    className="nb-btn-secondary rounded-full px-3 py-1 text-xs"
                     onClick={handleUndoBilliePatch}
                   >
                     Undo last Billie change
@@ -2156,7 +2158,7 @@ function AIIntake() {
                   <button
                     key={chip.id}
                     type="button"
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-400"
+                    className="nb-btn-secondary rounded-full px-3 py-1 text-xs disabled:cursor-not-allowed disabled:text-slate-400"
                     onClick={() =>
                       submitUserMessage(chip.value, {
                         billieRefineTone: chip.tone
@@ -2170,7 +2172,7 @@ function AIIntake() {
                 {hasHiddenBillieActionChips ? (
                   <button
                     type="button"
-                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                    className="nb-btn-secondary rounded-full bg-slate-50 px-3 py-1 text-xs"
                     onClick={() => setBillieChipTrayExpanded(true)}
                     disabled={isTyping}
                   >
@@ -2180,7 +2182,7 @@ function AIIntake() {
                 {isCompactViewport && billieChipTrayExpanded && billieActionChips.length > 3 ? (
                   <button
                     type="button"
-                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                    className="nb-btn-secondary rounded-full bg-slate-50 px-3 py-1 text-xs"
                     onClick={() => setBillieChipTrayExpanded(false)}
                     disabled={isTyping}
                   >
@@ -2191,7 +2193,7 @@ function AIIntake() {
             ) : null}
             {billieChangePreview.length > 0 ? (
               <div
-                className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3"
+                className="nb-subcard px-3 py-3"
                 data-testid="billie-change-preview"
               >
                 <div className="flex items-center justify-between gap-2">
@@ -2201,7 +2203,7 @@ function AIIntake() {
                 </div>
                 <div className="mt-2 space-y-3">
                   {billieChangePreview.map((entry) => (
-                    <div key={entry.id} className="space-y-2 rounded-lg bg-white px-3 py-2 shadow-sm">
+                    <div key={entry.id} className="space-y-2 rounded-xl bg-white px-3 py-2 shadow-sm">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                         {entry.label}
                       </p>
@@ -2228,7 +2230,7 @@ function AIIntake() {
               <textarea
                 id="ai-intake-input"
                 rows={1}
-                className="max-h-32 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                className="nb-textarea max-h-32 resize-none"
                 placeholder={
                   intakeComplete
                     ? "Ask Billie to polish wording. Numbers stay locked."

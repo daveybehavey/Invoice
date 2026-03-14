@@ -2250,7 +2250,7 @@ test("business identity defaults prefill new manual drafts", async () => {
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Show manage tools" }).click();
-    await page.getByRole("button", { name: "Business Identity" }).click();
+    await page.getByRole("button", { name: "Branding" }).click();
     await page.waitForURL(/\/settings\/business$/, { timeout: 10000 });
     await page.getByRole("heading", { name: "Set your default invoice branding" }).waitFor({
       state: "visible"
@@ -2279,7 +2279,7 @@ test("ai intake applies business identity defaults when generating draft", async
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Show manage tools" }).click();
-    await page.getByRole("button", { name: "Business Identity" }).click();
+    await page.getByRole("button", { name: "Branding" }).click();
     await page.waitForURL(/\/settings\/business$/, { timeout: 10000 });
     await page.getByRole("heading", { name: "Set your default invoice branding" }).waitFor({
       state: "visible"
@@ -3491,10 +3491,8 @@ test("invoice library supports sent and paid status actions", async () => {
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    const card = page
-      .locator("div.rounded-2xl.border.border-slate-200.bg-white")
-      .filter({ hasText: "INV-STATUS-1" })
-      .first();
+    await page.getByText("INV-STATUS-1").waitFor({ state: "visible" });
+    const card = page.locator("div").filter({ hasText: "INV-STATUS-1" }).first();
     await card.getByRole("button", { name: "Mark sent" }).click();
     await card.locator("span.rounded-full", { hasText: "sent" }).waitFor({ state: "visible" });
 
@@ -3643,11 +3641,8 @@ test("invoice library shows open pay link action when payment link exists", asyn
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    const card = page
-      .locator("div.rounded-2xl.border.border-slate-200.bg-white")
-      .filter({ hasText: "INV-PAY-LINK-1" })
-      .first();
-    await card.getByRole("link", { name: "Open pay link" }).waitFor({ state: "visible" });
+    await page.getByText("INV-PAY-LINK-1").waitFor({ state: "visible" });
+    await page.getByRole("link", { name: "Open pay link" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

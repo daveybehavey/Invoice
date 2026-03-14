@@ -27,7 +27,7 @@ function LauncherAccountStrip({
   onSignOut
 }) {
   return (
-    <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-white/50 bg-white/80 px-4 py-3 shadow-[0_18px_40px_rgba(9,48,100,0.08)] backdrop-blur">
+    <div className="nb-surface nb-surface--muted mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[24px] px-4 py-3">
       <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold text-slate-700">
           {authSession?.email ? `Signed in as ${authSession.email}` : "Not signed in (local mode)"}
@@ -43,7 +43,7 @@ function LauncherAccountStrip({
         {hasPlanActions ? (
           <button
             type="button"
-            className="rounded-full border border-[#6993d2]/25 bg-[#f4f8fd] px-3 py-1.5 text-sm font-semibold text-[#093064] disabled:opacity-60"
+            className="nb-btn-ghost text-sm disabled:opacity-60"
             onClick={onTogglePlanActions}
             aria-expanded={showPlanActions}
             aria-controls="launcher-plan-actions"
@@ -54,7 +54,7 @@ function LauncherAccountStrip({
         {authSession?.email ? (
           <button
             type="button"
-            className="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-60"
+            className="nb-btn-secondary rounded-full px-3 py-1.5 disabled:opacity-60"
             onClick={onSignOut}
             disabled={authBusy}
           >
@@ -63,7 +63,7 @@ function LauncherAccountStrip({
         ) : (
           <button
             type="button"
-            className="rounded-full border border-[#6993d2]/35 bg-[#acd0f4] px-3 py-1.5 text-sm font-semibold text-[#093064] disabled:opacity-60"
+            className="nb-btn-ghost rounded-full bg-[#acd0f4] px-3 py-1.5 text-sm disabled:opacity-60"
             onClick={onOpenSignIn}
             disabled={authBusy}
           >
@@ -77,7 +77,7 @@ function LauncherAccountStrip({
             useStripeUpgradeAction ? (
               <button
                 type="button"
-                className="rounded-full border border-[#6993d2]/35 bg-[#093064] px-3 py-1.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                className="nb-btn-primary rounded-full px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={onOpenUpgrade}
                 disabled={billingBusy}
               >
@@ -88,7 +88,7 @@ function LauncherAccountStrip({
                 href={upgradeUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-full border border-[#6993d2]/35 bg-[#093064] px-3 py-1.5 text-sm font-semibold text-white"
+                className="nb-btn-primary rounded-full px-3 py-1.5 text-sm"
               >
                 Upgrade
               </a>
@@ -98,7 +98,7 @@ function LauncherAccountStrip({
             useStripePortalAction ? (
               <button
                 type="button"
-                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={onOpenBillingPortal}
                 disabled={billingBusy}
               >
@@ -109,7 +109,7 @@ function LauncherAccountStrip({
                 href={billingPortalUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700"
+                className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
               >
                 Billing
               </a>
@@ -126,15 +126,15 @@ function LauncherDraftRecoverySection({ drafts, loading, busyInvoiceId, onResume
     return null;
   }
   return (
-    <section className="mt-5 rounded-[28px] border border-[#6993d2]/15 bg-white/90 p-5 shadow-[0_18px_40px_rgba(9,48,100,0.06)] backdrop-blur md:p-6">
+    <section className="nb-surface mt-5 rounded-[28px] p-5 md:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Draft recovery</p>
-          <p className="mt-1 text-sm text-slate-600">Pick up where you left off without digging through the library.</p>
+          <p className="mt-1 text-sm text-slate-600">Open the last draft you were working on without hunting for it.</p>
         </div>
         <button
           type="button"
-          className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
+          className="nb-btn-secondary rounded-full px-3 py-1 text-xs"
           onClick={onOpenLibrary}
         >
           Open library
@@ -144,7 +144,7 @@ function LauncherDraftRecoverySection({ drafts, loading, busyInvoiceId, onResume
         {drafts.map((draft) => (
           <div
             key={draft.invoiceId}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-3"
+            className="nb-subcard flex flex-wrap items-center justify-between gap-2 px-3 py-3"
           >
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-slate-900">
@@ -156,7 +156,7 @@ function LauncherDraftRecoverySection({ drafts, loading, busyInvoiceId, onResume
             </div>
             <button
               type="button"
-              className="rounded-full border border-[#6993d2]/25 bg-white px-3 py-1.5 text-xs font-semibold text-[#093064] hover:border-[#6993d2]/50"
+              className="nb-btn-ghost rounded-full px-3 py-1.5"
               aria-label={`Resume ${draft.invoiceNumber || "draft invoice"}`}
               onClick={() => onResumeDraft(draft.invoiceId)}
               disabled={busyInvoiceId === draft.invoiceId}
@@ -179,7 +179,7 @@ function LauncherStartSection({
 }) {
   return (
     <section
-      className="mt-6 overflow-hidden rounded-[32px] border border-[#6993d2]/20 bg-white shadow-[0_25px_70px_rgba(9,48,100,0.12)]"
+      className="nb-surface nb-surface--elevated mt-6 overflow-hidden rounded-[32px] p-0"
       style={{
         backgroundImage:
           "radial-gradient(circle at top left, rgba(172,204,240,0.9), rgba(255,255,255,0) 42%), linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%)"
@@ -189,20 +189,21 @@ function LauncherStartSection({
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Start here</p>
           <h2 className="mt-2 text-[1.75rem] text-slate-900 md:text-4xl" style={{ fontFamily: "'Fraunces', serif" }}>
-            Invoices from notes, not forms.
+            Paste the rough version. Billie builds the draft.
           </h2>
           <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 md:mt-3 md:text-base">
-            Billie does the heavy lift. You stay in control of prices, tax, and what actually gets sent.
+            This is the normal path. Best for job notes, screenshots, texts, or anything that still
+            needs to be cleaned up.
           </p>
           <div className="mt-4 grid gap-2 sm:grid-cols-3 md:mt-5 md:gap-3">
             {[
-              ["1", "Paste", "Drop in notes, photos, or messy job details."],
-              ["2", "Review", "Confirm the money decisions that matter."],
-              ["3", "Send", "Export, save, or send the polished invoice."]
+              ["1", "Paste notes", "Drop in the messy version."],
+              ["2", "Approve money", "Confirm only the decisions that affect totals."],
+              ["3", "Send invoice", "Save, export, or send the finished version."]
             ].map(([step, title, copy]) => (
               <div
                 key={step}
-                className="rounded-2xl border border-white/70 bg-white/75 p-3 shadow-sm backdrop-blur"
+                className="nb-subcard border-white/70 bg-white/75 p-3 shadow-sm backdrop-blur"
               >
                 <div className="flex items-center gap-2">
                   <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#093064] text-xs font-bold text-white">
@@ -215,7 +216,7 @@ function LauncherStartSection({
             ))}
           </div>
         </div>
-        <div className="rounded-[28px] border border-[#6993d2]/25 bg-white/90 p-4 shadow-[0_18px_40px_rgba(9,48,100,0.08)] backdrop-blur md:p-5">
+        <div className="nb-surface nb-surface--muted rounded-[28px] p-4 md:p-5">
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#6993d2]">Recommended path</p>
           <div className="mt-3">
             {primaryOption ? (
@@ -234,7 +235,7 @@ function LauncherStartSection({
             {hasResumeDraft ? (
               <button
                 type="button"
-                className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:border-slate-300"
+                className="nb-btn-secondary rounded-full px-3 py-1.5"
                 onClick={onResumeDraft}
               >
                 Resume last draft
@@ -242,7 +243,7 @@ function LauncherStartSection({
             ) : null}
             <button
               type="button"
-              className="inline-flex rounded-full border border-[#6993d2]/25 bg-[#f4f8fd] px-3 py-1.5 text-sm font-semibold text-[#093064] hover:border-[#6993d2]/45"
+              className="nb-btn-ghost rounded-full px-3 py-1.5 text-sm"
               onClick={onToggleAlternateStarts}
               aria-expanded={showAlternateStarts}
               aria-controls="alternate-start-options"
@@ -251,7 +252,7 @@ function LauncherStartSection({
             </button>
           </div>
           <p className="mt-3 text-xs leading-5 text-slate-500">
-            Best for messy notes, text dumps, or talking through a job the way you naturally would.
+            Start here unless you already have a file or want full manual control.
           </p>
         </div>
       </div>
@@ -266,15 +267,15 @@ function LauncherAlternateStartsSection({ showAlternateStarts, quickStartOptions
   return (
     <section
       id="alternate-start-options"
-      className="mt-5 rounded-[28px] border border-[#6993d2]/15 bg-white/90 p-5 shadow-[0_18px_40px_rgba(9,48,100,0.06)] backdrop-blur md:p-6"
+      className="nb-surface mt-5 rounded-[28px] p-5 md:p-6"
     >
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Other ways to start</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Other starting points</p>
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         {quickStartOptions.map((option) => (
           <button
             key={option.key}
             type="button"
-            className="rounded-[24px] border border-slate-200 bg-slate-50/90 p-4 text-left transition hover:-translate-y-0.5 hover:border-[#6993d2]/40 hover:bg-white"
+            className="nb-subcard rounded-[24px] bg-slate-50/90 p-4 text-left transition hover:-translate-y-0.5 hover:border-[#6993d2]/40 hover:bg-white"
             onClick={option.onClick}
             disabled={option.disabled}
           >
@@ -291,7 +292,7 @@ function LauncherAlternateStartsSection({ showAlternateStarts, quickStartOptions
         ))}
       </div>
       <p className="mt-3 text-xs text-slate-500">
-        Use these only when you already have a file or need a blank draft.
+        Use these when you already have a file or want full manual control.
       </p>
     </section>
   );
@@ -299,15 +300,15 @@ function LauncherAlternateStartsSection({ showAlternateStarts, quickStartOptions
 
 function LauncherManageSection({ showManageOptions, onToggleManageOptions, manageOptions }) {
   return (
-    <section className="mt-5 rounded-[28px] border border-[#6993d2]/15 bg-white/90 p-5 shadow-[0_18px_40px_rgba(9,48,100,0.06)] backdrop-blur md:p-6">
+    <section className="nb-surface mt-5 rounded-[28px] p-5 md:p-6">
       <div className="flex items-center justify-between gap-2">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Manage</p>
-          <p className="mt-1 text-sm text-slate-600">Library, branding, and the parts you touch less often.</p>
+          <p className="mt-1 text-sm text-slate-600">Library, branding, and the tools you use less often.</p>
         </div>
         <button
           type="button"
-          className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700"
+          className="nb-btn-secondary rounded-full px-3 py-1 text-xs"
           onClick={onToggleManageOptions}
           aria-expanded={showManageOptions}
           aria-controls="launcher-manage-options"
@@ -318,10 +319,10 @@ function LauncherManageSection({ showManageOptions, onToggleManageOptions, manag
       {showManageOptions ? (
         <div id="launcher-manage-options" className="mt-4 grid gap-3 md:grid-cols-2">
           {manageOptions.map((option) => (
-            <button
-              key={option.key}
-              type="button"
-              className="rounded-[22px] border border-slate-200 bg-slate-50/90 p-4 text-left text-sm font-semibold text-slate-700 transition hover:border-[#6993d2]/40 hover:bg-white"
+          <button
+            key={option.key}
+            type="button"
+            className="nb-subcard rounded-[22px] bg-slate-50/90 p-4 text-left text-sm font-semibold text-slate-700 transition hover:border-[#6993d2]/40 hover:bg-white"
               onClick={option.onClick}
               disabled={option.disabled}
             >
@@ -356,7 +357,7 @@ function LauncherAuthModal({
   }
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 px-4">
-      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
+      <div className="nb-surface nb-surface--elevated w-full max-w-sm rounded-[28px] p-5">
         <h2 className="text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
           Sign in
         </h2>
@@ -372,7 +373,7 @@ function LauncherAuthModal({
           autoFocus
           value={authEmail}
           onChange={onChangeEmail}
-          className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none ring-blue-200 focus:border-blue-700 focus:ring-2"
+          className="nb-input mt-1 rounded-xl px-3 py-2"
           placeholder="you@example.com"
           disabled={authBusy}
           onKeyDown={(event) => {
@@ -386,7 +387,7 @@ function LauncherAuthModal({
         <div className="mt-4 flex items-center justify-end gap-2">
           <button
             type="button"
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:opacity-60"
+            className="nb-btn-secondary rounded-xl px-3 py-1.5 disabled:opacity-60"
             onClick={onCancel}
             disabled={authBusy}
           >
@@ -394,7 +395,7 @@ function LauncherAuthModal({
           </button>
           <button
             type="button"
-            className="rounded-lg border border-blue-300 bg-blue-100 px-3 py-1.5 text-sm font-semibold text-blue-900 disabled:opacity-60"
+            className="nb-btn-primary rounded-xl px-3 py-1.5 disabled:opacity-60"
             onClick={onSubmit}
             disabled={authBusy}
           >

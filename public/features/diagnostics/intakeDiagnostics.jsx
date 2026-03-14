@@ -12,9 +12,9 @@
           ? "border-rose-200 bg-rose-50 text-rose-700"
           : tone === "amber"
             ? "border-amber-200 bg-amber-50 text-amber-700"
-            : "border-slate-200 bg-slate-100 text-slate-700";
+            : "border-slate-200 bg-slate-50 text-slate-700";
     return (
-      <div className={`rounded-lg border px-3 py-2 ${toneClasses}`}>
+      <div className={`rounded-2xl border px-3 py-3 shadow-sm ${toneClasses}`}>
         <p className="text-[11px] font-semibold uppercase tracking-wide">{label}</p>
         <p className="mt-1 text-sm font-semibold">{value}</p>
       </div>
@@ -312,19 +312,19 @@
     const frictionFailedRatePct = `${(frictionTrend24h.failedRate * 100).toFixed(1)}%`;
 
     return (
-      <div className="min-h-screen bg-slate-50">
-        <main className="mx-auto max-w-5xl px-4 py-8 md:py-10">
+      <div className="nb-page nb-page--quiet min-h-screen">
+        <main className="nb-page-shell nb-page-shell--medium max-w-5xl py-8 md:py-10">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <button
               type="button"
-              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700"
+              className="nb-btn-secondary rounded-full px-3 py-1.5"
               onClick={() => navigate("/")}
             >
               Back
             </button>
             <button
               type="button"
-              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+              className="nb-btn-secondary rounded-full px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-60"
               onClick={() => void loadDiagnostics({ silent: true })}
               disabled={refreshing || loading}
             >
@@ -332,7 +332,7 @@
             </button>
           </div>
 
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="nb-surface mt-4 rounded-[28px] p-5">
             <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
               Internal diagnostics
             </p>
@@ -365,7 +365,7 @@
             </p>
           </div>
 
-          <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="nb-surface mt-4 rounded-[28px] p-5">
             <h2 className="text-lg font-semibold text-slate-900">System health snapshot</h2>
             <p className="mt-1 text-xs text-slate-500">
               Quick view of rollout readiness and intake quality signals.
@@ -415,7 +415,7 @@
             ) : null}
           </section>
 
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="nb-surface mt-4 rounded-[28px] p-5">
             <h2 className="text-lg font-semibold text-slate-900">Launch readiness</h2>
             <p className="mt-2 text-xs text-slate-500">
               Public base URL: {launchInfo?.publicBaseUrl || "n/a"}

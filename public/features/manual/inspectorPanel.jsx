@@ -988,9 +988,9 @@ function InspectorPanel({
 
   return (
     <>
-      <div className="flex h-full min-h-0 flex-col border border-slate-200 bg-white shadow-sm md:rounded-2xl">
+      <div className="nb-surface nb-surface--elevated flex h-full min-h-0 flex-col rounded-[28px] p-0 md:rounded-[30px]">
         {!hideInternalTabs ? (
-          <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+          <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[rgba(9,48,100,0.08)] bg-white/88 px-4 py-3 backdrop-blur">
             <div className="flex gap-2">
               {tabs.map((tab) => (
                 <button
@@ -1034,7 +1034,7 @@ function InspectorPanel({
                         className={`w-full cursor-pointer rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-200 ${
                           isSelected
                             ? "shadow-sm"
-                            : "border-slate-200 bg-white hover:border-slate-300"
+                            : "border-slate-200 bg-white/88 hover:border-slate-300"
                         }`}
                         style={isSelected ? { borderColor: accent.border, backgroundColor: accent.soft } : undefined}
                         onClick={() => onStylePresetChange(option.id)}

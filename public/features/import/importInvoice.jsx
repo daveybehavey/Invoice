@@ -497,11 +497,11 @@ function ImportInvoice() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <main className="mx-auto max-w-3xl px-4 py-10">
+    <div className="nb-page nb-page--quiet min-h-screen">
+      <main className="nb-page-shell nb-page-shell--narrow max-w-3xl py-10">
         <button
           type="button"
-          className="text-sm font-semibold text-blue-800"
+          className="nb-btn-ghost"
           onClick={() => navigate("/")}
         >
           Back to launcher
@@ -510,13 +510,13 @@ function ImportInvoice() {
           <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">
             Import invoice
           </p>
-          <h1 className="text-2xl font-semibold text-slate-900">Upload invoice files or photo notes</h1>
+          <h1 className="nb-section-title text-2xl">Upload invoice files or photo notes</h1>
           <p className="text-sm text-slate-600">
             PDF/text files can build directly or preview extracted text first. Photo notes require text review before parsing.
           </p>
         </div>
         {planSummary ? (
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <div className="nb-surface nb-surface--muted mt-4 rounded-[26px] px-4 py-3">
             <p className="text-sm font-semibold text-slate-900">{planSummary}</p>
             {planWarning && !planLimitReached ? (
               <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
@@ -549,19 +549,19 @@ function ImportInvoice() {
         ) : null}
         {billingNotice ? (
           <div
-            className={`mt-4 rounded-2xl border px-4 py-3 text-sm font-medium ${
+            className={`nb-banner mt-4 font-medium ${
               billingNotice.tone === "green"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                : "border-amber-200 bg-amber-50 text-amber-900"
+                ? "nb-banner--success"
+                : "nb-banner--warning"
             }`}
           >
             {billingNotice.message}
           </div>
         ) : null}
 
-        <div className="mt-6 space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="nb-surface nb-surface--elevated mt-6 space-y-6 rounded-[30px] p-6">
           <div
-            className={`relative rounded-2xl border-2 border-dashed px-6 py-8 text-center transition ${
+            className={`relative rounded-[28px] border-2 border-dashed px-6 py-8 text-center transition ${
               dragActive ? "border-blue-400 bg-blue-100/60" : "border-slate-200 bg-slate-50/60"
             }`}
             onDragOver={(event) => {
@@ -597,14 +597,14 @@ function ImportInvoice() {
           </div>
 
           {selectedFile ? (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+            <div className="nb-subcard flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm text-slate-700">
               <div>
                 <p className="font-semibold text-slate-900">{selectedFile.name}</p>
                 <p className="text-xs text-slate-500">{formatBytes(selectedFile.size)}</p>
               </div>
               <button
                 type="button"
-                className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-300 hover:text-slate-900"
+                className="nb-btn-secondary rounded-full px-3 py-1 text-xs"
                 onClick={clearFile}
               >
                 Remove
@@ -613,13 +613,13 @@ function ImportInvoice() {
           ) : null}
 
           {selectedFile && isImageFile(selectedFile) ? (
-            <div className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-4">
+            <div className="nb-banner nb-banner--warning space-y-3 rounded-[24px] px-4 py-4">
               <p className="text-sm font-semibold text-amber-900">Review extracted text (required)</p>
               <p className="text-xs text-amber-800">
                 OCR can miss or alter words. Check this text before building the invoice.
               </p>
               {!hasReviewedText ? (
-                <div className="rounded-xl border border-amber-200 bg-white px-3 py-2">
+                  <div className="nb-subcard border-amber-200 bg-white px-3 py-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
                     Better OCR tips
                   </p>
@@ -659,7 +659,7 @@ function ImportInvoice() {
                 </ul>
               ) : null}
               {ocrActionHints.length > 0 ? (
-                <div className="rounded-xl border border-amber-200 bg-white px-3 py-2">
+                <div className="nb-subcard border-amber-200 bg-white px-3 py-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
                     Recommended fixes
                   </p>
@@ -671,21 +671,21 @@ function ImportInvoice() {
                 </div>
               ) : null}
               {isExtracting ? (
-                <p className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-amber-800">
+                <p className="nb-subcard border-amber-200 bg-white px-3 py-2 text-xs text-amber-800">
                   Reading text from image...
                 </p>
               ) : null}
               {hasReviewedText ? (
                 <textarea
                   rows={6}
-                  className="w-full resize-none rounded-xl border border-amber-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className="nb-textarea w-full resize-none border-amber-200 bg-white px-4 py-3"
                   placeholder="Review and edit extracted text if needed."
                   value={reviewedText}
                   onChange={(event) => setReviewedText(event.target.value)}
                   disabled={isExtracting}
                 />
               ) : (
-                <p className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs text-amber-800">
+                <p className="nb-subcard border-amber-200 bg-white px-3 py-2 text-xs text-amber-800">
                   Click Extract text, then review before building the draft.
                 </p>
               )}

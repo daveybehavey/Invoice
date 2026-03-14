@@ -1064,22 +1064,22 @@ function InvoiceLibrary() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <main className="mx-auto max-w-4xl px-4 py-10">
+    <div className="nb-page nb-page--quiet min-h-screen">
+      <main className="nb-page-shell nb-page-shell--medium max-w-5xl py-10">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <button
               type="button"
-              className="text-sm font-semibold text-blue-800"
+              className="nb-btn-ghost"
               onClick={() => navigate("/")}
             >
               Back to launcher
             </button>
-            <h1 className="mt-3 text-2xl font-semibold text-slate-900">Invoice Library</h1>
+            <h1 className="nb-section-title mt-3">Invoice Library</h1>
             <p className="mt-1 text-sm text-slate-600">
-              Reopen saved drafts, invoice again, and export.
+              Reopen saved work, follow up, and keep payments moving.
             </p>
-            <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs">
+            <div className="nb-chip mt-2 inline-flex items-center gap-2 px-3 py-1 normal-case tracking-normal text-xs">
               <span className="font-semibold text-slate-500">Account:</span>
               <span className={authSession?.email ? "font-semibold text-blue-800" : "font-semibold text-slate-700"}>
                 {authSession?.email ? authSession.email : "Local mode"}
@@ -1123,32 +1123,32 @@ function InvoiceLibrary() {
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-              <button
-                type="button"
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                  showTrash
-                    ? "text-slate-500 hover:text-slate-700"
-                    : "bg-blue-800 text-white"
-                }`}
-                onClick={() => setShowTrash(false)}
-              >
+              <div className="nb-toolbar">
+                <button
+                  type="button"
+                  className={`${showTrash ? "is-idle" : "is-active"} ${
+                    showTrash
+                      ? ""
+                      : ""
+                  }`}
+                  onClick={() => setShowTrash(false)}
+                >
                 All
               </button>
-              <button
-                type="button"
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                  showTrash
-                    ? "bg-rose-600 text-white"
-                    : "text-slate-500 hover:text-slate-700"
-                }`}
-                onClick={() => setShowTrash(true)}
-              >
+                <button
+                  type="button"
+                  className={`${showTrash ? "is-active" : "is-idle"} ${
+                    showTrash
+                      ? ""
+                      : ""
+                  }`}
+                  onClick={() => setShowTrash(true)}
+                >
                 Trash
               </button>
             </div>
             {!showTrash ? (
-              <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+              <div className="nb-toolbar">
                 {statusFilterOptions.map((option) => {
                   const isActive = statusFilter === option.id;
                   const countLabel =
@@ -1159,11 +1159,7 @@ function InvoiceLibrary() {
                     <button
                       key={option.id}
                       type="button"
-                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                        isActive
-                          ? "bg-slate-900 text-white"
-                          : "text-slate-500 hover:text-slate-700"
-                      }`}
+                      className={isActive ? "is-active" : "is-idle"}
                       onClick={() => {
                         setStatusFilter(option.id);
                         setSelectedIds([]);
@@ -1178,7 +1174,7 @@ function InvoiceLibrary() {
             {filteredInvoices.length > 0 ? (
               <button
                 type="button"
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300"
+                className="nb-btn-secondary rounded-xl px-3 py-2 text-xs"
                 onClick={() => {
                   if (selectionMode) {
                     clearSelection();
@@ -1192,14 +1188,14 @@ function InvoiceLibrary() {
             ) : null}
             <button
               type="button"
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300"
+              className="nb-btn-secondary rounded-xl px-4 py-2"
               onClick={() => navigate("/ai-intake")}
             >
               New intake
             </button>
             <button
               type="button"
-              className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-900"
+              className="nb-btn-primary rounded-xl px-4 py-2"
               onClick={() => navigate("/manual")}
             >
               Blank invoice
@@ -1208,34 +1204,34 @@ function InvoiceLibrary() {
         </div>
 
         {error ? (
-          <div className="mt-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <div className="nb-banner nb-banner--danger mt-6">
             {error}
           </div>
         ) : null}
         {billingError ? (
-          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <div className="nb-banner nb-banner--danger mt-3">
             {billingError}
           </div>
         ) : null}
         {billingNotice ? (
           <div
-            className={`mt-3 rounded-xl border px-4 py-3 text-sm font-medium ${
+            className={`nb-banner mt-3 font-medium ${
               billingNotice.tone === "green"
-                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                : "border-amber-200 bg-amber-50 text-amber-900"
+                ? "nb-banner--success"
+                : "nb-banner--warning"
             }`}
           >
             {billingNotice.message}
           </div>
         ) : null}
         {deliveryNotice ? (
-          <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+          <div className="nb-banner nb-banner--info mt-3">
             {deliveryNotice}
           </div>
         ) : null}
 
         {!requiresSignIn && planLimitReached ? (
-          <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <div className="nb-banner nb-banner--warning mt-6">
             <p className="text-sm font-semibold text-amber-900">Free plan limit reached</p>
             <p className="mt-1 text-sm text-amber-800">
               You can open and export existing invoices. Save more drafts by upgrading your plan.
@@ -1264,7 +1260,7 @@ function InvoiceLibrary() {
           </div>
         ) : null}
         {showDraftRecoveryReminder ? (
-          <div className="mt-6 rounded-2xl border border-emerald-200 bg-emerald-100 px-4 py-3">
+          <div className="nb-banner nb-banner--success mt-6">
             <p className="text-sm font-semibold text-emerald-900">Draft recovery inbox</p>
             <p className="mt-1 text-sm text-emerald-900">
               {staleDraftInvoices.length === 1
@@ -1301,7 +1297,7 @@ function InvoiceLibrary() {
           </div>
         ) : null}
         {showRecurringReminder ? (
-          <div className="mt-6 rounded-2xl border border-indigo-200 bg-indigo-100 px-4 py-3">
+          <div className="nb-banner mt-6 border-indigo-200 bg-indigo-50 text-indigo-900">
             <p className="text-sm font-semibold text-indigo-900">Recurring reminders</p>
             <p className="mt-1 text-sm text-indigo-900">
               {recurringDueCount > 0
@@ -1338,7 +1334,7 @@ function InvoiceLibrary() {
           </div>
         ) : null}
         {showSentFollowUpReminder ? (
-          <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-100 px-4 py-3">
+          <div className="nb-banner nb-banner--info mt-6">
             <p className="text-sm font-semibold text-blue-900">Follow-up reminders</p>
             <p className="mt-1 text-sm text-blue-900">
               {sentFollowUpInvoices.length === 1
@@ -1402,7 +1398,7 @@ function InvoiceLibrary() {
         ) : null}
 
         {requiresSignIn ? (
-          <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <div className="nb-banner nb-banner--warning mt-6 p-4">
             <p className="text-sm font-semibold text-amber-900">Sign in required to use Invoice Library</p>
             <p className="mt-1 text-sm text-amber-800">
               Your server currently requires an authenticated account for saved invoices.
@@ -1435,7 +1431,7 @@ function InvoiceLibrary() {
         ) : null}
 
         {!requiresSignIn && selectionMode && filteredInvoices.length > 0 ? (
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm">
+          <div className="nb-surface nb-surface--muted mt-6 flex flex-wrap items-center justify-between gap-3 rounded-[26px] px-4 py-3 text-sm">
             <div className="flex items-center gap-3">
               <span className="text-sm font-semibold text-slate-900">
                 {selectedCount > 0 ? `${selectedCount} selected` : "Select invoices"}
@@ -1497,13 +1493,13 @@ function InvoiceLibrary() {
         {!requiresSignIn ? (
           <div className="mt-6 space-y-4">
           {loading ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
+            <div className="nb-surface nb-surface--muted rounded-[28px] p-6 text-sm text-slate-500">
               Loading saved invoices…
             </div>
           ) : null}
 
           {!loading && filteredInvoices.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-white p-8 text-center shadow-sm">
+            <div className="nb-empty">
               {showTrash ? (
                 <>
                   <p className="text-sm font-semibold text-slate-900">Trash is empty</p>
@@ -1524,7 +1520,7 @@ function InvoiceLibrary() {
                   {statusFilter === "all" ? (
                     <button
                       type="button"
-                      className="mt-4 inline-flex h-10 items-center justify-center rounded-xl bg-blue-800 px-4 text-sm font-semibold text-white shadow-sm"
+                      className="nb-btn-primary mt-4 inline-flex h-10 px-4"
                       onClick={() => navigate("/ai-intake")}
                     >
                       Create your first draft
@@ -1564,7 +1560,7 @@ function InvoiceLibrary() {
                 return (
                   <div
                     key={invoice.invoiceId}
-                    className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+                    className="nb-surface rounded-[28px] p-5"
                   >
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <div className="flex items-start gap-3">
@@ -1606,7 +1602,7 @@ function InvoiceLibrary() {
                           {invoice.status}
                         </span>
                         {recurringEntry ? (
-                          <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-semibold text-indigo-900">
+                          <span className="nb-chip border-indigo-200 bg-indigo-50 px-3 py-1 normal-case tracking-normal text-indigo-900">
                             Recurring {recurringIntervalLabel}
                           </span>
                         ) : null}
@@ -1621,7 +1617,7 @@ function InvoiceLibrary() {
                         <>
                           <button
                             type="button"
-                            className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-900 disabled:cursor-not-allowed disabled:bg-blue-300"
+                            className="nb-btn-primary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:bg-blue-300"
                             onClick={() => handleRestore([invoice.invoiceId])}
                             disabled={actionId === invoice.invoiceId || isDeleting}
                           >
@@ -1629,7 +1625,7 @@ function InvoiceLibrary() {
                           </button>
                           <button
                             type="button"
-                            className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-600 shadow-sm transition hover:border-rose-300 hover:text-rose-700 disabled:cursor-not-allowed disabled:text-rose-300"
+                            className="nb-btn-secondary rounded-xl border-rose-200 bg-rose-50 px-4 py-2 text-rose-600 hover:border-rose-300 hover:text-rose-700 disabled:cursor-not-allowed disabled:text-rose-300"
                             onClick={() =>
                               requestDelete({
                                 ids: [invoice.invoiceId],
@@ -1646,7 +1642,7 @@ function InvoiceLibrary() {
                         <>
                           <button
                             type="button"
-                            className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-900 disabled:cursor-not-allowed disabled:bg-blue-300"
+                            className="nb-btn-primary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:bg-blue-300"
                             onClick={() => handleOpen(invoice.invoiceId)}
                             disabled={actionId === invoice.invoiceId}
                           >
@@ -1654,7 +1650,7 @@ function InvoiceLibrary() {
                           </button>
                           <button
                             type="button"
-                            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300"
+                            className="nb-btn-secondary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:text-slate-300"
                             onClick={() => handleInvoiceAgain(invoice.invoiceId)}
                             disabled={actionId === invoice.invoiceId || isStatusBusy}
                           >
@@ -1662,7 +1658,7 @@ function InvoiceLibrary() {
                           </button>
                           <button
                             type="button"
-                            className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm transition hover:border-blue-300 hover:text-blue-800 disabled:cursor-not-allowed disabled:text-blue-300"
+                            className="nb-btn-secondary rounded-xl border-blue-200 bg-blue-50 px-4 py-2 text-blue-700 hover:border-blue-300 hover:text-blue-800 disabled:cursor-not-allowed disabled:text-blue-300"
                             onClick={() => {
                               if (canInstantResend) {
                                 void handleSendInvoice(invoice, { recipientEmail: deliveryRecipient });

@@ -69,7 +69,7 @@
     return (
       <div className={`space-y-2 ${hasReviewCard ? "mt-0 sm:mt-3" : "mt-2 sm:mt-3"}`}>
         <section
-          className={`w-full border border-slate-200 bg-white p-4 shadow-sm ${
+          className={`nb-assistant-panel w-full ${
             hasReviewCard
               ? "rounded-b-2xl rounded-t-none border-t-0 sm:rounded-2xl sm:border"
               : "rounded-2xl"
@@ -85,7 +85,7 @@
                     : "Confirm"}
               </h2>
               {openDecisionCount > 0 ? (
-                <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
+                <span className="nb-chip nb-chip--warning px-2 py-1 normal-case tracking-normal">
                   {openDecisionCount} decision{openDecisionCount > 1 ? "s" : ""} open
                 </span>
               ) : null}
@@ -98,7 +98,7 @@
             <p className="mt-2">
               <button
                 type="button"
-                className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                className="nb-btn-secondary inline-flex rounded-full px-2.5 py-1 text-xs"
                 onClick={() => setAssumptionsCollapsed((prev) => !prev)}
               >
                 {contextDetailsToggleLabel}
@@ -112,7 +112,7 @@
             <>
               {showQuickDecisions ? (
                 <div
-                  className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"
+                  className="nb-banner nb-banner--warning mt-3 rounded-[22px] p-3"
                   ref={decisionsRef}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -121,7 +121,7 @@
                         {quickDecisionHeading}
                       </p>
                       {openDecisionCount > 0 ? (
-                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                        <span className="nb-chip nb-chip--warning px-2 py-0.5 normal-case tracking-normal">
                           {`Decision ${decisionProgressLabel}`}
                         </span>
                       ) : null}
@@ -146,7 +146,7 @@
                     </button>
                   </div>
                   {decisionApplyPending ? (
-                    <div className="mt-2 rounded-lg border border-blue-300 bg-blue-100 px-3 py-2">
+                    <div className="nb-banner nb-banner--info mt-2 rounded-xl px-3 py-2">
                       <p className="text-xs font-semibold text-blue-900">
                         {decisionApplyLabel || "Billie: Applying decision..."}
                       </p>
@@ -348,7 +348,7 @@
               ) : null}
               {showAssumptionDetails && hasDecisions && !showQuickDecisions ? (
                 <div
-                  className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3"
+                  className="nb-banner nb-banner--warning mt-3 rounded-[22px] p-3"
                   ref={decisionsRef}
                 >
                   <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
@@ -397,7 +397,7 @@
               ) : null}
               {showAssumptionDetails && hasVisibleDetails ? (
                 <div
-                  className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3"
+                  className="nb-subcard mt-3 p-3"
                   ref={unparsedRef}
                 >
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -426,7 +426,7 @@
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                        className="nb-btn-secondary rounded-full px-3 py-1 text-xs disabled:cursor-not-allowed disabled:text-slate-300"
                         onClick={handleManualDeepAudit}
                         disabled={auditStatus === "running" || !structuredInvoice}
                       >
@@ -447,16 +447,16 @@
                               <p>{item.text}</p>
                               <div className="flex flex-wrap gap-2">
                                 <button
-                                  type="button"
-                                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                                type="button"
+                                  className="nb-btn-secondary rounded-full px-3 py-1 text-xs disabled:cursor-not-allowed disabled:text-slate-300"
                                   onClick={() => submitUserMessage(`Add to notes: ${item.text}`)}
                                   disabled={isTyping}
                                 >
                                   Add to notes
                                 </button>
                                 <button
-                                  type="button"
-                                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                                type="button"
+                                  className="nb-btn-secondary rounded-full px-3 py-1 text-xs disabled:cursor-not-allowed disabled:text-slate-300"
                                   onClick={() => submitUserMessage(`Add line item: ${item.text}`)}
                                   disabled={isTyping}
                                 >
@@ -496,10 +496,10 @@
           <div className="mt-3 space-y-2">
             <button
               type="button"
-              className={`inline-flex w-full items-center justify-center rounded-xl px-4 py-3 text-sm font-semibold shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 active:scale-[0.98] ${
+              className={`inline-flex w-full items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold shadow-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 active:scale-[0.98] ${
                 primaryCtaDisabled
                   ? "cursor-not-allowed bg-slate-200 text-slate-500"
-                  : "bg-blue-800 text-white"
+                  : "nb-btn-primary text-white"
               }`}
               disabled={primaryCtaDisabled}
               onClick={handlePrimaryCta}

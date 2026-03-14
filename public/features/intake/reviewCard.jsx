@@ -123,7 +123,7 @@
     return (
       <div key={messageId} className="flex justify-start">
         <div
-          className={`w-full border border-slate-200 bg-white p-4 text-sm shadow-sm ${
+          className={`nb-surface w-full p-4 text-sm ${
             showAssumptionsCard
               ? "rounded-t-2xl rounded-b-none border-b-0 sm:rounded-2xl sm:border-b"
               : "rounded-2xl"
@@ -135,7 +135,7 @@
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-sm font-semibold text-slate-900">Draft snapshot</p>
                 {billieIsWorking ? (
-                  <span className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
+                  <span className="nb-chip px-2 py-0.5 normal-case tracking-normal text-sky-700">
                     Refining
                     <span className="ml-1 inline-flex w-4 justify-start" aria-hidden="true">
                       <span className="typing-dot">.</span>
@@ -149,7 +149,7 @@
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                className="nb-btn-secondary rounded-full px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:text-slate-300"
                 onClick={() => focusInputWithValue("Update: ")}
                 disabled={isTyping}
               >
@@ -159,7 +159,7 @@
           </div>
 
           <div className="mt-3 space-y-3">
-            <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+            <div className="nb-subcard px-3 py-2 text-sm text-slate-600">
               {payload.customerName ? (
                 <p>
                   <span className="font-semibold text-slate-900">Client:</span> {payload.customerName}
