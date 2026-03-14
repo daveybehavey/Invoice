@@ -44,7 +44,8 @@
 
 @layer components {
   .nb-page {
-    @apply min-h-screen text-slate-900;
+    @apply relative min-h-screen text-slate-900;
+    overflow-x: hidden;
     background:
       radial-gradient(circle at top left, rgba(172, 207, 240, 0.54), rgba(243, 247, 252, 0) 28%),
       radial-gradient(circle at top right, rgba(105, 147, 210, 0.16), rgba(243, 247, 252, 0) 24%),
