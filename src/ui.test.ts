@@ -3209,7 +3209,10 @@ test("invoice library recurring reminder opens invoice-again for the next due in
 });
 
 test("invoice library shows draft recovery inbox for stale draft invoices", async () => {
-  const ownerId = "ui-library-draft-recovery-owner";
+  const ownerId = `ui-library-draft-recovery-owner-${Date.now()}`;
+  const dayMs = 24 * 60 * 60 * 1000;
+  const staleUpdatedAt = new Date(Date.now() - 8 * dayMs).toISOString();
+  const freshUpdatedAt = new Date(Date.now() - 2 * dayMs).toISOString();
   const context = await browser.newContext();
   await context.addInitScript((initOwnerId) => {
     window.localStorage.setItem("invoiceOwnerId", initOwnerId);
@@ -3253,7 +3256,7 @@ test("invoice library shows draft recovery inbox for stale draft invoices", asyn
   assert.equal(olderResponse.status(), 200);
   const olderPayload = await olderResponse.json();
   await mutateStoredInvoice(olderPayload?.invoice?.invoiceId, {
-    updatedAt: "2026-02-01T00:00:00.000Z"
+    updatedAt: staleUpdatedAt
   });
 
   const newerResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
@@ -3294,7 +3297,7 @@ test("invoice library shows draft recovery inbox for stale draft invoices", asyn
   assert.equal(newerResponse.status(), 200);
   const newerPayload = await newerResponse.json();
   await mutateStoredInvoice(newerPayload?.invoice?.invoiceId, {
-    updatedAt: "2026-03-09T00:00:00.000Z"
+    updatedAt: freshUpdatedAt
   });
 
   const page = await context.newPage();

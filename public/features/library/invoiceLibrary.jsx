@@ -916,10 +916,10 @@ function InvoiceLibrary() {
   };
 
   const statusStyles = {
-    draft: "bg-slate-100 text-slate-700",
-    sent: "bg-blue-100 text-blue-700",
-    paid: "bg-emerald-100 text-emerald-700",
-    deleted: "bg-rose-100 text-rose-700"
+    draft: "nb-chip nb-chip--soft normal-case tracking-normal rounded-full",
+    sent: "nb-chip nb-chip--info normal-case tracking-normal rounded-full",
+    paid: "nb-chip nb-chip--success normal-case tracking-normal rounded-full",
+    deleted: "nb-chip nb-chip--danger normal-case tracking-normal rounded-full"
   };
   const statusFilterOptions = [
     { id: "all", label: "All" },
@@ -1564,8 +1564,8 @@ function InvoiceLibrary() {
                 const paymentLabel = invoice.status === "paid" ? "Paid in full" : `${formatMoney(balanceDue)} due`;
                 const paymentLabelClass =
                   invoice.status === "paid"
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                    : "border-amber-200 bg-amber-50 text-amber-800";
+                    ? "nb-chip nb-chip--success normal-case tracking-normal"
+                    : "nb-chip nb-chip--warning normal-case tracking-normal";
                 const recurringEntry = recurringSchedulesByInvoiceId[invoice.invoiceId] ?? null;
                 const recurringIntervalLabel = recurringEntry
                   ? formatRecurringCadence(recurringEntry.intervalDays)
@@ -1615,7 +1615,7 @@ function InvoiceLibrary() {
                             Updated {formatDate(invoice.updatedAt)}
                           </p>
                           {hasDelivery ? (
-                            <p className="mt-1 text-xs text-blue-800">
+                          <p className="mt-1 text-xs text-slate-600">
                               {providerDelivery
                                 ? `Sent to ${delivery.recipientEmail}`
                                 : `Prepared for ${delivery.recipientEmail} (tracking only)`}
@@ -1627,24 +1627,22 @@ function InvoiceLibrary() {
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusClass}`}>
+                        <span className={statusClass}>
                           {formatStatusLabel(invoice.status)}
                         </span>
                         {recurringEntry ? (
-                          <span className="nb-chip border-indigo-200 bg-indigo-50 px-3 py-1 normal-case tracking-normal text-indigo-900">
+                          <span className="nb-chip nb-chip--soft normal-case tracking-normal">
                             Recurring {recurringIntervalLabel}
                           </span>
                         ) : null}
-                        <span
-                          className={`rounded-lg border px-3 py-1 text-xs font-semibold ${paymentLabelClass}`}
-                        >
+                        <span className={paymentLabelClass}>
                           {paymentLabel}
                         </span>
                         <span className="text-sm font-semibold text-slate-900">{totalLabel}</span>
                       </div>
                     </div>
                     {recurringEntry ? (
-                      <p className="mt-3 text-xs text-indigo-900">Next due {recurringNextDue || "soon"}</p>
+                      <p className="mt-3 text-xs text-slate-600">Next due {recurringNextDue || "soon"}</p>
                     ) : null}
                     <div className="mt-4 flex flex-wrap gap-2">
                       {isDeleted || showTrash ? (
@@ -1692,7 +1690,7 @@ function InvoiceLibrary() {
                           </button>
                           <button
                             type="button"
-                            className="nb-btn-secondary rounded-xl border-blue-200 bg-blue-50 px-4 py-2 text-blue-700 hover:border-blue-300 hover:text-blue-800 disabled:cursor-not-allowed disabled:text-blue-300"
+                            className="nb-btn-secondary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:text-slate-300"
                             onClick={() => {
                               if (canInstantResend) {
                                 void handleSendInvoice(invoice, { recipientEmail: deliveryRecipient });
@@ -1712,7 +1710,7 @@ function InvoiceLibrary() {
                           {hasDelivery && !deliveryOpened ? (
                             <button
                               type="button"
-                              className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm transition hover:border-blue-300 hover:text-blue-800 disabled:cursor-not-allowed disabled:text-blue-300"
+                              className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"
                               onClick={() => handleMarkDeliveryOpened(invoice.invoiceId)}
                               disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
                               aria-label={`Mark opened ${invoice.invoiceNumber || "Draft invoice"}`}
@@ -1727,15 +1725,15 @@ function InvoiceLibrary() {
                               rel="noreferrer"
                               className="nb-btn-primary inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm"
                             >
-                              Open payment link
+                              Open pay link
                             </a>
                           ) : null}
                           {recurringEntry ? (
                             <>
-                              <label className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-800">
+                              <label className="nb-subcard inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700">
                                 Cadence
                                 <select
-                                  className="rounded-md border border-indigo-200 bg-white px-2 py-1 text-xs font-semibold text-indigo-900"
+                                  className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
                                   value={String(normalizeRecurringInterval(recurringEntry.intervalDays))}
                                   onChange={(event) =>
                                     setRecurringSchedule(invoice.invoiceId, Number(event.target.value))
@@ -1763,7 +1761,7 @@ function InvoiceLibrary() {
                               </label>
                               <button
                                 type="button"
-                                className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition hover:border-indigo-300 hover:text-indigo-800 disabled:cursor-not-allowed disabled:text-indigo-300"
+                                className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"
                                 onClick={() =>
                                   setCustomRecurringSchedule(
                                     invoice.invoiceId,
@@ -1777,7 +1775,7 @@ function InvoiceLibrary() {
                               </button>
                               <button
                                 type="button"
-                                className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition hover:border-indigo-300 hover:text-indigo-800 disabled:cursor-not-allowed disabled:text-indigo-300"
+                                className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"
                                 onClick={() => removeRecurringSchedule(invoice.invoiceId)}
                                 disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
                                 aria-label={`Pause recurring for ${invoice.invoiceNumber || "Draft invoice"}`}
@@ -1788,7 +1786,7 @@ function InvoiceLibrary() {
                           ) : (
                             <button
                               type="button"
-                              className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 shadow-sm transition hover:border-indigo-300 hover:text-indigo-800 disabled:cursor-not-allowed disabled:text-indigo-300"
+                              className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"
                               onClick={() => setRecurringSchedule(invoice.invoiceId, 30)}
                               disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
                               aria-label={`Set monthly recurring for ${invoice.invoiceNumber || "Draft invoice"}`}
@@ -1799,7 +1797,7 @@ function InvoiceLibrary() {
                           {showMarkSent ? (
                             <button
                               type="button"
-                              className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 shadow-sm transition hover:border-blue-300 hover:text-blue-800 disabled:cursor-not-allowed disabled:text-blue-300"
+                              className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"
                               onClick={() => handleStatusUpdate(invoice.invoiceId, "sent")}
                               disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
                             >
@@ -1809,7 +1807,7 @@ function InvoiceLibrary() {
                           {showMarkPaid ? (
                             <button
                               type="button"
-                              className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm transition hover:border-emerald-300 hover:text-emerald-800 disabled:cursor-not-allowed disabled:text-emerald-300"
+                              className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"
                               onClick={() => handleStatusUpdate(invoice.invoiceId, "paid")}
                               disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
                             >
@@ -1828,7 +1826,7 @@ function InvoiceLibrary() {
                           ) : null}
                           <button
                             type="button"
-                            className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-600 shadow-sm transition hover:border-rose-300 hover:text-rose-700 disabled:cursor-not-allowed disabled:text-rose-300"
+                            className="nb-btn-secondary rounded-xl border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 hover:border-rose-300 disabled:cursor-not-allowed disabled:text-rose-300"
                             onClick={() =>
                               requestDelete({
                                 ids: [invoice.invoiceId],
@@ -1844,8 +1842,8 @@ function InvoiceLibrary() {
                       )}
                     </div>
                     {showSendComposer ? (
-                      <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-blue-900">
+                      <div className="nb-surface nb-surface--muted mt-3 rounded-xl p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                           Recipient email
                         </p>
                         <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -1859,13 +1857,13 @@ function InvoiceLibrary() {
                                   : current
                               )
                             }
-                            className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-200"
+                            className="nb-input w-full rounded-lg px-3 py-2 text-sm"
                             placeholder="client@example.com"
                           />
                           <div className="flex items-center gap-2">
                             <button
                               type="button"
-                              className="rounded-lg bg-blue-800 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-900 disabled:cursor-not-allowed disabled:bg-blue-300"
+                              className="nb-btn-primary rounded-lg px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-blue-300"
                               onClick={() => void submitSendComposer(invoice.invoiceId)}
                               disabled={actionId === invoice.invoiceId}
                             >
@@ -1873,7 +1871,7 @@ function InvoiceLibrary() {
                             </button>
                             <button
                               type="button"
-                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300"
+                              className="nb-btn-secondary rounded-lg px-3 py-2 text-sm"
                               onClick={cancelSendComposer}
                               disabled={actionId === invoice.invoiceId}
                             >

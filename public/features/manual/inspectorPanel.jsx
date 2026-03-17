@@ -231,9 +231,9 @@ function InspectorPanel({
   const showBillingPortalAction =
     accountPlan?.plan === "pro" && (Boolean(planBillingPortalUrl) || useStripePortalAction);
   const invoiceStatusStyles = {
-    draft: "bg-slate-100 text-slate-700",
-    sent: "bg-blue-100 text-blue-700",
-    paid: "bg-emerald-100 text-emerald-700"
+    draft: "nb-chip nb-chip--soft normal-case tracking-normal",
+    sent: "nb-chip nb-chip--info normal-case tracking-normal",
+    paid: "nb-chip nb-chip--success normal-case tracking-normal"
   };
   const canMarkSent = invoiceStatus === "draft" || invoiceStatus === "paid";
   const canMarkPaid = invoiceStatus === "sent";
@@ -945,8 +945,8 @@ function InspectorPanel({
     invoiceStatus === "paid" ? "Paid in full" : `${formatPreviewMoney(previewTotal)} due`;
   const paymentStateClass =
     invoiceStatus === "paid"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-      : "border-amber-200 bg-amber-50 text-amber-800";
+      ? "nb-chip nb-chip--success normal-case tracking-normal"
+      : "nb-chip nb-chip--warning normal-case tracking-normal";
 
   useEffect(() => {
     const requestId = assistantCommandRequest?.id;
@@ -1553,7 +1553,7 @@ function InspectorPanel({
                 )
               ) : null}
               {planLimitReached ? (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-2">
+                <div className="nb-banner nb-banner--warning px-2 py-2">
                   <p className="text-xs font-semibold text-amber-900">
                     Save limit reached. Update existing invoices or upgrade to save more.
                   </p>
@@ -1561,7 +1561,7 @@ function InspectorPanel({
                     useStripeUpgradeAction ? (
                       <button
                         type="button"
-                        className="mt-2 inline-flex rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs font-semibold text-amber-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="nb-btn-secondary mt-2 inline-flex rounded-lg px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                         onClick={handleUpgradeAction}
                         disabled={billingBusy}
                       >
@@ -1572,7 +1572,7 @@ function InspectorPanel({
                         href={planUpgradeUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="mt-2 inline-flex rounded-lg border border-amber-300 bg-white px-2 py-1 text-xs font-semibold text-amber-800"
+                        className="nb-btn-secondary mt-2 inline-flex rounded-lg px-2 py-1 text-xs"
                       >
                         Upgrade plan
                       </a>
@@ -1619,14 +1619,10 @@ function InspectorPanel({
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-slate-900">Invoice status</p>
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                    <span
-                      className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                        invoiceStatusStyles[invoiceStatus] ?? invoiceStatusStyles.draft
-                      }`}
-                    >
+                    <span className={`${invoiceStatusStyles[invoiceStatus] ?? invoiceStatusStyles.draft}`}>
                       Current: {invoiceStatus || "draft"}
                     </span>
-                    <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${paymentStateClass}`}>
+                    <span className={paymentStateClass}>
                       {paymentStateLabel}
                     </span>
                   </div>
@@ -1636,7 +1632,7 @@ function InspectorPanel({
                   {canMarkSent ? (
                     <button
                       type="button"
-                      className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 disabled:cursor-not-allowed disabled:text-blue-300"
+                      className="nb-btn-secondary rounded-lg px-3 py-2 text-xs disabled:cursor-not-allowed disabled:text-blue-300"
                       onClick={() => onUpdateSavedInvoiceStatus("sent")}
                       disabled={statusUpdateLoading}
                     >
@@ -1646,7 +1642,7 @@ function InspectorPanel({
                   {canMarkPaid ? (
                     <button
                       type="button"
-                      className="rounded-lg border border-blue-300 bg-blue-100 px-3 py-2 text-xs font-semibold text-blue-900 disabled:cursor-not-allowed disabled:text-blue-300"
+                      className="nb-btn-secondary rounded-lg px-3 py-2 text-xs disabled:cursor-not-allowed disabled:text-blue-300"
                       onClick={() => onUpdateSavedInvoiceStatus("paid")}
                       disabled={statusUpdateLoading}
                     >
@@ -1656,7 +1652,7 @@ function InspectorPanel({
                   {canMarkDraft ? (
                     <button
                       type="button"
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 disabled:cursor-not-allowed disabled:text-slate-300"
+                      className="nb-btn-ghost rounded-lg px-3 py-2 text-xs disabled:cursor-not-allowed disabled:text-slate-300"
                       onClick={() => onUpdateSavedInvoiceStatus("draft")}
                       disabled={statusUpdateLoading}
                     >
@@ -1677,7 +1673,7 @@ function InspectorPanel({
                     </p>
                   </div>
                   {previewPaymentLink ? (
-                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
+                    <span className="nb-chip nb-chip--success normal-case tracking-normal text-[11px]">
                       Link ready
                     </span>
                   ) : null}

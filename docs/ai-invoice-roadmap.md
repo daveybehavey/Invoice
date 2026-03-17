@@ -535,6 +535,14 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
 132. Mobile/store packaging hardening baseline
    - Added installed Capacitor toolchain, stronger manifest metadata, safer Capacitor transport defaults, and a stricter `npm run check:mobile-wrapper`.
    - Packaging docs now include the real pre-store checklist instead of only a placeholder baseline.
+133. Launch gate verification pass (web)
+   - Verified live launch readiness with `npm run check:release` (launch + public-domain checks passing).
+   - Verified provider-backed launch email delivery with `npm run send:launch-email-test`.
+   - Confirms live Stripe mode + verified Resend domain in one operational pass.
+134. Cross-surface consistency pass (launcher/intake/manual/library)
+   - Unified plan-limit warning treatments onto shared banner/button patterns in intake decisions and manual export.
+   - Simplified invoice-library status/payment/recurring visual language to shared chip/button primitives.
+   - Reduced cross-screen color drift so secondary actions stay quieter and the primary CTA remains clear.
 
 ## Next (current priorities)
 1. Optional modularization continuation

@@ -511,7 +511,7 @@
               <p className="text-xs text-slate-500">{ctaHelper}</p>
             ) : null}
             {planLimitReached ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <div className="nb-banner nb-banner--warning rounded-xl p-3">
                 <p className="text-sm font-semibold text-amber-900">Free plan limit reached</p>
                 {planSummary ? (
                   <p className="mt-1 text-xs font-semibold text-amber-800">{planSummary}</p>
@@ -524,7 +524,7 @@
                     {useStripeUpgradeAction ? (
                       <button
                         type="button"
-                        className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300"
+                        className="nb-btn-secondary rounded-full px-3 py-1 text-xs disabled:cursor-not-allowed disabled:text-amber-300"
                         onClick={handleUpgradeAction}
                         disabled={billingBusy}
                       >
@@ -535,7 +535,7 @@
                         href={upgradeUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-300 hover:text-amber-900"
+                        className="nb-btn-secondary inline-flex rounded-full px-3 py-1 text-xs"
                       >
                         Upgrade plan
                       </a>
@@ -545,7 +545,7 @@
                 {billingError ? <p className="mt-2 text-xs text-rose-700">{billingError}</p> : null}
               </div>
             ) : planWarning ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <div className="nb-banner nb-banner--warning rounded-xl p-3">
                 {planSummary ? (
                   <p className="text-xs text-amber-800">{planSummary}</p>
                 ) : null}

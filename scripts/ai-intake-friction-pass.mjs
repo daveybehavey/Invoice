@@ -175,7 +175,9 @@ async function appendHistorySnapshot(report) {
 }
 
 async function getVisiblePrimaryButtons(page) {
-  const labels = await page.locator("button.bg-emerald-600:visible").allTextContents();
+  const labels = await page
+    .locator("button.nb-btn-primary:visible, button.bg-emerald-600:visible")
+    .allTextContents();
   const allowedLabels = new Set(["Build invoice", "Resolve decisions", "Generate Invoice"]);
   return labels
     .map((label) => label.trim())

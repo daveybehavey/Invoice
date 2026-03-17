@@ -196,6 +196,12 @@
     color: #be123c;
   }
 
+  .nb-chip--info {
+    border-color: rgba(29, 78, 216, 0.16);
+    background: var(--nb-info-soft);
+    color: #1d4ed8;
+  }
+
   .nb-btn-primary {
     @apply inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-semibold text-white transition duration-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60;
     background: linear-gradient(180deg, #14447d 0%, #093064 100%);
