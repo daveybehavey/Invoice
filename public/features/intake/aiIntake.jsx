@@ -1611,6 +1611,9 @@ function AIIntake() {
           <div className="text-right">
             <p className="text-sm font-semibold text-slate-900">Billie at NoteBill</p>
             <p className="text-xs text-slate-500">{intakeHeaderStatus}</p>
+            <p className="mt-1 inline-flex rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800">
+              Billie suggests. You approve money decisions.
+            </p>
             <button
               type="button"
               className="mt-1 text-xs font-medium text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"

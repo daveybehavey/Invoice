@@ -94,6 +94,7 @@
           {summaryTimeLabel ? (
             <p className="mt-1 text-xs text-slate-500">Summary updated {summaryTimeLabel}</p>
           ) : null}
+          <p className="mt-1 text-xs text-slate-500">Billie suggests options. You make final money calls.</p>
           {showContextDetailsToggle ? (
             <p className="mt-2">
               <button
@@ -106,7 +107,7 @@
             </p>
           ) : null}
           {openDecisionCount > 0 && showConfirmDetails && !showQuickDecisions ? (
-            <p className="mt-2 text-xs text-amber-800">I found unclear money items. Choose Add or Skip.</p>
+            <p className="mt-2 text-xs text-amber-800">Money decision pending. Choose Add or Skip to continue.</p>
           ) : null}
           {showConfirmDetails && (showQuickDecisions || hasVisibleDetails || hasDecisions) ? (
             <>
@@ -154,8 +155,8 @@
                   ) : null}
                   {showDecisionWhy ? (
                     <p className="mt-2 text-sm text-amber-900">
-                      These items were unclear in your notes. Choose Add or Skip so no money is
-                      guessed.
+                      These items were unclear in your notes. Billie does not auto-decide money.
+                      Choose Add or Skip to continue.
                     </p>
                   ) : null}
                   <div className="mt-2 space-y-2">
