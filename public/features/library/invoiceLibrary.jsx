@@ -227,6 +227,19 @@ function InvoiceLibrary() {
     });
   };
 
+  const formatStatusLabel = (status) => {
+    if (status === "paid") {
+      return "Paid";
+    }
+    if (status === "sent") {
+      return "Sent";
+    }
+    if (status === "deleted") {
+      return "Deleted";
+    }
+    return "Draft";
+  };
+
   const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
   const deriveTaxRate = (invoice) => {
@@ -1079,6 +1092,9 @@ function InvoiceLibrary() {
             <p className="mt-1 text-sm text-slate-600">
               Reopen saved work, follow up, and keep payments moving.
             </p>
+            <p className="nb-chip mt-2 inline-flex items-center gap-2 px-3 py-1 normal-case tracking-normal text-xs text-slate-700">
+              Billie is ready to polish any draft when you open it.
+            </p>
             <div className="nb-chip mt-2 inline-flex items-center gap-2 px-3 py-1 normal-case tracking-normal text-xs">
               <span className="font-semibold text-slate-500">Account:</span>
               <span className={authSession?.email ? "font-semibold text-blue-800" : "font-semibold text-slate-700"}>
@@ -1537,6 +1553,19 @@ function InvoiceLibrary() {
                 const totalLabel = Number.isFinite(invoice.total)
                   ? formatMoney(invoice.total)
                   : "—";
+                const balanceDueRaw = Number(
+                  invoice.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue
+                );
+                const balanceDue = Number.isFinite(balanceDueRaw)
+                  ? Math.max(balanceDueRaw, 0)
+                  : Number.isFinite(invoice.total)
+                    ? Math.max(Number(invoice.total), 0)
+                    : 0;
+                const paymentLabel = invoice.status === "paid" ? "Paid in full" : `${formatMoney(balanceDue)} due`;
+                const paymentLabelClass =
+                  invoice.status === "paid"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-amber-200 bg-amber-50 text-amber-800";
                 const recurringEntry = recurringSchedulesByInvoiceId[invoice.invoiceId] ?? null;
                 const recurringIntervalLabel = recurringEntry
                   ? formatRecurringCadence(recurringEntry.intervalDays)
@@ -1599,13 +1628,18 @@ function InvoiceLibrary() {
                       </div>
                       <div className="flex items-center gap-3">
                         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${statusClass}`}>
-                          {invoice.status}
+                          {formatStatusLabel(invoice.status)}
                         </span>
                         {recurringEntry ? (
                           <span className="nb-chip border-indigo-200 bg-indigo-50 px-3 py-1 normal-case tracking-normal text-indigo-900">
                             Recurring {recurringIntervalLabel}
                           </span>
                         ) : null}
+                        <span
+                          className={`rounded-lg border px-3 py-1 text-xs font-semibold ${paymentLabelClass}`}
+                        >
+                          {paymentLabel}
+                        </span>
                         <span className="text-sm font-semibold text-slate-900">{totalLabel}</span>
                       </div>
                     </div>
@@ -1691,9 +1725,9 @@ function InvoiceLibrary() {
                               href={invoice.paymentLinkUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex items-center justify-center rounded-xl border border-blue-300 bg-blue-100 px-4 py-2 text-sm font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 hover:text-blue-950"
+                              className="nb-btn-primary inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm"
                             >
-                              Open pay link
+                              Open payment link
                             </a>
                           ) : null}
                           {recurringEntry ? (

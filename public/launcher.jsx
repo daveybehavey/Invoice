@@ -463,18 +463,17 @@ function Launcher() {
                   className="nb-title text-[2rem] leading-[1.02] text-slate-900 md:text-6xl"
                   style={{ fontFamily: "'Fraunces', serif" }}
                 >
-                  From rough notes to a finished invoice.
+                  Turn rough notes into a client-ready invoice.
                 </h1>
                 <p className="nb-copy mt-3 max-w-2xl md:mt-4 md:leading-7">
-                  Paste what happened. Billie shapes the draft. You only step in for pricing, tax,
-                  and the few choices that actually matter.
+                  Paste what happened. Billie builds a clean draft. You only approve the money decisions.
                 </p>
               </div>
               <div className="mt-5 grid gap-2 sm:grid-cols-3 md:mt-6 md:gap-3">
                 {[
-                  ["Messy input", "Notes, screenshots, PDFs, photos, or half-finished thoughts."],
-                  ["Clear review", "Billie surfaces the choices that need your approval."],
-                  ["Ready to send", "Export an invoice that already reads cleanly."]
+                  ["Messy input", "Notes, screenshots, PDFs, photos, or voice notes."],
+                  ["Clear review", "Only money-impacting choices require your call."],
+                  ["Ready to send", "Save, export, or send without rewrites."]
                 ].map(([title, copy]) => (
                   <div
                     key={title}
@@ -523,7 +522,7 @@ function Launcher() {
                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#acd0f4]">Built for real work</p>
                 <p className="mt-2 text-base font-semibold text-white">Billie organizes the draft. You approve the money.</p>
                 <p className="mt-2 text-sm leading-6 text-slate-200">
-                  One clear start, visible draft changes, no silent total edits.
+                  One clear start. Visible draft changes. No silent total edits.
                 </p>
               </div>
             </div>
@@ -536,7 +535,7 @@ function Launcher() {
                   className="mt-4 text-3xl leading-tight text-white"
                   style={{ fontFamily: "'Fraunces', serif" }}
                 >
-                  Fast enough to use between jobs. Clean enough to send the same day.
+                  Fast enough between jobs. Clean enough to send the same day.
                 </h2>
                 <div className="mt-6 space-y-3">
                   {[

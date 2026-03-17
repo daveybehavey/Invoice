@@ -189,17 +189,16 @@ function LauncherStartSection({
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Start here</p>
           <h2 className="mt-2 text-[1.75rem] text-slate-900 md:text-4xl" style={{ fontFamily: "'Fraunces', serif" }}>
-            Paste the rough version. Billie builds the draft.
+            Start with notes. Billie prepares the draft.
           </h2>
           <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 md:mt-3 md:text-base">
-            This is the normal path. Best for job notes, screenshots, texts, or anything that still
-            needs to be cleaned up.
+            This is the default path for most jobs. Paste what happened, approve money decisions, then send.
           </p>
           <div className="mt-4 grid gap-2 sm:grid-cols-3 md:mt-5 md:gap-3">
             {[
               ["1", "Paste notes", "Drop in the messy version."],
-              ["2", "Approve money", "Confirm only the decisions that affect totals."],
-              ["3", "Send invoice", "Save, export, or send the finished version."]
+              ["2", "Approve money", "Confirm decisions that change totals."],
+              ["3", "Send invoice", "Save, export, or send immediately."]
             ].map(([step, title, copy]) => (
               <div
                 key={step}
@@ -252,7 +251,7 @@ function LauncherStartSection({
             </button>
           </div>
           <p className="mt-3 text-xs leading-5 text-slate-500">
-            Start here unless you already have a file or want full manual control.
+            Start here unless you already have a file or need full manual control.
           </p>
         </div>
       </div>
