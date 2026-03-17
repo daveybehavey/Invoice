@@ -941,6 +941,12 @@ function InspectorPanel({
   const previewBillToDetails = previewData?.billToDetails?.trim() || "Add client details";
   const previewNotes = previewData?.notes?.trim() || "Add payment terms or a note.";
   const previewPaymentLink = previewData?.paymentLinkUrl?.trim() || "";
+  const paymentStateLabel =
+    invoiceStatus === "paid" ? "Paid in full" : `${formatPreviewMoney(previewTotal)} due`;
+  const paymentStateClass =
+    invoiceStatus === "paid"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      : "border-amber-200 bg-amber-50 text-amber-800";
 
   useEffect(() => {
     const requestId = assistantCommandRequest?.id;
@@ -1612,13 +1618,18 @@ function InspectorPanel({
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-slate-900">Invoice status</p>
-                  <span
-                    className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                      invoiceStatusStyles[invoiceStatus] ?? invoiceStatusStyles.draft
-                    }`}
-                  >
-                    Current: {invoiceStatus || "draft"}
-                  </span>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <span
+                      className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                        invoiceStatusStyles[invoiceStatus] ?? invoiceStatusStyles.draft
+                      }`}
+                    >
+                      Current: {invoiceStatus || "draft"}
+                    </span>
+                    <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${paymentStateClass}`}>
+                      {paymentStateLabel}
+                    </span>
+                  </div>
                 </div>
                 <p className="text-xs text-slate-500">Track draft, sent, and paid state for this saved invoice.</p>
                 <div className="flex flex-wrap gap-2">
