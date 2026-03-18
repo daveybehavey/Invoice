@@ -129,7 +129,8 @@
       "Missing /utils/accountPlan.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
     );
   }
-  const { formatPlanSummary, getPlanUpgradeUrl, getPlanPrelimitWarning } = accountPlanUtils;
+  const { formatPlanSummary, getPlanUpgradeUrl, getPlanPrelimitWarning, getPlanUsageModel } =
+    accountPlanUtils;
 
   const billingActions = window.InvoiceBillingActions;
   if (!billingActions) {
@@ -165,6 +166,15 @@
     buildBillieChangePreview,
     buildLaborQuickReplies
   } = aiIntakeHelperUtils;
+  const billieTelemetryUtils = window.InvoiceBillieTelemetry;
+  const getInitialRefineSummaryLabel = () => {
+    if (!billieTelemetryUtils) {
+      return "";
+    }
+    return billieTelemetryUtils.formatRefineSummaryLabel(
+      billieTelemetryUtils.getRefineSummary("intake")
+    );
+  };
 
 function AIIntake() {
   const navigate = useNavigate();
@@ -205,6 +215,9 @@ function AIIntake() {
   const [assumptionsCollapsed, setAssumptionsCollapsed] = useState(true);
   const [decisionToast, setDecisionToast] = useState(null);
   const [billieStatus, setBillieStatus] = useState(null);
+  const [billieRefineSummaryLabel, setBillieRefineSummaryLabel] = useState(() =>
+    getInitialRefineSummaryLabel()
+  );
   const [billieUndoState, setBillieUndoState] = useState(null);
   const [billieChangePreview, setBillieChangePreview] = useState([]);
   const [recentlyChangedLines, setRecentlyChangedLines] = useState({
@@ -326,6 +339,7 @@ function AIIntake() {
   const billieStatusTimeoutRef = useRef(null);
   const billieHighlightTimeoutRef = useRef(null);
   const pendingDecisionUndoRef = useRef(null);
+  const billieRefineStartMsRef = useRef(null);
   const intakeComplete = intakePhase === "ready_to_generate";
   const confirmationKeywords = [];
   const rejectionKeywords = ["no", "not correct", "wrong", "incorrect", "needs change"];
@@ -648,6 +662,7 @@ function AIIntake() {
 
   const handleBillieEditLifecycle = ({ phase, outcome, targetType }) => {
     if (phase === "start") {
+      billieRefineStartMsRef.current = Date.now();
       const targetText =
         targetType === "line_item"
           ? "Billie: Refining selected line"
@@ -660,6 +675,23 @@ function AIIntake() {
     if (phase !== "complete") {
       return;
     }
+    const startedAtMs = Number.isFinite(billieRefineStartMsRef.current)
+      ? billieRefineStartMsRef.current
+      : null;
+    if (billieTelemetryUtils && startedAtMs && outcome !== "ignored") {
+      const durationMs = Math.max(0, Date.now() - startedAtMs);
+      billieTelemetryUtils.recordRefineEvent({
+        source: "intake",
+        outcome,
+        durationMs
+      });
+      setBillieRefineSummaryLabel(
+        billieTelemetryUtils.formatRefineSummaryLabel(
+          billieTelemetryUtils.getRefineSummary("intake")
+        )
+      );
+    }
+    billieRefineStartMsRef.current = null;
     if (outcome === "no_change") {
       showBillieStatus({ kind: "info", text: "No wording changes needed" }, { durationMs: 4000 });
       return;
@@ -988,6 +1020,7 @@ function AIIntake() {
   const primaryCtaLabel = hasDecisionPrimaryPath ? "Resolve decisions" : "Generate Invoice";
   const primaryCtaDisabled = hasDecisionPrimaryPath ? false : ctaDisabled;
   const planSummary = formatPlanSummary(accountPlan);
+  const planUsage = getPlanUsageModel(accountPlan);
   const planLimitReached = Boolean(accountPlan?.upgradeRequired);
   const planWarning = getPlanPrelimitWarning(accountPlan);
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
@@ -999,6 +1032,15 @@ function AIIntake() {
   const contextDetailsToggleLabel = assumptionsCollapsed
     ? "Show context details"
     : "Hide context details";
+  const activeBillieStatus = billieStatus ?? { kind: "ready", text: "Billie ready" };
+  const billieStatusClass =
+    activeBillieStatus.kind === "safe"
+      ? "nb-assistant-chip nb-assistant-chip--safe"
+      : activeBillieStatus.kind === "warning"
+        ? "nb-assistant-chip nb-assistant-chip--warning"
+        : activeBillieStatus.kind === "working"
+          ? "nb-assistant-chip nb-assistant-chip--working"
+          : "nb-assistant-chip nb-assistant-chip--ready";
   const decisionIncludeButtonClass =
     "rounded-full border border-amber-600 bg-amber-600 px-3 py-1 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-700 disabled:cursor-not-allowed disabled:border-amber-300 disabled:bg-amber-300";
   const decisionExcludeButtonClass =
@@ -2003,6 +2045,7 @@ function AIIntake() {
                 ctaHelper={ctaHelper}
                 planLimitReached={showIntakePlanBanner}
                 planSummary={planSummary}
+                planUsage={planUsage}
                 planWarning={hasReviewCard && !showIntakePlanBanner ? planWarning : ""}
                 showUpgradeAction={showUpgradeAction}
                 useStripeUpgradeAction={useStripeUpgradeAction}
@@ -2114,35 +2157,27 @@ function AIIntake() {
                 <p className="text-[11px] text-slate-500">Wording only. Numbers stay locked.</p>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
-                {billieStatus ? (
-                  <span
-                    className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
-                      billieStatus.kind === "safe"
-                        ? "bg-emerald-50 text-emerald-700"
-                        : billieStatus.kind === "warning"
-                          ? "bg-amber-100 text-amber-800"
-                          : billieStatus.kind === "working"
-                            ? "bg-sky-50 text-sky-700"
-                            : "bg-slate-100 text-slate-600"
-                    }`}
-                  >
-                    {billieStatus.kind === "safe"
-                      ? `✓ ${billieStatus.text}`
-                      : billieStatus.kind === "warning"
-                        ? `⚠ ${billieStatus.text}`
-                        : billieStatus.kind === "working"
-                          ? (
-                            <>
-                              <span>{billieStatus.text}</span>
-                              <span className="ml-1 inline-flex w-4 justify-start" aria-hidden="true">
-                                <span className="typing-dot">.</span>
-                                <span className="typing-dot">.</span>
-                                <span className="typing-dot">.</span>
-                              </span>
-                            </>
-                          )
-                          : billieStatus.text}
-                  </span>
+                <span className={billieStatusClass}>
+                  <span className="nb-assistant-chip__dot" aria-hidden="true" />
+                  {activeBillieStatus.kind === "safe"
+                    ? `✓ ${activeBillieStatus.text}`
+                    : activeBillieStatus.kind === "warning"
+                      ? `⚠ ${activeBillieStatus.text}`
+                      : activeBillieStatus.kind === "working"
+                        ? (
+                          <>
+                            <span>{activeBillieStatus.text}</span>
+                            <span className="ml-1 inline-flex w-4 justify-start" aria-hidden="true">
+                              <span className="typing-dot">.</span>
+                              <span className="typing-dot">.</span>
+                              <span className="typing-dot">.</span>
+                            </span>
+                          </>
+                        )
+                        : activeBillieStatus.text}
+                </span>
+                {billieRefineSummaryLabel ? (
+                  <span className="text-[11px] font-medium text-slate-500">{billieRefineSummaryLabel}</span>
                 ) : null}
                 {billieUndoState ? (
                   <button

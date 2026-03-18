@@ -3,6 +3,7 @@
   const { useCallback, useEffect, useMemo, useState } = React;
   const requestIdentity = window.InvoiceRequestIdentity;
   const apiFetch = requestIdentity?.apiFetch ?? window.fetch.bind(window);
+  const billieTelemetryUtils = window.InvoiceBillieTelemetry;
 
   function StatusPill({ label, value, tone = "slate" }) {
     const toneClasses =
@@ -310,6 +311,11 @@
     const migrationBacklog = Boolean(migrationInfo?.migrationStatus?.backlogDetected);
     const ocrLowRatePct = `${(trend24h.lowRate * 100).toFixed(1)}%`;
     const frictionFailedRatePct = `${(frictionTrend24h.failedRate * 100).toFixed(1)}%`;
+    const intakeRefineSummary = billieTelemetryUtils?.getRefineSummary("intake") ?? null;
+    const manualRefineSummary = billieTelemetryUtils?.getRefineSummary("manual") ?? null;
+    const formatLatency = (value) =>
+      billieTelemetryUtils?.formatDuration?.(value) ||
+      (Number.isFinite(value) ? `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}s` : "n/a");
 
     return (
       <div className="nb-page nb-page--quiet min-h-screen">
@@ -413,6 +419,41 @@
                 Legacy migration backlog detected. Complete migration before strict production cutover.
               </p>
             ) : null}
+          </section>
+
+          <section className="nb-surface mt-4 rounded-[28px] p-5">
+            <h2 className="text-lg font-semibold text-slate-900">Billie refine latency</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Client-captured timing for wording refine actions. Target: p50 under 2s, p95 under 5s.
+            </p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Intake Billie</p>
+                <p className="mt-1 text-sm text-slate-700">
+                  Last: <span className="font-semibold">{formatLatency(intakeRefineSummary?.lastMs)}</span>
+                </p>
+                <p className="text-sm text-slate-700">
+                  p50: <span className="font-semibold">{formatLatency(intakeRefineSummary?.p50Ms)}</span>
+                </p>
+                <p className="text-sm text-slate-700">
+                  p95: <span className="font-semibold">{formatLatency(intakeRefineSummary?.p95Ms)}</span>
+                </p>
+                <p className="mt-1 text-xs text-slate-500">Samples: {intakeRefineSummary?.count ?? 0}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Manual Billie</p>
+                <p className="mt-1 text-sm text-slate-700">
+                  Last: <span className="font-semibold">{formatLatency(manualRefineSummary?.lastMs)}</span>
+                </p>
+                <p className="text-sm text-slate-700">
+                  p50: <span className="font-semibold">{formatLatency(manualRefineSummary?.p50Ms)}</span>
+                </p>
+                <p className="text-sm text-slate-700">
+                  p95: <span className="font-semibold">{formatLatency(manualRefineSummary?.p95Ms)}</span>
+                </p>
+                <p className="mt-1 text-xs text-slate-500">Samples: {manualRefineSummary?.count ?? 0}</p>
+              </div>
+            </div>
           </section>
 
           <div className="nb-surface mt-4 rounded-[28px] p-5">

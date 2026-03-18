@@ -543,6 +543,18 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Unified plan-limit warning treatments onto shared banner/button patterns in intake decisions and manual export.
    - Simplified invoice-library status/payment/recurring visual language to shared chip/button primitives.
    - Reduced cross-screen color drift so secondary actions stay quieter and the primary CTA remains clear.
+135. Freemium usage-meter rollout (cross-surface)
+   - Added a shared plan-usage meter component style and wired it into launcher, import, intake decisions, manual export, and library account surfaces.
+   - Free-plan usage now shows consistent `used/limit`, remaining saves, and progress-tone states (normal/warning/limit) across all primary workflows.
+   - Keeps billing logic unchanged; this is visibility + conversion UX hardening.
+136. Library reminder automation controls (retention operations)
+   - Added owner-scoped reminder automation settings (`dueAfterDays`, `cooldownDays`, `maxPerRun`) in Invoice Library with persisted local defaults.
+   - Added one-tap `Preview due now` and `Run due reminders` actions that call the deterministic reminders-run endpoint with overrides.
+   - Keeps reminder safety rules unchanged while making follow-up automation operational from the library surface.
+137. Billie runtime presence + refine latency visibility
+   - Added a shared Billie status-chip treatment (`ready`, `working`, `safe`, `warning`) and applied it across intake, manual workspace, launcher/import/library cues.
+   - Added local refine telemetry (`last`, `p50`, `p95`) for intake/manual wording actions and surfaced summary labels in active Billie UI states.
+   - Diagnostics now includes a Billie refine-latency panel so perceived assistant responsiveness can be tracked over time.
 
 ## Next (current priorities)
 1. Optional modularization continuation

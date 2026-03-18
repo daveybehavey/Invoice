@@ -67,7 +67,13 @@ if (!accountPlanUtils) {
   throw new Error("Missing /utils/accountPlan.js load. Ensure it is loaded before /launcher.jsx.");
 }
 
-const { formatPlanSummary, getPlanUpgradeUrl, getPlanBillingPortalUrl, getPlanPrelimitWarning } =
+const {
+  formatPlanSummary,
+  getPlanUpgradeUrl,
+  getPlanBillingPortalUrl,
+  getPlanPrelimitWarning,
+  getPlanUsageModel
+} =
   accountPlanUtils;
 const billingActions = window.InvoiceBillingActions;
 if (!billingActions) {
@@ -291,6 +297,7 @@ function Launcher() {
     (option) => option.key === "library" || option.key === "identity"
   );
   const planSummary = formatPlanSummary(accountPlan);
+  const planUsage = getPlanUsageModel(accountPlan);
   const planAtLimit = Boolean(accountPlan?.upgradeRequired);
   const planWarning = getPlanPrelimitWarning(accountPlan);
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
@@ -487,8 +494,9 @@ function Launcher() {
               <AccountStrip
                 authSession={authSession}
                 authBusy={authBusy}
-                planSummary={planSummary}
-                planAtLimit={planAtLimit}
+          planSummary={planSummary}
+          planUsage={planUsage}
+          planAtLimit={planAtLimit}
                 planWarning={planWarning}
                 hasPlanActions={hasPlanActions}
                 showPlanActions={showPlanActions}

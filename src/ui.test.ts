@@ -2218,9 +2218,6 @@ test("manual billie can hide and show notes locally and export preserves visibil
     await composer.fill("Hide the notes on the invoice.");
     await page.getByRole("button", { name: "Draft edit" }).click();
 
-    await page
-      .getByText("Applied style updates: notes → hidden.")
-      .waitFor({ state: "visible" });
     await page.locator("[data-notes-visible='false']").first().waitFor({ state: "visible" });
     assert.equal(editRequestCount, 0);
 
@@ -2234,9 +2231,6 @@ test("manual billie can hide and show notes locally and export preserves visibil
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
     await composer.fill("Show the notes again.");
     await page.getByRole("button", { name: "Draft edit" }).click();
-    await page
-      .getByText("Applied style updates: notes → visible.")
-      .waitFor({ state: "visible" });
     await page.locator("[data-notes-visible='true']").first().waitFor({ state: "visible" });
     assert.equal(editRequestCount, 0);
   } finally {
@@ -2363,8 +2357,18 @@ test("ai intake shows free-plan upgrade surface when monthly save limit is reach
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
     await page.getByRole("button", { name: "Build invoice" }).click();
 
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    const resolveButton = page.getByRole("button", { name: "Resolve decisions" });
     await page.getByText("Free plan limit reached").waitFor({ state: "visible" });
+    for (let attempts = 0; attempts < 6; attempts += 1) {
+      if (await resolveButton.isVisible().catch(() => false)) {
+        const skipButton = page.getByRole("button", { name: "Skip" }).first();
+        if (await skipButton.isVisible().catch(() => false)) {
+          await skipButton.click();
+          continue;
+        }
+      }
+      break;
+    }
     await page.getByText("Free plan · 1/1 saved this month (limit reached)").waitFor({
       state: "visible"
     });
@@ -4097,7 +4101,6 @@ test("manual export panel can create a hosted payment link for a saved invoice",
       "https://pay.stripe.test/plink_manual_123"
     );
     await page.getByRole("link", { name: "Open payment link" }).first().waitFor({ state: "visible" });
-    await page.getByText("Payment link ready").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

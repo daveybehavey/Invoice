@@ -202,6 +202,81 @@
     color: #1d4ed8;
   }
 
+  .nb-assistant-chip {
+    @apply inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold;
+    border-color: rgba(105, 147, 210, 0.2);
+    background: rgba(255, 255, 255, 0.88);
+    color: var(--nb-text-secondary);
+  }
+
+  .nb-assistant-chip__dot {
+    @apply inline-flex h-2.5 w-2.5 rounded-full;
+    background: #6993d2;
+  }
+
+  .nb-assistant-chip--working {
+    border-color: rgba(37, 99, 235, 0.25);
+    background: #eff6ff;
+    color: #1d4ed8;
+  }
+
+  .nb-assistant-chip--safe {
+    border-color: rgba(15, 118, 110, 0.2);
+    background: #ecfdf5;
+    color: #0f766e;
+  }
+
+  .nb-assistant-chip--warning {
+    border-color: rgba(180, 83, 9, 0.24);
+    background: #fffbeb;
+    color: #b45309;
+  }
+
+  .nb-assistant-chip--ready {
+    border-color: rgba(71, 85, 105, 0.2);
+    background: #f8fafc;
+    color: #475569;
+  }
+
+  .nb-usage-meter {
+    @apply rounded-xl border px-3 py-2;
+    border-color: rgba(9, 48, 100, 0.1);
+    background: rgba(255, 255, 255, 0.72);
+  }
+
+  .nb-usage-meter__row {
+    @apply flex items-center justify-between gap-2 text-[11px];
+  }
+
+  .nb-usage-meter__label {
+    @apply font-semibold;
+    color: #334155;
+  }
+
+  .nb-usage-meter__remaining {
+    @apply font-medium;
+    color: #64748b;
+  }
+
+  .nb-usage-meter__track {
+    @apply mt-1 h-1.5 w-full overflow-hidden rounded-full;
+    background: rgba(100, 116, 139, 0.2);
+  }
+
+  .nb-usage-meter__fill {
+    @apply h-full rounded-full;
+    background: linear-gradient(90deg, #6993d2 0%, #093064 100%);
+    transition: width 220ms ease;
+  }
+
+  .nb-usage-meter--warning .nb-usage-meter__fill {
+    background: linear-gradient(90deg, #f59e0b 0%, #b45309 100%);
+  }
+
+  .nb-usage-meter--limit .nb-usage-meter__fill {
+    background: linear-gradient(90deg, #ef4444 0%, #be123c 100%);
+  }
+
   .nb-btn-primary {
     @apply inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-semibold text-white transition duration-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60;
     background: linear-gradient(180deg, #14447d 0%, #093064 100%);

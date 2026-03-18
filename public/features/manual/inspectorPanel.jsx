@@ -38,8 +38,13 @@
   }
 
   const { polishLineItemDescription } = formatUtils;
-  const { formatPlanSummary, getPlanUpgradeUrl, getPlanBillingPortalUrl, getPlanPrelimitWarning } =
-    accountPlanUtils;
+  const {
+    formatPlanSummary,
+    getPlanUpgradeUrl,
+    getPlanBillingPortalUrl,
+    getPlanPrelimitWarning,
+    getPlanUsageModel
+  } = accountPlanUtils;
   const { hasStripeCheckout, hasStripePortal, startUpgradeCheckout, openBillingPortal } = billingActions;
   const { DEFAULT_ACCENT_COLOR, buildAccentPalette } = brandThemeUtils;
   const {
@@ -76,6 +81,15 @@
     resolveBillieLineWordingCommand,
     buildAssistantChangePreview
   } = manualAssistantHelpers;
+  const billieTelemetryUtils = window.InvoiceBillieTelemetry;
+  const getInitialAssistantTimingSummary = () => {
+    if (!billieTelemetryUtils) {
+      return "";
+    }
+    return billieTelemetryUtils.formatRefineSummaryLabel(
+      billieTelemetryUtils.getRefineSummary("manual")
+    );
+  };
 
 function InspectorPanel({
   activeTab,
@@ -146,6 +160,9 @@ function InspectorPanel({
   const [assistantError, setAssistantError] = useState("");
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantMessages, setAssistantMessages] = useState([]);
+  const [assistantTimingSummary, setAssistantTimingSummary] = useState(() =>
+    getInitialAssistantTimingSummary()
+  );
   const [assistantChangePreview, setAssistantChangePreview] = useState([]);
   const [assistantUndoState, setAssistantUndoState] = useState(null);
   const [pendingAssistantEdit, setPendingAssistantEdit] = useState(null);
@@ -221,11 +238,18 @@ function InspectorPanel({
   const invoiceStatus = savedInvoiceStatus || (savedInvoiceId ? "draft" : "");
   const planLimitReached = !savedInvoiceId && Boolean(accountPlan?.upgradeRequired);
   const planSummary = formatPlanSummary(accountPlan);
+  const planUsage = getPlanUsageModel(accountPlan);
   const planWarning = !planLimitReached ? getPlanPrelimitWarning(accountPlan) : "";
   const planUpgradeUrl = getPlanUpgradeUrl(accountPlan);
   const planBillingPortalUrl = getPlanBillingPortalUrl(accountPlan);
   const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
   const useStripePortalAction = accountPlan?.plan === "pro" && hasStripePortal(accountPlan);
+  const planUsageToneClass =
+    planUsage?.statusTone === "limit"
+      ? "nb-usage-meter--limit"
+      : planUsage?.statusTone === "warning"
+        ? "nb-usage-meter--warning"
+        : "";
   const showUpgradeAction =
     accountPlan?.plan === "free" && (Boolean(planUpgradeUrl) || useStripeUpgradeAction);
   const showBillingPortalAction =
@@ -378,6 +402,23 @@ function InspectorPanel({
       });
   };
 
+  const recordAssistantTiming = (outcome, startedAtMs) => {
+    if (!billieTelemetryUtils || !Number.isFinite(startedAtMs)) {
+      return;
+    }
+    const durationMs = Math.max(0, Date.now() - startedAtMs);
+    billieTelemetryUtils.recordRefineEvent({
+      source: "manual",
+      outcome,
+      durationMs
+    });
+    setAssistantTimingSummary(
+      billieTelemetryUtils.formatRefineSummaryLabel(
+        billieTelemetryUtils.getRefineSummary("manual")
+      )
+    );
+  };
+
   const runAssistantWordingRewrite = (instruction, wordingCommand, undoStateOverride = null) => {
     const appendUserMessage = wordingCommand.appendUserMessage !== false;
     const payloadResult = buildRewriteInvoicePayload?.();
@@ -404,6 +445,7 @@ function InspectorPanel({
 
     assistantRequestIdRef.current += 1;
     const requestId = assistantRequestIdRef.current;
+    const startedAtMs = Date.now();
     setAssistantLoading(true);
     setAssistantError("");
     setAssistantStatus(wordingCommand.loadingText);
@@ -448,6 +490,7 @@ function InspectorPanel({
         setAssistantStatus("");
         setAssistantInstruction("");
         setAssistantLoading(false);
+        recordAssistantTiming("success", startedAtMs);
       })
       .catch(() => {
         if (requestId !== assistantRequestIdRef.current) {
@@ -456,6 +499,7 @@ function InspectorPanel({
         setAssistantError("Rewrite failed. Try again.");
         setAssistantStatus("");
         setAssistantLoading(false);
+        recordAssistantTiming("error", startedAtMs);
       });
   };
 
@@ -473,6 +517,7 @@ function InspectorPanel({
 
     assistantRequestIdRef.current += 1;
     const requestId = assistantRequestIdRef.current;
+    const startedAtMs = Date.now();
     setAssistantLoading(true);
     setAssistantError("");
     setAssistantStatus(lineWordingCommand.loadingText || "Billie is refining line wording…");
@@ -523,6 +568,7 @@ function InspectorPanel({
         setAssistantStatus("");
         setAssistantInstruction("");
         setAssistantLoading(false);
+        recordAssistantTiming("success", startedAtMs);
       })
       .catch(() => {
         if (requestId !== assistantRequestIdRef.current) {
@@ -531,6 +577,7 @@ function InspectorPanel({
         setAssistantError("Rewrite failed. Try again.");
         setAssistantStatus("");
         setAssistantLoading(false);
+        recordAssistantTiming("error", startedAtMs);
       });
   };
 
@@ -978,7 +1025,8 @@ function InspectorPanel({
       latestMessage: latestAssistantMessage,
       hasPendingEdit: Boolean(pendingAssistantEdit),
       canUndo: Boolean(assistantUndoState),
-      changePreviewCount: assistantChangePreview.length
+      changePreviewCount: assistantChangePreview.length,
+      timingSummary: assistantTimingSummary
     });
   }, [
     assistantLoading,
@@ -988,6 +1036,7 @@ function InspectorPanel({
     pendingAssistantEdit,
     assistantUndoState,
     assistantChangePreview,
+    assistantTimingSummary,
     onAssistantRuntimeChange
   ]);
   const previewAccent = buildAccentPalette(previewData?.accentColor ?? accentColor ?? DEFAULT_ACCENT_COLOR);
@@ -1506,6 +1555,9 @@ function InspectorPanel({
             ) : assistantLoading ? (
               <p className="text-xs text-slate-500">Applying changes...</p>
             ) : null}
+            {assistantTimingSummary ? (
+              <p className="text-[11px] text-slate-500">{assistantTimingSummary}</p>
+            ) : null}
             {assistantError ? <p className="text-xs text-rose-600">{assistantError}</p> : null}
             {assistantStatus && !assistantLoading ? <p className="text-xs text-slate-500">{assistantStatus}</p> : null}
           </div>
@@ -1527,6 +1579,21 @@ function InspectorPanel({
                 <p className={`text-xs ${planLimitReached ? "font-semibold text-amber-700" : "text-slate-500"}`}>
                   {planSummary}
                 </p>
+              ) : null}
+              {planUsage?.finite ? (
+                <div className={`nb-usage-meter ${planUsageToneClass}`}>
+                  <div className="nb-usage-meter__row">
+                    <span className="nb-usage-meter__label">{planUsage.progressLabel}</span>
+                    <span className="nb-usage-meter__remaining">{planUsage.remainingLabel}</span>
+                  </div>
+                  <div className="nb-usage-meter__track">
+                    <div
+                      className="nb-usage-meter__fill"
+                      style={{ width: `${planUsage.progressPercent}%` }}
+                      aria-hidden="true"
+                    />
+                  </div>
+                </div>
               ) : null}
               {planWarning ? (
                 <p className="text-xs font-semibold text-amber-700">{planWarning}</p>

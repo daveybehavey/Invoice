@@ -165,7 +165,8 @@ function ManualInvoiceCanvas() {
     latestMessage: "",
     hasPendingEdit: false,
     canUndo: false,
-    changePreviewCount: 0
+    changePreviewCount: 0,
+    timingSummary: ""
   });
   const [savedLineItemLibrary, setSavedLineItemLibrary] = useState(() => getLineItemLibrary());
   const [showSavedLineItems, setShowSavedLineItems] = useState(false);
@@ -1085,30 +1086,46 @@ function ManualInvoiceCanvas() {
           ) : null}
           <div className="mt-3 min-h-[20px]">
             {assistantWorkspaceRuntime.loading ? (
-              <div
-                className="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold"
-                style={{ borderColor: accent.border, backgroundColor: accent.soft, color: accent.text }}
-              >
-                <span
-                  className="inline-flex h-2.5 w-2.5 animate-pulse rounded-full"
-                  style={{ backgroundColor: accent.primary }}
-                />
-                <span>{assistantWorkspaceRuntime.status || "Billie is working..."}</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="nb-assistant-chip nb-assistant-chip--working">
+                  <span className="nb-assistant-chip__dot animate-pulse" />
+                  <span>{assistantWorkspaceRuntime.status || "Billie is working..."}</span>
+                </div>
+                {assistantWorkspaceRuntime.timingSummary ? (
+                  <span className="text-[11px] font-medium text-slate-500">
+                    {assistantWorkspaceRuntime.timingSummary}
+                  </span>
+                ) : null}
               </div>
             ) : billieWorkspaceError || assistantWorkspaceRuntime.error ? (
               <p className="text-xs font-medium text-rose-600">
                 {billieWorkspaceError || assistantWorkspaceRuntime.error}
               </p>
-            ) : billieWorkspaceExpanded && assistantWorkspaceRuntime.latestMessage ? (
-              <p className="text-sm font-medium text-slate-700">
-                {assistantWorkspaceRuntime.latestMessage}
-              </p>
             ) : (
-              <p className="text-xs text-slate-500">
-                {billieWorkspaceExpanded
-                  ? "Billie updates the draft live and keeps numbers unchanged unless you make an explicit money decision."
-                  : "Billie tools are open. Use the detailed panel for history, previews, and undo."}
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="nb-assistant-chip nb-assistant-chip--ready">
+                  <span className="nb-assistant-chip__dot" />
+                  <span>
+                    {billieWorkspaceExpanded ? "Billie ready" : "Billie tools available"}
+                  </span>
+                </div>
+                {assistantWorkspaceRuntime.timingSummary ? (
+                  <span className="text-[11px] font-medium text-slate-500">
+                    {assistantWorkspaceRuntime.timingSummary}
+                  </span>
+                ) : null}
+                {billieWorkspaceExpanded && assistantWorkspaceRuntime.latestMessage ? (
+                  <span className="text-xs font-medium text-slate-600">
+                    {assistantWorkspaceRuntime.latestMessage}
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-500">
+                    {billieWorkspaceExpanded
+                      ? "Billie updates the draft live and keeps numbers unchanged unless you make an explicit money decision."
+                      : "Billie tools are open. Use the detailed panel for history, previews, and undo."}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </section>

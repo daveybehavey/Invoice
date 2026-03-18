@@ -9,6 +9,7 @@ function LauncherAccountStrip({
   authSession,
   authBusy,
   planSummary,
+  planUsage,
   planAtLimit,
   planWarning,
   hasPlanActions,
@@ -26,6 +27,12 @@ function LauncherAccountStrip({
   onOpenSignIn,
   onSignOut
 }) {
+  const usageToneClass =
+    planUsage?.statusTone === "limit"
+      ? "nb-usage-meter--limit"
+      : planUsage?.statusTone === "warning"
+        ? "nb-usage-meter--warning"
+        : "";
   return (
     <div className="nb-surface nb-surface--muted mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[24px] px-4 py-3">
       <div className="min-w-0 flex-1">
@@ -37,6 +44,21 @@ function LauncherAccountStrip({
         ) : null}
         {planWarning && !planAtLimit ? (
           <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
+        ) : null}
+        {planUsage?.finite ? (
+          <div className={`nb-usage-meter mt-2 ${usageToneClass}`}>
+            <div className="nb-usage-meter__row">
+              <span className="nb-usage-meter__label">{planUsage.progressLabel}</span>
+              <span className="nb-usage-meter__remaining">{planUsage.remainingLabel}</span>
+            </div>
+            <div className="nb-usage-meter__track">
+              <div
+                className="nb-usage-meter__fill"
+                style={{ width: `${planUsage.progressPercent}%` }}
+                aria-hidden="true"
+              />
+            </div>
+          </div>
         ) : null}
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -188,6 +210,10 @@ function LauncherStartSection({
       <div className="grid gap-4 p-4 md:grid-cols-[minmax(0,1.3fr)_minmax(280px,0.9fr)] md:gap-5 md:p-7">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Start here</p>
+          <p className="nb-assistant-chip nb-assistant-chip--ready mt-2 inline-flex text-xs normal-case tracking-normal">
+            <span className="nb-assistant-chip__dot" aria-hidden="true" />
+            Billie ready
+          </p>
           <h2 className="mt-2 text-[1.75rem] text-slate-900 md:text-4xl" style={{ fontFamily: "'Fraunces', serif" }}>
             Start with notes. Billie prepares the draft.
           </h2>

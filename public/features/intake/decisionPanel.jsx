@@ -55,6 +55,7 @@
     ctaHelper,
     planLimitReached,
     planSummary,
+    planUsage,
     planWarning,
     showUpgradeAction,
     useStripeUpgradeAction,
@@ -66,6 +67,12 @@
     if (!showAssumptionsCard) {
       return null;
     }
+    const usageToneClass =
+      planUsage?.statusTone === "limit"
+        ? "nb-usage-meter--limit"
+        : planUsage?.statusTone === "warning"
+          ? "nb-usage-meter--warning"
+          : "";
     return (
       <div className={`space-y-2 ${hasReviewCard ? "mt-0 sm:mt-3" : "mt-2 sm:mt-3"}`}>
         <section
@@ -516,6 +523,21 @@
                 {planSummary ? (
                   <p className="mt-1 text-xs font-semibold text-amber-800">{planSummary}</p>
                 ) : null}
+                {planUsage?.finite ? (
+                  <div className={`nb-usage-meter mt-2 ${usageToneClass}`}>
+                    <div className="nb-usage-meter__row">
+                      <span className="nb-usage-meter__label">{planUsage.progressLabel}</span>
+                      <span className="nb-usage-meter__remaining">{planUsage.remainingLabel}</span>
+                    </div>
+                    <div className="nb-usage-meter__track">
+                      <div
+                        className="nb-usage-meter__fill"
+                        style={{ width: `${planUsage.progressPercent}%` }}
+                        aria-hidden="true"
+                      />
+                    </div>
+                  </div>
+                ) : null}
                 <p className="mt-1 text-xs text-amber-800">
                   You can keep generating drafts. Saving a new invoice is locked until you upgrade.
                 </p>
@@ -548,6 +570,21 @@
               <div className="nb-banner nb-banner--warning rounded-xl p-3">
                 {planSummary ? (
                   <p className="text-xs text-amber-800">{planSummary}</p>
+                ) : null}
+                {planUsage?.finite ? (
+                  <div className={`nb-usage-meter mt-2 ${usageToneClass}`}>
+                    <div className="nb-usage-meter__row">
+                      <span className="nb-usage-meter__label">{planUsage.progressLabel}</span>
+                      <span className="nb-usage-meter__remaining">{planUsage.remainingLabel}</span>
+                    </div>
+                    <div className="nb-usage-meter__track">
+                      <div
+                        className="nb-usage-meter__fill"
+                        style={{ width: `${planUsage.progressPercent}%` }}
+                        aria-hidden="true"
+                      />
+                    </div>
+                  </div>
                 ) : null}
                 <p className="mt-1 text-xs font-semibold text-amber-900">{planWarning}</p>
               </div>

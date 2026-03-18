@@ -48,10 +48,60 @@
     return "";
   };
 
+  const getPlanUsageModel = (plan) => {
+    if (!plan || typeof plan !== "object") {
+      return null;
+    }
+    const tier = plan.plan === "pro" ? "pro" : "free";
+    const limit = Number.isFinite(plan?.limits?.invoicesPerMonth) ? Number(plan.limits.invoicesPerMonth) : null;
+    const used = Number.isFinite(plan?.usage?.invoicesCreated) ? Math.max(0, Number(plan.usage.invoicesCreated)) : 0;
+    const remaining = Number.isFinite(plan?.usage?.invoicesRemaining)
+      ? Math.max(0, Number(plan.usage.invoicesRemaining))
+      : null;
+
+    if (tier === "pro" || limit === null || limit <= 0) {
+      return {
+        tier,
+        finite: false,
+        used,
+        limit,
+        remaining,
+        progressPercent: 0,
+        statusTone: "pro",
+        progressLabel: tier === "pro" ? "Unlimited saved invoices on Pro." : "Unlimited saved invoices."
+      };
+    }
+
+    const progressPercent = Math.max(0, Math.min(100, Math.round((used / limit) * 100)));
+    const nearLimit = remaining !== null && remaining <= 3;
+    const atLimit = remaining !== null && remaining <= 0;
+    const statusTone = atLimit ? "limit" : nearLimit ? "warning" : "normal";
+    const progressLabel = `${used}/${limit} saves used this month`;
+    const remainingLabel =
+      remaining === null
+        ? ""
+        : remaining === 1
+          ? "1 save remaining"
+          : `${remaining} saves remaining`;
+
+    return {
+      tier,
+      finite: true,
+      used,
+      limit,
+      remaining,
+      progressPercent,
+      statusTone,
+      progressLabel,
+      remainingLabel
+    };
+  };
+
   window.InvoiceAccountPlanUtils = {
     formatPlanSummary,
     getPlanUpgradeUrl,
     getPlanBillingPortalUrl,
-    getPlanPrelimitWarning
+    getPlanPrelimitWarning,
+    getPlanUsageModel
   };
 })();

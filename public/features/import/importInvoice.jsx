@@ -35,7 +35,8 @@
       "Missing /utils/accountPlan.js load. Ensure it is loaded before /features/import/importInvoice.jsx."
     );
   }
-  const { formatPlanSummary, getPlanPrelimitWarning, getPlanUpgradeUrl } = accountPlanUtils;
+  const { formatPlanSummary, getPlanPrelimitWarning, getPlanUpgradeUrl, getPlanUsageModel } =
+    accountPlanUtils;
   const billingActions = window.InvoiceBillingActions;
   if (!billingActions) {
     throw new Error(
@@ -132,10 +133,17 @@ function ImportInvoice() {
   const ocrActionHints = mapOcrWarningsToActions(ocrWarnings, ocrConfidence);
   const ocrDebugEnabled = isReadinessDebugEnabled();
   const planSummary = formatPlanSummary(accountPlan);
+  const planUsage = getPlanUsageModel(accountPlan);
   const planLimitReached = Boolean(accountPlan?.upgradeRequired);
   const planWarning = getPlanPrelimitWarning(accountPlan);
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
   const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
+  const usageToneClass =
+    planUsage?.statusTone === "limit"
+      ? "nb-usage-meter--limit"
+      : planUsage?.statusTone === "warning"
+        ? "nb-usage-meter--warning"
+        : "";
 
   useEffect(() => {
     const notice = readBillingNoticeFromUrl();
@@ -510,6 +518,10 @@ function ImportInvoice() {
           <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">
             Import invoice
           </p>
+          <p className="nb-assistant-chip nb-assistant-chip--ready inline-flex text-xs normal-case tracking-normal">
+            <span className="nb-assistant-chip__dot" aria-hidden="true" />
+            Billie ready
+          </p>
           <h1 className="nb-section-title text-2xl">Upload invoice files or photo notes</h1>
           <p className="text-sm text-slate-600">
             PDF/text files can build directly or preview extracted text first. Photo notes require text review before parsing.
@@ -520,6 +532,21 @@ function ImportInvoice() {
             <p className="text-sm font-semibold text-slate-900">{planSummary}</p>
             {planWarning && !planLimitReached ? (
               <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
+            ) : null}
+            {planUsage?.finite ? (
+              <div className={`nb-usage-meter mt-2 ${usageToneClass}`}>
+                <div className="nb-usage-meter__row">
+                  <span className="nb-usage-meter__label">{planUsage.progressLabel}</span>
+                  <span className="nb-usage-meter__remaining">{planUsage.remainingLabel}</span>
+                </div>
+                <div className="nb-usage-meter__track">
+                  <div
+                    className="nb-usage-meter__fill"
+                    style={{ width: `${planUsage.progressPercent}%` }}
+                    aria-hidden="true"
+                  />
+                </div>
+              </div>
             ) : null}
             {planLimitReached ? (
               <p className="mt-1 text-xs text-rose-700">

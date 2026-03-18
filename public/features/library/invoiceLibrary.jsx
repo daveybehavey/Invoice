@@ -28,8 +28,13 @@
       "Missing /utils/accountPlan.js load. Ensure it is loaded before /features/library/invoiceLibrary.jsx."
     );
   }
-  const { formatPlanSummary, getPlanUpgradeUrl, getPlanBillingPortalUrl, getPlanPrelimitWarning } =
-    accountPlanUtils;
+  const {
+    formatPlanSummary,
+    getPlanUpgradeUrl,
+    getPlanBillingPortalUrl,
+    getPlanPrelimitWarning,
+    getPlanUsageModel
+  } = accountPlanUtils;
   const billingActions = window.InvoiceBillingActions;
   if (!billingActions) {
     throw new Error(
@@ -46,6 +51,7 @@
   const deleteSkipStorageKey = "invoiceDeleteSkipConfirm";
   const followUpReminderStorageKey = "invoiceFollowUpReminder";
   const recurringScheduleStorageKey = "invoiceRecurringSchedules";
+  const reminderAutomationSettingsStorageKey = "invoiceReminderAutomationSettings";
   const recurringIntervalOptions = [7, 14, 30];
   const recurringIntervalLabels = {
     7: "weekly",
@@ -129,6 +135,46 @@
     }
   };
 
+  const readReminderAutomationSettings = (storageKey) => {
+    if (typeof window === "undefined") {
+      return {
+        dueAfterDays: 14,
+        cooldownDays: 7,
+        maxPerRun: 10
+      };
+    }
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) {
+        return {
+          dueAfterDays: 14,
+          cooldownDays: 7,
+          maxPerRun: 10
+        };
+      }
+      const parsed = JSON.parse(raw);
+      return {
+        dueAfterDays: normalizeReminderSetting(parsed?.dueAfterDays, 14, 1, 120),
+        cooldownDays: normalizeReminderSetting(parsed?.cooldownDays, 7, 1, 60),
+        maxPerRun: normalizeReminderSetting(parsed?.maxPerRun, 10, 1, 100)
+      };
+    } catch (_error) {
+      return {
+        dueAfterDays: 14,
+        cooldownDays: 7,
+        maxPerRun: 10
+      };
+    }
+  };
+
+  const normalizeReminderSetting = (value, fallback, min, max) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return fallback;
+    }
+    return Math.max(min, Math.min(max, Math.round(parsed)));
+  };
+
 function InvoiceLibrary() {
   const navigate = useNavigate();
   const legacyDraftStorageKey = "invoiceDraft";
@@ -138,6 +184,9 @@ function InvoiceLibrary() {
     requestIdentity.getScopedStorageKey?.(followUpReminderStorageKey) ?? followUpReminderStorageKey;
   const recurringStorageKey =
     requestIdentity.getScopedStorageKey?.(recurringScheduleStorageKey) ?? recurringScheduleStorageKey;
+  const reminderAutomationStorageKey =
+    requestIdentity.getScopedStorageKey?.(reminderAutomationSettingsStorageKey) ??
+    reminderAutomationSettingsStorageKey;
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -173,6 +222,11 @@ function InvoiceLibrary() {
   const [recurringSchedules, setRecurringSchedules] = useState(() =>
     readRecurringSchedules(recurringStorageKey)
   );
+  const [reminderAutomationSettings, setReminderAutomationSettings] = useState(() =>
+    readReminderAutomationSettings(reminderAutomationStorageKey)
+  );
+  const [reminderAutomationBusy, setReminderAutomationBusy] = useState(false);
+  const [reminderAutomationNotice, setReminderAutomationNotice] = useState("");
   const undoTimeoutRef = useRef(null);
   const requiresSignIn = (authRequiredByPolicy || authRequiredError) && !authSession?.userId;
 
@@ -276,6 +330,18 @@ function InvoiceLibrary() {
     setRecurringSchedules(nextEntries);
     if (typeof window !== "undefined") {
       window.localStorage.setItem(recurringStorageKey, JSON.stringify({ entries: nextEntries }));
+    }
+  };
+
+  const persistReminderAutomationSettings = (nextSettings) => {
+    const normalized = {
+      dueAfterDays: normalizeReminderSetting(nextSettings?.dueAfterDays, 14, 1, 120),
+      cooldownDays: normalizeReminderSetting(nextSettings?.cooldownDays, 7, 1, 60),
+      maxPerRun: normalizeReminderSetting(nextSettings?.maxPerRun, 10, 1, 100)
+    };
+    setReminderAutomationSettings(normalized);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(reminderAutomationStorageKey, JSON.stringify(normalized));
     }
   };
 
@@ -496,6 +562,11 @@ function InvoiceLibrary() {
   useEffect(() => {
     setRecurringSchedules(readRecurringSchedules(recurringStorageKey));
   }, [recurringStorageKey]);
+
+  useEffect(() => {
+    setReminderAutomationSettings(readReminderAutomationSettings(reminderAutomationStorageKey));
+    setReminderAutomationNotice("");
+  }, [reminderAutomationStorageKey]);
 
   useEffect(() => {
     if (showTrash || invoices.length === 0) {
@@ -728,6 +799,57 @@ function InvoiceLibrary() {
     }
   };
 
+  const runReminderAutomation = async ({ dryRun }) => {
+    setReminderAutomationBusy(true);
+    setError("");
+    setDeliveryNotice("");
+    setReminderAutomationNotice("");
+    try {
+      const payload = await requestJson(
+        "/api/invoices/reminders/run",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dryRun,
+            dueAfterDays: reminderAutomationSettings.dueAfterDays,
+            cooldownDays: reminderAutomationSettings.cooldownDays,
+            maxPerRun: reminderAutomationSettings.maxPerRun
+          })
+        },
+        dryRun ? "Failed to preview due reminders." : "Failed to run reminders."
+      );
+      setAuthRequiredError(false);
+      const dueCount = Number(payload?.dueCount ?? 0);
+      const scannedCount = Number(payload?.scannedCount ?? 0);
+      if (dryRun) {
+        setReminderAutomationNotice(
+          dueCount > 0
+            ? `${dueCount} reminder${dueCount === 1 ? "" : "s"} due now (from ${scannedCount} sent invoices).`
+            : `No reminders due right now (scanned ${scannedCount} sent invoices).`
+        );
+        return;
+      }
+      const sentCount = Number(payload?.sentCount ?? 0);
+      if (sentCount > 0) {
+        setReminderAutomationNotice(
+          `Sent ${sentCount} reminder${sentCount === 1 ? "" : "s"} (from ${dueCount} due).`
+        );
+      } else {
+        setReminderAutomationNotice(
+          dueCount > 0
+            ? "No reminders were sent. Check delivery configuration."
+            : "No reminders were due right now."
+        );
+      }
+      await loadInvoices(showTrash);
+    } catch (reminderRunError) {
+      handleLibraryError(reminderRunError, dryRun ? "Failed to preview due reminders." : "Failed to run reminders.");
+    } finally {
+      setReminderAutomationBusy(false);
+    }
+  };
+
   const startSendComposer = (invoice) => {
     if (!invoice?.invoiceId) {
       return;
@@ -944,6 +1066,7 @@ function InvoiceLibrary() {
   const visibleIds = filteredInvoices.map((invoice) => invoice.invoiceId);
   const allSelected = visibleIds.length > 0 && selectedCount === visibleIds.length;
   const planSummary = formatPlanSummary(accountPlan);
+  const planUsage = getPlanUsageModel(accountPlan);
   const planLimitReached = Boolean(accountPlan?.upgradeRequired);
   const planWarning = getPlanPrelimitWarning(accountPlan);
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
@@ -954,6 +1077,12 @@ function InvoiceLibrary() {
     accountPlan?.plan === "free" && (Boolean(upgradeUrl) || useStripeUpgradeAction);
   const showBillingPortalAction =
     accountPlan?.plan === "pro" && (Boolean(billingPortalUrl) || useStripePortalAction);
+  const planUsageToneClass =
+    planUsage?.statusTone === "limit"
+      ? "nb-usage-meter--limit"
+      : planUsage?.statusTone === "warning"
+        ? "nb-usage-meter--warning"
+        : "";
   const sentReminderThresholdDays = 14;
   const sentReminderThresholdMs = sentReminderThresholdDays * 24 * 60 * 60 * 1000;
   const staleDraftThresholdDays = 7;
@@ -1092,7 +1221,8 @@ function InvoiceLibrary() {
             <p className="mt-1 text-sm text-slate-600">
               Reopen saved work, follow up, and keep payments moving.
             </p>
-            <p className="nb-chip mt-2 inline-flex items-center gap-2 px-3 py-1 normal-case tracking-normal text-xs text-slate-700">
+            <p className="nb-assistant-chip nb-assistant-chip--ready mt-2 inline-flex normal-case tracking-normal text-xs">
+              <span className="nb-assistant-chip__dot" aria-hidden="true" />
               Billie is ready to polish any draft when you open it.
             </p>
             <div className="nb-chip mt-2 inline-flex items-center gap-2 px-3 py-1 normal-case tracking-normal text-xs">
@@ -1133,6 +1263,21 @@ function InvoiceLibrary() {
               <p className={`mt-2 text-xs ${planLimitReached ? "font-semibold text-amber-700" : "text-slate-500"}`}>
                 {planSummary}
               </p>
+            ) : null}
+            {planUsage?.finite ? (
+              <div className={`nb-usage-meter mt-2 max-w-sm ${planUsageToneClass}`}>
+                <div className="nb-usage-meter__row">
+                  <span className="nb-usage-meter__label">{planUsage.progressLabel}</span>
+                  <span className="nb-usage-meter__remaining">{planUsage.remainingLabel}</span>
+                </div>
+                <div className="nb-usage-meter__track">
+                  <div
+                    className="nb-usage-meter__fill"
+                    style={{ width: `${planUsage.progressPercent}%` }}
+                    aria-hidden="true"
+                  />
+                </div>
+              </div>
             ) : null}
             {planWarning && !planLimitReached ? (
               <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
@@ -1249,6 +1394,21 @@ function InvoiceLibrary() {
         {!requiresSignIn && planLimitReached ? (
           <div className="nb-banner nb-banner--warning mt-6">
             <p className="text-sm font-semibold text-amber-900">Free plan limit reached</p>
+            {planUsage?.finite ? (
+              <div className={`nb-usage-meter mt-2 ${planUsageToneClass}`}>
+                <div className="nb-usage-meter__row">
+                  <span className="nb-usage-meter__label">{planUsage.progressLabel}</span>
+                  <span className="nb-usage-meter__remaining">{planUsage.remainingLabel}</span>
+                </div>
+                <div className="nb-usage-meter__track">
+                  <div
+                    className="nb-usage-meter__fill"
+                    style={{ width: `${planUsage.progressPercent}%` }}
+                    aria-hidden="true"
+                  />
+                </div>
+              </div>
+            ) : null}
             <p className="mt-1 text-sm text-amber-800">
               You can open and export existing invoices. Save more drafts by upgrading your plan.
             </p>
@@ -1409,6 +1569,93 @@ function InvoiceLibrary() {
                   Oldest sent update: {formatDate(oldestSentReminder.updatedAt)}
                 </p>
               ) : null}
+            </div>
+            <div className="nb-subcard mt-3 space-y-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Reminder automation
+                </p>
+                <p className="mt-1 text-xs text-slate-600">
+                  Tune follow-up timing, then preview or run reminders without leaving the library.
+                </p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <label className="text-xs font-medium text-slate-600">
+                  First follow-up (days)
+                  <input
+                    type="number"
+                    min={1}
+                    max={120}
+                    step={1}
+                    className="nb-input mt-1 rounded-lg px-2 py-1.5 text-xs"
+                    value={String(reminderAutomationSettings.dueAfterDays)}
+                    onChange={(event) =>
+                      persistReminderAutomationSettings({
+                        ...reminderAutomationSettings,
+                        dueAfterDays: event.target.value
+                      })
+                    }
+                    disabled={reminderAutomationBusy}
+                  />
+                </label>
+                <label className="text-xs font-medium text-slate-600">
+                  Repeat cooldown (days)
+                  <input
+                    type="number"
+                    min={1}
+                    max={60}
+                    step={1}
+                    className="nb-input mt-1 rounded-lg px-2 py-1.5 text-xs"
+                    value={String(reminderAutomationSettings.cooldownDays)}
+                    onChange={(event) =>
+                      persistReminderAutomationSettings({
+                        ...reminderAutomationSettings,
+                        cooldownDays: event.target.value
+                      })
+                    }
+                    disabled={reminderAutomationBusy}
+                  />
+                </label>
+                <label className="text-xs font-medium text-slate-600">
+                  Max per run
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    step={1}
+                    className="nb-input mt-1 rounded-lg px-2 py-1.5 text-xs"
+                    value={String(reminderAutomationSettings.maxPerRun)}
+                    onChange={(event) =>
+                      persistReminderAutomationSettings({
+                        ...reminderAutomationSettings,
+                        maxPerRun: event.target.value
+                      })
+                    }
+                    disabled={reminderAutomationBusy}
+                  />
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="nb-btn-secondary rounded-xl px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => runReminderAutomation({ dryRun: true })}
+                  disabled={reminderAutomationBusy}
+                >
+                  {reminderAutomationBusy ? "Working..." : "Preview due now"}
+                </button>
+                <button
+                  type="button"
+                  className="nb-btn-secondary rounded-xl px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => runReminderAutomation({ dryRun: false })}
+                  disabled={reminderAutomationBusy}
+                >
+                  {reminderAutomationBusy ? "Working..." : "Run due reminders"}
+                </button>
+                {reminderAutomationNotice ? (
+                  <p className="text-xs font-medium text-blue-900">{reminderAutomationNotice}</p>
+                ) : null}
+              </div>
             </div>
           </div>
         ) : null}
