@@ -181,12 +181,20 @@ app.post("/api/assistant/launcher", async (req: Request, res: Response, next: Ne
   }
 });
 
-const spaRoutes = ["/", "/ai-intake", "/manual", "/import", "/diagnostics", "/settings/business", "/pay/:invoiceId"];
+const spaRoutes = ["/", "/ai-intake", "/manual", "/import", "/diagnostics", "/settings/business", "/pay/:invoiceId", "/privacy", "/support"];
 app.get(spaRoutes, (_req: Request, res: Response) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
 app.get("/invoices", (_req: Request, res: Response) => {
+  res.sendFile(path.join(publicDir, "index.html"));
+});
+
+app.get("/privacy", (_req: Request, res: Response) => {
+  res.sendFile(path.join(publicDir, "index.html"));
+});
+
+app.get("/support", (_req: Request, res: Response) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 

@@ -991,6 +991,161 @@ function Placeholder({ title, description }) {
   );
 }
 
+function PublicInfoPage({ kicker, title, intro, sections, footerNote }) {
+  return (
+    <div className="nb-page nb-page--quiet">
+      <main className="nb-page-shell nb-page-shell--medium py-8 md:py-10">
+        <div className="nb-surface nb-surface--elevated">
+          <div className="flex flex-col gap-3 border-b border-slate-200/80 pb-5 md:flex-row md:items-end md:justify-between">
+            <div>
+              <p className="nb-kicker">{kicker}</p>
+              <h1 className="nb-title mt-3 text-4xl md:text-5xl">{title}</h1>
+              <p className="nb-copy mt-4 max-w-3xl">{intro}</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <a className="nb-btn-primary" href="/">
+                Open NoteBill
+              </a>
+              <a className="nb-btn-ghost" href="/support">
+                Support
+              </a>
+            </div>
+          </div>
+
+          <div className="mt-6 space-y-4">
+            {sections.map((section) => (
+              <section key={section.title} className="nb-subcard">
+                <h2 className="text-lg font-semibold text-slate-900">{section.title}</h2>
+                {section.paragraphs.map((paragraph) => (
+                  <p key={paragraph} className="mt-3 text-sm leading-7 text-slate-700 md:text-[15px]">
+                    {paragraph}
+                  </p>
+                ))}
+                {section.items?.length ? (
+                  <ul className="mt-3 space-y-2 text-sm leading-7 text-slate-700 md:text-[15px]">
+                    {section.items.map((item) => (
+                      <li key={item} className="flex items-start gap-3">
+                        <span className="mt-[0.55rem] inline-flex h-2 w-2 rounded-full bg-[#6993d2]" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </section>
+            ))}
+          </div>
+
+          {footerNote ? <p className="mt-6 text-xs leading-6 text-slate-500">{footerNote}</p> : null}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function PrivacyPage() {
+  return (
+    <PublicInfoPage
+      kicker="Privacy"
+      title="NoteBill Privacy Policy"
+      intro="NoteBill helps you turn rough notes, imports, and draft invoice details into professional invoices. This page explains what information may be collected, how it is used, and what choices you have when using the product."
+      footerNote='Before publishing this page publicly, replace the business-name placeholder if needed and confirm that support@notebill.app and https://notebill.app are live. Last updated: 2026-04-10.'
+      sections={[
+        {
+          title: "Information we may collect",
+          items: [
+            "Email address and session-related identifiers when you sign in or keep invoices tied to your account.",
+            "Content you provide, including notes, invoice details, uploaded invoice files, images, and saved drafts.",
+            "Audio notes and transcripts if audio transcription is enabled.",
+            "Billing and subscription metadata if paid plans, payment links, or Stripe checkout are enabled.",
+            "Limited diagnostic or quality information used to run, secure, and improve the product."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "How we use information",
+          items: [
+            "To generate, edit, save, export, send, and reopen invoices.",
+            "To authenticate users and scope invoice data to the correct account.",
+            "To process imports, transcription, OCR, and invoice-generation workflows.",
+            "To support subscription billing, payment-link creation, and invoice email delivery when those features are enabled.",
+            "To troubleshoot issues, prevent abuse, and improve reliability."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "Service providers",
+          paragraphs: [
+            "Depending on which features are enabled in production, NoteBill may use service providers such as OpenAI for AI-assisted processing, Stripe for billing and payment features, and an email delivery provider for sending invoices or reminders.",
+            "These providers are used to operate the service, not to sell your information."
+          ]
+        },
+        {
+          title: "Your choices",
+          items: [
+            "You can delete saved invoices from the app.",
+            "You can avoid optional features like uploads, transcription, billing, or email sending if you do not want to use them.",
+            "You can request account-related privacy help through the support channel listed on the support page."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "Security and retention",
+          paragraphs: [
+            "NoteBill uses reasonable safeguards designed to protect information in transit and at rest, but no system can guarantee absolute security.",
+            "Information is kept only as long as needed to provide the service, comply with legal obligations, resolve disputes, and maintain backups or security records where necessary."
+          ]
+        }
+      ]}
+    />
+  );
+}
+
+function SupportPage() {
+  return (
+    <PublicInfoPage
+      kicker="Support"
+      title="NoteBill Support"
+      intro="If you need help with NoteBill, billing, invoice delivery, or account-related questions, use the support details below. Update them if you decide to use a different monitored address."
+      footerNote="Publishing note: confirm that each address forwards correctly before using this page in Play Console."
+      sections={[
+        {
+          title: "Contact",
+          items: [
+            "Support email: support@notebill.app",
+            "Contact email: contact@notebill.app",
+            "Info email: info@notebill.app",
+            "Direct contact: david@notebill.app",
+            "Website: https://notebill.app",
+            "Business name: [Your business or developer name]"
+          ],
+          paragraphs: []
+        },
+        {
+          title: "What to include when you contact support",
+          items: [
+            "The email address used with your NoteBill account, if applicable.",
+            "A short description of the problem and what you were trying to do.",
+            "The device model and Android version if the issue is mobile-specific.",
+            "Screenshots or the invoice ID if the problem relates to a saved draft or send flow."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "Typical support topics",
+          items: [
+            "Signing in or session issues",
+            "Invoice import, OCR, or transcription questions",
+            "Saved drafts, export, and send behavior",
+            "Billing, subscription, or payment-link questions",
+            "Privacy or data deletion requests"
+          ],
+          paragraphs: []
+        }
+      ]}
+    />
+  );
+}
+
 function CustomerPaymentPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -1306,6 +1461,8 @@ function App() {
         <Route path="/pay/:invoiceId" element={<CustomerPaymentPage />} />
         <Route path="/diagnostics" element={<IntakeDiagnostics />} />
         <Route path="/settings/business" element={<BusinessIdentitySettings />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/support" element={<SupportPage />} />
         <Route
           path="*"
           element={<Placeholder title="Page not found" description="Return to the launcher to continue." />}
