@@ -2,11 +2,11 @@
 
 Last updated: 2026-04-10
 
-This draft is written for `NoteBill`. Replace bracketed placeholders before publishing.
+This policy is written for `NoteBill`.
 
-- Company or owner name: `[Your name or business name]`
-- Support email: `[support email]`
-- Website: `[website URL]`
+- Company or owner name: `David Heslop`
+- Support email: `support@notebill.app`
+- Website: `https://notebill.app`
 
 ## Privacy Policy
 
@@ -14,7 +14,7 @@ NoteBill helps users turn messy notes, uploaded invoice content, and draft invoi
 
 This Privacy Policy explains what information we collect, how we use it, and what choices you have when you use NoteBill.
 
-If you have questions, contact us at `[support email]`.
+If you have questions, contact us at `support@notebill.app`.
 
 ## Information We Collect
 
@@ -104,7 +104,7 @@ Depending on how NoteBill is configured and where you live, you may be able to:
 
 - Access or update certain information you provide
 - Delete saved invoices from the app
-- Request deletion of your account-related data by contacting `[support email]`
+- Request deletion of your account-related data by contacting `support@notebill.app`
 - Stop using optional features such as uploads, audio transcription, billing, or invoice email sending
 
 If you request deletion, we may retain limited information where necessary for legal, security, fraud-prevention, or backup purposes.
@@ -119,7 +119,7 @@ No method of transmission over the internet or electronic storage is completely 
 
 NoteBill is not directed to children under 13, and we do not knowingly collect personal information from children under 13.
 
-If you believe a child has provided personal information to us, contact `[support email]` and we will review the request.
+If you believe a child has provided personal information to us, contact `support@notebill.app` and we will review the request.
 
 ## International Transfers
 
@@ -133,17 +133,16 @@ We may update this Privacy Policy from time to time. If we make material changes
 
 If you have questions or requests related to this Privacy Policy, contact:
 
-- `[Your name or business name]`
-- `[support email]`
-- `[website URL]`
+- `David Heslop`
+- `support@notebill.app`
+- `https://notebill.app`
 
 ## Publishing Notes
 
 Before publishing this policy:
 
-1. Replace all placeholders
-2. Confirm whether audio transcription is enabled in production
-3. Confirm whether telemetry export is enabled in production
-4. Confirm the exact email provider used in production
-5. Confirm whether users can request full account-level deletion by email
-6. Publish this text at a stable public HTTPS URL for Play Console
+1. Confirm whether audio transcription is enabled in production
+2. Confirm whether telemetry export is enabled in production
+3. Confirm the exact email provider used in production
+4. Confirm whether users can request full account-level deletion by email
+5. Publish this text at a stable public HTTPS URL for Play Console

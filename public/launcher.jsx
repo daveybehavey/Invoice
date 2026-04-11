@@ -1048,7 +1048,7 @@ function PrivacyPage() {
       kicker="Privacy"
       title="NoteBill Privacy Policy"
       intro="NoteBill helps you turn rough notes, imports, and draft invoice details into professional invoices. This page explains what information may be collected, how it is used, and what choices you have when using the product."
-      footerNote='Before publishing this page publicly, replace the business-name placeholder if needed and confirm that support@notebill.app and https://notebill.app are live. Last updated: 2026-04-10.'
+      footerNote="Last updated: 2026-04-10."
       sections={[
         {
           title: "Information we may collect",
@@ -1105,8 +1105,8 @@ function SupportPage() {
     <PublicInfoPage
       kicker="Support"
       title="NoteBill Support"
-      intro="If you need help with NoteBill, billing, invoice delivery, or account-related questions, use the support details below. Update them if you decide to use a different monitored address."
-      footerNote="Publishing note: confirm that each address forwards correctly before using this page in Play Console."
+      intro="If you need help with NoteBill, billing, invoice delivery, or account-related questions, use the support details below."
+      footerNote="Responses are handled through the NoteBill support mailbox."
       sections={[
         {
           title: "Contact",
@@ -1116,7 +1116,7 @@ function SupportPage() {
             "Info email: info@notebill.app",
             "Direct contact: david@notebill.app",
             "Website: https://notebill.app",
-            "Business name: [Your business or developer name]"
+            "Business name: David Heslop"
           ],
           paragraphs: []
         },
