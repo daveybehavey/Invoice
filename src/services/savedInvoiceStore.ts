@@ -106,19 +106,31 @@ export async function listSavedInvoiceMetadata(
     ? collection.invoices.filter((invoice) => invoice.ownerId === ownerId)
     : collection.invoices.filter((invoice) => invoice.ownerId === ownerId && invoice.status !== "deleted");
   return visibleInvoices
-    .map((invoice) =>
-      InvoiceListItemSchema.parse({
+    .map((invoice) => {
+      const finished = invoice.invoiceData.finishedInvoice;
+      const attachments = Array.isArray(finished.attachments) ? finished.attachments : [];
+      return InvoiceListItemSchema.parse({
         invoiceId: invoice.invoiceId,
         createdAt: invoice.createdAt,
         updatedAt: invoice.updatedAt,
         status: invoice.status,
         sourceType: invoice.sourceType,
-        invoiceNumber:
-          invoice.invoiceData.finishedInvoice.invoiceNumber ?? invoice.invoiceData.structuredInvoice.invoiceNumber,
-        total: invoice.invoiceData.finishedInvoice.total,
-        paymentLinkUrl: invoice.invoiceData.finishedInvoice.paymentLinkUrl
-      })
-    )
+        documentType: finished.documentType ?? "invoice",
+        billingStage: finished.billingStage,
+        projectTotal: finished.projectTotal,
+        projectPaidToDate: finished.projectPaidToDate,
+        projectBalanceAfterInvoice: finished.projectBalanceAfterInvoice,
+        estimateApprovalStatus:
+          finished.documentType === "estimate" ? finished.estimateApprovalStatus ?? "pending" : undefined,
+        estimateApprovedAt: finished.documentType === "estimate" ? finished.estimateApprovedAt : undefined,
+        estimateApprovedBy: finished.documentType === "estimate" ? finished.estimateApprovedBy : undefined,
+        invoiceNumber: finished.invoiceNumber ?? invoice.invoiceData.structuredInvoice.invoiceNumber,
+        total: finished.total,
+        balanceDue: finished.balanceDue,
+        paymentLinkUrl: finished.paymentLinkUrl,
+        attachmentCount: attachments.length
+      });
+    })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 

@@ -75,6 +75,20 @@
     label: preset.label
   }));
 
+  const HEADER_LAYOUT_PRESETS = {
+    split: {
+      label: "Split"
+    },
+    centered: {
+      label: "Centered"
+    }
+  };
+
+  const HEADER_LAYOUT_OPTIONS = Object.entries(HEADER_LAYOUT_PRESETS).map(([id, preset]) => ({
+    id,
+    label: preset.label
+  }));
+
   const TEMPLATE_PREVIEWS = {
     default: {
       title: "bg-slate-900",
@@ -103,6 +117,8 @@
     STYLE_PRESETS,
     STYLE_OPTIONS,
     TEMPLATE_PREVIEWS,
+    HEADER_LAYOUT_PRESETS,
+    HEADER_LAYOUT_OPTIONS,
     SPACING_DENSITY_PRESETS,
     SPACING_DENSITY_OPTIONS
   };

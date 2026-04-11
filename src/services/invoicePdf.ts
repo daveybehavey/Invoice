@@ -76,10 +76,12 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
   renderPartyBlocks(state, { fromLines, billToLines, styleScale });
   renderLineItemsSection(state, { invoice: input.invoice, styleScale });
   renderTotalsPanel(state, { invoice: input.invoice, styleScale });
+  renderProgressBillingSummary(state, { invoice: input.invoice, styleScale });
   if (input.notesVisible !== false) {
     renderNotes(state, { notes: input.invoice.notes ?? "", styleScale });
   }
   renderPaymentLink(state, { paymentLinkUrl: input.invoice.paymentLinkUrl ?? "", styleScale });
+  renderAttachments(state, { attachments: input.invoice.attachments ?? [], styleScale });
   renderFooter(state, { fromLines });
 
   const pdfBytes = await doc.save({ useObjectStreams: false });
@@ -635,6 +637,128 @@ function drawTotalsRow(
   });
 }
 
+function renderProgressBillingSummary(
+  state: PdfRenderState,
+  options: { invoice: FinishedInvoice; styleScale: number }
+): void {
+  const { invoice } = options;
+  const stage =
+    invoice.billingStage === "deposit" ||
+    invoice.billingStage === "progress" ||
+    invoice.billingStage === "final"
+      ? invoice.billingStage
+      : "standard";
+  const hasProjectTotal = typeof invoice.projectTotal === "number" && Number.isFinite(invoice.projectTotal);
+  const hasPaidToDate =
+    typeof invoice.projectPaidToDate === "number" && Number.isFinite(invoice.projectPaidToDate);
+  if (stage === "standard" && !hasProjectTotal && !hasPaidToDate) {
+    return;
+  }
+
+  const rows = [
+    `Stage: ${formatBillingStageLabel(stage)}`
+  ];
+  if (hasProjectTotal) {
+    rows.push(`Project total: ${formatMoney(invoice.projectTotal ?? 0)}`);
+  }
+  if (hasPaidToDate) {
+    rows.push(`Paid to date: ${formatMoney(invoice.projectPaidToDate ?? 0)}`);
+  }
+  if (typeof invoice.projectBalanceAfterInvoice === "number" && Number.isFinite(invoice.projectBalanceAfterInvoice)) {
+    rows.push(`Remaining after this invoice: ${formatMoney(Math.max(0, invoice.projectBalanceAfterInvoice))}`);
+  }
+
+  const spacingScale = state.spacingScale;
+  const sectionHeight = (30 + rows.length * 12) * spacingScale;
+  ensureVerticalSpace(state, sectionHeight + 10 * spacingScale, true);
+
+  drawSectionTitle(state, "Progress billing");
+  state.page.drawRectangle({
+    x: PAGE_MARGIN_X,
+    y: state.cursorY - (rows.length * 12 + 16) * spacingScale,
+    width: CONTENT_WIDTH,
+    height: (rows.length * 12 + 16) * spacingScale,
+    borderColor: state.accent.border,
+    borderWidth: 1,
+    color: SURFACE
+  });
+
+  let y = state.cursorY - 12 * spacingScale;
+  for (const line of rows) {
+    state.page.drawText(line, {
+      x: PAGE_MARGIN_X + 10,
+      y,
+      size: 10,
+      font: state.regularFont,
+      color: SLATE_700
+    });
+    y -= 12 * spacingScale;
+  }
+  state.cursorY = y - 8 * spacingScale;
+}
+
+function renderAttachments(
+  state: PdfRenderState,
+  options: {
+    attachments: FinishedInvoice["attachments"];
+    styleScale: number;
+  }
+): void {
+  const list = Array.isArray(options.attachments)
+    ? options.attachments
+        .map((entry) => ({
+          label: typeof entry?.label === "string" ? entry.label.trim() : "",
+          url: typeof entry?.url === "string" ? entry.url.trim() : ""
+        }))
+        .filter((entry) => entry.label.length > 0 && entry.url.length > 0)
+    : [];
+  if (list.length === 0) {
+    return;
+  }
+
+  const previewLines = list.slice(0, 6).map((entry) => `${entry.label}: ${entry.url}`);
+  const spacingScale = state.spacingScale;
+  const sectionHeight = (30 + previewLines.length * 12 + (list.length > 6 ? 12 : 0)) * spacingScale;
+  ensureVerticalSpace(state, sectionHeight + 10 * spacingScale, true);
+
+  drawSectionTitle(state, "Attachments");
+  state.page.drawRectangle({
+    x: PAGE_MARGIN_X,
+    y: state.cursorY - (previewLines.length * 12 + (list.length > 6 ? 28 : 16)) * spacingScale,
+    width: CONTENT_WIDTH,
+    height: (previewLines.length * 12 + (list.length > 6 ? 28 : 16)) * spacingScale,
+    borderColor: SLATE_200,
+    borderWidth: 1,
+    color: rgb(1, 1, 1)
+  });
+
+  let y = state.cursorY - 12 * spacingScale;
+  for (const line of previewLines) {
+    const wrapped = wrapTextToWidth(line, state.regularFont, 10, CONTENT_WIDTH - 20, 2);
+    for (const wrappedLine of wrapped) {
+      state.page.drawText(wrappedLine, {
+        x: PAGE_MARGIN_X + 10,
+        y,
+        size: 10,
+        font: state.regularFont,
+        color: SLATE_700
+      });
+      y -= 12 * spacingScale;
+    }
+  }
+  if (list.length > 6) {
+    state.page.drawText(`+${list.length - 6} more attachment${list.length - 6 === 1 ? "" : "s"}`, {
+      x: PAGE_MARGIN_X + 10,
+      y,
+      size: 9,
+      font: state.boldFont,
+      color: SLATE_500
+    });
+    y -= 12 * spacingScale;
+  }
+  state.cursorY = y - 8 * spacingScale;
+}
+
 function renderNotes(
   state: PdfRenderState,
   options: { notes: string; styleScale: number }
@@ -674,6 +798,21 @@ function renderNotes(
     y -= 12 * spacingScale;
   }
   state.cursorY = y - 8 * spacingScale;
+}
+
+function formatBillingStageLabel(
+  stage: "standard" | "deposit" | "progress" | "final"
+): string {
+  if (stage === "deposit") {
+    return "Deposit";
+  }
+  if (stage === "progress") {
+    return "Progress";
+  }
+  if (stage === "final") {
+    return "Final";
+  }
+  return "Standard";
 }
 
 function renderPaymentLink(

@@ -1,7 +1,7 @@
 # Smoke Pass Checklist
 
 ## Flow
-- Sign in with email + password (confirm password field visible).
+- Sign in with email session flow (confirm signed-in identity is shown in launcher/account strip).
 - Intake notes via "Paste notes" default path.
 - Resolve decisions flow (review panel, quick fixes, decisions panel).
 - Generate invoice → open manual view.

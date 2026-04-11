@@ -22,6 +22,8 @@ export type ReminderCandidate = {
   sendCount: number;
 };
 
+export type ReminderTone = "friendly" | "firm";
+
 export type ReminderRunResult = {
   settings: InvoiceReminderSettings;
   scannedCount: number;
@@ -37,6 +39,8 @@ export type ReminderRunResult = {
     delivery?: DeliverySummary;
     mode?: "provider" | "record_only";
     provider?: "none" | "resend";
+    reminderTone?: ReminderTone;
+    lateFeePercentApplied?: number | null;
     error?: string;
   }>;
 };
@@ -129,18 +133,24 @@ export async function listDueInvoiceReminderCandidates(
 
 export async function runDueInvoiceReminders(context: ReminderContext): Promise<ReminderRunResult> {
   const { settings, scannedCount, due } = await listDueInvoiceReminderCandidates(context);
+  const lateFeePercent = resolveReminderLateFeePercent(process.env.INVOICE_REMINDER_LATE_FEE_PERCENT);
   const results: ReminderRunResult["results"] = [];
   for (const candidate of due) {
     try {
       const saved = await context.repository.getSavedInvoiceById(candidate.invoiceId, context.ownerId);
       const trackingToken = randomUUID();
+      const customerInvoiceUrl = `${context.baseUrl}/pay/${candidate.invoiceId}?token=${encodeURIComponent(trackingToken)}`;
       const openTrackingPixelUrl = `${context.baseUrl}/api/invoices/${candidate.invoiceId}/delivery/opened/pixel?token=${encodeURIComponent(trackingToken)}`;
+      const reminderTone = resolveReminderToneForSendCount(candidate.sendCount);
       const sendResult = await sendInvoiceEmail({
         recipientEmail: candidate.recipientEmail,
         invoice: saved.invoiceData.finishedInvoice,
         invoiceId: candidate.invoiceId,
         openTrackingPixelUrl,
-        messageType: "reminder"
+        customerInvoiceUrl,
+        messageType: "reminder",
+        reminderTone,
+        reminderLateFeePercent: lateFeePercent ?? undefined
       });
       await recordInvoiceDeliverySend({
         ownerId: context.ownerId,
@@ -168,7 +178,9 @@ export async function runDueInvoiceReminders(context: ReminderContext): Promise<
         invoiceUpdatedAt: refreshedInvoice.updatedAt,
         delivery: deliverySummary,
         mode: sendResult.mode,
-        provider: sendResult.provider
+        provider: sendResult.provider,
+        reminderTone,
+        lateFeePercentApplied: lateFeePercent
       });
     } catch (error) {
       results.push({
@@ -200,6 +212,8 @@ export async function sendInvoiceReminderById(
   recipientEmail: string;
   mode: "provider" | "record_only";
   provider: "none" | "resend";
+  reminderTone: ReminderTone;
+  lateFeePercentApplied: number | null;
   warning?: string;
 }> {
   const saved = await context.repository.getSavedInvoiceById(context.invoiceId, context.ownerId);
@@ -215,13 +229,19 @@ export async function sendInvoiceReminderById(
     throw new Error("No recipient email found. Send the invoice first.");
   }
   const trackingToken = randomUUID();
+  const customerInvoiceUrl = `${context.baseUrl}/pay/${context.invoiceId}?token=${encodeURIComponent(trackingToken)}`;
   const openTrackingPixelUrl = `${context.baseUrl}/api/invoices/${context.invoiceId}/delivery/opened/pixel?token=${encodeURIComponent(trackingToken)}`;
+  const reminderTone = resolveReminderToneForSendCount(delivery.sendCount ?? 0);
+  const lateFeePercent = resolveReminderLateFeePercent(process.env.INVOICE_REMINDER_LATE_FEE_PERCENT);
   const sendResult = await sendInvoiceEmail({
     recipientEmail: delivery.recipientEmail,
     invoice: saved.invoiceData.finishedInvoice,
     invoiceId: context.invoiceId,
     openTrackingPixelUrl,
-    messageType: "reminder"
+    customerInvoiceUrl,
+    messageType: "reminder",
+    reminderTone,
+    reminderLateFeePercent: lateFeePercent ?? undefined
   });
   await recordInvoiceDeliverySend({
     ownerId: context.ownerId,
@@ -249,6 +269,8 @@ export async function sendInvoiceReminderById(
     recipientEmail: delivery.recipientEmail,
     mode: sendResult.mode,
     provider: sendResult.provider,
+    reminderTone,
+    lateFeePercentApplied: lateFeePercent,
     warning: sendResult.warning
   };
 }
@@ -280,4 +302,23 @@ function normalizePositiveInteger(
     return fallback;
   }
   return Math.max(min, Math.min(max, Math.round(input)));
+}
+
+function resolveReminderToneForSendCount(sendCount: number): ReminderTone {
+  return sendCount >= 2 ? "firm" : "friendly";
+}
+
+function resolveReminderLateFeePercent(value: string | undefined): number | null {
+  if (!value?.trim()) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  const normalized = Math.round(parsed * 100) / 100;
+  if (normalized <= 0 || normalized > 50) {
+    return null;
+  }
+  return normalized;
 }

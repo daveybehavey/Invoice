@@ -67,7 +67,12 @@
   const { InspectorPanel } = manualInspectorUtils;
   const { DEFAULT_ACCENT_COLOR, normalizeAccentColor, buildAccentPalette } = brandThemeUtils;
   const { STYLE_PRESETS, SPACING_DENSITY_PRESETS } = styleCatalogUtils;
-  const { getBusinessProfile, applyBusinessProfileToDraft } = businessProfileUtils;
+  const {
+    getBusinessProfile,
+    applyBusinessProfileToDraft,
+    resolveTaxRegionPresets,
+    inferTaxRegionPreset
+  } = businessProfileUtils;
   const { rememberClientDetails } = clientMemoryUtils;
   const { getLineItemLibrary, rememberLineItems } = lineItemLibraryUtils;
   const { readLogoFileForStorage } = logoImageUtils;
@@ -113,13 +118,41 @@ function ManualInvoiceCanvas() {
   const seededDraft = applyBusinessProfileToDraft(initialDraft ?? {}, initialBusinessProfile);
   const [invoiceNumber, setInvoiceNumber] = useState(() => initialDraft?.invoiceNumber ?? "INV-0001");
   const [invoiceDate, setInvoiceDate] = useState(() => initialDraft?.invoiceDate ?? "");
+  const [documentType, setDocumentType] = useState(() =>
+    initialDraft?.documentType === "estimate" ? "estimate" : "invoice"
+  );
   const [fromDetails, setFromDetails] = useState(
     () => initialDraft?.fromDetails ?? seededDraft?.fromDetails ?? ""
   );
   const [billToDetails, setBillToDetails] = useState(() => initialDraft?.billToDetails ?? "");
   const [notes, setNotes] = useState(() => initialDraft?.notes ?? "");
+  const [billingStage, setBillingStage] = useState(() =>
+    initialDraft?.billingStage === "deposit" ||
+    initialDraft?.billingStage === "progress" ||
+    initialDraft?.billingStage === "final"
+      ? initialDraft.billingStage
+      : "standard"
+  );
+  const [projectTotal, setProjectTotal] = useState(() =>
+    initialDraft?.projectTotal === undefined ? "" : String(initialDraft.projectTotal)
+  );
+  const [projectPaidToDate, setProjectPaidToDate] = useState(() =>
+    initialDraft?.projectPaidToDate === undefined ? "" : String(initialDraft.projectPaidToDate)
+  );
   const [paymentLinkUrl, setPaymentLinkUrl] = useState(() => initialDraft?.paymentLinkUrl ?? "");
-  const [taxRate, setTaxRate] = useState(() => initialDraft?.taxRate ?? "0");
+  const [taxRate, setTaxRate] = useState(() => {
+    const explicitTaxRate =
+      typeof initialDraft?.taxRate === "number"
+        ? String(initialDraft.taxRate)
+        : typeof initialDraft?.taxRate === "string"
+          ? initialDraft.taxRate.trim()
+          : "";
+    const explicitTaxNumber = Number(explicitTaxRate);
+    if (!explicitTaxRate || !Number.isFinite(explicitTaxNumber) || explicitTaxNumber === 0) {
+      return seededDraft?.taxRate ?? "0";
+    }
+    return explicitTaxRate;
+  });
   const [discountAmount, setDiscountAmount] = useState(() =>
     initialDraft?.discountAmount === undefined ? "0" : String(initialDraft.discountAmount)
   );
@@ -128,11 +161,36 @@ function ManualInvoiceCanvas() {
       ? initialDraft.lineItems
       : [{ id: "line-1", description: "", qty: "", rate: "" }]
   );
+  const [attachments, setAttachments] = useState(() =>
+    Array.isArray(initialDraft?.attachments)
+      ? initialDraft.attachments
+          .map((attachment, index) => ({
+            id: attachment?.id ?? `attachment-${Date.now()}-${index}`,
+            label: typeof attachment?.label === "string" ? attachment.label : "",
+            url: typeof attachment?.url === "string" ? attachment.url : "",
+            type:
+              attachment?.type === "photo" ||
+              attachment?.type === "document" ||
+              attachment?.type === "other"
+                ? attachment.type
+                : "link"
+          }))
+          .filter((attachment) => attachment.label.trim() || attachment.url.trim())
+      : []
+  );
   const [logoUrl, setLogoUrl] = useState(() => initialDraft?.logoUrl ?? seededDraft?.logoUrl ?? null);
-  const [logoVisible, setLogoVisible] = useState(() => initialDraft?.logoVisible ?? true);
-  const [notesVisible, setNotesVisible] = useState(() => initialDraft?.notesVisible ?? true);
-  const [headerLayout, setHeaderLayout] = useState(() => initialDraft?.headerLayout ?? "split");
-  const [spacingDensity, setSpacingDensity] = useState(() => initialDraft?.spacingDensity ?? "balanced");
+  const [logoVisible, setLogoVisible] = useState(
+    () => initialDraft?.logoVisible ?? seededDraft?.logoVisible ?? true
+  );
+  const [notesVisible, setNotesVisible] = useState(
+    () => initialDraft?.notesVisible ?? seededDraft?.notesVisible ?? true
+  );
+  const [headerLayout, setHeaderLayout] = useState(
+    () => initialDraft?.headerLayout ?? seededDraft?.headerLayout ?? "split"
+  );
+  const [spacingDensity, setSpacingDensity] = useState(
+    () => initialDraft?.spacingDensity ?? seededDraft?.spacingDensity ?? "balanced"
+  );
   const [stylePreset, setStylePreset] = useState(
     () => initialDraft?.stylePreset ?? seededDraft?.stylePreset ?? "default"
   );
@@ -155,6 +213,8 @@ function ManualInvoiceCanvas() {
   const [statusUpdateError, setStatusUpdateError] = useState("");
   const [paymentLinkBusy, setPaymentLinkBusy] = useState(false);
   const [paymentLinkError, setPaymentLinkError] = useState("");
+  const [attachmentUploadBusy, setAttachmentUploadBusy] = useState(false);
+  const [attachmentUploadError, setAttachmentUploadError] = useState("");
   const [assistantCommandRequest, setAssistantCommandRequest] = useState(null);
   const [billieWorkspaceInstruction, setBillieWorkspaceInstruction] = useState("");
   const [billieWorkspaceError, setBillieWorkspaceError] = useState("");
@@ -191,6 +251,24 @@ function ManualInvoiceCanvas() {
       }),
     [billToDetails, lineItems, savedLineItemLibrary]
   );
+  const taxRegionPresets = useMemo(
+    () => resolveTaxRegionPresets(initialBusinessProfile),
+    [initialBusinessProfile]
+  );
+  const inferredTaxRegionPreset = useMemo(
+    () => inferTaxRegionPreset({ billToDetails }, initialBusinessProfile),
+    [billToDetails, initialBusinessProfile]
+  );
+  const selectedTaxPresetKey = useMemo(() => {
+    const parsedTaxRate = Number(taxRate);
+    if (!Number.isFinite(parsedTaxRate)) {
+      return inferredTaxRegionPreset?.key ?? "";
+    }
+    const matchingPreset = taxRegionPresets.find(
+      (preset) => Math.abs(Number(preset.rate) - parsedTaxRate) < 0.0005
+    );
+    return matchingPreset?.key ?? inferredTaxRegionPreset?.key ?? "";
+  }, [taxRate, taxRegionPresets, inferredTaxRegionPreset]);
 
   useEffect(() => {
     const notice = readBillingNoticeFromUrl();
@@ -206,6 +284,21 @@ function ManualInvoiceCanvas() {
     const parsed = Number.parseFloat(value);
     return Number.isFinite(parsed) ? parsed : 0;
   };
+  const hasNumericInput = (value) => `${value ?? ""}`.trim().length > 0;
+  const normalizeAttachmentDrafts = (entries = attachments) =>
+    (Array.isArray(entries) ? entries : [])
+      .map((entry, index) => ({
+        id: entry?.id ?? `attachment-${Date.now()}-${index}`,
+        label: `${entry?.label ?? ""}`.trim(),
+        url: `${entry?.url ?? ""}`.trim(),
+        type:
+          entry?.type === "photo" ||
+          entry?.type === "document" ||
+          entry?.type === "other"
+            ? entry.type
+            : "link"
+      }))
+      .filter((entry) => entry.label.length > 0 && entry.url.length > 0);
 
   const formatMoney = (value) => `$${value.toFixed(2)}`;
 
@@ -215,13 +308,32 @@ function ManualInvoiceCanvas() {
   const discountedSubtotal = Math.max(0, subtotal - effectiveDiscountAmount);
   const taxAmount = discountedSubtotal * (parseNumber(taxRate) / 100);
   const total = discountedSubtotal + taxAmount;
+  const parsedProjectTotal = Math.max(0, parseNumber(projectTotal));
+  const parsedProjectPaidToDate = Math.max(0, parseNumber(projectPaidToDate));
+  const hasProjectTotal = hasNumericInput(projectTotal) && parsedProjectTotal > 0;
+  const normalizedProjectPaidToDate = hasProjectTotal
+    ? Math.min(parsedProjectPaidToDate, parsedProjectTotal)
+    : parsedProjectPaidToDate;
+  const projectBalanceAfterInvoice = hasProjectTotal
+    ? Math.max(0, parsedProjectTotal - normalizedProjectPaidToDate - total)
+    : 0;
+  const normalizedAttachments = normalizeAttachmentDrafts();
+  const normalizedDocumentType = documentType === "estimate" ? "estimate" : "invoice";
+  const documentHeading = normalizedDocumentType === "estimate" ? "ESTIMATE" : "INVOICE";
+  const documentLabel = normalizedDocumentType === "estimate" ? "Estimate" : "Invoice";
   const previewData = {
+    documentType: normalizedDocumentType,
+    billingStage,
+    projectTotal: hasProjectTotal ? parsedProjectTotal : undefined,
+    projectPaidToDate: hasNumericInput(projectPaidToDate) ? normalizedProjectPaidToDate : undefined,
+    projectBalanceAfterInvoice: hasProjectTotal ? projectBalanceAfterInvoice : undefined,
     invoiceNumber,
     invoiceDate,
     fromDetails,
     billToDetails,
     notes,
     paymentLinkUrl,
+    attachments: normalizedAttachments,
     taxRate,
     discountAmount: effectiveDiscountAmount,
     subtotal,
@@ -317,6 +429,90 @@ function ManualInvoiceCanvas() {
     ]);
   };
 
+  const handleAttachmentChange = (id, field, value) => {
+    setAttachmentUploadError("");
+    setAttachments((prev) =>
+      prev.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry))
+    );
+  };
+
+  const handleAddAttachment = () => {
+    const nextId = `attachment-${Date.now()}`;
+    setAttachmentUploadError("");
+    setAttachments((prev) => [
+      ...prev,
+      { id: nextId, label: "", url: "", type: "link" }
+    ]);
+  };
+
+  const handleRemoveAttachment = (id) => {
+    setAttachmentUploadError("");
+    setAttachments((prev) => prev.filter((entry) => entry.id !== id));
+  };
+
+  const handleUploadAttachmentFile = async (file) => {
+    if (!file) {
+      return;
+    }
+    setAttachmentUploadBusy(true);
+    setAttachmentUploadError("");
+    try {
+      const formData = new FormData();
+      formData.append("attachmentFile", file, file.name || "attachment");
+      const response = await apiFetch("/api/invoices/attachments/upload", {
+        method: "POST",
+        body: formData
+      });
+      let body = {};
+      try {
+        body = await response.json();
+      } catch (_error) {
+        body = {};
+      }
+      if (!response.ok) {
+        throw new Error(typeof body?.error === "string" ? body.error : "Couldn't upload attachment.");
+      }
+      const attachmentPayload =
+        body?.attachment && typeof body.attachment === "object" ? body.attachment : {};
+      const uploadedId =
+        typeof attachmentPayload.id === "string" && attachmentPayload.id.trim()
+          ? attachmentPayload.id.trim()
+          : `attachment-${Date.now()}`;
+      const uploadedLabel =
+        typeof attachmentPayload.label === "string" && attachmentPayload.label.trim()
+          ? attachmentPayload.label.trim()
+          : (file.name || "Attachment").trim();
+      const uploadedUrl =
+        typeof attachmentPayload.url === "string" ? attachmentPayload.url.trim() : "";
+      if (!uploadedUrl) {
+        throw new Error("Attachment upload returned an invalid URL.");
+      }
+      const uploadedType =
+        attachmentPayload.type === "photo" ||
+        attachmentPayload.type === "document" ||
+        attachmentPayload.type === "other"
+          ? attachmentPayload.type
+          : "document";
+
+      setAttachments((prev) => [
+        ...prev,
+        {
+          id: uploadedId,
+          label: uploadedLabel,
+          url: uploadedUrl,
+          type: uploadedType
+        }
+      ]);
+      setTimedDraftStatus(`Uploaded attachment: ${uploadedLabel}`);
+    } catch (error) {
+      setAttachmentUploadError(
+        error instanceof Error && error.message ? error.message : "Couldn't upload attachment."
+      );
+    } finally {
+      setAttachmentUploadBusy(false);
+    }
+  };
+
   const setTimedDraftStatus = (message) => {
     setDraftStatus(message);
     if (clearStatusTimeoutRef.current) {
@@ -325,6 +521,18 @@ function ManualInvoiceCanvas() {
     clearStatusTimeoutRef.current = window.setTimeout(() => {
       setDraftStatus("");
     }, 1800);
+  };
+
+  const handleTaxPresetChange = (nextPresetKey) => {
+    if (!nextPresetKey) {
+      return;
+    }
+    const nextPreset = taxRegionPresets.find((preset) => preset.key === nextPresetKey);
+    if (!nextPreset) {
+      return;
+    }
+    setTaxRate(nextPreset.rate);
+    setTimedDraftStatus(`Applied ${nextPreset.label} tax preset (${nextPreset.rate}%).`);
   };
 
   const handleInsertSavedLineItem = (entry) => {
@@ -401,6 +609,12 @@ function ManualInvoiceCanvas() {
       return { error: "Add at least one line item description before rewriting." };
     }
     const invoice = {
+      documentType,
+      billingStage,
+      projectTotal: hasProjectTotal ? parsedProjectTotal : undefined,
+      projectPaidToDate:
+        hasProjectTotal || hasNumericInput(projectPaidToDate) ? normalizedProjectPaidToDate : undefined,
+      projectBalanceAfterInvoice: hasProjectTotal ? projectBalanceAfterInvoice : undefined,
       invoiceNumber: invoiceNumber?.trim() || undefined,
       issueDate: invoiceDate || undefined,
       customerName: billToDetails?.trim() || undefined,
@@ -415,6 +629,7 @@ function ManualInvoiceCanvas() {
       })),
       notes: notes?.trim() || undefined,
       paymentLinkUrl: paymentLinkUrl?.trim() || undefined,
+      attachments: normalizedAttachments,
       discountAmount: effectiveDiscountAmount,
       subtotal,
       total,
@@ -429,6 +644,12 @@ function ManualInvoiceCanvas() {
       return { error: "Add at least one line item description before using Edit with Billie." };
     }
     const invoice = {
+      documentType,
+      billingStage,
+      projectTotal: hasProjectTotal ? parsedProjectTotal : undefined,
+      projectPaidToDate:
+        hasProjectTotal || hasNumericInput(projectPaidToDate) ? normalizedProjectPaidToDate : undefined,
+      projectBalanceAfterInvoice: hasProjectTotal ? projectBalanceAfterInvoice : undefined,
       invoiceNumber: invoiceNumber?.trim() || undefined,
       issueDate: invoiceDate || undefined,
       customerName: billToDetails?.trim() || undefined,
@@ -443,6 +664,7 @@ function ManualInvoiceCanvas() {
       })),
       notes: notes?.trim() || undefined,
       paymentLinkUrl: paymentLinkUrl?.trim() || undefined,
+      attachments: normalizedAttachments,
       discountAmount: effectiveDiscountAmount,
       subtotal,
       total,
@@ -476,6 +698,9 @@ function ManualInvoiceCanvas() {
     if (!updatedInvoice) {
       return;
     }
+    if (updatedInvoice.documentType !== undefined) {
+      setDocumentType(updatedInvoice.documentType === "estimate" ? "estimate" : "invoice");
+    }
     if (updatedInvoice.invoiceNumber !== undefined) {
       setInvoiceNumber(updatedInvoice.invoiceNumber ?? "");
     }
@@ -487,6 +712,25 @@ function ManualInvoiceCanvas() {
     }
     if (updatedInvoice.notes !== undefined) {
       setNotes(updatedInvoice.notes ?? "");
+    }
+    if (updatedInvoice.billingStage !== undefined) {
+      setBillingStage(
+        updatedInvoice.billingStage === "deposit" ||
+          updatedInvoice.billingStage === "progress" ||
+          updatedInvoice.billingStage === "final"
+          ? updatedInvoice.billingStage
+          : "standard"
+      );
+    }
+    if (updatedInvoice.projectTotal !== undefined) {
+      setProjectTotal(
+        Number.isFinite(updatedInvoice.projectTotal) ? String(updatedInvoice.projectTotal) : ""
+      );
+    }
+    if (updatedInvoice.projectPaidToDate !== undefined) {
+      setProjectPaidToDate(
+        Number.isFinite(updatedInvoice.projectPaidToDate) ? String(updatedInvoice.projectPaidToDate) : ""
+      );
     }
     if (updatedInvoice.paymentLinkUrl !== undefined) {
       setPaymentLinkUrl(updatedInvoice.paymentLinkUrl ?? "");
@@ -502,6 +746,23 @@ function ManualInvoiceCanvas() {
           qty: Number.isFinite(item.quantity) ? String(item.quantity) : "",
           rate: Number.isFinite(item.unitPrice) ? String(item.unitPrice) : ""
         }))
+      );
+    }
+    if (Array.isArray(updatedInvoice.attachments)) {
+      setAttachments(
+        updatedInvoice.attachments
+          .map((attachment, index) => ({
+            id: attachment.id ?? `attachment-${Date.now()}-${index}`,
+            label: typeof attachment.label === "string" ? attachment.label : "",
+            url: typeof attachment.url === "string" ? attachment.url : "",
+            type:
+              attachment.type === "photo" ||
+              attachment.type === "document" ||
+              attachment.type === "other"
+                ? attachment.type
+                : "link"
+          }))
+          .filter((attachment) => attachment.label.trim() || attachment.url.trim())
       );
     }
   };
@@ -528,10 +789,15 @@ function ManualInvoiceCanvas() {
     const payload = {
       invoiceNumber,
       invoiceDate,
+      documentType,
       fromDetails,
       billToDetails,
       notes,
+      billingStage,
+      projectTotal,
+      projectPaidToDate,
       paymentLinkUrl,
+      attachments: normalizeAttachmentDrafts(),
       taxRate,
       discountAmount,
       lineItems,
@@ -582,10 +848,15 @@ function ManualInvoiceCanvas() {
   }, [
     invoiceNumber,
     invoiceDate,
+    documentType,
     fromDetails,
     billToDetails,
     notes,
+    billingStage,
+    projectTotal,
+    projectPaidToDate,
     paymentLinkUrl,
+    attachments,
     taxRate,
     discountAmount,
     lineItems,
@@ -1140,7 +1411,7 @@ function ManualInvoiceCanvas() {
           />
           <div className={`relative ${activeSpacing.sectionGapClass || activePreset.sectionGap}`}>
             <div className={`flex items-center justify-between ${activePreset.metaClass}`}>
-              <span>Invoice Document</span>
+              <span>{documentLabel} document</span>
               <span className="flex items-center gap-2">
                 {draftStatus ? <span className="text-xs text-slate-400">{draftStatus}</span> : null}
                 <span className="rounded-full border px-2 py-0.5 text-[10px]" style={{ borderColor: accent.border, color: accent.primary }}>
@@ -1191,14 +1462,14 @@ function ManualInvoiceCanvas() {
                 }`}
               >
                 <div>
-                  <h1 className={activePreset.titleClass}>INVOICE</h1>
+                  <h1 className={activePreset.titleClass}>{documentHeading}</h1>
                   <p className="mt-2 text-xs font-semibold uppercase tracking-[0.2em]" style={{ color: accent.primary }}>
                     NoteBill · prepared with Billie
                   </p>
                 </div>
                 <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
                   <label className={`${activePreset.textClass} ${activePreset.labelClass} flex items-center gap-3`}>
-                    <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Invoice #</span>
+                    <span className="text-xs uppercase tracking-[0.2em] text-slate-400">{documentLabel} #</span>
                     <input
                       type="text"
                       className={`min-w-[150px] ${activePreset.inputClass} ${activePreset.textClass}`}
@@ -1427,9 +1698,30 @@ function ManualInvoiceCanvas() {
                       onChange={(event) => setTaxRate(event.target.value)}
                     />
                     <span className="text-xs text-slate-400">%</span>
+                    <select
+                      aria-label="Tax preset"
+                      className="w-28 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      value={selectedTaxPresetKey}
+                      onChange={(event) => handleTaxPresetChange(event.target.value)}
+                    >
+                      <option value="">Preset</option>
+                      {taxRegionPresets.map((preset) => (
+                        <option key={preset.key} value={preset.key}>
+                          {`${preset.label} ${preset.rate}%`}
+                        </option>
+                      ))}
+                    </select>
                   </span>
                   <span className="tabular-nums">{formatMoney(taxAmount)}</span>
                 </div>
+                {inferredTaxRegionPreset ? (
+                  <p className="text-[11px] text-slate-500">
+                    Suggested from bill-to details:{" "}
+                    <span className="font-semibold text-slate-700">
+                      {inferredTaxRegionPreset.label} {inferredTaxRegionPreset.rate}%
+                    </span>
+                  </p>
+                ) : null}
                 <div className={`flex justify-between font-semibold ${activePreset.totalsStrongClass}`}>
                   <span>Total</span>
                   <span className="tabular-nums" style={{ color: accent.primary }}>{formatMoney(total)}</span>
@@ -1496,6 +1788,58 @@ function ManualInvoiceCanvas() {
                 </a>
               ) : null}
             </section>
+
+            {billingStage !== "standard" || hasProjectTotal ? (
+              <section className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                <p className={`${activePreset.textClass} ${activePreset.labelClass}`}>Progress billing</p>
+                <div className="flex flex-wrap gap-2 text-xs text-slate-600">
+                  <span className="nb-chip nb-chip--soft normal-case tracking-normal">
+                    Stage: {billingStage === "deposit"
+                      ? "Deposit"
+                      : billingStage === "progress"
+                        ? "Progress"
+                        : billingStage === "final"
+                          ? "Final"
+                          : "Standard"}
+                  </span>
+                  {hasProjectTotal ? (
+                    <>
+                      <span className="nb-chip nb-chip--soft normal-case tracking-normal">
+                        Project total {formatMoney(parsedProjectTotal)}
+                      </span>
+                      <span className="nb-chip nb-chip--soft normal-case tracking-normal">
+                        Paid to date {formatMoney(normalizedProjectPaidToDate)}
+                      </span>
+                      <span className="nb-chip nb-chip--soft normal-case tracking-normal">
+                        Remaining after this {formatMoney(projectBalanceAfterInvoice)}
+                      </span>
+                    </>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
+
+            {normalizedAttachments.length > 0 ? (
+              <section className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                <p className={`${activePreset.textClass} ${activePreset.labelClass}`}>Attachments</p>
+                <ul className="space-y-1 text-sm text-slate-700">
+                  {normalizedAttachments.map((attachment) => (
+                    <li key={attachment.id} className="flex items-center justify-between gap-2">
+                      <span className="truncate">{attachment.label}</span>
+                      <a
+                        href={attachment.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-semibold underline-offset-2 hover:underline"
+                        style={{ color: accent.primary }}
+                      >
+                        Open
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
           </div>
         </div>
 
@@ -1514,6 +1858,21 @@ function ManualInvoiceCanvas() {
             onNotesVisibilityChange={setNotesVisible}
             onHeaderLayoutChange={setHeaderLayout}
             onSpacingDensityChange={setSpacingDensity}
+            documentType={documentType}
+            onDocumentTypeChange={setDocumentType}
+            billingStage={billingStage}
+            onBillingStageChange={setBillingStage}
+            projectTotal={projectTotal}
+            onProjectTotalChange={setProjectTotal}
+            projectPaidToDate={projectPaidToDate}
+            onProjectPaidToDateChange={setProjectPaidToDate}
+            attachments={attachments}
+            onAttachmentChange={handleAttachmentChange}
+            onAddAttachment={handleAddAttachment}
+            onUploadAttachmentFile={handleUploadAttachmentFile}
+            onRemoveAttachment={handleRemoveAttachment}
+            attachmentUploadBusy={attachmentUploadBusy}
+            attachmentUploadError={attachmentUploadError}
             stylePreset={stylePreset}
             onStylePresetChange={setStylePreset}
             accentColor={accentColor}
@@ -1630,6 +1989,21 @@ function ManualInvoiceCanvas() {
                 onNotesVisibilityChange={setNotesVisible}
                 onHeaderLayoutChange={setHeaderLayout}
                 onSpacingDensityChange={setSpacingDensity}
+                documentType={documentType}
+                onDocumentTypeChange={setDocumentType}
+                billingStage={billingStage}
+                onBillingStageChange={setBillingStage}
+                projectTotal={projectTotal}
+                onProjectTotalChange={setProjectTotal}
+                projectPaidToDate={projectPaidToDate}
+                onProjectPaidToDateChange={setProjectPaidToDate}
+                attachments={attachments}
+                onAttachmentChange={handleAttachmentChange}
+                onAddAttachment={handleAddAttachment}
+                onUploadAttachmentFile={handleUploadAttachmentFile}
+                onRemoveAttachment={handleRemoveAttachment}
+                attachmentUploadBusy={attachmentUploadBusy}
+                attachmentUploadError={attachmentUploadError}
                 stylePreset={stylePreset}
                 onStylePresetChange={setStylePreset}
                 accentColor={accentColor}

@@ -1,4 +1,5 @@
 import { FinishedInvoice } from "../models/invoice.js";
+import { buildPdfFilename, createInvoicePdfBuffer } from "./invoicePdf.js";
 
 export type InvoiceEmailProvider = "none" | "resend";
 
@@ -42,7 +43,10 @@ type SendInvoiceEmailInput = {
   invoice: FinishedInvoice;
   invoiceId: string;
   openTrackingPixelUrl: string;
-  messageType?: "invoice" | "reminder";
+  customerInvoiceUrl?: string;
+  messageType?: "invoice" | "estimate" | "reminder" | "receipt";
+  reminderTone?: "friendly" | "firm";
+  reminderLateFeePercent?: number;
 };
 
 const RESEND_API_URL = "https://api.resend.com/emails";
@@ -172,6 +176,7 @@ async function sendViaResend(input: SendInvoiceEmailInput, fromEmail: string): P
     controller.abort(new Error("timeout"));
   }, RESEND_REQUEST_TIMEOUT_MS);
   try {
+    const payload = await buildResendPayload(input, fromEmail);
     const response = await fetch(RESEND_API_URL, {
       method: "POST",
       signal: controller.signal,
@@ -179,14 +184,16 @@ async function sendViaResend(input: SendInvoiceEmailInput, fromEmail: string): P
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(buildResendPayload(input, fromEmail))
+      body: JSON.stringify(payload)
     });
-    const payload = await response.json().catch(() => ({}));
+    const responsePayload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(resolveResendErrorMessage(payload, response.status));
+      throw new Error(resolveResendErrorMessage(responsePayload, response.status));
     }
     const providerMessageId =
-      typeof payload?.id === "string" && payload.id.trim().length > 0 ? payload.id.trim() : undefined;
+      typeof responsePayload?.id === "string" && responsePayload.id.trim().length > 0
+        ? responsePayload.id.trim()
+        : undefined;
     return {
       mode: "provider",
       provider: "resend",
@@ -315,23 +322,46 @@ async function getInvoiceEmailVerification(
   }
 }
 
-function buildResendPayload(input: SendInvoiceEmailInput, fromEmail: string): Record<string, unknown> {
+type ResendAttachmentPayload = {
+  filename: string;
+  content: string;
+};
+
+async function buildResendPayload(input: SendInvoiceEmailInput, fromEmail: string): Promise<Record<string, unknown>> {
   const subject = buildInvoiceEmailSubject(input);
   const text = buildInvoiceEmailText(input);
   const html = buildInvoiceEmailHtml(input);
+  const attachment = await buildInvoicePdfAttachment(input.invoice);
   return {
     from: fromEmail,
     to: [input.recipientEmail],
     subject,
     text,
-    html
+    html,
+    attachments: [attachment]
+  };
+}
+
+async function buildInvoicePdfAttachment(invoice: FinishedInvoice): Promise<ResendAttachmentPayload> {
+  const pdfBuffer = await createInvoicePdfBuffer({ invoice });
+  return {
+    filename: buildPdfFilename(invoice.invoiceNumber),
+    content: pdfBuffer.toString("base64")
   };
 }
 
 function buildInvoiceEmailSubject(input: SendInvoiceEmailInput): string {
   const invoice = input.invoice;
   const invoiceNumber = toOptionalTrimmedString(invoice.invoiceNumber);
-  const prefix = input.messageType === "reminder" ? "Payment reminder" : "Invoice";
+  if (input.messageType === "reminder") {
+    const prefix = input.reminderTone === "firm" ? "Final payment reminder" : "Payment reminder";
+    if (invoiceNumber) {
+      return `${prefix} ${invoiceNumber}`;
+    }
+    return `${prefix} from NoteBill`;
+  }
+  const prefix =
+    input.messageType === "receipt" ? "Receipt" : input.messageType === "estimate" ? "Estimate" : "Invoice";
   if (invoiceNumber) {
     return `${prefix} ${invoiceNumber}`;
   }
@@ -345,8 +375,16 @@ function buildInvoiceEmailText(input: SendInvoiceEmailInput): string {
   const customerName = toOptionalTrimmedString(invoice.customerName) ?? "there";
   const total = formatCurrency(invoice.total, invoice.currency);
   const paymentLine =
-    typeof invoice.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0
+    input.messageType !== "receipt" &&
+    input.messageType !== "estimate" &&
+    typeof invoice.paymentLinkUrl === "string" &&
+    invoice.paymentLinkUrl.trim().length > 0
       ? `Pay online: ${invoice.paymentLinkUrl.trim()}`
+      : "";
+  const customerDocumentLabel = input.messageType === "estimate" ? "estimate" : "invoice";
+  const customerInvoiceLine =
+    typeof input.customerInvoiceUrl === "string" && input.customerInvoiceUrl.trim().length > 0
+      ? `View ${customerDocumentLabel}: ${input.customerInvoiceUrl.trim()}`
       : "";
   const linePreview = invoice.lineItems
     .slice(0, 8)
@@ -354,17 +392,39 @@ function buildInvoiceEmailText(input: SendInvoiceEmailInput): string {
     .join("\n");
   const introLine =
     input.messageType === "reminder"
-      ? `This is a reminder for invoice${invoiceNumber ? ` (${invoiceNumber})` : ""}${issueDate ? ` dated ${issueDate}` : ""}.`
-      : `Here is your invoice${invoiceNumber ? ` (${invoiceNumber})` : ""}${issueDate ? ` dated ${issueDate}` : ""}.`;
+      ? input.reminderTone === "firm"
+        ? `This is a final reminder for invoice${invoiceNumber ? ` (${invoiceNumber})` : ""}${issueDate ? ` dated ${issueDate}` : ""}. Please arrange payment as soon as possible.`
+        : `This is a reminder for invoice${invoiceNumber ? ` (${invoiceNumber})` : ""}${issueDate ? ` dated ${issueDate}` : ""}.`
+      : input.messageType === "receipt"
+        ? `We received your payment for invoice${invoiceNumber ? ` (${invoiceNumber})` : ""}${issueDate ? ` dated ${issueDate}` : ""}.`
+        : input.messageType === "estimate"
+          ? `Here is your estimate${invoiceNumber ? ` (${invoiceNumber})` : ""}${issueDate ? ` dated ${issueDate}` : ""}.`
+        : `Here is your invoice${invoiceNumber ? ` (${invoiceNumber})` : ""}${issueDate ? ` dated ${issueDate}` : ""}.`;
+  const reminderLateFeeLine =
+    input.messageType === "reminder"
+      ? buildReminderLateFeeNotice(input.reminderLateFeePercent, {
+          tone: input.reminderTone,
+          format: "text"
+        })
+      : "";
+  const billingStageLine = buildBillingStageSummaryLine(invoice, "text");
+  const projectBillingLines = buildProjectBillingLines(invoice, "text") as string[];
+  const attachmentTextLines = buildAttachmentLines(invoice, "text") as string[];
+  const totalLabel = input.messageType === "receipt" ? "Paid amount" : "Total due";
   return [
     `Hi ${customerName},`,
     "",
     introLine,
+    reminderLateFeeLine,
+    billingStageLine,
+    ...projectBillingLines,
     "",
     linePreview,
     "",
-    `Total due: ${total}`,
+    `${totalLabel}: ${total}`,
+    ...attachmentTextLines,
     paymentLine,
+    customerInvoiceLine,
     "",
     "Sent with NoteBill."
   ]
@@ -379,6 +439,7 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
   const customerName = escapeHtml(toOptionalTrimmedString(invoice.customerName) ?? "Client");
   const total = escapeHtml(formatCurrency(invoice.total, invoice.currency));
   const paymentLink =
+    input.messageType !== "estimate" &&
     typeof invoice.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0
       ? invoice.paymentLinkUrl.trim()
       : "";
@@ -393,13 +454,41 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
 
   const introLine =
     input.messageType === "reminder"
-      ? `Hi ${customerName}, this is a reminder for your invoice.`
-      : `Hi ${customerName}, here is your invoice.`;
+      ? input.reminderTone === "firm"
+        ? `Hi ${customerName}, this is a final reminder for your invoice. Please arrange payment as soon as possible.`
+        : `Hi ${customerName}, this is a reminder for your invoice.`
+      : input.messageType === "receipt"
+        ? `Hi ${customerName}, we received your payment. Your receipt is attached.`
+        : input.messageType === "estimate"
+          ? `Hi ${customerName}, here is your estimate.`
+        : `Hi ${customerName}, here is your invoice.`;
+  const reminderLateFeeLine =
+    input.messageType === "reminder"
+      ? buildReminderLateFeeNotice(input.reminderLateFeePercent, {
+          tone: input.reminderTone,
+          format: "html"
+        })
+      : "";
+  const billingStageHtml = buildBillingStageSummaryLine(invoice, "html");
+  const projectBillingHtml = buildProjectBillingLines(invoice, "html") as string;
+  const attachmentHtml = buildAttachmentLines(invoice, "html") as string;
   const paymentBlock = paymentLink
     ? `<p style="margin:16px 0 0 0;font-size:14px;line-height:1.5;">
         <a href="${escapeAttribute(paymentLink)}" style="color:#0b63ce;">Pay online</a>
       </p>`
     : "";
+  const customerInvoiceUrl =
+    typeof input.customerInvoiceUrl === "string" && input.customerInvoiceUrl.trim().length > 0
+      ? input.customerInvoiceUrl.trim()
+      : "";
+  const customerInvoiceLabel = input.messageType === "estimate" ? "View estimate" : "View invoice";
+  const customerInvoiceBlock = customerInvoiceUrl
+    ? `<p style="margin:10px 0 0 0;font-size:14px;line-height:1.5;">
+        <a href="${escapeAttribute(customerInvoiceUrl)}" style="color:#0b63ce;">${customerInvoiceLabel}</a>
+      </p>`
+    : "";
+  const totalLabel = input.messageType === "receipt" ? "Paid amount" : "Total due";
+  const headingLabel = input.messageType === "estimate" ? "Estimate" : "Invoice";
 
   return `<!doctype html>
 <html>
@@ -410,14 +499,19 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
             <tr>
               <td>
-                <h1 style="margin:0;font-size:20px;color:#093064;">Invoice ${invoiceNumber}</h1>
+                <h1 style="margin:0;font-size:20px;color:#093064;">${headingLabel} ${invoiceNumber}</h1>
                 <p style="margin:6px 0 0 0;font-size:14px;color:#475569;">Issue date: ${issueDate}</p>
                 <p style="margin:12px 0 0 0;font-size:14px;color:#334155;">${introLine}</p>
+                ${reminderLateFeeLine}
+                ${billingStageHtml}
+                ${projectBillingHtml}
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:14px;">
                   ${lineRows}
                 </table>
-                <p style="margin:16px 0 0 0;font-size:16px;font-weight:700;color:#0f172a;">Total due: ${total}</p>
-                ${paymentBlock}
+                <p style="margin:16px 0 0 0;font-size:16px;font-weight:700;color:#0f172a;">${totalLabel}: ${total}</p>
+                ${attachmentHtml}
+                ${input.messageType === "receipt" ? "" : paymentBlock}
+                ${customerInvoiceBlock}
                 <p style="margin:18px 0 0 0;font-size:12px;color:#64748b;">Sent with NoteBill.</p>
                 <img src="${escapeAttribute(input.openTrackingPixelUrl)}" alt="" width="1" height="1" style="display:block;border:0;outline:none;" />
               </td>
@@ -523,4 +617,136 @@ function escapeHtml(value: string): string {
 
 function escapeAttribute(value: string): string {
   return escapeHtml(value);
+}
+
+function buildBillingStageSummaryLine(
+  invoice: FinishedInvoice,
+  format: "text" | "html"
+): string {
+  const stage =
+    invoice.billingStage === "deposit" ||
+    invoice.billingStage === "progress" ||
+    invoice.billingStage === "final"
+      ? invoice.billingStage
+      : "standard";
+  if (stage === "standard") {
+    return "";
+  }
+  const label = stage === "deposit" ? "Deposit" : stage === "progress" ? "Progress" : "Final";
+  if (format === "html") {
+    return `<p style="margin:8px 0 0 0;font-size:13px;line-height:1.5;color:#334155;"><strong>Billing stage:</strong> ${escapeHtml(label)}</p>`;
+  }
+  return `Billing stage: ${label}`;
+}
+
+function buildProjectBillingLines(
+  invoice: FinishedInvoice,
+  format: "text" | "html"
+): string[] | string {
+  const lines: string[] = [];
+  if (typeof invoice.projectTotal === "number" && Number.isFinite(invoice.projectTotal)) {
+    lines.push(`Project total: ${formatCurrency(invoice.projectTotal, invoice.currency)}`);
+  }
+  if (typeof invoice.projectPaidToDate === "number" && Number.isFinite(invoice.projectPaidToDate)) {
+    lines.push(`Paid to date: ${formatCurrency(invoice.projectPaidToDate, invoice.currency)}`);
+  }
+  if (
+    typeof invoice.projectBalanceAfterInvoice === "number" &&
+    Number.isFinite(invoice.projectBalanceAfterInvoice)
+  ) {
+    lines.push(
+      `Remaining after this invoice: ${formatCurrency(
+        Math.max(0, invoice.projectBalanceAfterInvoice),
+        invoice.currency
+      )}`
+    );
+  }
+  if (format === "text") {
+    return lines;
+  }
+  if (lines.length === 0) {
+    return "";
+  }
+  const rows = lines
+    .map((line) => `<li style="margin:0 0 4px 0;">${escapeHtml(line)}</li>`)
+    .join("");
+  return `<ul style="margin:8px 0 0 18px;padding:0;font-size:13px;color:#475569;">${rows}</ul>`;
+}
+
+function buildAttachmentLines(
+  invoice: FinishedInvoice,
+  format: "text" | "html"
+): string[] | string {
+  const attachments = Array.isArray(invoice.attachments)
+    ? invoice.attachments
+        .map((attachment) => ({
+          label: toOptionalTrimmedString(attachment.label) ?? "",
+          url: toOptionalTrimmedString(attachment.url) ?? ""
+        }))
+        .filter((attachment) => attachment.label.length > 0 && attachment.url.length > 0)
+        .slice(0, 8)
+    : [];
+  if (attachments.length === 0) {
+    return format === "text" ? [] : "";
+  }
+  if (format === "text") {
+    return [
+      "Attachments:",
+      ...attachments.map((attachment) => `- ${attachment.label}: ${attachment.url}`)
+    ];
+  }
+  const rows = attachments
+    .map(
+      (attachment) =>
+        `<li style="margin:0 0 4px 0;"><a href="${escapeAttribute(attachment.url)}" style="color:#0b63ce;">${escapeHtml(attachment.label)}</a></li>`
+    )
+    .join("");
+  return `<div style="margin:12px 0 0 0;">
+    <p style="margin:0 0 6px 0;font-size:13px;font-weight:600;color:#334155;">Attachments</p>
+    <ul style="margin:0 0 0 18px;padding:0;font-size:13px;color:#475569;">${rows}</ul>
+  </div>`;
+}
+
+function buildReminderLateFeeNotice(
+  value: unknown,
+  options: {
+    tone?: "friendly" | "firm";
+    format: "text" | "html";
+  }
+): string {
+  const lateFeePercent = normalizeReminderLateFeePercent(value);
+  if (lateFeePercent === null) {
+    return "";
+  }
+
+  const percentLabel = formatReminderPercent(lateFeePercent);
+  const sentence =
+    options.tone === "firm"
+      ? `A ${percentLabel}% late fee may be applied to overdue balances.`
+      : `To avoid a ${percentLabel}% late fee, please pay soon.`;
+
+  if (options.format === "html") {
+    return `<p style="margin:10px 0 0 0;font-size:13px;line-height:1.5;color:#92400e;font-weight:600;">${escapeHtml(sentence)}</p>`;
+  }
+
+  return sentence;
+}
+
+function normalizeReminderLateFeePercent(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  const normalized = Math.round(parsed * 100) / 100;
+  if (normalized <= 0 || normalized > 50) {
+    return null;
+  }
+  return normalized;
+}
+
+function formatReminderPercent(value: number): string {
+  if (Number.isInteger(value)) {
+    return String(value);
+  }
+  return value.toFixed(2).replace(/\.?0+$/, "");
 }

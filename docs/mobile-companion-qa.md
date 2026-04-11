@@ -1,5 +1,27 @@
 # Mobile companion QA checklist
 
+## Android quickstart (Windows/Linux, emulator-first)
+Use this when you want the fastest local proof before phone wiring.
+
+One command baseline:
+- `npm run check:android-prep`
+
+Strict mode (requires a connected emulator/phone):
+- `npm run check:android-prep:strict`
+
+1. In project root, run `npm run check:android-local`.
+2. Run web-mobile regression suite: `npm run check:smoke:mobile`.
+3. If `android/` is missing, run `npm run cap:sync` then `npx cap add android`.
+4. Open Android Studio and use `Open` -> select the project `android` folder.
+5. In Android Studio, open `Device Manager` and start a Pixel emulator (Android 14+).
+6. In project root, run `npm run cap:sync` after any web UI change.
+7. In Android Studio, press Run on the `app` target.
+8. Verify these flows on emulator:
+   - launcher -> start with Billie
+   - intake -> resolve decision -> generate
+   - manual -> send/export -> library status update
+9. If app looks stale, run `npm run cap:sync` again, then re-run app.
+
 ## Initial setup
 1. Keep Android/iOS Capacitor projects in sync (`npm run build && npx cap copy && npx cap sync`).
 2. Document bundle id, app name, and web URL used in `capacitor.config.json` for both platforms.
@@ -27,6 +49,8 @@
 
 ### Android-specific notes
 - Use Android Studio to run the `app` module, confirm the assets copy, and watch logs for permission requests and errors.
+- If `adb devices` shows no devices, restart `adb` (`adb kill-server && adb start-server`) and re-open the emulator.
+- If builds fail after dependency updates, run `npx cap sync android` before trying Gradle sync again.
 
 ### iOS-specific notes (requires Mac/Xcode or cloud builder)
 - Open `ios/App/App.xcworkspace`, select a development team, and run on the iPhone 15.

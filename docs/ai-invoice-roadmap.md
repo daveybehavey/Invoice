@@ -555,6 +555,138 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added a shared Billie status-chip treatment (`ready`, `working`, `safe`, `warning`) and applied it across intake, manual workspace, launcher/import/library cues.
    - Added local refine telemetry (`last`, `p50`, `p95`) for intake/manual wording actions and surfaced summary labels in active Billie UI states.
    - Diagnostics now includes a Billie refine-latency panel so perceived assistant responsiveness can be tracked over time.
+138. Delivery PDF attachment baseline
+   - Resend-backed invoice sends now include a generated invoice PDF attachment by default.
+   - Attachment filename follows the exported invoice number format (`Invoice-<number>.pdf`) and is covered by API delivery tests.
+139. Auto receipt email on paid webhook
+   - Stripe `payment_intent.succeeded` now triggers a paid-receipt email (with attached invoice PDF) when a prior delivery recipient exists.
+   - Receipt send is idempotent on first paid transition and covered by webhook + delivery API tests.
+140. Customer payment page token flow
+   - Added a token-gated public payment summary endpoint (`/api/public/invoices/:id/payment`) and a customer-facing `/pay/:invoiceId` route.
+   - Sent/reminder/receipt emails now include a secure customer invoice URL (`/pay/:id?token=...`) in addition to payment-link support.
+141. Reminder tone escalation baseline (friendly -> firm)
+   - Reminder sends now apply deterministic tone presets based on prior delivery count (`friendly` on first reminder, `firm` on repeat reminders).
+   - Reminder API responses include `reminderTone` so UI/ops surfaces can explain message style without inspecting provider payloads.
+142. Accounting export starter (CSV baseline)
+   - Added owner-scoped accounting export endpoint (`GET /api/invoices/export-accounting.csv`) with optional status/date filters.
+   - Invoice Library now includes a one-tap `Accounting CSV` download action in the account strip for bookkeeping handoff.
+143. Tax profile defaults baseline
+   - Business Identity settings now supports a default tax-rate profile value for new drafts.
+   - AI intake/manual/import draft handoff now applies default tax rate when draft tax is blank/zero, while preserving per-invoice overrides.
+144. Regional tax presets baseline
+   - Business Identity now supports reusable regional tax presets (BC/AB/ON/QC) with editable rates.
+   - New drafts auto-suggest/apply matched regional rates from bill-to details, and manual editor now includes one-tap tax preset selection.
+145. Billie launcher presence bubble baseline
+   - Launcher now includes a subtle floating Billie bubble with lightweight mood states and one-tap `Open Billie assistant`.
+   - Added a dismissible first-run helper popover (`Hide`) so discoverability improves without increasing persistent cognitive load.
+146. Estimate document baseline + convert action
+   - Manual editor now supports `Invoice` vs `Estimate` document type selection as part of save/export controls.
+   - Invoice Library now recognizes estimate cards (`Send estimate`, `Estimate again`) and supports one-tap `Convert to invoice`.
+   - Added deterministic `POST /api/invoices/:id/convert-to-invoice` path that preserves line-item math and updates document type safely.
+147. Estimate approval lifecycle baseline
+   - Estimates now persist deterministic approval state (`pending`, `approved`, `rejected`) and expose owner action controls in Invoice Library.
+   - Conversion is now approval-gated (`Approve estimate` required before `Convert to invoice`) with server-side enforcement.
+   - Added deterministic `POST /api/invoices/:id/estimate-approval` endpoint and metadata propagation across file/postgres stores.
+148. Customer estimate approval link baseline
+   - Public customer token route now supports estimate approval actions (`approved`/`rejected`) without requiring account login.
+   - Customer `/pay/:invoiceId` page adapts to estimate mode and shows a focused approval state/action UI.
+   - Public invoice summary payload now includes estimate approval fields for consistent customer + owner state.
+149. Estimate approval proof metadata baseline
+   - Approved estimates now persist proof metadata (`estimateApprovedBy`, `estimateApprovalSource`) for owner and customer approval paths.
+   - Library estimate cards now surface approval proof context (`Approved by ... · timestamp`) once approved.
+   - Accounting CSV export now includes estimate approval columns for bookkeeping/audit workflows.
+150. Billie line-level refine + presence consistency pass
+   - Intake review now uses the shared Billie status-chip language and exposes cleaner line-level + notes refine actions directly in context.
+   - Manual editor assistant tab now includes a calmer co-pilot header, explicit line-target refine controls, and consistent status states (`working`, `safe`, `warning`, `ready`).
+   - Targeted UI/API tests cover line-level refine, notes refine, transparency preview, estimate convert/approval, and public estimate approval + CSV export paths.
+151. Launcher Billie chatbot helper baseline
+   - The floating Billie bubble now opens an in-app helper chat instead of only hard-routing to intake.
+   - Users can ask plain-language starter questions (notes/import/manual/library/money-safety) and receive route-aware replies with one-tap navigation actions.
+   - Keeps Billie linked to product actions while preserving low cognitive load and the existing dismissible first-run helper.
+152. AI-backed launcher Billie routing endpoint
+   - Added `POST /api/assistant/launcher` so Billie helper chat can use a model-backed response path with strict route/action guardrails.
+   - Added deterministic fallback routing in the same service for reliability and test determinism (`NODE_ENV=test` stays fallback-only).
+   - Launcher helper chat now calls the API endpoint directly, so chat guidance remains linked to real in-app routes.
+153. Team roles baseline (owner + helper money guardrails)
+   - Added role resolution from auth session/email lists (`INVOICE_TEAM_OWNER_*`, `INVOICE_TEAM_HELPER_*`) and exposed `GET /api/account/team`.
+   - `GET /api/account/plan` now returns role/capability metadata so UI can adapt without extra role fetches.
+   - Owner-only money actions now return 403 for helpers (`mark paid`, `payment-link creation`, `estimate approval/conversion`, reminder automation runs).
+154. Team-role visibility pass (launcher/library/manual)
+   - Account surfaces now show low-noise role context (`Owner` / `Helper`) to reduce permission confusion.
+   - Manual export and library automation/payment controls now show explicit owner-only hints for helper sessions.
+   - Keeps drafting/sending available for helpers while preserving owner-only money safety boundaries.
+155. Reminder late-fee notice baseline (copy-only, deterministic)
+   - Added optional `INVOICE_REMINDER_LATE_FEE_PERCENT` configuration to include late-fee language in reminder emails.
+   - Reminder APIs now expose `lateFeePercentApplied` metadata for UI/ops visibility.
+   - This is informational copy only and does not change invoice totals or payment math.
+156. Deposit/progress invoicing metadata baseline
+   - Added canonical stage metadata (`standard`/`deposit`/`progress`/`final`) plus project tracking fields (`projectTotal`, `projectPaidToDate`, `projectBalanceAfterInvoice`) to saved/public/accounting invoice surfaces.
+   - Manual editor now supports stage + project progress context, and customer pay pages now show progress billing details when configured.
+   - Accounting CSV now includes stage/project columns for bookkeeping workflows.
+157. Attachment groundwork baseline (metadata-first)
+   - Added attachment metadata support (`label`, `url`, `type`) to manual draft/save flows and public invoice summaries.
+   - Added manual export controls for attachment links and surfaced attachment chips in Invoice Library cards.
+   - Delivery email templates and PDF exports now include attachment context (links in email body; attachment summary section in PDF).
+158. Attachment upload + hosted file URL baseline
+   - Added `POST /api/invoices/attachments/upload` to accept photo/document uploads and return validated attachment metadata with a hosted URL.
+   - Added public file serving route for stored attachment files (`/api/invoices/attachments/files/:ownerKey/:fileName`) with immutable caching headers.
+   - Manual editor attachment controls now support direct file uploads (not only manual link pasting) while preserving existing money guardrails.
+159. Billie refine latency trim pass (deterministic notes + smaller wording budgets)
+   - Added deterministic notes fast-path for short formal/neutral rewrites so common “pay in X days thanks” style notes no longer wait on model round-trips.
+   - Reduced wording token budgets for line/notes/description/full refine calls to improve response time while keeping guardrails intact.
+   - Added service-level tests to cover deterministic notes rewrite behavior and preserve model path coverage for non-deterministic tones.
+160. Billie wording latency benchmark command
+   - Added `npm run check:wording-latency` to run repeatable timing checks across line/notes/descriptions/full refine actions.
+   - Supports action/runs/target overrides (`--actions=... --runs=... --target-p50=... --target-p95=...`) with optional `--assert` for gate-style runs.
+   - Keeps refine performance tracking explicit so p50/p95 targets can be validated before launch decisions.
+161. Fast-first wording model chain (opt-in)
+   - Added `OPENAI_WORDING_FAST_MODEL` so wording operations can try a low-latency model first, then fall back to `OPENAI_WORDING_MODEL` for reliability.
+   - `runJsonTask` now supports an ordered wording model chain without changing default behavior when fast model is unset.
+   - Added config tests for chain ordering and duplicate collapse.
+162. Expanded deterministic wording tones for line/description quick actions
+   - Description wording fast-path now covers `Professional`, `Simpler`, and related clear/plain tones (not only strict formal/neutral).
+   - Keeps `Stronger`/`Friendly` on model path so stylistic intents still work while common low-risk cleanup actions stay instant.
+   - Added tests to confirm deterministic behavior for professional/simpler actions and model-path retention for stronger tone.
+163. Default quick-action refine latency gate pass
+   - Added a repeatable assert-mode run for wording latency: `npm run check:wording-latency -- --runs=3 --assert`.
+   - Current gate passes for default quick-action tone (`Professional`) with p50/p95 comfortably below target.
+   - Explicitly tracks model-bound tones (`Stronger`, `Friendly`) as separate monitoring work.
+164. Model-tone refine latency monitoring command
+   - Added `npm run check:wording-latency:model-tones` to sample AI-bound tones (`Stronger`, `Friendly`) separately from deterministic quick-action paths.
+   - Gives recurring visibility into true model-latency behavior without weakening money guardrails or changing tone semantics.
+165. Launch-critical automated smoke subset refresh
+   - Re-ran targeted UI flows for send/reminder/payment-link/sent-paid transitions and confirmed pass.
+   - Re-ran `check:release`, `send:launch-email-test`, and friction pass with zero blocking issues.
+   - Leaves only manual smoke walkthrough as the final launch-gate closeout task.
+166. Freemium pre-limit conversion pass (3/2/1 warnings + early-upgrade cues)
+   - Pre-limit messaging now starts at 3 saves remaining (not only 1), with explicit urgency copy that stays low-noise.
+   - Added early-upgrade CTA exposure in launcher/intake/manual/library warning states to reduce dead-end upgrade discovery.
+   - Added UI coverage for launcher 3-saves-remaining warning behavior.
+167. Upgrade funnel telemetry baseline (conversion visibility)
+   - Added `POST /api/telemetry/upgrade-events` and `GET /api/telemetry/upgrade-funnel` for warning/limit exposure, upgrade click, and checkout return tracking.
+   - Added initial funnel recommendations (low click-through, low checkout start rate, low success-return rate) for trigger-copy tuning.
+   - Added API regression coverage for event ingestion + funnel summary math.
+168. Upgrade diagnostics + import warning-state parity
+   - Diagnostics now includes an `Upgrade funnel diagnostics` panel with 24h/7d rates and recommendation surfacing.
+   - Import flow now mirrors warning-state upgrade CTA behavior (`Upgrade early`) instead of only showing upgrade actions at hard limit.
+   - Upgrade telemetry exposure/click tracking is now wired across launcher, intake, import, manual, and library plan surfaces.
+169. Ops health check expansion
+   - `npm run check:ops-health` now includes upgrade-funnel telemetry metrics and warning heuristics.
+   - Output now reports upgrade view/click/success rates alongside billing/delivery/reminder signals.
+   - Keeps launch-critical checks non-blocking unless critical readiness is impacted.
+170. Owner-scoped reminder automation settings persistence
+   - Added `GET/PUT /api/invoices/reminders/settings` so `dueAfterDays`, `cooldownDays`, and `maxPerRun` persist server-side per owner (not only local storage).
+   - Reminder dry-run/run endpoints now merge stored owner defaults before applying request overrides, keeping automation behavior stable across devices.
+   - Delivery diagnostics now surfaces reminder settings source + updated timestamp for fast operational visibility.
+171. Reminder automation UX polish (saved-state clarity)
+   - Library reminder controls now show explicit `Saved to account.` confirmation after settings writes.
+   - Settings meta copy now communicates source (`stored`/`default`/`local fallback`) plus last-updated timestamp with relative recency.
+   - Added UI regression coverage for reminder automation save-confirmation visibility.
+172. Telemetry-driven pre-limit threshold tuning baseline
+   - `/api/account/plan` now includes `upgradeGuidance` derived from upgrade-funnel telemetry (`prelimitStartRemaining`, warning variant, reason, and window stats).
+   - When warning views are high and click-through is low, warning threshold auto-expands from 3 to 5 saves remaining to increase early upgrade exposure.
+   - Frontend plan-warning logic now honors server guidance for warning timing while preserving default behavior when telemetry is sparse.
+   - Upgrade CTA labels now adapt by surface (`launcher`/`intake`/`import`/`manual`/`library`) based on guidance reason, with regression coverage for the low-click-rate path.
 
 ## Next (current priorities)
 1. Optional modularization continuation
@@ -586,12 +718,30 @@ Ordered by leverage (highest first); complexity is the tie-breaker.
    - Estimated complexity: Medium
    - Impact score: Retention
    - Dependency: Invoice-again baseline + sent follow-up reminder baseline (shipped)
-3. "Draft recovery inbox" for abandoned work
+3. Accounting export starter (CSV now, QuickBooks/Xero later)
+   - Description: Add a reliable accounting export path for invoices/payments, starting with CSV and expanding to native accounting sync.
+   - Why it beats Excel: Removes manual double-entry and reduces bookkeeping cleanup at month end.
+   - Estimated complexity: Medium
+   - Impact score: Retention
+   - Dependency: Payment status fields + stable invoice schema
+4. "Draft recovery inbox" for abandoned work
    - Description: Surface stale unfinished drafts with one-tap resume actions and lightweight guidance.
    - Why it beats Excel: Reduces lost progress and unfinished invoices that normally disappear in manual workflows.
    - Estimated complexity: Low
    - Impact score: Retention
    - Dependency: Existing scoped draft persistence (shipped)
+5. Tax profile defaults by region
+   - Description: Save reusable tax presets (rates/rules) per region so users do not re-enter tax behavior on each invoice.
+   - Why it beats Excel: Prevents tax setup mistakes and repetitive manual tax edits.
+   - Estimated complexity: Low
+   - Impact score: Retention
+   - Dependency: Existing tax decision guardrails + settings persistence
+6. Team workspace roles (owner + helper)
+   - Description: Add multi-user access with simple role boundaries so office/admin helpers can draft while owners retain money controls.
+   - Why it beats Excel: Spreads invoicing workload across a team without sharing one spreadsheet login.
+   - Estimated complexity: High
+   - Impact score: Retention
+   - Dependency: Auth scopes + per-account access control
 
 ### Revenue Layer
 Ordered by leverage (highest first); complexity is the tie-breaker.
@@ -601,24 +751,48 @@ Ordered by leverage (highest first); complexity is the tie-breaker.
    - Estimated complexity: High
    - Impact score: Revenue
    - Dependency: Payments provider integration
-2. Free-to-paid plan gating
+2. Estimate-to-invoice conversion
+   - Description: Expand estimate workflow with approval status, estimate-specific send UX, and post-approval conversion controls (baseline conversion is shipped).
+   - Why it beats Excel: Connects quoting and billing in one flow instead of duplicated docs and retyping.
+   - Estimated complexity: High
+   - Impact score: Revenue
+   - Dependency: Approval capture + estimate lifecycle state expansion
+3. Deposit + progress invoicing
+   - Description: Support staged billing (deposit, milestone, final) with running-balance visibility for larger jobs.
+   - Why it beats Excel: Handles real trade payment schedules that spreadsheets manage poorly.
+   - Estimated complexity: High
+   - Impact score: Revenue
+   - Dependency: Payment links + staged total validation
+4. Customer payment page + automatic receipt email
+   - Description: Provide a branded pay page and automatically email a paid receipt PDF once payment completes.
+   - Why it beats Excel: Gives customers a clean payment/receipt flow without manual follow-up work.
+   - Estimated complexity: Medium
+   - Impact score: Revenue
+   - Dependency: Payment links + transactional email provider + receipt PDF template
+5. Free-to-paid plan gating
    - Description: Add account limits (for example invoices/month or exports) with in-app upgrade prompts tied to real usage moments.
    - Why it beats Excel: Converts active usage into monetization without blocking initial value.
    - Estimated complexity: Medium
    - Impact score: Revenue
    - Dependency: Auth + account identity (shipped), billing integration
-3. Send-from-app + delivery tracking
-   - Description: Allow sending invoices directly by email with sent/opened status and resend actions.
-   - Why it beats Excel: Removes manual attachment workflows and provides delivery visibility users cannot get from spreadsheets.
+6. Send-from-app + delivery tracking + PDF attachment
+   - Description: Allow sending invoices directly by email with the invoice PDF attached, plus sent/opened status and resend actions.
+   - Why it beats Excel: Removes manual export/attach workflows and adds delivery visibility users cannot get from spreadsheets.
    - Estimated complexity: Medium
    - Impact score: Revenue
-   - Dependency: Transactional email provider + audit logging
-4. Automated reminders + optional late-fee rule
-   - Description: Optional reminder schedule for unpaid invoices, with explicit user-controlled late-fee behavior.
+   - Dependency: Transactional email provider + audit logging + PDF export endpoint (shipped)
+7. Automated reminders + optional late-fee rules
+   - Description: Add preset overdue reminder sequences (friendly to firm) with optional explicit late-fee behavior.
    - Why it beats Excel: Automates follow-up collections work that is usually manual and forgotten.
    - Estimated complexity: High
    - Impact score: Revenue
    - Dependency: Payment status tracking + send-from-app flow + sent follow-up reminder baseline (shipped)
+8. Estimate e-sign capture + customer approval proof
+   - Description: Capture customer signature/evidence on estimates before conversion, with a stored approval audit trail and downloadable proof.
+   - Why it beats Excel: Replaces paper/email approval confusion with a clear approval record tied to billing.
+   - Estimated complexity: High
+   - Impact score: Revenue
+   - Dependency: Estimate approval lifecycle baseline (shipped) + signature provider or managed signature capture
 
 ### Differentiation Layer
 Ordered by leverage (highest first); complexity is the tie-breaker.
@@ -641,24 +815,48 @@ Ordered by leverage (highest first); complexity is the tie-breaker.
    - Estimated complexity: Medium
    - Impact score: Differentiation
    - Dependency: OCR pipeline + output-quality gate (shipped)
-4. "Before vs after" transparency panel
+4. Job attachments on invoice (photos + scope notes)
+   - Description: Allow attaching before/after photos and supporting notes to invoices and sent email payloads.
+   - Why it beats Excel: Adds proof-of-work context directly in billing without hunting for separate files.
+   - Estimated complexity: Medium
+   - Impact score: Differentiation
+   - Dependency: File uploads + attachment-aware invoice/PDF rendering
+5. "Before vs after" transparency panel
    - Description: Show raw notes alongside cleaned client-facing line items so users can trust what changed and why.
    - Why it beats Excel: Excel provides no intelligent transformation or change explainability.
    - Estimated complexity: Low
    - Impact score: Differentiation
    - Dependency: Existing wording-cleanup and review details controls
-5. Multi-day job timeline synthesizer
+6. Multi-day job timeline synthesizer
    - Description: Convert scattered dated notes into a clear service timeline and grouped labor/material structure before final draft.
    - Why it beats Excel: Reduces complex job reconstruction effort from minutes to seconds.
    - Estimated complexity: Medium
    - Impact score: Differentiation
    - Dependency: Date parsing + service period helper (shipped)
-6. Voice-note to invoice intake
+7. Trade-specific template presets
+   - Description: Offer tuned language/layout presets for common trades (roofing, plumbing, electrical) while preserving one core data model.
+   - Why it beats Excel: Produces professional, industry-appropriate invoices faster than generic spreadsheet templates.
+   - Estimated complexity: Medium
+   - Impact score: Differentiation
+   - Dependency: Existing branding defaults + template selection controls
+8. Voice-note to invoice intake
    - Description: Accept spoken job notes, transcribe them, and run the same decision-safe invoice pipeline.
    - Why it beats Excel: Enables truly mobile-first capture right after a job without typing.
    - Estimated complexity: High
    - Impact score: Differentiation
    - Dependency: Speech-to-text provider + intake normalization
+9. Billie presence layer (mascot bubble + first-run guide)
+   - Description: Add a subtle Billie bubble with mood states and a one-time onboarding nudge that opens the co-pilot flow instantly.
+   - Why it beats Excel: Makes the assistant discoverable at all times without forcing users into a separate chat app.
+   - Estimated complexity: Low
+   - Impact score: Differentiation
+   - Dependency: Existing Billie workspace status + launcher onboarding copy
+10. Canva-style freeform editor mode (future)
+   - Description: Add optional freeform document layout controls for advanced branding use cases while keeping the safe default editor path intact.
+   - Why it beats Excel: Gives users premium visual control while retaining structured totals, guardrails, and AI edits.
+   - Estimated complexity: High
+   - Impact score: Differentiation
+   - Dependency: Stable document schema + attachment-aware rendering + template preset maturity
 
 ### Infrastructure / Distribution (non-core)
 Ordered by leverage (highest first); complexity is the tie-breaker.

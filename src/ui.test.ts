@@ -24,6 +24,14 @@ process.env.FLOW_FRICTION_HISTORY_FILE = path.join(
   os.tmpdir(),
   `invoice-ui-friction-history-${randomUUID()}.json`
 );
+process.env.UPGRADE_TELEMETRY_STORE_FILE = path.join(
+  os.tmpdir(),
+  `invoice-ui-upgrade-telemetry-${randomUUID()}.json`
+);
+process.env.INVOICE_REMINDER_SETTINGS_STORE_FILE = path.join(
+  os.tmpdir(),
+  `invoice-ui-reminder-settings-${randomUUID()}.json`
+);
 
 const [{ app }, { setImageOcrRunnerForTests, setJsonTaskRunnerForTests }] = await Promise.all([
   import("./server.js"),
@@ -37,6 +45,8 @@ const ocrMetricsStoreFilePath = process.env.OCR_METRICS_STORE_FILE;
 const invoiceStoreFilePath = process.env.INVOICE_STORE_FILE;
 const flowFrictionReportFilePath = process.env.FLOW_FRICTION_REPORT_FILE;
 const flowFrictionHistoryFilePath = process.env.FLOW_FRICTION_HISTORY_FILE;
+const upgradeTelemetryStoreFilePath = process.env.UPGRADE_TELEMETRY_STORE_FILE;
+const reminderSettingsStoreFilePath = process.env.INVOICE_REMINDER_SETTINGS_STORE_FILE;
 
 before(async () => {
   server = app.listen(0);
@@ -63,6 +73,14 @@ beforeEach(async () => {
     await fs.mkdir(path.dirname(flowFrictionHistoryFilePath), { recursive: true });
     await fs.rm(flowFrictionHistoryFilePath, { force: true });
   }
+  if (upgradeTelemetryStoreFilePath) {
+    await fs.mkdir(path.dirname(upgradeTelemetryStoreFilePath), { recursive: true });
+    await fs.rm(upgradeTelemetryStoreFilePath, { force: true });
+  }
+  if (reminderSettingsStoreFilePath) {
+    await fs.mkdir(path.dirname(reminderSettingsStoreFilePath), { recursive: true });
+    await fs.rm(reminderSettingsStoreFilePath, { force: true });
+  }
   delete process.env.INVOICE_REQUIRE_AUTH;
   delete process.env.INVOICE_DEFAULT_PLAN;
   delete process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH;
@@ -74,7 +92,14 @@ beforeEach(async () => {
   delete process.env.STRIPE_SECRET_KEY;
   delete process.env.STRIPE_PRICE_ID;
   delete process.env.STRIPE_WEBHOOK_SECRET;
+  delete process.env.INVOICE_EMAIL_PROVIDER;
+  delete process.env.RESEND_API_KEY;
+  delete process.env.INVOICE_FROM_EMAIL;
   delete process.env.APP_BASE_URL;
+  delete process.env.INVOICE_TEAM_OWNER_EMAILS;
+  delete process.env.INVOICE_TEAM_OWNER_USER_IDS;
+  delete process.env.INVOICE_TEAM_HELPER_EMAILS;
+  delete process.env.INVOICE_TEAM_HELPER_USER_IDS;
 });
 
 afterEach(() => {
@@ -106,6 +131,12 @@ after(async () => {
   }
   if (flowFrictionHistoryFilePath) {
     await fs.rm(flowFrictionHistoryFilePath, { force: true });
+  }
+  if (upgradeTelemetryStoreFilePath) {
+    await fs.rm(upgradeTelemetryStoreFilePath, { force: true });
+  }
+  if (reminderSettingsStoreFilePath) {
+    await fs.rm(reminderSettingsStoreFilePath, { force: true });
   }
 });
 
@@ -210,6 +241,51 @@ test("mobile intake steps start compact and can expand on demand", async () => {
     await page.getByRole("button", { name: "Show steps" }).click();
     await page.locator("#intake-step-details").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Hide steps" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("mobile core routes avoid horizontal overflow", async () => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 3
+  });
+  const page = await context.newPage();
+  const assertNoOverflow = async (route: string, waitFor: () => Promise<void>) => {
+    await page.goto(`${baseUrl}${route}`, { waitUntil: "networkidle" });
+    await waitFor();
+    const dimensions = await page.evaluate(() => ({
+      docScrollWidth: document.documentElement.scrollWidth,
+      docClientWidth: document.documentElement.clientWidth,
+      bodyScrollWidth: document.body?.scrollWidth ?? 0,
+      bodyClientWidth: document.body?.clientWidth ?? 0
+    }));
+    assert.ok(
+      dimensions.docScrollWidth <= dimensions.docClientWidth + 2,
+      `${route} has document overflow (${dimensions.docScrollWidth} > ${dimensions.docClientWidth}).`
+    );
+    assert.ok(
+      dimensions.bodyScrollWidth <= dimensions.bodyClientWidth + 2,
+      `${route} has body overflow (${dimensions.bodyScrollWidth} > ${dimensions.bodyClientWidth}).`
+    );
+  };
+
+  try {
+    await assertNoOverflow("/", async () => {
+      await page.getByRole("button", { name: "Start with Billie" }).first().waitFor({ state: "visible" });
+    });
+    await assertNoOverflow("/ai-intake", async () => {
+      await page.getByPlaceholder(/Example: Jan 10 fixed sink/i).waitFor({ state: "visible" });
+    });
+    await assertNoOverflow("/manual", async () => {
+      await page.getByPlaceholder("Description").first().waitFor({ state: "visible" });
+    });
+    await assertNoOverflow("/invoices", async () => {
+      await page.getByRole("heading", { name: /invoice library/i }).first().waitFor({ state: "visible" });
+    });
   } finally {
     await context.close();
   }
@@ -2252,7 +2328,11 @@ test("business identity defaults prefill new manual drafts", async () => {
     await page
       .locator("#business-from-details")
       .fill("Acme Plumbing\n123 Main St\n(555) 555-1234");
+    await page.locator("#business-default-tax-rate").fill("5");
     await page.getByRole("button", { name: "Bold" }).click();
+    await page.locator('button[aria-label="Header layout Centered"]').click();
+    await page.locator('button[aria-label="Spacing density Airy"]').click();
+    await page.getByRole("checkbox", { name: "Show notes on invoices by default" }).uncheck();
     await page.getByRole("button", { name: "Save defaults" }).click();
     await page.getByText("Business identity saved.").waitFor({ state: "visible" });
 
@@ -2260,6 +2340,66 @@ test("business identity defaults prefill new manual drafts", async () => {
     const fromInput = page.getByPlaceholder("Your Name / Company");
     await fromInput.waitFor({ state: "visible" });
     await expectValueContains(fromInput, "Acme Plumbing");
+    const taxInput = page.getByLabel("Tax rate");
+    assert.equal(await taxInput.inputValue(), "5");
+    await page.locator("[data-header-layout='centered']").first().waitFor({ state: "visible" });
+    await page.locator("[data-spacing-density='airy']").first().waitFor({ state: "visible" });
+    await page.locator("[data-notes-visible='false']").first().waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("business identity regional tax presets apply to matching manual drafts", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Show manage tools" }).click();
+    await page.getByRole("button", { name: "Branding" }).click();
+    await page.waitForURL(/\/settings\/business$/, { timeout: 10000 });
+    await page.getByRole("heading", { name: "Set your default invoice branding" }).waitFor({
+      state: "visible"
+    });
+    await page.locator("#business-default-tax-rate").fill("0");
+    await page.getByLabel("BC tax preset (%)").fill("11.5");
+    await page.getByRole("button", { name: "Save defaults" }).click();
+    await page.getByText("Business identity saved.").waitFor({ state: "visible" });
+
+    await page.evaluate(() => {
+      const ownerId = window.localStorage.getItem("invoiceOwnerId");
+      if (!ownerId) {
+        throw new Error("Expected owner id before seeding manual draft.");
+      }
+      const draftStorageKey = `invoiceDraft::owner:${ownerId}`;
+      window.localStorage.setItem(
+        draftStorageKey,
+        JSON.stringify({
+          invoiceNumber: "INV-TAX-REGION-1",
+          invoiceDate: "2026-03-12",
+          billToDetails: "Mike Johnson\nNanaimo, BC",
+          taxRate: "0",
+          lineItems: [
+            {
+              id: "line-1",
+              description: "Cabinet door adjustment",
+              qty: "1",
+              rate: "120"
+            }
+          ]
+        })
+      );
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const taxInput = page.getByLabel("Tax rate");
+    await taxInput.waitFor({ state: "visible" });
+    assert.equal(await taxInput.inputValue(), "11.5");
+
+    const taxPresetInput = page.getByLabel("Tax preset");
+    assert.equal(await taxPresetInput.inputValue(), "CA-BC");
+    await taxPresetInput.selectOption("CA-AB");
+    assert.equal(await taxInput.inputValue(), "5");
   } finally {
     await context.close();
   }
@@ -2281,6 +2421,10 @@ test("ai intake applies business identity defaults when generating draft", async
     await page
       .locator("#business-from-details")
       .fill("Acme Plumbing\n123 Main St\n(555) 555-1234");
+    await page.locator("#business-default-tax-rate").fill("7.5");
+    await page.locator('button[aria-label="Header layout Centered"]').click();
+    await page.locator('button[aria-label="Spacing density Airy"]').click();
+    await page.getByRole("checkbox", { name: "Show notes on invoices by default" }).uncheck();
     await page.getByRole("button", { name: "Save defaults" }).click();
     await page.getByText("Business identity saved.").waitFor({ state: "visible" });
 
@@ -2296,6 +2440,11 @@ test("ai intake applies business identity defaults when generating draft", async
     const fromInput = page.getByPlaceholder("Your Name / Company");
     await fromInput.waitFor({ state: "visible" });
     await expectValueContains(fromInput, "Acme Plumbing");
+    const taxInput = page.getByLabel("Tax rate");
+    assert.equal(await taxInput.inputValue(), "7.5");
+    await page.locator("[data-header-layout='centered']").first().waitFor({ state: "visible" });
+    await page.locator("[data-spacing-density='airy']").first().waitFor({ state: "visible" });
+    await page.locator("[data-notes-visible='false']").first().waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -2435,6 +2584,32 @@ test("launcher shows free-plan usage when monthly save limit is reached", async 
     const upgradeLink = page.getByRole("link", { name: "Upgrade" });
     await upgradeLink.waitFor({ state: "visible" });
     assert.equal(await upgradeLink.getAttribute("href"), "https://notebill.app/upgrade");
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher account strip shows helper role when team helper email is configured", async () => {
+  process.env.INVOICE_TEAM_HELPER_EMAILS = "helper-ui@example.com";
+  const signInResponse = await request(app).post("/api/auth/session").send({ email: "helper-ui@example.com" });
+  assert.equal(signInResponse.status, 200);
+  const token = signInResponse.body.token as string;
+  const session = signInResponse.body.session as { userId: string; email: string };
+
+  const context = await browser.newContext();
+  await context.addInitScript(
+    ({ storedToken, storedSession }) => {
+      window.localStorage.setItem("invoiceSessionToken", storedToken);
+      window.localStorage.setItem("invoiceAuthSession", JSON.stringify(storedSession));
+      window.localStorage.setItem("invoiceOwnerId", storedSession.userId);
+    },
+    { storedToken: token, storedSession: session }
+  );
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByText("Role: Helper").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -2651,9 +2826,53 @@ test("launcher shows draft recovery inbox for saved draft invoices", async () =>
   }
 });
 
-test("launcher shows pre-limit warning when one free save remains", async () => {
+test("launcher billie bubble opens AI intake", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Open Billie assistant" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Open Billie assistant" }).click();
+    await page.getByText(/I.?m Billie\. Tell me what you need/i).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Start from notes" }).click();
+    await page.getByRole("button", { name: "Send" }).click();
+    await page.getByRole("button", { name: "Open intake" }).click();
+    await page.waitForURL(/\/ai-intake$/, { timeout: 10000 });
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher billie helper popover can be dismissed and stays hidden after reload", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByText("Want help getting started? I can build your first draft from rough notes.").waitFor({
+      state: "visible"
+    });
+    await page.getByRole("button", { name: "Hide Billie helper" }).click();
+    await page
+      .getByText("Want help getting started? I can build your first draft from rough notes.")
+      .waitFor({ state: "hidden" });
+
+    await page.reload({ waitUntil: "networkidle" });
+    assert.equal(
+      await page.getByText("Want help getting started? I can build your first draft from rough notes.").count(),
+      0
+    );
+    await page.getByRole("button", { name: "Open Billie assistant" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher shows pre-limit warning when one free save remains", { concurrency: false }, async () => {
   process.env.INVOICE_DEFAULT_PLAN = "free";
   process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "2";
+  if (upgradeTelemetryStoreFilePath) {
+    await fs.rm(upgradeTelemetryStoreFilePath, { force: true });
+  }
 
   const context = await browser.newContext();
   await context.addInitScript(() => {
@@ -2704,6 +2923,163 @@ test("launcher shows pre-limit warning when one free save remains", async () => 
     await page.getByText("1 save left this month before upgrade is required.").waitFor({
       state: "visible"
     });
+  } finally {
+    await context.close();
+  }
+});
+
+test(
+  "launcher surfaces early-upgrade cue when three free saves remain",
+  { concurrency: false },
+  async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "4";
+  process.env.INVOICE_UPGRADE_URL = "https://notebill.app/upgrade";
+  if (upgradeTelemetryStoreFilePath) {
+    await fs.rm(upgradeTelemetryStoreFilePath, { force: true });
+  }
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-plan-warning-owner-three-left");
+  });
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-plan-warning-owner-three-left"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Plan Warning Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PLAN-WARN-3",
+          issueDate: "2026-03-10",
+          customerName: "Plan Warning Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Plan warning baseline",
+              quantity: 1,
+              unitPrice: 95,
+              amount: 95
+            }
+          ],
+          subtotal: 95,
+          total: 95,
+          balanceDue: 95
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByText("Free plan · 1/4 saved this month").waitFor({ state: "visible" });
+    await page.getByText("3 saves left this month. Upgrade now to avoid a save lock.").waitFor({
+      state: "visible"
+    });
+  } finally {
+    await context.close();
+  }
+  }
+);
+
+test("launcher expands warning threshold and copy when click-through is low", { concurrency: false }, async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "6";
+  process.env.INVOICE_UPGRADE_URL = "https://notebill.app/upgrade";
+  const ownerId = "ui-plan-guidance-owner";
+  if (upgradeTelemetryStoreFilePath) {
+    await fs.rm(upgradeTelemetryStoreFilePath, { force: true });
+  }
+
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Plan Guidance Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PLAN-GUIDANCE-1",
+          issueDate: "2026-03-10",
+          customerName: "Plan Guidance Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Plan guidance baseline",
+              quantity: 1,
+              unitPrice: 95,
+              amount: 95
+            }
+          ],
+          subtotal: 95,
+          total: 95,
+          balanceDue: 95
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  for (let index = 0; index < 25; index += 1) {
+    const telemetryResponse = await context.request.post(`${baseUrl}/api/telemetry/upgrade-events`, {
+      headers: {
+        "x-invoice-user-id": ownerId
+      },
+      data: {
+        eventType: "warning_view",
+        source: "launcher",
+        planTier: "free",
+        remainingSaves: 5
+      }
+    });
+    assert.equal(telemetryResponse.status(), 202);
+  }
+  const clickResponse = await context.request.post(`${baseUrl}/api/telemetry/upgrade-events`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      eventType: "upgrade_click",
+      source: "launcher",
+      planTier: "free",
+      remainingSaves: 5
+    }
+  });
+  assert.equal(clickResponse.status(), 202);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByText("Free plan · 1/6 saved this month").waitFor({ state: "visible" });
+    await page.getByText("5 saves left this month. Upgrade early before save lock.").waitFor({
+      state: "visible"
+    });
+    await page.getByRole("link", { name: "Unlock Pro" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -3055,6 +3431,67 @@ test("invoice library follow-up reminder can send oldest reminder without prompt
     }
     assert.equal(sendCount > 1, true);
     assert.equal(dialogTriggered, false);
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library reminder automation settings show saved-to-account confirmation", async () => {
+  const ownerId = "ui-reminder-settings-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const sentSeedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Reminder Settings Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REM-SETTINGS-1",
+          issueDate: "2026-02-01",
+          customerName: "Reminder Settings Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-rem-settings-1",
+              type: "labor",
+              description: "Reminder settings baseline",
+              quantity: 1,
+              unitPrice: 140,
+              amount: 140
+            }
+          ],
+          subtotal: 140,
+          total: 140,
+          balanceDue: 140
+        }
+      }
+    }
+  });
+  const sentSeedPayload = await sentSeedResponse.json();
+  const invoiceId = sentSeedPayload?.invoice?.invoiceId as string;
+  await mutateStoredInvoice(invoiceId, {
+    status: "sent",
+    updatedAt: "2026-01-15T00:00:00.000Z"
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("Reminder automation").waitFor({ state: "visible" });
+    await page.getByLabel("First follow-up (days)").fill("21");
+    await page.getByText("Saved to account.").waitFor({ state: "visible" });
+    await page.getByText(/Saved to account · Updated/i).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -3443,6 +3880,185 @@ test("invoice library invoice again opens a fresh draft with today's date and a 
     assert.equal(await page.getByLabel("Date").inputValue(), today);
     assert.notEqual(await page.getByLabel("Invoice #").inputValue(), "INV-1001");
     await expectValueContains(page.getByPlaceholder("Description").first(), "Faucet repair");
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library can convert an estimate to an invoice", async () => {
+  const ownerId = "ui-estimate-convert-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Estimate Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          documentType: "estimate",
+          invoiceNumber: "EST-UI-1",
+          issueDate: "2026-03-10",
+          customerName: "Estimate Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-estimate-1",
+              type: "other",
+              description: "Roof replacement estimate",
+              quantity: 1,
+              unitPrice: 3600,
+              amount: 3600
+            }
+          ],
+          subtotal: 3600,
+          total: 3600,
+          balanceDue: 3600
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("EST-UI-1").waitFor({ state: "visible" });
+    const convertButton = page.getByRole("button", { name: /Convert estimate .* to invoice/i });
+    assert.equal(await convertButton.isDisabled(), true);
+    await page.getByRole("button", { name: /Approve estimate/i }).click();
+    await page.getByText("Estimate approved.").waitFor({ state: "visible" });
+    assert.equal(await convertButton.isDisabled(), false);
+    await convertButton.click();
+    await page.getByText("Estimate converted to invoice.").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Invoice again" }).waitFor({ state: "visible" });
+
+    const listResponse = await context.request.get(`${baseUrl}/api/invoices`, {
+      headers: { "x-invoice-user-id": ownerId }
+    });
+    assert.equal(listResponse.status(), 200);
+    const payload = await listResponse.json();
+    const converted = (payload.invoices || []).find(
+      (invoice: { invoiceNumber?: string; documentType?: string }) =>
+        typeof invoice.invoiceNumber === "string" && invoice.invoiceNumber.startsWith("INV-")
+    );
+    assert.ok(converted);
+    assert.equal(converted.documentType, "invoice");
+  } finally {
+    await context.close();
+  }
+});
+
+test("customer estimate page supports token-based approval action", async () => {
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = baseUrl;
+
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: "email_ui_estimate_approval_1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const ownerId = "ui-customer-estimate-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Customer Estimate",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          documentType: "estimate",
+          invoiceNumber: "EST-CUSTOMER-1",
+          issueDate: "2026-03-10",
+          customerName: "Customer Estimate",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-estimate-customer-1",
+              type: "other",
+              description: "Estimate scope",
+              quantity: 1,
+              unitPrice: 2100,
+              amount: 2100
+            }
+          ],
+          subtotal: 2100,
+          total: 2100,
+          balanceDue: 2100
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const invoiceId = seedPayload?.invoice?.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      recipientEmail: "customer-estimate@example.com"
+    }
+  });
+  assert.equal(sendResponse.status(), 200);
+  assert.equal(fetchCalls.length, 1);
+  const sendFetchInit = fetchCalls[0]?.init as RequestInit | undefined;
+  const sendBody = JSON.parse(String(sendFetchInit?.body ?? "{}"));
+  const html = String(sendBody?.html ?? "");
+  const tokenMatch = html.match(new RegExp(`/pay/${invoiceId}\\?token=([^\"']+)`, "i"));
+  assert.ok(tokenMatch?.[1], "Expected customer estimate token in send email html payload.");
+  const trackingToken = decodeURIComponent(String(tokenMatch?.[1] ?? ""));
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/pay/${invoiceId}?token=${encodeURIComponent(trackingToken)}`, {
+      waitUntil: "networkidle"
+    });
+    await page.getByRole("heading", { name: "Estimate review" }).waitFor({ state: "visible" });
+    await page.getByText("Pending approval").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Approve estimate" }).click();
+    await page.getByText("Estimate approved.").waitFor({ state: "visible" });
+    await page.getByText("Approved", { exact: true }).waitFor({ state: "visible" });
+
+    const ownerListResponse = await context.request.get(`${baseUrl}/api/invoices`, {
+      headers: { "x-invoice-user-id": ownerId }
+    });
+    assert.equal(ownerListResponse.status(), 200);
+    const ownerListPayload = await ownerListResponse.json();
+    const approvedEstimate = (ownerListPayload.invoices || []).find(
+      (invoice: { invoiceId?: string }) => invoice.invoiceId === invoiceId
+    );
+    assert.equal(approvedEstimate?.estimateApprovalStatus, "approved");
+    assert.equal(approvedEstimate?.estimateApprovedBy, "customer-estimate@example.com");
   } finally {
     await context.close();
   }
@@ -4136,6 +4752,7 @@ test("diagnostics route shows launch, billing, delivery, and telemetry panels", 
     await page.getByRole("heading", { name: "Launch readiness" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Persistence migration" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Billing diagnostics" }).waitFor({ state: "visible" });
+    await page.getByRole("heading", { name: "Ops health alerts" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Delivery diagnostics" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Send launch test email" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Preview due reminders" }).waitFor({ state: "visible" });

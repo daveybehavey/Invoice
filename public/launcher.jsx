@@ -1,5 +1,5 @@
-const { BrowserRouter, Routes, Route, useNavigate } = ReactRouterDOM;
-const { useEffect, useState } = React;
+const { BrowserRouter, Routes, Route, useLocation, useNavigate, useParams } = ReactRouterDOM;
+const { useEffect, useMemo, useState } = React;
 
 const uiPrimitives = window.InvoiceUIPrimitives;
 if (!uiPrimitives) {
@@ -72,7 +72,8 @@ const {
   getPlanUpgradeUrl,
   getPlanBillingPortalUrl,
   getPlanPrelimitWarning,
-  getPlanUsageModel
+  getPlanUsageModel,
+  getPlanUpgradeCtaLabel
 } =
   accountPlanUtils;
 const billingActions = window.InvoiceBillingActions;
@@ -81,6 +82,7 @@ if (!billingActions) {
 }
 
 const { hasStripeCheckout, hasStripePortal, startUpgradeCheckout, openBillingPortal } = billingActions;
+const upgradeTelemetry = window.InvoiceUpgradeTelemetry;
 
 const requestIdentity = window.InvoiceRequestIdentity;
 if (!requestIdentity) {
@@ -145,6 +147,63 @@ function formatUpdatedLabel(value) {
     return "";
   }
   return parsed.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
+
+function resolveBillieLauncherFallbackReply(message) {
+  const normalized = typeof message === "string" ? message.trim().toLowerCase() : "";
+  if (!normalized) {
+    return {
+      message:
+        "Tell me what you want to do. I can route you to intake, import, manual editing, or library.",
+      action: null
+    };
+  }
+  if (/(start|intake|notes|draft|new invoice|first invoice)/.test(normalized)) {
+    return {
+      message:
+        "Start with intake. Paste rough notes and I will help you turn them into a draft with explicit money decisions.",
+      action: { label: "Open intake", route: "/ai-intake" }
+    };
+  }
+  if (/(import|photo|image|pdf|file|upload|scan)/.test(normalized)) {
+    return {
+      message:
+        "Use import when you already have a file or photo note. You can review extracted text before building the draft.",
+      action: { label: "Open import", route: "/import" }
+    };
+  }
+  if (/(manual|blank|custom|from scratch|edit layout)/.test(normalized)) {
+    return {
+      message:
+        "Manual mode is best when you want full control. Billie is still available there for safe wording and style updates.",
+      action: { label: "Open manual editor", route: "/manual" }
+    };
+  }
+  if (/(library|history|past invoice|sent|paid|reminder|follow up)/.test(normalized)) {
+    return {
+      message: "Library is where you manage sent, paid, reminders, and estimate conversion.",
+      action: { label: "Open library", route: "/invoices" }
+    };
+  }
+  if (/(decision|skip|add|money|total|safe|guardrail|numbers)/.test(normalized)) {
+    return {
+      message:
+        "Billie can refine wording and structure, but money-impacting changes stay explicit with Add/Skip or structured actions.",
+      action: { label: "Start with intake", route: "/ai-intake" }
+    };
+  }
+  if (/(price|pricing|plan|upgrade|billing|pro)/.test(normalized)) {
+    return {
+      message:
+        "Free works for getting started. Pro unlocks higher limits and smoother send/payment workflows when usage grows.",
+      action: null
+    };
+  }
+  return {
+    message:
+      "I can help you start quickly. Try: \"start from notes\", \"import a PDF\", \"open library\", or \"manual invoice\".",
+    action: { label: "Open intake", route: "/ai-intake" }
+  };
 }
 
 function Launcher() {
@@ -298,8 +357,22 @@ function Launcher() {
   );
   const planSummary = formatPlanSummary(accountPlan);
   const planUsage = getPlanUsageModel(accountPlan);
+  const teamRole =
+    accountPlan?.team?.role === "helper"
+      ? "helper"
+      : accountPlan?.team?.role === "owner"
+        ? "owner"
+        : null;
   const planAtLimit = Boolean(accountPlan?.upgradeRequired);
   const planWarning = getPlanPrelimitWarning(accountPlan);
+  const warningUpgradeLabel = getPlanUpgradeCtaLabel(accountPlan, {
+    source: "launcher",
+    phase: "warning"
+  });
+  const primaryUpgradeLabel = getPlanUpgradeCtaLabel(accountPlan, {
+    source: "launcher",
+    phase: "primary"
+  });
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
   const billingPortalUrl = getPlanBillingPortalUrl(accountPlan);
   const {
@@ -319,18 +392,82 @@ function Launcher() {
   const [hasResumeDraft, setHasResumeDraft] = useState(false);
   const [showAlternateStarts, setShowAlternateStarts] = useState(false);
   const [showPlanActions, setShowPlanActions] = useState(false);
+  const [planActionsAutoOpened, setPlanActionsAutoOpened] = useState(false);
   const [showManageOptions, setShowManageOptions] = useState(false);
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState("");
   const [draftRecoveryItems, setDraftRecoveryItems] = useState([]);
   const [draftRecoveryLoading, setDraftRecoveryLoading] = useState(false);
   const [resumeDraftBusyId, setResumeDraftBusyId] = useState("");
+  const billieBubbleDismissedStorageKey =
+    requestIdentity.getScopedStorageKey?.("billieLauncherBubbleDismissed") ??
+    "billieLauncherBubbleDismissed";
+  const [billieBubbleDismissed, setBillieBubbleDismissed] = useState(() => {
+    try {
+      return window.localStorage.getItem(billieBubbleDismissedStorageKey) === "1";
+    } catch (_error) {
+      return false;
+    }
+  });
+  const billieMoods = ["(•‿•)", "(•ᴗ•)", "(•‿◕)"];
+  const [billieMoodIndex, setBillieMoodIndex] = useState(0);
+  const [billieChatOpen, setBillieChatOpen] = useState(false);
+  const [billieChatInput, setBillieChatInput] = useState("");
+  const [billieChatBusy, setBillieChatBusy] = useState(false);
+  const [billieChatMessages, setBillieChatMessages] = useState(() => [
+    {
+      id: "billie-welcome",
+      role: "ai",
+      text: "Hi - I'm Billie. Tell me what you need and I'll route you to the right flow.",
+      action: null
+    }
+  ]);
+
+  useEffect(() => {
+    const shouldAutoOpenPlanActions = hasPlanActions && (planAtLimit || Boolean(planWarning));
+    if (shouldAutoOpenPlanActions && !planActionsAutoOpened) {
+      setShowPlanActions(true);
+      setPlanActionsAutoOpened(true);
+      return;
+    }
+    if (!shouldAutoOpenPlanActions && planActionsAutoOpened) {
+      setPlanActionsAutoOpened(false);
+    }
+  }, [hasPlanActions, planAtLimit, planWarning, planActionsAutoOpened]);
+
+  useEffect(() => {
+    if (!upgradeTelemetry || accountPlan?.plan !== "free") {
+      return;
+    }
+    const remainingSaves = Number.isFinite(accountPlan?.usage?.invoicesRemaining)
+      ? Number(accountPlan.usage.invoicesRemaining)
+      : null;
+    if (planAtLimit) {
+      upgradeTelemetry.trackLimitExposure({
+        source: "launcher",
+        planTier: "free",
+        remainingSaves
+      });
+      return;
+    }
+    if (planWarning) {
+      upgradeTelemetry.trackWarningExposure({
+        source: "launcher",
+        planTier: "free",
+        remainingSaves
+      });
+    }
+  }, [accountPlan?.plan, accountPlan?.usage?.invoicesRemaining, planAtLimit, planWarning]);
 
   const handleUpgradeAction = async () => {
     setBillingBusy(true);
     setBillingError("");
     try {
-      await startUpgradeCheckout(accountPlan, { successPath: "/?billing=success" });
+      await startUpgradeCheckout(accountPlan, {
+        source: "launcher",
+        successPath: "/?billing=success",
+        cancelPath: "/?billing=cancelled"
+      });
     } catch (error) {
       setBillingError(error?.message || "Unable to open upgrade.");
     } finally {
@@ -342,12 +479,26 @@ function Launcher() {
     setBillingBusy(true);
     setBillingError("");
     try {
-      await openBillingPortal(accountPlan, { returnPath: "/" });
+      await openBillingPortal(accountPlan, { source: "launcher", returnPath: "/" });
     } catch (error) {
       setBillingError(error?.message || "Unable to open billing.");
     } finally {
       setBillingBusy(false);
     }
+  };
+
+  const handleUpgradeLinkClick = () => {
+    if (!upgradeTelemetry || accountPlan?.plan !== "free") {
+      return;
+    }
+    const remainingSaves = Number.isFinite(accountPlan?.usage?.invoicesRemaining)
+      ? Number(accountPlan.usage.invoicesRemaining)
+      : null;
+    upgradeTelemetry.trackUpgradeClick({
+      source: "launcher",
+      planTier: "free",
+      remainingSaves
+    });
   };
 
   useEffect(() => {
@@ -442,6 +593,93 @@ function Launcher() {
     }
   };
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setBillieMoodIndex((value) => (value + 1) % billieMoods.length);
+    }, 3800);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [billieMoods.length]);
+
+  const dismissBillieBubble = () => {
+    setBillieBubbleDismissed(true);
+    try {
+      window.localStorage.setItem(billieBubbleDismissedStorageKey, "1");
+    } catch (_error) {
+      // Best effort only.
+    }
+  };
+
+  const handleBillieChatSubmit = async (event) => {
+    event?.preventDefault?.();
+    const message = billieChatInput.trim();
+    if (!message || billieChatBusy) {
+      return;
+    }
+    const messageId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    setBillieChatMessages((current) => [
+      ...current,
+      {
+        id: `user-${messageId}`,
+        role: "user",
+        text: message,
+        action: null
+      }
+    ]);
+    setBillieChatInput("");
+    setBillieChatBusy(true);
+    try {
+      const response = await apiFetch("/api/assistant/launcher", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message })
+      });
+      const payload = await response.json().catch(() => ({}));
+      const reply =
+        response.ok && payload?.reply && typeof payload.reply.message === "string"
+          ? payload.reply
+          : resolveBillieLauncherFallbackReply(message);
+      setBillieChatMessages((current) => [
+        ...current,
+        {
+          id: `ai-${messageId}`,
+          role: "ai",
+          text: reply.message ?? reply.text ?? "I can help route you to the right flow.",
+          action:
+            reply?.action &&
+            typeof reply.action.route === "string" &&
+            typeof reply.action.label === "string"
+              ? {
+                  route: reply.action.route,
+                  label: reply.action.label
+                }
+              : null
+        }
+      ]);
+    } catch (_error) {
+      const fallback = resolveBillieLauncherFallbackReply(message);
+      setBillieChatMessages((current) => [
+        ...current,
+        {
+          id: `ai-${messageId}`,
+          role: "ai",
+          text: fallback.message ?? fallback.text,
+          action: fallback.action
+        }
+      ]);
+    } finally {
+      setBillieChatBusy(false);
+    }
+  };
+
+  const billieQuickPrompts = [
+    { label: "Start from notes", value: "start from notes" },
+    { label: "Import a PDF", value: "import a PDF invoice" },
+    { label: "Open library", value: "open library" },
+    { label: "Manual invoice", value: "manual invoice" }
+  ];
+
   return (
     <div
       className="nb-page nb-page--launcher min-h-screen overflow-hidden text-slate-900"
@@ -493,15 +731,18 @@ function Launcher() {
               </div>
               <AccountStrip
                 authSession={authSession}
+                teamRole={teamRole}
                 authBusy={authBusy}
-          planSummary={planSummary}
-          planUsage={planUsage}
-          planAtLimit={planAtLimit}
+                planSummary={planSummary}
+                planUsage={planUsage}
+                planAtLimit={planAtLimit}
                 planWarning={planWarning}
                 hasPlanActions={hasPlanActions}
                 showPlanActions={showPlanActions}
                 onTogglePlanActions={() => setShowPlanActions((current) => !current)}
                 showUpgradeAction={showUpgradeAction}
+                warningUpgradeLabel={warningUpgradeLabel}
+                primaryUpgradeLabel={primaryUpgradeLabel}
                 upgradeUrl={upgradeUrl}
                 useStripeUpgradeAction={useStripeUpgradeAction}
                 showBillingPortalAction={showBillingPortalAction}
@@ -509,6 +750,7 @@ function Launcher() {
                 useStripePortalAction={useStripePortalAction}
                 billingBusy={billingBusy}
                 onOpenUpgrade={handleUpgradeAction}
+                onUpgradeLinkClick={handleUpgradeLinkClick}
                 onOpenBillingPortal={handleBillingAction}
                 onOpenSignIn={openSignInModal}
                 onSignOut={handleSignOut}
@@ -608,6 +850,110 @@ function Launcher() {
           </button>
         ) : null}
       </main>
+      <div className="nb-billie-floating">
+        {billieChatOpen ? (
+          <div className="nb-billie-floating__popover">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6993d2]">Billie assistant</p>
+              <button
+                type="button"
+                className="text-[11px] font-semibold text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
+                onClick={() => setBillieChatOpen(false)}
+                aria-label="Close Billie chat"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-2 max-h-48 space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+              {billieChatMessages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`rounded-lg px-2.5 py-2 text-xs ${
+                    message.role === "user" ? "bg-[#e9f2fd] text-[#093064]" : "bg-white text-slate-700"
+                  }`}
+                >
+                  <p className="font-semibold uppercase tracking-wide text-[10px]">
+                    {message.role === "user" ? "You" : "Billie"}
+                  </p>
+                  <p className="mt-1 leading-5">{message.text}</p>
+                  {message.action ? (
+                    <button
+                      type="button"
+                      className="mt-2 rounded-full border border-[#6993d2]/35 bg-[#f4f8fd] px-2.5 py-1 text-[11px] font-semibold text-[#093064]"
+                      onClick={() => navigate(message.action.route)}
+                    >
+                      {message.action.label}
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {billieQuickPrompts.map((prompt) => (
+                <button
+                  key={prompt.value}
+                  type="button"
+                  className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:border-slate-300 hover:text-slate-800"
+                  onClick={() => setBillieChatInput(prompt.value)}
+                >
+                  {prompt.label}
+                </button>
+              ))}
+            </div>
+            <form className="mt-2 flex items-center gap-2" onSubmit={handleBillieChatSubmit}>
+              <input
+                type="text"
+                className="min-w-0 flex-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-800 focus:border-[#6993d2] focus:outline-none focus:ring-2 focus:ring-[#acd0f4]"
+                placeholder="Ask Billie…"
+                value={billieChatInput}
+                onChange={(event) => setBillieChatInput(event.target.value)}
+                disabled={billieChatBusy}
+              />
+              <button
+                type="submit"
+                className="rounded-full border border-[#6993d2]/35 bg-[#f4f8fd] px-2.5 py-1.5 text-[11px] font-semibold text-[#093064] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={billieChatBusy || !billieChatInput.trim()}
+              >
+                {billieChatBusy ? "..." : "Send"}
+              </button>
+            </form>
+          </div>
+        ) : null}
+        {!billieBubbleDismissed && !billieChatOpen ? (
+          <div className="nb-billie-floating__popover">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6993d2]">Billie</p>
+            <p className="mt-1 text-sm text-slate-700">
+              Want help getting started? I can build your first draft from rough notes.
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                type="button"
+                className="nb-btn-ghost px-2.5 py-1 text-[11px]"
+                onClick={() => navigate("/ai-intake")}
+              >
+                Start with Billie
+              </button>
+              <button
+                type="button"
+                className="text-[11px] font-semibold text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
+                onClick={dismissBillieBubble}
+                aria-label="Hide Billie helper"
+              >
+                Hide
+              </button>
+            </div>
+          </div>
+        ) : null}
+        <button
+          type="button"
+          className="nb-billie-floating__button"
+          onClick={() => setBillieChatOpen((open) => !open)}
+          aria-label="Open Billie assistant"
+        >
+          <span className="nb-billie-floating__face" aria-hidden="true">{billieMoods[billieMoodIndex]}</span>
+          <span className="nb-billie-floating__label">Billie</span>
+        </button>
+      </div>
       <AuthModal
         open={authModalOpen}
         authBusy={authBusy}
@@ -645,6 +991,309 @@ function Placeholder({ title, description }) {
   );
 }
 
+function CustomerPaymentPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { invoiceId = "" } = useParams();
+  const [invoice, setInvoice] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [approvalBusy, setApprovalBusy] = useState(false);
+  const [approvalNotice, setApprovalNotice] = useState("");
+  const [approvalError, setApprovalError] = useState("");
+
+  const trackingToken = useMemo(() => {
+    const params = new URLSearchParams(location.search || "");
+    return (params.get("token") || "").trim();
+  }, [location.search]);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (!invoiceId || !trackingToken) {
+        setError("This payment link is missing a valid token.");
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      setError("");
+      try {
+        const response = await apiFetch(
+          `/api/public/invoices/${encodeURIComponent(invoiceId)}/payment?token=${encodeURIComponent(trackingToken)}`
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error || "Unable to load invoice payment details.");
+        }
+        if (!active) {
+          return;
+        }
+        setInvoice(payload?.invoice ?? null);
+        setLoading(false);
+      } catch (requestError) {
+        if (!active) {
+          return;
+        }
+        setError(requestError?.message || "Unable to load invoice payment details.");
+        setLoading(false);
+      }
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, [invoiceId, trackingToken]);
+
+  const formatMoney = (value, currency = "USD") => {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) {
+      return "—";
+    }
+    try {
+      return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount);
+    } catch (_error) {
+      return `${currency} ${amount.toFixed(2)}`;
+    }
+  };
+
+  const isPaid = invoice?.status === "paid" || Number(invoice?.balanceDue ?? 0) <= 0;
+  const documentType = invoice?.documentType === "estimate" ? "estimate" : "invoice";
+  const isEstimate = documentType === "estimate";
+  const estimateApprovalStatus =
+    invoice?.estimateApprovalStatus === "approved" || invoice?.estimateApprovalStatus === "rejected"
+      ? invoice.estimateApprovalStatus
+      : "pending";
+  const isEstimateApproved = estimateApprovalStatus === "approved";
+  const paymentLinkUrl =
+    typeof invoice?.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim()
+      ? invoice.paymentLinkUrl.trim()
+      : "";
+  const billingStage =
+    invoice?.billingStage === "deposit" ||
+    invoice?.billingStage === "progress" ||
+    invoice?.billingStage === "final"
+      ? invoice.billingStage
+      : "standard";
+  const billingStageLabel =
+    billingStage === "deposit"
+      ? "Deposit"
+      : billingStage === "progress"
+        ? "Progress"
+        : billingStage === "final"
+          ? "Final"
+          : "Standard";
+  const projectTotal =
+    Number.isFinite(invoice?.projectTotal) && invoice.projectTotal > 0 ? Number(invoice.projectTotal) : null;
+  const projectPaidToDate =
+    Number.isFinite(invoice?.projectPaidToDate) && invoice.projectPaidToDate >= 0
+      ? Number(invoice.projectPaidToDate)
+      : null;
+  const projectBalanceAfterInvoice =
+    Number.isFinite(invoice?.projectBalanceAfterInvoice) && invoice.projectBalanceAfterInvoice >= 0
+      ? Number(invoice.projectBalanceAfterInvoice)
+      : null;
+  const attachmentList = Array.isArray(invoice?.attachments)
+    ? invoice.attachments
+        .map((attachment) => ({
+          label: typeof attachment?.label === "string" ? attachment.label.trim() : "",
+          url: typeof attachment?.url === "string" ? attachment.url.trim() : "",
+          type:
+            attachment?.type === "photo" ||
+            attachment?.type === "document" ||
+            attachment?.type === "other"
+              ? attachment.type
+              : "link"
+        }))
+        .filter((attachment) => attachment.label.length > 0 && attachment.url.length > 0)
+    : [];
+
+  const handleEstimateApproval = async (status) => {
+    if (!invoiceId || !trackingToken) {
+      setApprovalError("This estimate link is missing a valid token.");
+      return;
+    }
+    if (!isEstimate) {
+      return;
+    }
+    setApprovalBusy(true);
+    setApprovalError("");
+    setApprovalNotice("");
+    try {
+      const response = await apiFetch(
+        `/api/public/invoices/${encodeURIComponent(invoiceId)}/estimate-approval?token=${encodeURIComponent(trackingToken)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status })
+        }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Unable to update estimate approval.");
+      }
+      setInvoice(payload?.invoice ?? null);
+      setApprovalNotice(status === "approved" ? "Estimate approved." : "Estimate declined.");
+    } catch (requestError) {
+      setApprovalError(requestError?.message || "Unable to update estimate approval.");
+    } finally {
+      setApprovalBusy(false);
+    }
+  };
+
+  const estimateApprovalChipClass =
+    estimateApprovalStatus === "approved"
+      ? "nb-chip nb-chip--success normal-case tracking-normal"
+      : estimateApprovalStatus === "rejected"
+        ? "nb-chip nb-chip--danger normal-case tracking-normal"
+        : "nb-chip nb-chip--warning normal-case tracking-normal";
+  const estimateApprovalLabel =
+    estimateApprovalStatus === "approved"
+      ? "Approved"
+      : estimateApprovalStatus === "rejected"
+        ? "Rejected"
+        : "Pending approval";
+  const estimateApprovedBy =
+    typeof invoice?.estimateApprovedBy === "string" && invoice.estimateApprovedBy.trim()
+      ? invoice.estimateApprovedBy.trim()
+      : "";
+
+  return (
+    <div className="nb-page">
+      <main className="nb-page-shell nb-page-shell--medium py-10">
+        <div className="nb-surface nb-surface--elevated p-6 sm:p-8">
+          <p className="nb-kicker">NoteBill {isEstimate ? "Estimate" : "Payment"}</p>
+          <h1 className="nb-section-title mt-2">{isEstimate ? "Estimate review" : "Invoice payment"}</h1>
+          {loading ? (
+            <p className="mt-4 text-sm text-slate-600">Loading payment details…</p>
+          ) : error ? (
+            <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              {error}
+            </div>
+          ) : (
+            <div className="mt-5 space-y-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-sm text-slate-600">{isEstimate ? "Estimate" : "Invoice"}</div>
+                <div className="text-lg font-semibold text-slate-900">
+                  {invoice?.invoiceNumber || "Draft"}
+                </div>
+                <div className="mt-1 text-sm text-slate-600">
+                  {invoice?.issueDate || "Issue date not set"}
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="text-sm text-slate-600">{isEstimate ? "Estimated total" : "Amount"}</div>
+                <div className="text-2xl font-semibold text-slate-900">
+                  {formatMoney(invoice?.balanceDue ?? invoice?.total ?? 0, invoice?.currency)}
+                </div>
+                <div className="mt-1 text-sm text-slate-600">
+                  {isEstimate ? "Estimate amount" : isPaid ? "Paid in full" : "Balance due"}
+                </div>
+              </div>
+              {billingStage !== "standard" || projectTotal !== null ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="text-sm text-slate-600">Progress billing</div>
+                  <div className="mt-1 text-base font-semibold text-slate-900">{billingStageLabel} stage</div>
+                  <div className="mt-2 space-y-1 text-sm text-slate-600">
+                    {projectTotal !== null ? (
+                      <div>Project total: {formatMoney(projectTotal, invoice?.currency)}</div>
+                    ) : null}
+                    {projectPaidToDate !== null ? (
+                      <div>Paid to date: {formatMoney(projectPaidToDate, invoice?.currency)}</div>
+                    ) : null}
+                    {projectBalanceAfterInvoice !== null ? (
+                      <div>
+                        Remaining after this invoice: {formatMoney(projectBalanceAfterInvoice, invoice?.currency)}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+              {attachmentList.length > 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="text-sm font-semibold text-slate-900">Attachments</div>
+                  <div className="mt-2 space-y-2">
+                    {attachmentList.map((attachment, index) => (
+                      <a
+                        key={`${attachment.url}-${index}`}
+                        href={attachment.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700"
+                      >
+                        <span className="truncate">{attachment.label}</span>
+                        <span className="text-xs font-semibold text-slate-500 uppercase">
+                          {attachment.type}
+                        </span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {isEstimate ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm text-slate-600">Approval status</span>
+                    <span className={estimateApprovalChipClass}>{estimateApprovalLabel}</span>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-600">
+                    {isEstimateApproved
+                      ? "This estimate has already been approved."
+                      : "Review the estimate details and choose Approve or Decline."}
+                  </p>
+                  {isEstimateApproved && estimateApprovedBy ? (
+                    <p className="mt-2 text-xs text-slate-500">Approved by {estimateApprovedBy}</p>
+                  ) : null}
+                  {!isEstimateApproved ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="nb-btn-primary"
+                        onClick={() => handleEstimateApproval("approved")}
+                        disabled={approvalBusy}
+                      >
+                        {approvalBusy ? "Applying…" : "Approve estimate"}
+                      </button>
+                      <button
+                        type="button"
+                        className="nb-btn-secondary"
+                        onClick={() => handleEstimateApproval("rejected")}
+                        disabled={approvalBusy}
+                      >
+                        Decline estimate
+                      </button>
+                    </div>
+                  ) : null}
+                  {approvalNotice ? (
+                    <p className="mt-3 text-sm text-emerald-700">{approvalNotice}</p>
+                  ) : null}
+                  {approvalError ? (
+                    <p className="mt-3 text-sm text-rose-700">{approvalError}</p>
+                  ) : null}
+                </div>
+              ) : isPaid ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                  This invoice is already paid.
+                </div>
+              ) : paymentLinkUrl ? (
+                <a className="nb-btn-primary w-full justify-center" href={paymentLinkUrl} target="_blank" rel="noreferrer">
+                  Pay securely
+                </a>
+              ) : (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  Payment link is not available yet. Please contact the sender.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <button type="button" className="nb-btn-ghost mt-4" onClick={() => navigate("/")}>
+          Back to NoteBill
+        </button>
+      </main>
+    </div>
+  );
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -654,6 +1303,7 @@ function App() {
         <Route path="/invoices" element={<InvoiceLibrary />} />
         <Route path="/manual" element={<ManualInvoiceCanvas />} />
         <Route path="/import" element={<ImportInvoice />} />
+        <Route path="/pay/:invoiceId" element={<CustomerPaymentPage />} />
         <Route path="/diagnostics" element={<IntakeDiagnostics />} />
         <Route path="/settings/business" element={<BusinessIdentitySettings />} />
         <Route

@@ -77,11 +77,11 @@ async function clearDirectory(directory) {
 
 async function runTailwindBuild() {
   await new Promise((resolve, reject) => {
-    const child = spawn(
-      tailwindBin,
-      ["-c", tailwindConfig, "-i", tailwindInput, "-o", tailwindOutput, "--minify"],
-      { stdio: "inherit" }
-    );
+    const args = ["-c", tailwindConfig, "-i", tailwindInput, "-o", tailwindOutput, "--minify"];
+    const child =
+      process.platform === "win32"
+        ? spawn("npx", ["tailwindcss", ...args], { stdio: "inherit", shell: true })
+        : spawn(tailwindBin, args, { stdio: "inherit" });
 
     child.on("error", (error) => {
       reject(error);

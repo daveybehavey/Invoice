@@ -101,6 +101,15 @@ export const InvoiceLineItemSchema = z.object({
   sourceSessionDate: OptionalString
 });
 
+export const InvoiceBillingStageSchema = z.enum(["standard", "deposit", "progress", "final"]);
+
+export const InvoiceAttachmentSchema = z.object({
+  id: OptionalString,
+  label: z.string().min(1),
+  url: z.string().url(),
+  type: z.enum(["photo", "document", "link", "other"]).default("link")
+});
+
 export const InvoiceDecisionSchema = z.object({
   kind: z.enum(["tax", "billing"]),
   prompt: z.string().min(1),
@@ -122,6 +131,15 @@ export const InvoiceAuditSchema = z.object({
 });
 
 export const FinishedInvoiceSchema = z.object({
+  documentType: z.enum(["invoice", "estimate"]).optional(),
+  billingStage: InvoiceBillingStageSchema.optional(),
+  projectTotal: OptionalNumber,
+  projectPaidToDate: OptionalNumber,
+  projectBalanceAfterInvoice: OptionalNumber,
+  estimateApprovalStatus: z.enum(["pending", "approved", "rejected"]).optional(),
+  estimateApprovedAt: OptionalString,
+  estimateApprovedBy: OptionalString,
+  estimateApprovalSource: z.enum(["owner", "customer"]).optional(),
   invoiceNumber: OptionalString,
   issueDate: OptionalString,
   servicePeriodStart: OptionalString,
@@ -135,7 +153,8 @@ export const FinishedInvoiceSchema = z.object({
   discountReason: OptionalString,
   subtotal: OptionalNumber,
   total: OptionalNumber,
-  balanceDue: OptionalNumber
+  balanceDue: OptionalNumber,
+  attachments: z.array(InvoiceAttachmentSchema).optional()
 });
 
 export const ChangeLineWordingRequestSchema = z.object({
@@ -268,9 +287,19 @@ export const InvoiceListItemSchema = z.object({
   updatedAt: z.string().datetime(),
   status: SavedInvoiceStatusSchema,
   sourceType: SavedInvoiceSourceTypeSchema,
+  documentType: z.enum(["invoice", "estimate"]).optional(),
+  billingStage: InvoiceBillingStageSchema.optional(),
+  projectTotal: OptionalNumber,
+  projectPaidToDate: OptionalNumber,
+  projectBalanceAfterInvoice: OptionalNumber,
+  estimateApprovalStatus: z.enum(["pending", "approved", "rejected"]).optional(),
+  estimateApprovedAt: OptionalString,
+  estimateApprovedBy: OptionalString,
   invoiceNumber: OptionalString,
   total: OptionalNumber,
-  paymentLinkUrl: OptionalUrl
+  balanceDue: OptionalNumber,
+  paymentLinkUrl: OptionalUrl,
+  attachmentCount: z.number().int().nonnegative().optional()
 });
 
 export const RecentClientContextItemSchema = z.object({
@@ -289,6 +318,7 @@ export type Task = z.infer<typeof TaskSchema>;
 export type Material = z.infer<typeof MaterialSchema>;
 export type FinishedInvoice = z.infer<typeof FinishedInvoiceSchema>;
 export type InvoiceLineItem = z.infer<typeof InvoiceLineItemSchema>;
+export type InvoiceAttachment = z.infer<typeof InvoiceAttachmentSchema>;
 export type LaborPricingChoice = z.infer<typeof LaborPricingChoiceSchema>;
 export type SavedInvoice = z.infer<typeof SavedInvoiceSchema>;
 export type SavedInvoiceStatus = z.infer<typeof SavedInvoiceStatusSchema>;

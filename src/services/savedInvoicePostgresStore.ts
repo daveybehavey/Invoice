@@ -146,19 +146,31 @@ export class PostgresSavedInvoiceRepository {
       [ownerId, includeDeleted]
     );
 
-    return result.rows.map((row) =>
-      InvoiceListItemSchema.parse({
+    return result.rows.map((row) => {
+      const finished = row.invoice_data.finishedInvoice;
+      const attachments = Array.isArray(finished.attachments) ? finished.attachments : [];
+      return InvoiceListItemSchema.parse({
         invoiceId: row.invoice_id,
         createdAt: toIsoString(row.created_at),
         updatedAt: toIsoString(row.updated_at),
         status: row.status,
         sourceType: row.source_type,
-        invoiceNumber:
-          row.invoice_data.finishedInvoice.invoiceNumber ?? row.invoice_data.structuredInvoice.invoiceNumber,
-        total: row.invoice_data.finishedInvoice.total,
-        paymentLinkUrl: row.invoice_data.finishedInvoice.paymentLinkUrl
-      })
-    );
+        documentType: finished.documentType ?? "invoice",
+        billingStage: finished.billingStage,
+        projectTotal: finished.projectTotal,
+        projectPaidToDate: finished.projectPaidToDate,
+        projectBalanceAfterInvoice: finished.projectBalanceAfterInvoice,
+        estimateApprovalStatus:
+          finished.documentType === "estimate" ? finished.estimateApprovalStatus ?? "pending" : undefined,
+        estimateApprovedAt: finished.documentType === "estimate" ? finished.estimateApprovedAt : undefined,
+        estimateApprovedBy: finished.documentType === "estimate" ? finished.estimateApprovedBy : undefined,
+        invoiceNumber: finished.invoiceNumber ?? row.invoice_data.structuredInvoice.invoiceNumber,
+        total: finished.total,
+        balanceDue: finished.balanceDue,
+        paymentLinkUrl: finished.paymentLinkUrl,
+        attachmentCount: attachments.length
+      });
+    });
   }
 
   async listRecentClientContext(

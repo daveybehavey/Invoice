@@ -129,7 +129,7 @@
       "Missing /utils/accountPlan.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
     );
   }
-  const { formatPlanSummary, getPlanUpgradeUrl, getPlanPrelimitWarning, getPlanUsageModel } =
+  const { formatPlanSummary, getPlanUpgradeUrl, getPlanPrelimitWarning, getPlanUsageModel, getPlanUpgradeCtaLabel } =
     accountPlanUtils;
 
   const billingActions = window.InvoiceBillingActions;
@@ -167,6 +167,7 @@
     buildLaborQuickReplies
   } = aiIntakeHelperUtils;
   const billieTelemetryUtils = window.InvoiceBillieTelemetry;
+  const upgradeTelemetry = window.InvoiceUpgradeTelemetry;
   const getInitialRefineSummaryLabel = () => {
     if (!billieTelemetryUtils) {
       return "";
@@ -1023,9 +1024,18 @@ function AIIntake() {
   const planUsage = getPlanUsageModel(accountPlan);
   const planLimitReached = Boolean(accountPlan?.upgradeRequired);
   const planWarning = getPlanPrelimitWarning(accountPlan);
+  const warningUpgradeLabel = getPlanUpgradeCtaLabel(accountPlan, {
+    source: "intake",
+    phase: "warning"
+  });
+  const limitUpgradeLabel = getPlanUpgradeCtaLabel(accountPlan, {
+    source: "intake",
+    phase: "limit"
+  });
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
   const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
-  const showUpgradeAction = planLimitReached && (Boolean(upgradeUrl) || useStripeUpgradeAction);
+  const hasUpgradePath = Boolean(upgradeUrl) || useStripeUpgradeAction;
+  const showUpgradeAction = hasUpgradePath && (planLimitReached || Boolean(planWarning));
   const showIntakePlanBanner = hasReviewCard && planLimitReached;
   const reviewDetailsToggleLabel = reviewCardCollapsed ? "Show review details" : "Hide review details";
   const showContextDetailsToggle = hasReviewCard && hasVisibleDetails;
@@ -1046,6 +1056,30 @@ function AIIntake() {
   const decisionExcludeButtonClass =
     "rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-700 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-300";
 
+  useEffect(() => {
+    if (!upgradeTelemetry || accountPlan?.plan !== "free") {
+      return;
+    }
+    const remainingSaves = Number.isFinite(accountPlan?.usage?.invoicesRemaining)
+      ? Number(accountPlan.usage.invoicesRemaining)
+      : null;
+    if (planLimitReached) {
+      upgradeTelemetry.trackLimitExposure({
+        source: "intake",
+        planTier: "free",
+        remainingSaves
+      });
+      return;
+    }
+    if (planWarning) {
+      upgradeTelemetry.trackWarningExposure({
+        source: "intake",
+        planTier: "free",
+        remainingSaves
+      });
+    }
+  }, [accountPlan?.plan, accountPlan?.usage?.invoicesRemaining, planLimitReached, planWarning]);
+
   const handlePrimaryCta = () => {
     if (hasDecisionPrimaryPath) {
       scrollToSection(decisionsRef);
@@ -1063,12 +1097,20 @@ function AIIntake() {
     try {
       if (useStripeUpgradeAction) {
         await startUpgradeCheckout(accountPlan, {
+          source: "intake",
           successPath: "/ai-intake?billing=success",
           cancelPath: "/ai-intake?billing=cancelled"
         });
         return;
       }
       if (upgradeUrl) {
+        upgradeTelemetry?.trackUpgradeClick?.({
+          source: "intake",
+          planTier: "free",
+          remainingSaves: Number.isFinite(accountPlan?.usage?.invoicesRemaining)
+            ? Number(accountPlan.usage.invoicesRemaining)
+            : null
+        });
         window.open(upgradeUrl, "_blank", "noopener,noreferrer");
         return;
       }
@@ -1078,6 +1120,19 @@ function AIIntake() {
     } finally {
       setBillingBusy(false);
     }
+  };
+
+  const handleUpgradeLinkClick = () => {
+    if (accountPlan?.plan !== "free") {
+      return;
+    }
+    upgradeTelemetry?.trackUpgradeClick?.({
+      source: "intake",
+      planTier: "free",
+      remainingSaves: Number.isFinite(accountPlan?.usage?.invoicesRemaining)
+        ? Number(accountPlan.usage.invoicesRemaining)
+        : null
+    });
   };
 
   const focusInputWithValue = (value) => {
@@ -2047,12 +2102,15 @@ function AIIntake() {
                 planSummary={planSummary}
                 planUsage={planUsage}
                 planWarning={hasReviewCard && !showIntakePlanBanner ? planWarning : ""}
+                warningUpgradeLabel={warningUpgradeLabel}
+                limitUpgradeLabel={limitUpgradeLabel}
                 showUpgradeAction={showUpgradeAction}
                 useStripeUpgradeAction={useStripeUpgradeAction}
                 upgradeUrl={upgradeUrl}
                 billingBusy={billingBusy}
                 billingError={billingError}
                 handleUpgradeAction={handleUpgradeAction}
+                handleUpgradeLinkClick={handleUpgradeLinkClick}
               />
             </div>
           </div>

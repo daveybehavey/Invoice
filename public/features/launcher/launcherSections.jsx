@@ -7,6 +7,7 @@ const { LauncherCard } = launcherSectionUiPrimitives;
 
 function LauncherAccountStrip({
   authSession,
+  teamRole,
   authBusy,
   planSummary,
   planUsage,
@@ -16,6 +17,8 @@ function LauncherAccountStrip({
   showPlanActions,
   onTogglePlanActions,
   showUpgradeAction,
+  warningUpgradeLabel,
+  primaryUpgradeLabel,
   upgradeUrl,
   useStripeUpgradeAction,
   showBillingPortalAction,
@@ -23,6 +26,7 @@ function LauncherAccountStrip({
   useStripePortalAction,
   billingBusy,
   onOpenUpgrade,
+  onUpgradeLinkClick,
   onOpenBillingPortal,
   onOpenSignIn,
   onSignOut
@@ -39,11 +43,40 @@ function LauncherAccountStrip({
         <p className="text-sm font-semibold text-slate-700">
           {authSession?.email ? `Signed in as ${authSession.email}` : "Not signed in (local mode)"}
         </p>
+        {teamRole ? (
+          <p className="mt-0.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Role: {teamRole === "helper" ? "Helper" : "Owner"}
+          </p>
+        ) : null}
         {planSummary ? (
           <p className={`text-xs ${planAtLimit ? "text-amber-700" : "text-slate-500"}`}>{planSummary}</p>
         ) : null}
         {planWarning && !planAtLimit ? (
-          <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="text-xs font-semibold text-amber-700">{planWarning}</p>
+            {showUpgradeAction ? (
+              useStripeUpgradeAction ? (
+                <button
+                  type="button"
+                  className="nb-btn-secondary rounded-full px-2 py-0.5 text-[11px] disabled:opacity-60"
+                  onClick={onOpenUpgrade}
+                  disabled={billingBusy}
+                >
+                  {billingBusy ? "Opening..." : warningUpgradeLabel || "Upgrade early"}
+                </button>
+              ) : (
+                <a
+                  href={upgradeUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="nb-btn-secondary inline-flex rounded-full px-2 py-0.5 text-[11px]"
+                  onClick={onUpgradeLinkClick}
+                >
+                  {warningUpgradeLabel || "Upgrade early"}
+                </a>
+              )
+            ) : null}
+          </div>
         ) : null}
         {planUsage?.finite ? (
           <div className={`nb-usage-meter mt-2 ${usageToneClass}`}>
@@ -103,7 +136,7 @@ function LauncherAccountStrip({
                 onClick={onOpenUpgrade}
                 disabled={billingBusy}
               >
-                {billingBusy ? "Opening..." : "Upgrade"}
+                {billingBusy ? "Opening..." : primaryUpgradeLabel || "Upgrade"}
               </button>
             ) : (
               <a
@@ -111,8 +144,9 @@ function LauncherAccountStrip({
                 target="_blank"
                 rel="noreferrer"
                 className="nb-btn-primary rounded-full px-3 py-1.5 text-sm"
+                onClick={onUpgradeLinkClick}
               >
-                Upgrade
+                {primaryUpgradeLabel || "Upgrade"}
               </a>
             )
           ) : null}

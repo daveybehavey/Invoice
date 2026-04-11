@@ -68,6 +68,14 @@ function getDefaultWordingModel(): string {
   return getDefaultModel();
 }
 
+function getFastWordingModel(): string | null {
+  const configuredFastModel = process.env.OPENAI_WORDING_FAST_MODEL?.trim();
+  if (!configuredFastModel) {
+    return null;
+  }
+  return configuredFastModel;
+}
+
 function getDefaultVisionModel(): string {
   return process.env.OPENAI_VISION_MODEL ?? "gpt-4.1-mini";
 }
@@ -84,6 +92,22 @@ export function resolveJsonTaskModel(options: JsonTaskOptions = {}): string {
     return getDefaultWordingModel();
   }
   return getDefaultModel();
+}
+
+export function resolveJsonTaskModelChain(options: JsonTaskOptions = {}): string[] {
+  const primaryModel = resolveJsonTaskModel(options);
+  const explicitModel = typeof options.model === "string" ? options.model.trim() : "";
+  if (explicitModel.length > 0) {
+    return [explicitModel];
+  }
+  if (options.taskType !== "wording") {
+    return [primaryModel];
+  }
+  const fastModel = getFastWordingModel();
+  if (!fastModel || fastModel === primaryModel) {
+    return [primaryModel];
+  }
+  return [fastModel, primaryModel];
 }
 
 export function resolveJsonTaskConfig(options: JsonTaskOptions = {}): JsonTaskConfig {
@@ -129,8 +153,6 @@ export async function runJsonTask<T>(
     return jsonTaskRunnerForTests<T>(userTaskPrompt, options);
   }
 
-  const config = resolveJsonTaskConfig(options);
-
   const runOnce = async (prompt: string, taskConfig: JsonTaskConfig): Promise<T> => {
     const completion = await getClient().chat.completions.create({
       model: taskConfig.model,
@@ -157,30 +179,45 @@ export async function runJsonTask<T>(
     return parseJsonFromModel<T>(raw);
   };
 
-  try {
-    return await runOnce(userTaskPrompt, config);
-  } catch (error) {
-    const retryOptions: JsonTaskOptions =
-      options.taskType === "wording"
-        ? {
-            ...options,
-            disableStructuredJsonResponse: true,
-            maxCompletionTokens: Math.min(
-              2200,
-              Math.max(
-                900,
-                Math.ceil((config.maxCompletionTokens ?? 600) * 1.75)
-              )
-            )
-          }
-        : options;
-    const retryConfig = resolveJsonTaskConfig(retryOptions);
-    const retryPrompt =
-      options.taskType === "wording"
-        ? `${userTaskPrompt}\n\nReturn a single raw JSON object with double-quoted keys and string values where needed. Do not wrap the JSON in markdown.`
-        : `${userTaskPrompt}\n\nYou must reply with a single JSON object. Do not include any extra text.`;
-    return await runOnce(retryPrompt, retryConfig);
+  const modelChain = resolveJsonTaskModelChain(options);
+  let lastError: unknown = null;
+  for (const model of modelChain) {
+    const runOptions: JsonTaskOptions = {
+      ...options,
+      model
+    };
+    const config = resolveJsonTaskConfig(runOptions);
+    try {
+      return await runOnce(userTaskPrompt, config);
+    } catch (error) {
+      try {
+        const retryOptions: JsonTaskOptions =
+          runOptions.taskType === "wording"
+            ? {
+                ...runOptions,
+                disableStructuredJsonResponse: true,
+                maxCompletionTokens: Math.min(
+                  2200,
+                  Math.max(
+                    900,
+                    Math.ceil((config.maxCompletionTokens ?? 600) * 1.75)
+                  )
+                )
+              }
+            : runOptions;
+        const retryConfig = resolveJsonTaskConfig(retryOptions);
+        const retryPrompt =
+          runOptions.taskType === "wording"
+            ? `${userTaskPrompt}\n\nReturn a single raw JSON object with double-quoted keys and string values where needed. Do not wrap the JSON in markdown.`
+            : `${userTaskPrompt}\n\nYou must reply with a single JSON object. Do not include any extra text.`;
+        return await runOnce(retryPrompt, retryConfig);
+      } catch (retryError) {
+        lastError = retryError ?? error;
+      }
+    }
   }
+
+  throw lastError instanceof Error ? lastError : new Error("Model task failed.");
 }
 
 export async function runImageOcrTask(input: ImageOcrTaskInput): Promise<ImageOcrTaskResult> {

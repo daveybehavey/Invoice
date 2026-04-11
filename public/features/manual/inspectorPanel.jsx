@@ -43,7 +43,8 @@
     getPlanUpgradeUrl,
     getPlanBillingPortalUrl,
     getPlanPrelimitWarning,
-    getPlanUsageModel
+    getPlanUsageModel,
+    getPlanUpgradeCtaLabel
   } = accountPlanUtils;
   const { hasStripeCheckout, hasStripePortal, startUpgradeCheckout, openBillingPortal } = billingActions;
   const { DEFAULT_ACCENT_COLOR, buildAccentPalette } = brandThemeUtils;
@@ -51,6 +52,7 @@
     STYLE_PRESETS,
     STYLE_OPTIONS,
     TEMPLATE_PREVIEWS,
+    HEADER_LAYOUT_OPTIONS,
     SPACING_DENSITY_PRESETS,
     SPACING_DENSITY_OPTIONS
   } = styleCatalogUtils;
@@ -60,9 +62,17 @@
     { label: "Blue", value: "#6993D2", matches: [/\bblue\b/, /accent blue/, /clean blue/] },
     { label: "Light blue", value: "#ACCCF0", matches: [/light blue/, /sky blue/, /pale blue/] }
   ];
-  const HEADER_LAYOUT_OPTIONS = [
-    { id: "split", label: "Split" },
-    { id: "centered", label: "Centered" }
+  const BILLING_STAGE_OPTIONS = [
+    { id: "standard", label: "Standard" },
+    { id: "deposit", label: "Deposit" },
+    { id: "progress", label: "Progress" },
+    { id: "final", label: "Final" }
+  ];
+  const ATTACHMENT_TYPE_OPTIONS = [
+    { id: "link", label: "Link" },
+    { id: "photo", label: "Photo" },
+    { id: "document", label: "Document" },
+    { id: "other", label: "Other" }
   ];
 
   const manualAssistantHelpers = window.InvoiceManualAssistantHelpers;
@@ -82,6 +92,7 @@
     buildAssistantChangePreview
   } = manualAssistantHelpers;
   const billieTelemetryUtils = window.InvoiceBillieTelemetry;
+  const upgradeTelemetry = window.InvoiceUpgradeTelemetry;
   const getInitialAssistantTimingSummary = () => {
     if (!billieTelemetryUtils) {
       return "";
@@ -102,6 +113,7 @@ function InspectorPanel({
   notesVisible,
   headerLayout,
   spacingDensity,
+  documentType,
   taxRate,
   discountAmount,
   paymentLinkUrl,
@@ -111,6 +123,20 @@ function InspectorPanel({
   onNotesVisibilityChange,
   onHeaderLayoutChange,
   onSpacingDensityChange,
+  onDocumentTypeChange,
+  billingStage,
+  onBillingStageChange,
+  projectTotal,
+  onProjectTotalChange,
+  projectPaidToDate,
+  onProjectPaidToDateChange,
+  attachments,
+  onAttachmentChange,
+  onAddAttachment,
+  onUploadAttachmentFile,
+  onRemoveAttachment,
+  attachmentUploadBusy,
+  attachmentUploadError,
   onTaxRateChange,
   onDiscountAmountChange,
   onPaymentLinkChange,
@@ -160,6 +186,7 @@ function InspectorPanel({
   const [assistantError, setAssistantError] = useState("");
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantMessages, setAssistantMessages] = useState([]);
+  const [assistantLineRefineTargetId, setAssistantLineRefineTargetId] = useState("");
   const [assistantTimingSummary, setAssistantTimingSummary] = useState(() =>
     getInitialAssistantTimingSummary()
   );
@@ -172,6 +199,7 @@ function InspectorPanel({
   const [billingError, setBillingError] = useState("");
   const previewCloseButtonRef = useRef(null);
   const previewFocusReturnRef = useRef(null);
+  const attachmentUploadInputRef = useRef(null);
   const assistantRequestIdRef = useRef(0);
   const handledAssistantCommandRef = useRef("");
   const assistantQuickActions = [
@@ -201,20 +229,49 @@ function InspectorPanel({
       instruction: notesVisible ? "Hide the notes on the invoice." : "Show the notes on the invoice."
     }
   ];
-  const assistantLineQuickActions = (Array.isArray(previewData?.lineItems) ? previewData.lineItems : [])
+  const assistantLineRefineTargets = (Array.isArray(previewData?.lineItems) ? previewData.lineItems : [])
     .map((item, index) => ({
       id: item?.id ?? `line-${index + 1}`,
       lineNumber: index + 1,
       description: typeof item?.description === "string" ? item.description.trim() : ""
     }))
-    .filter((item) => item.description.length > 0)
-    .slice(0, 3)
-    .map((item) => ({
-      id: `line-refine-${item.id}`,
-      label: `Refine line ${item.lineNumber}`,
-      instruction: `Refine line ${item.lineNumber} wording.`,
-      helperText: item.description
-    }));
+    .filter((item) => item.description.length > 0);
+  const assistantLineRefineTarget =
+    assistantLineRefineTargets.find((item) => item.id === assistantLineRefineTargetId) ??
+    assistantLineRefineTargets[0] ??
+    null;
+  const assistantPresence =
+    assistantLoading
+      ? { kind: "working", label: assistantStatus || "Billie is applying your update…" }
+      : assistantError
+        ? { kind: "warning", label: "Action needs attention." }
+        : pendingAssistantEdit
+          ? { kind: "warning", label: "Review pending changes before drafting again." }
+          : assistantUndoState
+            ? { kind: "safe", label: "Last change can be undone." }
+            : { kind: "ready", label: "Ready for your next instruction." };
+  const assistantPresenceClassName =
+    assistantPresence.kind === "working"
+      ? "nb-assistant-chip nb-assistant-chip--working"
+      : assistantPresence.kind === "safe"
+        ? "nb-assistant-chip nb-assistant-chip--safe"
+        : assistantPresence.kind === "warning"
+          ? "nb-assistant-chip nb-assistant-chip--warning"
+          : "nb-assistant-chip nb-assistant-chip--ready";
+  const assistantFace =
+    assistantPresence.kind === "working"
+      ? "(•ᴗ•)…"
+      : assistantPresence.kind === "warning"
+        ? "(•_•)"
+        : assistantPresence.kind === "safe"
+          ? "(•‿◕)"
+          : "(•‿•)";
+  const assistantLineToneActions = [
+    { id: "professional", label: "Refine", tone: "Professional" },
+    { id: "simpler", label: "Simpler", tone: "Simpler" },
+    { id: "formal", label: "Formal", tone: "More formal" },
+    { id: "stronger", label: "Stronger", tone: "Stronger" }
+  ];
   const tabs = [
     { id: "style", label: "Style", content: "Style controls coming soon" },
     { id: "tone", label: "Tone", content: "Tone controls coming soon" },
@@ -236,10 +293,49 @@ function InspectorPanel({
     color: accent.text
   };
   const invoiceStatus = savedInvoiceStatus || (savedInvoiceId ? "draft" : "");
+  const normalizedDocumentType = documentType === "estimate" ? "estimate" : "invoice";
+  const normalizedBillingStage =
+    billingStage === "deposit" || billingStage === "progress" || billingStage === "final"
+      ? billingStage
+      : "standard";
+  const attachmentEntries = Array.isArray(attachments) ? attachments : [];
+  const handleAttachmentUploadClick = () => {
+    if (attachmentUploadBusy) {
+      return;
+    }
+    attachmentUploadInputRef.current?.click?.();
+  };
+  const handleAttachmentFileSelection = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || typeof onUploadAttachmentFile !== "function") {
+      return;
+    }
+    try {
+      await onUploadAttachmentFile(file);
+    } catch (_error) {
+      // Parent handles user-facing upload errors.
+    }
+  };
+  const documentLabel = normalizedDocumentType === "estimate" ? "Estimate" : "Invoice";
   const planLimitReached = !savedInvoiceId && Boolean(accountPlan?.upgradeRequired);
   const planSummary = formatPlanSummary(accountPlan);
   const planUsage = getPlanUsageModel(accountPlan);
+  const teamRole =
+    accountPlan?.team?.role === "helper"
+      ? "helper"
+      : accountPlan?.team?.role === "owner"
+        ? "owner"
+        : null;
   const planWarning = !planLimitReached ? getPlanPrelimitWarning(accountPlan) : "";
+  const warningUpgradeLabel = getPlanUpgradeCtaLabel(accountPlan, {
+    source: "manual",
+    phase: "warning"
+  });
+  const limitUpgradeLabel = getPlanUpgradeCtaLabel(accountPlan, {
+    source: "manual",
+    phase: "limit"
+  });
   const planUpgradeUrl = getPlanUpgradeUrl(accountPlan);
   const planBillingPortalUrl = getPlanBillingPortalUrl(accountPlan);
   const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
@@ -259,14 +355,46 @@ function InspectorPanel({
     sent: "nb-chip nb-chip--info normal-case tracking-normal",
     paid: "nb-chip nb-chip--success normal-case tracking-normal"
   };
+  const canCreatePaymentLinksByRole = accountPlan?.team?.capabilities?.canCreatePaymentLinks !== false;
+  const canMarkPaidByRole = accountPlan?.team?.capabilities?.canMarkInvoicesPaid !== false;
+  const ownerOnlyMoneyCopy =
+    !canCreatePaymentLinksByRole || !canMarkPaidByRole
+      ? "Owner permission is required for payment links and paid-state updates."
+      : "";
   const canMarkSent = invoiceStatus === "draft" || invoiceStatus === "paid";
-  const canMarkPaid = invoiceStatus === "sent";
+  const canMarkPaid = normalizedDocumentType !== "estimate" && invoiceStatus === "sent" && canMarkPaidByRole;
   const canMarkDraft = invoiceStatus === "sent" || invoiceStatus === "paid";
+
+  useEffect(() => {
+    if (!upgradeTelemetry || accountPlan?.plan !== "free") {
+      return;
+    }
+    const remainingSaves = Number.isFinite(accountPlan?.usage?.invoicesRemaining)
+      ? Number(accountPlan.usage.invoicesRemaining)
+      : null;
+    if (planLimitReached) {
+      upgradeTelemetry.trackLimitExposure({
+        source: "manual",
+        planTier: "free",
+        remainingSaves
+      });
+      return;
+    }
+    if (planWarning) {
+      upgradeTelemetry.trackWarningExposure({
+        source: "manual",
+        planTier: "free",
+        remainingSaves
+      });
+    }
+  }, [accountPlan?.plan, accountPlan?.usage?.invoicesRemaining, planLimitReached, planWarning]);
+
   const handleUpgradeAction = async () => {
     setBillingBusy(true);
     setBillingError("");
     try {
       await startUpgradeCheckout(accountPlan, {
+        source: "manual",
         successPath: "/manual?billing=success",
         cancelPath: "/manual?billing=cancelled"
       });
@@ -281,12 +409,25 @@ function InspectorPanel({
     setBillingBusy(true);
     setBillingError("");
     try {
-      await openBillingPortal(accountPlan, { returnPath: "/manual" });
+      await openBillingPortal(accountPlan, { source: "manual", returnPath: "/manual" });
     } catch (billingActionError) {
       setBillingError(billingActionError?.message || "Unable to open billing settings.");
     } finally {
       setBillingBusy(false);
     }
+  };
+
+  const handleUpgradeLinkClick = () => {
+    if (accountPlan?.plan !== "free") {
+      return;
+    }
+    upgradeTelemetry?.trackUpgradeClick?.({
+      source: "manual",
+      planTier: "free",
+      remainingSaves: Number.isFinite(accountPlan?.usage?.invoicesRemaining)
+        ? Number(accountPlan.usage.invoicesRemaining)
+        : null
+    });
   };
 
   const buildAssistantUndoState = () => ({
@@ -295,7 +436,38 @@ function InspectorPanel({
       issueDate: previewData?.invoiceDate ?? "",
       customerName: previewData?.billToDetails ?? "",
       notes: previewData?.notes ?? "",
+      billingStage:
+        previewData?.billingStage === "deposit" ||
+        previewData?.billingStage === "progress" ||
+        previewData?.billingStage === "final"
+          ? previewData.billingStage
+          : "standard",
+      projectTotal:
+        Number.isFinite(previewData?.projectTotal) && previewData.projectTotal > 0
+          ? previewData.projectTotal
+          : undefined,
+      projectPaidToDate:
+        Number.isFinite(previewData?.projectPaidToDate) && previewData.projectPaidToDate >= 0
+          ? previewData.projectPaidToDate
+          : undefined,
+      projectBalanceAfterInvoice:
+        Number.isFinite(previewData?.projectBalanceAfterInvoice) && previewData.projectBalanceAfterInvoice >= 0
+          ? previewData.projectBalanceAfterInvoice
+          : undefined,
       paymentLinkUrl: previewData?.paymentLinkUrl ?? "",
+      attachments: Array.isArray(previewData?.attachments)
+        ? previewData.attachments.map((attachment) => ({
+            id: attachment.id,
+            label: attachment.label ?? "",
+            url: attachment.url ?? "",
+            type:
+              attachment.type === "photo" ||
+              attachment.type === "document" ||
+              attachment.type === "other"
+                ? attachment.type
+                : "link"
+          }))
+        : [],
       lineItems: Array.isArray(previewData?.lineItems)
         ? previewData.lineItems.map((item) => ({
             id: item.id,
@@ -307,6 +479,7 @@ function InspectorPanel({
         : []
     },
     style: {
+      documentType: normalizedDocumentType,
       stylePreset,
       accentColor,
       logoVisible,
@@ -323,6 +496,7 @@ function InspectorPanel({
     }
     onApplyAiEdit?.(undoState.invoice);
     onStylePresetChange?.(undoState.style.stylePreset);
+    onDocumentTypeChange?.(undoState.style.documentType);
     onAccentColorChange?.(undoState.style.accentColor);
     onLogoVisibilityChange?.(undoState.style.logoVisible);
     onNotesVisibilityChange?.(undoState.style.notesVisible);
@@ -822,6 +996,28 @@ function InspectorPanel({
       });
   };
 
+  const buildLineRefineInstruction = (lineNumber, tone) => {
+    const normalizedLine = Number.isFinite(lineNumber) && lineNumber > 0 ? Math.round(lineNumber) : 1;
+    if (tone === "Simpler") {
+      return `Make line ${normalizedLine} simpler.`;
+    }
+    if (tone === "More formal") {
+      return `Make line ${normalizedLine} more formal.`;
+    }
+    if (tone === "Stronger") {
+      return `Make line ${normalizedLine} stronger.`;
+    }
+    return `Refine line ${normalizedLine} wording.`;
+  };
+
+  const runLineRefineQuickAction = (tone) => {
+    if (!assistantLineRefineTarget) {
+      setAssistantError("Add line items before using line-level refine.");
+      return;
+    }
+    submitAssistantEdit(buildLineRefineInstruction(assistantLineRefineTarget.lineNumber, tone));
+  };
+
   const buildEditSummary = (before, after) => {
     if (!before || !after) {
       return ["Review the suggested changes before applying."];
@@ -988,10 +1184,18 @@ function InspectorPanel({
   const previewBillToDetails = previewData?.billToDetails?.trim() || "Add client details";
   const previewNotes = previewData?.notes?.trim() || "Add payment terms or a note.";
   const previewPaymentLink = previewData?.paymentLinkUrl?.trim() || "";
+  const previewDocumentType = previewData?.documentType === "estimate" ? "estimate" : normalizedDocumentType;
+  const previewDocumentLabel = previewDocumentType === "estimate" ? "Estimate" : "Invoice";
   const paymentStateLabel =
-    invoiceStatus === "paid" ? "Paid in full" : `${formatPreviewMoney(previewTotal)} due`;
+    previewDocumentType === "estimate"
+      ? `Estimated total ${formatPreviewMoney(previewTotal)}`
+      : invoiceStatus === "paid"
+        ? "Paid in full"
+        : `${formatPreviewMoney(previewTotal)} due`;
   const paymentStateClass =
-    invoiceStatus === "paid"
+    previewDocumentType === "estimate"
+      ? "nb-chip nb-chip--soft normal-case tracking-normal"
+      : invoiceStatus === "paid"
       ? "nb-chip nb-chip--success normal-case tracking-normal"
       : "nb-chip nb-chip--warning normal-case tracking-normal";
 
@@ -1039,6 +1243,20 @@ function InspectorPanel({
     assistantTimingSummary,
     onAssistantRuntimeChange
   ]);
+
+  useEffect(() => {
+    if (assistantLineRefineTargets.length === 0) {
+      if (assistantLineRefineTargetId) {
+        setAssistantLineRefineTargetId("");
+      }
+      return;
+    }
+    const targetExists = assistantLineRefineTargets.some((item) => item.id === assistantLineRefineTargetId);
+    if (!targetExists) {
+      setAssistantLineRefineTargetId(assistantLineRefineTargets[0].id);
+    }
+  }, [assistantLineRefineTargets, assistantLineRefineTargetId]);
+
   const previewAccent = buildAccentPalette(previewData?.accentColor ?? accentColor ?? DEFAULT_ACCENT_COLOR);
 
   return (
@@ -1377,14 +1595,24 @@ function InspectorPanel({
           </div>
         ) : activeTab === "assistant" ? (
           <div className="space-y-4">
-            <div>
-              <p className="text-sm font-semibold text-slate-900">Edit with Billie</p>
-              <p className="mt-1 text-xs text-slate-500">
-                Ask for changes without retyping. Billie will only adjust what you request.
+            <div className="nb-assistant-panel space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-900">Billie co-pilot</p>
+                <span className={assistantPresenceClassName}>
+                  <span aria-hidden="true">{assistantFace}</span>
+                  <span>{assistantPresence.label}</span>
+                </span>
+              </div>
+              <p className="text-xs text-slate-600">
+                Ask for wording and layout help in plain English. Billie keeps money edits explicit and
+                never changes totals silently.
               </p>
+              {assistantTimingSummary ? (
+                <p className="text-[11px] text-slate-500">{assistantTimingSummary}</p>
+              ) : null}
             </div>
             <div className="space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Quick actions</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Wording quick actions</p>
               <div className="flex flex-wrap gap-2">
                 {assistantQuickActions.map((action) => (
                   <button
@@ -1400,25 +1628,46 @@ function InspectorPanel({
                 ))}
               </div>
             </div>
-            {assistantLineQuickActions.length > 0 ? (
+            {assistantLineRefineTargets.length > 0 ? (
               <div className="space-y-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  Line actions
+                  Line-level refine
                 </p>
-                <div className="flex flex-wrap gap-2">
-                  {assistantLineQuickActions.map((action) => (
-                    <button
-                      key={action.id}
-                      type="button"
-                      className="rounded-full border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
-                      style={accentGhostButtonStyle}
-                      onClick={() => submitAssistantEdit(action.instruction)}
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <label className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                    Target line
+                    <select
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700"
+                      value={assistantLineRefineTargetId}
+                      onChange={(event) => setAssistantLineRefineTargetId(event.target.value)}
                       disabled={assistantLoading || !!pendingAssistantEdit}
-                      title={action.helperText}
                     >
-                      {action.label}
-                    </button>
-                  ))}
+                      {assistantLineRefineTargets.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {`Line ${item.lineNumber}: ${item.description}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {assistantLineToneActions.map((action) => (
+                      <button
+                        key={`line-tone-${action.id}`}
+                        type="button"
+                        className="rounded-full border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                        style={accentGhostButtonStyle}
+                        onClick={() => runLineRefineQuickAction(action.tone)}
+                        disabled={assistantLoading || !!pendingAssistantEdit || !assistantLineRefineTarget}
+                      >
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                  {assistantLineRefineTarget ? (
+                    <p className="mt-2 text-xs text-slate-500">
+                      Selected: <span className="font-semibold text-slate-700">{assistantLineRefineTarget.description}</span>
+                    </p>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -1492,7 +1741,7 @@ function InspectorPanel({
             <textarea
               rows={4}
               className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
-              placeholder="Example: Use the bold template with a navy accent."
+              placeholder="Ask Billie to refine wording, update style, or adjust line details."
               value={assistantInstruction}
               onChange={(event) => setAssistantInstruction(event.target.value)}
               disabled={assistantLoading}
@@ -1580,6 +1829,11 @@ function InspectorPanel({
                   {planSummary}
                 </p>
               ) : null}
+              {teamRole ? (
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  Role: {teamRole === "helper" ? "Helper" : "Owner"}
+                </p>
+              ) : null}
               {planUsage?.finite ? (
                 <div className={`nb-usage-meter ${planUsageToneClass}`}>
                   <div className="nb-usage-meter__row">
@@ -1596,8 +1850,190 @@ function InspectorPanel({
                 </div>
               ) : null}
               {planWarning ? (
-                <p className="text-xs font-semibold text-amber-700">{planWarning}</p>
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold text-amber-700">{planWarning}</p>
+                  {!planLimitReached && showUpgradeAction ? (
+                    useStripeUpgradeAction ? (
+                      <button
+                        type="button"
+                        className="nb-btn-secondary inline-flex rounded-lg px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={handleUpgradeAction}
+                        disabled={billingBusy}
+                      >
+                        {billingBusy ? "Opening..." : warningUpgradeLabel}
+                      </button>
+                    ) : (
+                      <a
+                        href={planUpgradeUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="nb-btn-secondary inline-flex rounded-lg px-2 py-1 text-xs"
+                        onClick={handleUpgradeLinkClick}
+                      >
+                        {warningUpgradeLabel}
+                      </a>
+                    )
+                  ) : null}
+                </div>
               ) : null}
+              <label className="space-y-1">
+                <span className="text-xs font-semibold text-slate-600">Document type</span>
+                <select
+                  className="nb-input w-full rounded-lg px-3 py-2 text-sm"
+                  value={normalizedDocumentType}
+                  onChange={(event) => onDocumentTypeChange?.(event.target.value === "estimate" ? "estimate" : "invoice")}
+                >
+                  <option value="invoice">Invoice</option>
+                  <option value="estimate">Estimate</option>
+                </select>
+              </label>
+              <label className="space-y-1">
+                <span className="text-xs font-semibold text-slate-600">Billing stage</span>
+                <select
+                  className="nb-input w-full rounded-lg px-3 py-2 text-sm"
+                  value={normalizedBillingStage}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    onBillingStageChange?.(
+                      nextValue === "deposit" || nextValue === "progress" || nextValue === "final"
+                        ? nextValue
+                        : "standard"
+                    );
+                  }}
+                >
+                  {BILLING_STAGE_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {normalizedBillingStage !== "standard" ? (
+                <div className="nb-subcard space-y-2 rounded-xl p-3">
+                  <p className="text-xs font-semibold text-slate-700">Project tracking</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-semibold text-slate-500">Project total</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        className="nb-input w-full rounded-lg px-3 py-2 text-sm"
+                        value={projectTotal ?? ""}
+                        onChange={(event) => onProjectTotalChange?.(event.target.value)}
+                        placeholder="0.00"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[11px] font-semibold text-slate-500">Paid to date</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        className="nb-input w-full rounded-lg px-3 py-2 text-sm"
+                        value={projectPaidToDate ?? ""}
+                        onChange={(event) => onProjectPaidToDateChange?.(event.target.value)}
+                        placeholder="0.00"
+                      />
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Keeps deposit/progress context visible in exports, pay page, and accounting CSV.
+                  </p>
+                </div>
+              ) : null}
+              <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-slate-700">Attachments</p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="nb-btn-secondary rounded-lg px-2 py-1 text-xs"
+                      onClick={onAddAttachment}
+                    >
+                      Add link
+                    </button>
+                    <button
+                      type="button"
+                      className="nb-btn-secondary rounded-lg px-2 py-1 text-xs"
+                      onClick={handleAttachmentUploadClick}
+                      disabled={attachmentUploadBusy}
+                    >
+                      {attachmentUploadBusy ? "Uploading..." : "Upload file"}
+                    </button>
+                    <input
+                      ref={attachmentUploadInputRef}
+                      type="file"
+                      className="hidden"
+                      onChange={handleAttachmentFileSelection}
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Add optional links (photos, docs, scope notes). Money totals are unchanged.
+                </p>
+                {attachmentUploadError ? (
+                  <p className="text-[11px] font-medium text-rose-700">{attachmentUploadError}</p>
+                ) : null}
+                {attachmentEntries.length === 0 ? (
+                  <p className="text-[11px] text-slate-500">No attachments yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {attachmentEntries.map((attachment) => (
+                      <div key={attachment.id} className="rounded-lg border border-slate-200 bg-white p-2">
+                        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_110px]">
+                          <input
+                            type="text"
+                            className="nb-input w-full rounded-lg px-2 py-1.5 text-xs"
+                            placeholder="Label (Before photo, Scope doc...)"
+                            value={attachment.label ?? ""}
+                            onChange={(event) =>
+                              onAttachmentChange?.(attachment.id, "label", event.target.value)
+                            }
+                          />
+                          <select
+                            className="nb-input rounded-lg px-2 py-1.5 text-xs"
+                            value={
+                              attachment.type === "photo" ||
+                              attachment.type === "document" ||
+                              attachment.type === "other"
+                                ? attachment.type
+                                : "link"
+                            }
+                            onChange={(event) =>
+                              onAttachmentChange?.(attachment.id, "type", event.target.value)
+                            }
+                          >
+                            {ATTACHMENT_TYPE_OPTIONS.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <input
+                            type="url"
+                            className="nb-input w-full rounded-lg px-2 py-1.5 text-xs"
+                            placeholder="https://..."
+                            value={attachment.url ?? ""}
+                            onChange={(event) =>
+                              onAttachmentChange?.(attachment.id, "url", event.target.value)
+                            }
+                          />
+                          <button
+                            type="button"
+                            className="nb-btn-ghost rounded-lg px-2 py-1.5 text-xs"
+                            onClick={() => onRemoveAttachment?.(attachment.id)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               {showBillingPortalAction ? (
                 useStripePortalAction ? (
                   <button
@@ -1632,7 +2068,7 @@ function InspectorPanel({
                         onClick={handleUpgradeAction}
                         disabled={billingBusy}
                       >
-                        {billingBusy ? "Opening..." : "Upgrade plan"}
+                        {billingBusy ? "Opening..." : limitUpgradeLabel}
                       </button>
                     ) : (
                       <a
@@ -1640,8 +2076,9 @@ function InspectorPanel({
                         target="_blank"
                         rel="noreferrer"
                         className="nb-btn-secondary mt-2 inline-flex rounded-lg px-2 py-1 text-xs"
+                        onClick={handleUpgradeLinkClick}
                       >
-                        Upgrade plan
+                        {limitUpgradeLabel}
                       </a>
                     )
                   ) : null}
@@ -1655,7 +2092,7 @@ function InspectorPanel({
                 onClick={onSaveInvoice}
                 disabled={planLimitReached || Boolean(saveStatus && saveStatus !== "Saved")}
               >
-                {savedInvoiceId ? "Update saved invoice" : "Save invoice"}
+                {savedInvoiceId ? `Update saved ${normalizedDocumentType}` : `Save ${normalizedDocumentType}`}
               </button>
               {saveError ? <p className="text-xs text-rose-600">{saveError}</p> : null}
               {saveNeedsAuth ? (
@@ -1684,7 +2121,7 @@ function InspectorPanel({
             {savedInvoiceId ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-slate-900">Invoice status</p>
+                  <p className="text-sm font-semibold text-slate-900">{documentLabel} status</p>
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <span className={`${invoiceStatusStyles[invoiceStatus] ?? invoiceStatusStyles.draft}`}>
                       Current: {invoiceStatus || "draft"}
@@ -1694,7 +2131,10 @@ function InspectorPanel({
                     </span>
                   </div>
                 </div>
-                <p className="text-xs text-slate-500">Track draft, sent, and paid state for this saved invoice.</p>
+                <p className="text-xs text-slate-500">
+                  Track draft, sent, and paid state for this saved {normalizedDocumentType}.
+                </p>
+                {ownerOnlyMoneyCopy ? <p className="text-xs font-semibold text-amber-700">{ownerOnlyMoneyCopy}</p> : null}
                 <div className="flex flex-wrap gap-2">
                   {canMarkSent ? (
                     <button
@@ -1730,7 +2170,7 @@ function InspectorPanel({
                 {statusUpdateError ? <p className="text-xs text-rose-600">{statusUpdateError}</p> : null}
               </div>
             ) : null}
-            {savedInvoiceId ? (
+            {savedInvoiceId && normalizedDocumentType !== "estimate" ? (
               <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -1751,7 +2191,7 @@ function InspectorPanel({
                     className="rounded-lg px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                     style={accentButtonStyle}
                     onClick={onGeneratePaymentLink}
-                    disabled={paymentLinkBusy}
+                    disabled={paymentLinkBusy || !canCreatePaymentLinksByRole}
                   >
                     {paymentLinkBusy
                       ? "Creating link..."
@@ -1770,12 +2210,17 @@ function InspectorPanel({
                     </a>
                   ) : null}
                 </div>
+                {!canCreatePaymentLinksByRole ? (
+                  <p className="text-xs font-semibold text-amber-700">Owner permission is required to manage payment links.</p>
+                ) : null}
                 {paymentLinkError ? <p className="text-xs text-rose-600">{paymentLinkError}</p> : null}
               </div>
             ) : null}
             <div className="space-y-2">
               <p className="text-sm font-semibold text-slate-900">Download PDF</p>
-              <p className="text-xs text-slate-500">Save a PDF copy of the current invoice.</p>
+              <p className="text-xs text-slate-500">
+                Save a PDF copy of the current {normalizedDocumentType}.
+              </p>
               <button
                 type="button"
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
@@ -1849,7 +2294,7 @@ function InspectorPanel({
             >
               <div className={previewSpacing.sectionGapClass || previewPreset.sectionGap}>
                 <div className={`flex items-center justify-between ${previewPreset.metaClass}`}>
-                  <span>Invoice Document</span>
+                  <span>{previewDocumentLabel} Document</span>
                   <span>Preview</span>
                 </div>
 
@@ -1873,7 +2318,7 @@ function InspectorPanel({
                     }`}
                   >
                     <div>
-                      <h1 className={previewPreset.titleClass}>INVOICE</h1>
+                      <h1 className={previewPreset.titleClass}>{previewDocumentLabel.toUpperCase()}</h1>
                       <p
                         className="mt-2 text-xs font-semibold uppercase tracking-[0.2em]"
                         style={{ color: previewAccent.text }}
@@ -1884,7 +2329,7 @@ function InspectorPanel({
                     <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-xs">
                       <div className="flex items-center justify-between gap-4">
                         <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                          Invoice #
+                          {previewDocumentLabel} #
                         </span>
                         <span className="font-semibold text-slate-900">
                           {previewInvoiceNumber}

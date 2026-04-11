@@ -29,6 +29,18 @@ process.env.INVOICE_DELIVERY_STORE_FILE = path.join(
   os.tmpdir(),
   `invoice-delivery-store-${randomUUID()}.json`
 );
+process.env.INVOICE_ATTACHMENT_STORE_DIR = path.join(
+  os.tmpdir(),
+  `invoice-attachment-store-${randomUUID()}`
+);
+process.env.UPGRADE_TELEMETRY_STORE_FILE = path.join(
+  os.tmpdir(),
+  `invoice-upgrade-telemetry-${randomUUID()}.json`
+);
+process.env.INVOICE_REMINDER_SETTINGS_STORE_FILE = path.join(
+  os.tmpdir(),
+  `invoice-reminder-settings-${randomUUID()}.json`
+);
 
 const [
   { app },
@@ -66,6 +78,18 @@ const invoiceDeliveryStoreFilePath = process.env.INVOICE_DELIVERY_STORE_FILE;
 if (!invoiceDeliveryStoreFilePath) {
   throw new Error("INVOICE_DELIVERY_STORE_FILE is required for tests.");
 }
+const attachmentStoreDirPath = process.env.INVOICE_ATTACHMENT_STORE_DIR;
+if (!attachmentStoreDirPath) {
+  throw new Error("INVOICE_ATTACHMENT_STORE_DIR is required for tests.");
+}
+const upgradeTelemetryStoreFilePath = process.env.UPGRADE_TELEMETRY_STORE_FILE;
+if (!upgradeTelemetryStoreFilePath) {
+  throw new Error("UPGRADE_TELEMETRY_STORE_FILE is required for tests.");
+}
+const reminderSettingsStoreFilePath = process.env.INVOICE_REMINDER_SETTINGS_STORE_FILE;
+if (!reminderSettingsStoreFilePath) {
+  throw new Error("INVOICE_REMINDER_SETTINGS_STORE_FILE is required for tests.");
+}
 const nativeFetch = globalThis.fetch;
 
 beforeEach(async () => {
@@ -82,6 +106,11 @@ beforeEach(async () => {
   await fs.rm(stripeEntitlementsStoreFilePath, { force: true });
   await fs.mkdir(path.dirname(invoiceDeliveryStoreFilePath), { recursive: true });
   await fs.rm(invoiceDeliveryStoreFilePath, { force: true });
+  await fs.rm(attachmentStoreDirPath, { recursive: true, force: true });
+  await fs.mkdir(path.dirname(upgradeTelemetryStoreFilePath), { recursive: true });
+  await fs.rm(upgradeTelemetryStoreFilePath, { force: true });
+  await fs.mkdir(path.dirname(reminderSettingsStoreFilePath), { recursive: true });
+  await fs.rm(reminderSettingsStoreFilePath, { force: true });
   delete process.env.OCR_METRICS_EXPORT_PROVIDER;
   delete process.env.OCR_METRICS_EXPORT_URL;
   delete process.env.OCR_METRICS_GA4_MEASUREMENT_ID;
@@ -106,7 +135,14 @@ beforeEach(async () => {
   delete process.env.RESEND_API_KEY;
   delete process.env.INVOICE_FROM_EMAIL;
   delete process.env.INVOICE_LAUNCH_TEST_EMAIL;
+  delete process.env.INVOICE_REMINDER_LATE_FEE_PERCENT;
   delete process.env.APP_BASE_URL;
+  delete process.env.INVOICE_LAUNCHER_ASSISTANT_MODE;
+  delete process.env.INVOICE_LAUNCHER_ASSISTANT_MODEL;
+  delete process.env.INVOICE_TEAM_OWNER_EMAILS;
+  delete process.env.INVOICE_TEAM_OWNER_USER_IDS;
+  delete process.env.INVOICE_TEAM_HELPER_EMAILS;
+  delete process.env.INVOICE_TEAM_HELPER_USER_IDS;
 });
 
 afterEach(() => {
@@ -129,6 +165,9 @@ after(async () => {
   await fs.rm(flowFrictionHistoryFilePath, { force: true });
   await fs.rm(stripeEntitlementsStoreFilePath, { force: true });
   await fs.rm(invoiceDeliveryStoreFilePath, { force: true });
+  await fs.rm(attachmentStoreDirPath, { recursive: true, force: true });
+  await fs.rm(upgradeTelemetryStoreFilePath, { force: true });
+  await fs.rm(reminderSettingsStoreFilePath, { force: true });
 });
 
 test("asks one labor pricing follow-up and does not finalize with $0 labor", async () => {
@@ -146,6 +185,17 @@ test("asks one labor pricing follow-up and does not finalize with $0 labor", asy
     "I see labor work, but some labor pricing is missing. Please choose how labor should be billed."
   );
   assert.equal(response.body.followUp.laborItems.length, 2);
+});
+
+test("launcher assistant endpoint returns route-aware helper response", async () => {
+  const response = await request(app)
+    .post("/api/assistant/launcher")
+    .send({ message: "I need to import a pdf invoice" });
+
+  assert.equal(response.status, 200);
+  assert.equal(typeof response.body.reply?.message, "string");
+  assert.match(response.body.reply.message, /import/i);
+  assert.equal(response.body.reply?.action?.route, "/import");
 });
 
 test("asks labor follow-up when hours exist but labor rate is missing", async () => {
@@ -435,6 +485,46 @@ test("extract-upload-text returns extracted text for document uploads", async ()
   assert.equal(response.status, 200);
   assert.equal(response.body.sourceType, "document");
   assert.match(response.body.extractedText, /Jan 30 faucet repair/i);
+});
+
+test("attachment upload stores file and serves it from a stable public URL", async () => {
+  const ownerId = "attachment-upload-owner";
+  const uploadResponse = await request(app)
+    .post("/api/invoices/attachments/upload")
+    .set("x-invoice-user-id", ownerId)
+    .attach("attachmentFile", Buffer.from("scope notes"), {
+      filename: "scope-notes.txt",
+      contentType: "text/plain"
+    });
+
+  assert.equal(uploadResponse.status, 201);
+  assert.equal(uploadResponse.body.attachment?.label, "scope notes");
+  assert.equal(uploadResponse.body.attachment?.type, "document");
+  const attachmentUrl = String(uploadResponse.body.attachment?.url ?? "");
+  assert.match(attachmentUrl, /^https?:\/\/.+\/api\/invoices\/attachments\/files\//i);
+  const attachmentPathname = new URL(attachmentUrl).pathname;
+  assert.match(
+    attachmentPathname,
+    /^\/api\/invoices\/attachments\/files\/[a-f0-9]{16}\/[a-f0-9-]{36}\.[a-z0-9]{1,10}$/i
+  );
+
+  const fetchResponse = await request(app).get(attachmentPathname);
+  assert.equal(fetchResponse.status, 200);
+  assert.match(String(fetchResponse.headers["content-type"] ?? ""), /^text\/plain/i);
+  assert.equal(fetchResponse.text, "scope notes");
+});
+
+test("attachment upload rejects unsupported file formats", async () => {
+  const response = await request(app)
+    .post("/api/invoices/attachments/upload")
+    .set("x-invoice-user-id", "attachment-upload-owner")
+    .attach("attachmentFile", Buffer.from("<h1>bad file</h1>"), {
+      filename: "bad-file.html",
+      contentType: "text/html"
+    });
+
+  assert.equal(response.status, 400);
+  assert.match(String(response.body.error ?? ""), /unsupported attachment type/i);
 });
 
 test("transcribe-audio returns transcript text for uploaded voice notes", async () => {
@@ -1001,6 +1091,73 @@ test("intake trends endpoint summarizes OCR and friction windows", async () => {
   assert.equal(response.body.friction.last7d.runs, 2);
   assert.equal(response.body.friction.last7d.totalChecks, 16);
   assert.equal(response.body.friction.last7d.failedChecks, 3);
+});
+
+test("upgrade telemetry endpoint records events and summarizes funnel metrics", async () => {
+  const ownerId = "ui-upgrade-telemetry-owner";
+  for (let index = 0; index < 5; index += 1) {
+    const warningResponse = await request(app)
+      .post("/api/telemetry/upgrade-events")
+      .set("x-invoice-user-id", ownerId)
+      .send({
+        eventType: "warning_view",
+        source: "launcher",
+        planTier: "free",
+        remainingSaves: 2
+      });
+    assert.equal(warningResponse.status, 202);
+  }
+
+  const clickResponse = await request(app)
+    .post("/api/telemetry/upgrade-events")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      eventType: "upgrade_click",
+      source: "launcher",
+      planTier: "free",
+      remainingSaves: 2
+    });
+  assert.equal(clickResponse.status, 202);
+
+  const startResponse = await request(app)
+    .post("/api/telemetry/upgrade-events")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      eventType: "checkout_started",
+      source: "launcher",
+      planTier: "free"
+    });
+  assert.equal(startResponse.status, 202);
+
+  const successResponse = await request(app)
+    .post("/api/telemetry/upgrade-events")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      eventType: "checkout_success",
+      source: "launcher",
+      planTier: "free"
+    });
+  assert.equal(successResponse.status, 202);
+
+  const summaryResponse = await request(app).get("/api/telemetry/upgrade-funnel");
+  assert.equal(summaryResponse.status, 200);
+  assert.ok(summaryResponse.body.totalEvents >= 8);
+  assert.equal(summaryResponse.body.windows.last24h.warningViews, 5);
+  assert.equal(summaryResponse.body.windows.last24h.upgradeClicks, 1);
+  assert.equal(summaryResponse.body.windows.last24h.checkoutStarts, 1);
+  assert.equal(summaryResponse.body.windows.last24h.checkoutSuccesses, 1);
+  assert.equal(summaryResponse.body.windows.last24h.clickRateFromViews, 0.2);
+  assert.equal(summaryResponse.body.windows.last24h.checkoutStartRateFromClicks, 1);
+  assert.equal(summaryResponse.body.windows.last24h.checkoutSuccessRateFromStarts, 1);
+});
+
+test("upgrade telemetry endpoint validates event payload", async () => {
+  const response = await request(app).post("/api/telemetry/upgrade-events").send({
+    eventType: "not-real",
+    source: "launcher"
+  });
+  assert.equal(response.status, 400);
+  assert.match(String(response.body.error || ""), /invalid enum value/i);
 });
 
 test("extract-notes rejects non-image uploads", async () => {
@@ -2521,6 +2678,427 @@ test("send endpoint uses resend provider when configured", async () => {
   assert.equal(Array.isArray(body.to), true);
   assert.equal(body.to[0], "provider@example.com");
   assert.match(String(body.html), /delivery\/opened\/pixel\?token=/);
+  assert.match(String(body.html), /\/pay\/[0-9a-f-]+\?token=/i);
+  assert.equal(Array.isArray(body.attachments), true);
+  assert.equal(body.attachments.length, 1);
+  assert.equal(body.attachments[0].filename, "Invoice-INV-DELIVERY-PROVIDER-1.pdf");
+  assert.match(String(body.attachments[0].content), /^JVBERi0/);
+});
+
+test("public payment endpoint returns invoice payment summary when tracking token matches", async () => {
+  process.env.STRIPE_SECRET_KEY = "";
+  process.env.STRIPE_WEBHOOK_SECRET = "";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: "email_public_payment_1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const ownerId = "public-payment-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Public Payment Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PUBLIC-PAY-1",
+          issueDate: "2026-03-18",
+          customerName: "Public Payment Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-public-pay-1",
+              type: "labor",
+              description: "Public payment baseline",
+              quantity: 1,
+              unitPrice: 180,
+              amount: 180
+            }
+          ],
+          subtotal: 180,
+          total: 180,
+          balanceDue: 180,
+          paymentLinkUrl: "https://pay.notebill.app/example-public"
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "public-payment@example.com" });
+  assert.equal(sendResponse.status, 200);
+  assert.equal(fetchCalls.length, 1);
+
+  const sendFetchInit = fetchCalls[0]?.init as RequestInit | undefined;
+  const sendBody = JSON.parse(String(sendFetchInit?.body ?? "{}"));
+  const html = String(sendBody?.html ?? "");
+  const tokenMatch = html.match(new RegExp(`/pay/${invoiceId}\\?token=([^\"']+)`, "i"));
+  assert.ok(tokenMatch?.[1], "Expected customer payment token in send email html payload.");
+  const trackingToken = decodeURIComponent(String(tokenMatch?.[1] ?? ""));
+
+  const publicResponse = await request(app)
+    .get(`/api/public/invoices/${invoiceId}/payment`)
+    .query({ token: trackingToken });
+  assert.equal(publicResponse.status, 200);
+  assert.equal(publicResponse.body.invoice?.invoiceId, invoiceId);
+  assert.equal(publicResponse.body.invoice?.documentType, "invoice");
+  assert.equal(publicResponse.body.invoice?.estimateApprovalStatus, null);
+  assert.equal(publicResponse.body.invoice?.estimateApprovedBy, null);
+  assert.equal(publicResponse.body.invoice?.estimateApprovalSource, null);
+  assert.equal(publicResponse.body.invoice?.invoiceNumber, "INV-PUBLIC-PAY-1");
+  assert.equal(publicResponse.body.invoice?.status, "sent");
+  assert.equal(publicResponse.body.invoice?.paymentLinkUrl, "https://pay.notebill.app/example-public");
+
+  const invalidResponse = await request(app)
+    .get(`/api/public/invoices/${invoiceId}/payment`)
+    .query({ token: "invalid-token" });
+  assert.equal(invalidResponse.status, 404);
+});
+
+test("invoice list and public payment summary include progress billing and attachment metadata", async () => {
+  process.env.STRIPE_SECRET_KEY = "";
+  process.env.STRIPE_WEBHOOK_SECRET = "";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: "email_progress_public_1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const ownerId = "progress-metadata-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Progress Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PROGRESS-META-1",
+          issueDate: "2026-03-18",
+          customerName: "Progress Client",
+          currency: "USD",
+          billingStage: "progress",
+          projectTotal: 4800,
+          projectPaidToDate: 2200,
+          projectBalanceAfterInvoice: 1400,
+          lineItems: [
+            {
+              id: "line-progress-meta-1",
+              type: "labor",
+              description: "Progress draw week 2",
+              quantity: 1,
+              unitPrice: 1200,
+              amount: 1200
+            }
+          ],
+          attachments: [
+            {
+              id: "att-progress-1",
+              label: "Before photos",
+              url: "https://cdn.notebill.app/jobs/progress-before",
+              type: "photo"
+            },
+            {
+              id: "att-progress-2",
+              label: "Scope sheet",
+              url: "https://cdn.notebill.app/jobs/progress-scope.pdf",
+              type: "document"
+            }
+          ],
+          subtotal: 1200,
+          total: 1200,
+          balanceDue: 1200
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const listResponse = await request(app)
+    .get("/api/invoices")
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(listResponse.status, 200);
+  assert.equal(listResponse.body.invoices[0].invoiceId, invoiceId);
+  assert.equal(listResponse.body.invoices[0].billingStage, "progress");
+  assert.equal(listResponse.body.invoices[0].projectTotal, 4800);
+  assert.equal(listResponse.body.invoices[0].projectPaidToDate, 2200);
+  assert.equal(listResponse.body.invoices[0].projectBalanceAfterInvoice, 1400);
+  assert.equal(listResponse.body.invoices[0].attachmentCount, 2);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "progress-metadata@example.com" });
+  assert.equal(sendResponse.status, 200);
+  assert.equal(fetchCalls.length, 1);
+
+  const sendFetchInit = fetchCalls[0]?.init as RequestInit | undefined;
+  const sendBody = JSON.parse(String(sendFetchInit?.body ?? "{}"));
+  const html = String(sendBody?.html ?? "");
+  const tokenMatch = html.match(new RegExp(`/pay/${invoiceId}\\?token=([^\"']+)`, "i"));
+  assert.ok(tokenMatch?.[1], "Expected customer payment token in send email html payload.");
+  const trackingToken = decodeURIComponent(String(tokenMatch?.[1] ?? ""));
+
+  const publicResponse = await request(app)
+    .get(`/api/public/invoices/${invoiceId}/payment`)
+    .query({ token: trackingToken });
+  assert.equal(publicResponse.status, 200);
+  assert.equal(publicResponse.body.invoice?.billingStage, "progress");
+  assert.equal(publicResponse.body.invoice?.projectTotal, 4800);
+  assert.equal(publicResponse.body.invoice?.projectPaidToDate, 2200);
+  assert.equal(publicResponse.body.invoice?.projectBalanceAfterInvoice, 1400);
+  assert.equal(Array.isArray(publicResponse.body.invoice?.attachments), true);
+  assert.equal(publicResponse.body.invoice?.attachments?.length, 2);
+  assert.equal(publicResponse.body.invoice?.attachments?.[0]?.label, "Before photos");
+});
+
+test("public estimate approval endpoint updates estimate approval status with tracking token", async () => {
+  process.env.STRIPE_SECRET_KEY = "";
+  process.env.STRIPE_WEBHOOK_SECRET = "";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: "email_public_estimate_1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const ownerId = "public-estimate-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Public Estimate Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          documentType: "estimate",
+          invoiceNumber: "EST-PUBLIC-1",
+          issueDate: "2026-03-18",
+          customerName: "Public Estimate Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-public-estimate-1",
+              type: "labor",
+              description: "Estimate baseline",
+              quantity: 1,
+              unitPrice: 220,
+              amount: 220
+            }
+          ],
+          subtotal: 220,
+          total: 220,
+          balanceDue: 220
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "public-estimate@example.com" });
+  assert.equal(sendResponse.status, 200);
+  assert.equal(fetchCalls.length, 1);
+
+  const sendFetchInit = fetchCalls[0]?.init as RequestInit | undefined;
+  const sendBody = JSON.parse(String(sendFetchInit?.body ?? "{}"));
+  const html = String(sendBody?.html ?? "");
+  const tokenMatch = html.match(new RegExp(`/pay/${invoiceId}\\?token=([^\"']+)`, "i"));
+  assert.ok(tokenMatch?.[1], "Expected customer estimate token in send email html payload.");
+  const trackingToken = decodeURIComponent(String(tokenMatch?.[1] ?? ""));
+
+  const beforeResponse = await request(app)
+    .get(`/api/public/invoices/${invoiceId}/payment`)
+    .query({ token: trackingToken });
+  assert.equal(beforeResponse.status, 200);
+  assert.equal(beforeResponse.body.invoice?.documentType, "estimate");
+  assert.equal(beforeResponse.body.invoice?.estimateApprovalStatus, "pending");
+  assert.equal(beforeResponse.body.invoice?.estimateApprovedBy, null);
+  assert.equal(beforeResponse.body.invoice?.estimateApprovalSource, null);
+
+  const approveResponse = await request(app)
+    .post(`/api/public/invoices/${invoiceId}/estimate-approval`)
+    .query({ token: trackingToken })
+    .send({ status: "approved" });
+  assert.equal(approveResponse.status, 200);
+  assert.equal(approveResponse.body.invoice?.documentType, "estimate");
+  assert.equal(approveResponse.body.invoice?.estimateApprovalStatus, "approved");
+  assert.ok(approveResponse.body.invoice?.estimateApprovedAt);
+  assert.equal(approveResponse.body.invoice?.estimateApprovedBy, "public-estimate@example.com");
+  assert.equal(approveResponse.body.invoice?.estimateApprovalSource, "customer");
+
+  const afterResponse = await request(app)
+    .get(`/api/public/invoices/${invoiceId}/payment`)
+    .query({ token: trackingToken });
+  assert.equal(afterResponse.status, 200);
+  assert.equal(afterResponse.body.invoice?.estimateApprovalStatus, "approved");
+
+  const invalidResponse = await request(app)
+    .post(`/api/public/invoices/${invoiceId}/estimate-approval`)
+    .query({ token: "invalid-token" })
+    .send({ status: "approved" });
+  assert.equal(invalidResponse.status, 404);
+});
+
+test("export-accounting.csv returns owner-scoped rows with delivery metadata and filters", async () => {
+  const ownerId = "csv-export-owner";
+  const otherOwnerId = "csv-export-other-owner";
+
+  const ownerSaveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Client, One",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-CSV-OWNER1",
+          issueDate: "2026-03-10",
+          customerName: "Client, One",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-csv-owner-1",
+              type: "labor",
+              description: "CSV export baseline",
+              quantity: 1,
+              unitPrice: 150,
+              amount: 150
+            }
+          ],
+          subtotal: 150,
+          total: 150,
+          balanceDue: 150
+        }
+      }
+    });
+  const ownerInvoiceId = ownerSaveResponse.body.invoice.invoiceId as string;
+  assert.ok(ownerInvoiceId);
+  const ownerSendResponse = await request(app)
+    .post(`/api/invoices/${ownerInvoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "csv-owner@example.com" });
+  assert.equal(ownerSendResponse.status, 200);
+
+  const otherSaveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", otherOwnerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Other Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-CSV-OWNER2",
+          issueDate: "2026-03-10",
+          customerName: "Other Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-csv-owner-2",
+              type: "labor",
+              description: "Other owner row",
+              quantity: 1,
+              unitPrice: 99,
+              amount: 99
+            }
+          ],
+          subtotal: 99,
+          total: 99,
+          balanceDue: 99
+        }
+      }
+    });
+  assert.ok(otherSaveResponse.body.invoice.invoiceId);
+
+  const exportResponse = await request(app)
+    .get("/api/invoices/export-accounting.csv")
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(exportResponse.status, 200);
+  assert.match(String(exportResponse.headers["content-type"]), /text\/csv/i);
+  assert.match(String(exportResponse.headers["content-disposition"]), /notebill-accounting-export/i);
+  assert.match(exportResponse.text, /^invoice_id,document_type,billing_stage,invoice_number,status,source_type,/m);
+  assert.match(
+    exportResponse.text,
+    /estimate_approval_status,estimate_approved_at,estimate_approved_by,estimate_approval_source/m
+  );
+  assert.match(
+    exportResponse.text,
+    /project_total,project_paid_to_date,project_balance_after_invoice,line_item_count,attachment_count,payment_link_url/m
+  );
+  assert.match(exportResponse.text, /INV-CSV-OWNER1/);
+  assert.doesNotMatch(exportResponse.text, /INV-CSV-OWNER2/);
+  assert.match(exportResponse.text, /csv-owner@example.com/);
+  assert.match(exportResponse.text, /"Client, One"/);
+
+  const paidOnlyResponse = await request(app)
+    .get("/api/invoices/export-accounting.csv")
+    .set("x-invoice-user-id", ownerId)
+    .query({ status: "paid" });
+  assert.equal(paidOnlyResponse.status, 200);
+  assert.equal(paidOnlyResponse.text.trim().split("\n").length, 1);
+
+  const rangeFilteredResponse = await request(app)
+    .get("/api/invoices/export-accounting.csv")
+    .set("x-invoice-user-id", ownerId)
+    .query({ from: "2026-03-31", to: "2026-04-01" });
+  assert.equal(rangeFilteredResponse.status, 200);
+  assert.equal(rangeFilteredResponse.text.trim().split("\n").length, 1);
 });
 
 test("delivery pixel endpoint marks matching token as opened", async () => {
@@ -2633,6 +3211,39 @@ test("account plan endpoint reports free-tier usage and remaining saves", async 
   assert.equal(planResponse.body.usage.invoicesRemaining, 1);
   assert.equal(planResponse.body.canCreateInvoice, true);
   assert.equal(planResponse.body.upgradeRequired, false);
+  assert.equal(planResponse.body.upgradeGuidance?.prelimitStartRemaining, 3);
+  assert.equal(planResponse.body.upgradeGuidance?.warningVariant, "default");
+  assert.equal(planResponse.body.upgradeGuidance?.reason, "default");
+});
+
+test("account plan endpoint widens pre-limit warning threshold when upgrade click-through is low", async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "25";
+
+  for (let index = 0; index < 25; index += 1) {
+    const telemetryResponse = await request(app).post("/api/telemetry/upgrade-events").send({
+      eventType: "warning_view",
+      source: "launcher",
+      planTier: "free",
+      remainingSaves: 5
+    });
+    assert.equal(telemetryResponse.status, 202);
+  }
+  const clickResponse = await request(app).post("/api/telemetry/upgrade-events").send({
+    eventType: "upgrade_click",
+    source: "launcher",
+    planTier: "free",
+    remainingSaves: 5
+  });
+  assert.equal(clickResponse.status, 202);
+
+  const planResponse = await request(app).get("/api/account/plan");
+  assert.equal(planResponse.status, 200);
+  assert.equal(planResponse.body.plan, "free");
+  assert.equal(planResponse.body.upgradeGuidance?.prelimitStartRemaining, 5);
+  assert.equal(planResponse.body.upgradeGuidance?.warningVariant, "early");
+  assert.equal(planResponse.body.upgradeGuidance?.reason, "low_click_rate");
+  assert.equal(planResponse.body.upgradeGuidance?.telemetryWindow?.totalViews, 25);
 });
 
 test("account plan endpoint includes sanitized upgrade and billing links", async () => {
@@ -2800,6 +3411,21 @@ test("delivery diagnostics endpoint reports provider readiness + send summary", 
   assert.equal(afterSend.body.reminders?.dueCount, 0);
 });
 
+test("ops health endpoint returns alerts + metrics snapshot", async () => {
+  const response = await request(app).get("/api/system/ops-health");
+  assert.equal(response.status, 200);
+  assert.equal(typeof response.body.passed, "boolean");
+  assert.equal(typeof response.body.summary?.criticalCount, "number");
+  assert.equal(typeof response.body.summary?.warningCount, "number");
+  assert.equal(typeof response.body.metrics?.launchReady, "boolean");
+  assert.equal(typeof response.body.metrics?.deliveryConfigured, "boolean");
+  assert.equal(typeof response.body.metrics?.upgradeViews24h, "number");
+  assert.ok(Array.isArray(response.body.alerts));
+  assert.equal(typeof response.body.thresholds?.minOpenRate, "number");
+  assert.equal(typeof response.body.thresholds?.warningDueThreshold, "number");
+  assert.equal(typeof response.body.thresholds?.criticalDueThreshold, "number");
+});
+
 test("delivery diagnostics exposes launch test recipient readiness", async () => {
   process.env.INVOICE_EMAIL_PROVIDER = "resend";
   process.env.RESEND_API_KEY = "re_test_key";
@@ -2946,6 +3572,7 @@ test("send-reminder endpoint reuses tracked recipient and bumps delivery/send ti
   assert.equal(reminderResponse.body.mode, "record_only");
   assert.equal(reminderResponse.body.provider, "none");
   assert.equal(reminderResponse.body.reminder?.recipientEmail, "reminder@example.com");
+  assert.equal(reminderResponse.body.reminder?.reminderTone, "friendly");
   assert.equal(reminderResponse.body.delivery?.sendCount, 2);
   assert.equal(reminderResponse.body.delivery?.recipientEmail, "reminder@example.com");
   assert.ok(Date.parse(reminderResponse.body.delivery?.sentAt) >= Date.parse(firstSentAt));
@@ -3024,12 +3651,266 @@ test("reminder run endpoint previews and sends due reminders with overrides", as
   assert.equal(runResponse.body.sentCount, 1);
   assert.equal(runResponse.body.results?.[0]?.invoiceId, invoiceId);
   assert.equal(runResponse.body.results?.[0]?.sent, true);
+  assert.equal(runResponse.body.results?.[0]?.reminderTone, "friendly");
 
   const getResponse = await request(app)
     .get(`/api/invoices/${invoiceId}`)
     .set("x-invoice-user-id", ownerId);
   assert.equal(getResponse.status, 200);
   assert.equal(getResponse.body.invoice?.delivery?.sendCount, 2);
+});
+
+test("reminder settings endpoint persists owner-scoped automation defaults", async () => {
+  const ownerId = "delivery-reminder-settings-owner";
+  const initialResponse = await request(app)
+    .get("/api/invoices/reminders/settings")
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(initialResponse.status, 200);
+  assert.equal(initialResponse.body.source, "default");
+  assert.equal(initialResponse.body.settings?.dueAfterDays, 14);
+  assert.equal(initialResponse.body.settings?.cooldownDays, 7);
+  assert.equal(initialResponse.body.settings?.maxPerRun, 25);
+
+  const updateResponse = await request(app)
+    .put("/api/invoices/reminders/settings")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      dueAfterDays: 10,
+      cooldownDays: 5,
+      maxPerRun: 4
+    });
+  assert.equal(updateResponse.status, 200);
+  assert.equal(updateResponse.body.source, "stored");
+  assert.equal(updateResponse.body.settings?.dueAfterDays, 10);
+  assert.equal(updateResponse.body.settings?.cooldownDays, 5);
+  assert.equal(updateResponse.body.settings?.maxPerRun, 4);
+  assert.equal(typeof updateResponse.body.updatedAt, "string");
+
+  const recheckResponse = await request(app)
+    .get("/api/invoices/reminders/settings")
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(recheckResponse.status, 200);
+  assert.equal(recheckResponse.body.source, "stored");
+  assert.equal(recheckResponse.body.settings?.dueAfterDays, 10);
+  assert.equal(recheckResponse.body.settings?.cooldownDays, 5);
+  assert.equal(recheckResponse.body.settings?.maxPerRun, 4);
+});
+
+test("reminder dry-run uses stored settings when no overrides are provided", async () => {
+  const ownerId = "delivery-reminder-settings-run-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Stored Settings Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REMINDER-STORED-1",
+          issueDate: "2026-03-11",
+          customerName: "Stored Settings Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-reminder-stored-1",
+              type: "labor",
+              description: "Stored reminder baseline",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          subtotal: 120,
+          total: 120,
+          balanceDue: 120
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "stored-reminder@example.com" });
+  assert.equal(sendResponse.status, 200);
+
+  await mutateDeliveryStoreEntry(invoiceId, (entry) => ({
+    ...entry,
+    sentAt: "2026-01-01T00:00:00.000Z"
+  }));
+
+  const settingsUpdate = await request(app)
+    .put("/api/invoices/reminders/settings")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      dueAfterDays: 5,
+      cooldownDays: 3,
+      maxPerRun: 2
+    });
+  assert.equal(settingsUpdate.status, 200);
+
+  const dryRunResponse = await request(app)
+    .post("/api/invoices/reminders/run")
+    .set("x-invoice-user-id", ownerId)
+    .send({ dryRun: true });
+  assert.equal(dryRunResponse.status, 200);
+  assert.equal(dryRunResponse.body.settings?.dueAfterDays, 5);
+  assert.equal(dryRunResponse.body.settings?.cooldownDays, 3);
+  assert.equal(dryRunResponse.body.settings?.maxPerRun, 2);
+  assert.equal(dryRunResponse.body.dueCount, 1);
+  assert.equal(dryRunResponse.body.due?.[0]?.invoiceId, invoiceId);
+});
+
+test("send-reminder endpoint escalates reminder tone to firm after repeat sends", async () => {
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "NoteBill <billing@notebill.app>";
+
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: "email_repeat_reminder_123" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const ownerId = "delivery-reminder-firm-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Firm Reminder Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REMINDER-FIRM-1",
+          issueDate: "2026-03-11",
+          customerName: "Firm Reminder Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-reminder-firm-1",
+              type: "labor",
+              description: "Firm reminder baseline",
+              quantity: 1,
+              unitPrice: 140,
+              amount: 140
+            }
+          ],
+          subtotal: 140,
+          total: 140,
+          balanceDue: 140
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "firm-reminder@example.com" });
+  assert.equal(sendResponse.status, 200);
+
+  await mutateDeliveryStoreEntry(invoiceId, (entry) => ({
+    ...entry,
+    sendCount: 2
+  }));
+
+  const reminderResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send-reminder`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(reminderResponse.status, 200);
+  assert.equal(reminderResponse.body.reminder?.reminderTone, "firm");
+  assert.equal(reminderResponse.body.mode, "provider");
+
+  const reminderFetch = fetchCalls[1]?.init as RequestInit | undefined;
+  const reminderPayload = JSON.parse(String(reminderFetch?.body ?? "{}"));
+  assert.match(String(reminderPayload.subject), /Final payment reminder/i);
+});
+
+test("reminder sends include configured late-fee notice metadata and email copy", async () => {
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "NoteBill <billing@notebill.app>";
+  process.env.INVOICE_REMINDER_LATE_FEE_PERCENT = "2.5";
+
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: "email_late_fee_reminder_123" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const ownerId = "delivery-reminder-late-fee-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Late Fee Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REMINDER-LATE-FEE-1",
+          issueDate: "2026-03-11",
+          customerName: "Late Fee Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-reminder-late-fee-1",
+              type: "labor",
+              description: "Late fee reminder baseline",
+              quantity: 1,
+              unitPrice: 150,
+              amount: 150
+            }
+          ],
+          subtotal: 150,
+          total: 150,
+          balanceDue: 150
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "late-fee-reminder@example.com" });
+  assert.equal(sendResponse.status, 200);
+
+  const reminderResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send-reminder`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(reminderResponse.status, 200);
+  assert.equal(reminderResponse.body.reminder?.lateFeePercentApplied, 2.5);
+
+  const reminderFetch = fetchCalls[1]?.init as RequestInit | undefined;
+  const reminderPayload = JSON.parse(String(reminderFetch?.body ?? "{}"));
+  assert.match(String(reminderPayload.text), /2\.5% late fee/i);
+  assert.match(String(reminderPayload.html), /2\.5% late fee/i);
 });
 
 test("delivery diagnostics endpoint scopes reminder preview by request owner", async () => {
@@ -3236,6 +4117,114 @@ test("stripe payment-intent webhook marks a saved invoice paid and clears balanc
   assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.balanceDue, 0);
 });
 
+test("stripe payment-intent webhook sends a receipt email with pdf when prior delivery recipient exists", async () => {
+  process.env.STRIPE_SECRET_KEY = "";
+  process.env.STRIPE_WEBHOOK_SECRET = "";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: `email_${fetchCalls.length}` }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const ownerId = "invoice-paid-receipt-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Paid Receipt Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PAID-RECEIPT-1",
+          issueDate: "2026-03-12",
+          customerName: "Paid Receipt Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-paid-receipt-1",
+              type: "labor",
+              description: "Paid receipt visit",
+              quantity: 1,
+              unitPrice: 320,
+              amount: 320
+            }
+          ],
+          subtotal: 320,
+          total: 320,
+          balanceDue: 320
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const initialSendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "paid-receipt@example.com" });
+  assert.equal(initialSendResponse.status, 200);
+  assert.equal(fetchCalls.length, 1);
+
+  fetchCalls.length = 0;
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+
+  const webhookPayload = JSON.stringify({
+    id: "evt_test_payment_intent_receipt_succeeded",
+    object: "event",
+    type: "payment_intent.succeeded",
+    data: {
+      object: {
+        id: "pi_test_invoice_paid_receipt_123",
+        object: "payment_intent",
+        metadata: {
+          paymentKind: "saved_invoice_payment",
+          invoiceId,
+          ownerId,
+          invoiceNumber: "INV-PAID-RECEIPT-1"
+        }
+      }
+    }
+  });
+  const signature = Stripe.webhooks.generateTestHeaderString({
+    payload: webhookPayload,
+    secret: process.env.STRIPE_WEBHOOK_SECRET
+  });
+
+  const webhookResponse = await request(app)
+    .post("/api/billing/stripe/webhook")
+    .set("Content-Type", "application/json")
+    .set("stripe-signature", signature)
+    .send(webhookPayload);
+  assert.equal(webhookResponse.status, 200);
+  assert.equal(webhookResponse.body.ok, true);
+  assert.equal(webhookResponse.body.handled, true);
+  assert.equal(webhookResponse.body.eventType, "payment_intent.succeeded");
+
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.url, "https://api.resend.com/emails");
+  const fetchInit = fetchCalls[0]?.init as RequestInit | undefined;
+  const body = JSON.parse(String(fetchInit?.body ?? "{}"));
+  assert.match(String(body.subject), /^Receipt INV-PAID-RECEIPT-1$/);
+  assert.equal(Array.isArray(body.attachments), true);
+  assert.equal(body.attachments.length, 1);
+  assert.equal(body.attachments[0].filename, "Invoice-INV-PAID-RECEIPT-1.pdf");
+  assert.match(String(body.attachments[0].content), /^JVBERi0/);
+});
+
 test("stripe webhook endpoint requires signature header", async () => {
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
@@ -3420,6 +4409,123 @@ test("pro allowlist bypasses free monthly save limit", async () => {
   assert.equal(planResponse.body.canCreateInvoice, true);
   assert.equal(planResponse.body.upgradeRequired, false);
   assert.equal(planResponse.body.limits.invoicesPerMonth, null);
+});
+
+test("estimate approval must be approved before convert-to-invoice", async () => {
+  const saveResponse = await request(app).post("/api/invoices/save").send({
+    confirmSave: true,
+    sourceType: "text_input",
+    invoiceData: {
+      structuredInvoice: {
+        customerName: "Estimate Client",
+        workSessions: [],
+        materials: []
+      },
+      finishedInvoice: {
+        documentType: "estimate",
+        invoiceNumber: "EST-1001",
+        issueDate: "2026-03-10",
+        customerName: "Estimate Client",
+        currency: "USD",
+        lineItems: [
+          {
+            id: "line-1",
+            type: "other",
+            description: "Roof replacement estimate",
+            quantity: 1,
+            unitPrice: 4500,
+            amount: 4500
+          }
+        ],
+        subtotal: 4500,
+        total: 4500,
+        balanceDue: 4500
+      }
+    }
+  });
+
+  assert.equal(saveResponse.status, 200);
+  const savedId = saveResponse.body.invoice.invoiceId;
+  assert.ok(savedId);
+  assert.equal(
+    saveResponse.body.invoice.invoiceData.finishedInvoice.estimateApprovalStatus,
+    "pending"
+  );
+
+  const blockedConvertResponse = await request(app)
+    .post(`/api/invoices/${savedId}/convert-to-invoice`)
+    .send({});
+  assert.equal(blockedConvertResponse.status, 400);
+  assert.match(blockedConvertResponse.body.error, /Approve the estimate/i);
+
+  const approveResponse = await request(app)
+    .post(`/api/invoices/${savedId}/estimate-approval`)
+    .send({ status: "approved" });
+  assert.equal(approveResponse.status, 200);
+  assert.equal(
+    approveResponse.body.invoice.invoiceData.finishedInvoice.estimateApprovalStatus,
+    "approved"
+  );
+  assert.ok(approveResponse.body.invoice.invoiceData.finishedInvoice.estimateApprovedAt);
+  assert.equal(approveResponse.body.invoice.invoiceData.finishedInvoice.estimateApprovedBy, "local-default");
+  assert.equal(approveResponse.body.invoice.invoiceData.finishedInvoice.estimateApprovalSource, "owner");
+
+  const convertResponse = await request(app).post(`/api/invoices/${savedId}/convert-to-invoice`).send({});
+  assert.equal(convertResponse.status, 200);
+  assert.equal(convertResponse.body.converted, true);
+  assert.equal(convertResponse.body.invoice.invoiceData.finishedInvoice.documentType, "invoice");
+  assert.equal(convertResponse.body.invoice.invoiceData.finishedInvoice.estimateApprovalStatus, undefined);
+  assert.equal(convertResponse.body.invoice.invoiceData.finishedInvoice.estimateApprovedAt, undefined);
+  assert.equal(convertResponse.body.invoice.invoiceData.finishedInvoice.estimateApprovedBy, undefined);
+  assert.equal(convertResponse.body.invoice.invoiceData.finishedInvoice.estimateApprovalSource, undefined);
+  assert.match(convertResponse.body.invoice.invoiceData.finishedInvoice.invoiceNumber, /^INV-\d{8}-\d{4}$/);
+
+  const listResponse = await request(app).get("/api/invoices");
+  assert.equal(listResponse.status, 200);
+  assert.equal(listResponse.body.invoices[0].documentType, "invoice");
+});
+
+test("estimate approval endpoint only applies to estimates", async () => {
+  const saveResponse = await request(app).post("/api/invoices/save").send({
+    confirmSave: true,
+    sourceType: "text_input",
+    invoiceData: {
+      structuredInvoice: {
+        customerName: "Invoice Client",
+        workSessions: [],
+        materials: []
+      },
+      finishedInvoice: {
+        documentType: "invoice",
+        invoiceNumber: "INV-APPROVAL-1",
+        issueDate: "2026-03-10",
+        customerName: "Invoice Client",
+        currency: "USD",
+        lineItems: [
+          {
+            id: "line-1",
+            type: "labor",
+            description: "Install fascia board",
+            quantity: 1,
+            unitPrice: 400,
+            amount: 400
+          }
+        ],
+        subtotal: 400,
+        total: 400,
+        balanceDue: 400
+      }
+    }
+  });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId;
+  assert.ok(invoiceId);
+
+  const approvalResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/estimate-approval`)
+    .send({ status: "approved" });
+  assert.equal(approvalResponse.status, 400);
+  assert.match(approvalResponse.body.error, /Only estimates support approval state/i);
 });
 
 test("delete removes saved invoice", async () => {
@@ -3619,6 +4725,97 @@ test("auth session endpoint returns token + normalized user session", async () =
   assert.equal(response.body.session.email, "test@example.com");
   assert.match(response.body.session.userId, /^usr_[a-f0-9]{24}$/);
   assert.equal(typeof response.body.session.expiresAt, "string");
+});
+
+test("account team endpoint resolves helper role and capabilities from configured emails", async () => {
+  process.env.INVOICE_TEAM_OWNER_EMAILS = "owner@example.com";
+  process.env.INVOICE_TEAM_HELPER_EMAILS = "helper@example.com";
+
+  const signInResponse = await request(app).post("/api/auth/session").send({ email: "helper@example.com" });
+  assert.equal(signInResponse.status, 200);
+  const token = signInResponse.body.token as string;
+
+  const teamResponse = await request(app).get("/api/account/team").set("authorization", `Bearer ${token}`);
+  assert.equal(teamResponse.status, 200);
+  assert.equal(teamResponse.body.role, "helper");
+  assert.equal(teamResponse.body.capabilities?.canApplyMoneyActions, false);
+  assert.equal(teamResponse.body.capabilities?.canCreatePaymentLinks, false);
+  assert.equal(teamResponse.body.capabilities?.canMarkInvoicesPaid, false);
+
+  const planResponse = await request(app).get("/api/account/plan").set("authorization", `Bearer ${token}`);
+  assert.equal(planResponse.status, 200);
+  assert.equal(planResponse.body.team?.role, "helper");
+});
+
+test("helper role can draft and send but cannot run owner-only money actions", async () => {
+  process.env.INVOICE_TEAM_HELPER_EMAILS = "helper@team.test";
+
+  const signInResponse = await request(app).post("/api/auth/session").send({ email: "helper@team.test" });
+  assert.equal(signInResponse.status, 200);
+  const token = signInResponse.body.token as string;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("authorization", `Bearer ${token}`)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Helper Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-HELPER-1",
+          issueDate: "2026-03-16",
+          customerName: "Helper Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "helper-line-1",
+              type: "labor",
+              description: "Helper draft work",
+              quantity: 1,
+              unitPrice: 90,
+              amount: 90
+            }
+          ],
+          subtotal: 90,
+          total: 90,
+          balanceDue: 90
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const sentStatus = await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("authorization", `Bearer ${token}`)
+    .send({ status: "sent" });
+  assert.equal(sentStatus.status, 200);
+
+  const paidStatus = await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("authorization", `Bearer ${token}`)
+    .send({ status: "paid" });
+  assert.equal(paidStatus.status, 403);
+  assert.match(String(paidStatus.body.error || ""), /helpers cannot mark invoices as paid/i);
+
+  const paymentLinkResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("authorization", `Bearer ${token}`)
+    .send({});
+  assert.equal(paymentLinkResponse.status, 403);
+  assert.match(String(paymentLinkResponse.body.error || ""), /helpers cannot create payment links/i);
+
+  const remindersRunResponse = await request(app)
+    .post("/api/invoices/reminders/run")
+    .set("authorization", `Bearer ${token}`)
+    .send({});
+  assert.equal(remindersRunResponse.status, 403);
+  assert.match(String(remindersRunResponse.body.error || ""), /helpers cannot run reminder automation/i);
 });
 
 test("authenticated owner id takes precedence over spoofed owner header", async () => {

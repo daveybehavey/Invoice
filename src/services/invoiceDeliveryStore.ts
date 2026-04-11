@@ -41,6 +41,10 @@ export const DeliverySummarySchema = z.object({
 type DeliveryStore = z.infer<typeof DeliveryStoreSchema>;
 type DeliveryEntry = z.infer<typeof DeliveryEntrySchema>;
 export type DeliverySummary = z.infer<typeof DeliverySummarySchema>;
+export type DeliveryTokenMatch = {
+  ownerId: string;
+  recipientEmail: string;
+};
 
 let mutationQueue: Promise<void> = Promise.resolve();
 
@@ -174,6 +178,27 @@ export async function getInvoiceDeliverySummariesByInvoiceIds(input: {
     result[entry.invoiceId] = toSummary(entry);
     return result;
   }, {});
+}
+
+export async function getInvoiceDeliveryByTrackingToken(input: {
+  invoiceId: string;
+  trackingToken: string;
+}): Promise<DeliveryTokenMatch | null> {
+  const normalizedToken = input.trackingToken.trim();
+  if (!normalizedToken) {
+    return null;
+  }
+  const store = await readStore();
+  const entry = store.entries.find(
+    (candidate) => candidate.invoiceId === input.invoiceId && candidate.trackingToken === normalizedToken
+  );
+  if (!entry) {
+    return null;
+  }
+  return {
+    ownerId: entry.ownerId,
+    recipientEmail: entry.recipientEmail
+  };
 }
 
 export async function getInvoiceDeliveryStoreSummary(): Promise<{

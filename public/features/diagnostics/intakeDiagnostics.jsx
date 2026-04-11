@@ -35,6 +35,8 @@
     const [billingInfo, setBillingInfo] = useState(null);
     const [deliveryInfo, setDeliveryInfo] = useState(null);
     const [launchInfo, setLaunchInfo] = useState(null);
+    const [upgradeFunnel, setUpgradeFunnel] = useState(null);
+    const [opsHealth, setOpsHealth] = useState(null);
     const [exporting, setExporting] = useState(false);
     const [exportResult, setExportResult] = useState(null);
     const [reminderActionBusy, setReminderActionBusy] = useState(false);
@@ -58,7 +60,9 @@
           migrationResponse,
           billingResponse,
           deliveryResponse,
-          launchResponse
+          launchResponse,
+          upgradeFunnelResponse,
+          opsHealthResponse
         ] =
           await Promise.all([
           apiFetch("/api/telemetry/ocr-confidence"),
@@ -68,7 +72,9 @@
           apiFetch("/api/system/persistence/migration"),
           apiFetch("/api/system/billing"),
           apiFetch("/api/system/delivery"),
-          apiFetch("/api/system/launch")
+          apiFetch("/api/system/launch"),
+          apiFetch("/api/telemetry/upgrade-funnel"),
+          apiFetch("/api/system/ops-health")
         ]);
         const [
           ocrPayload,
@@ -78,7 +84,9 @@
           migrationPayload,
           billingPayload,
           deliveryPayload,
-          launchPayload
+          launchPayload,
+          upgradeFunnelPayload,
+          opsHealthPayload
         ] =
           await Promise.all([
           ocrResponse.json(),
@@ -88,7 +96,9 @@
           migrationResponse.json(),
           billingResponse.json(),
           deliveryResponse.json(),
-          launchResponse.json()
+          launchResponse.json(),
+          upgradeFunnelResponse.json(),
+          opsHealthResponse.json()
         ]);
         if (!ocrResponse.ok) {
           throw new Error(ocrPayload?.error || "Failed to load OCR telemetry.");
@@ -114,6 +124,12 @@
         if (!launchResponse.ok) {
           throw new Error(launchPayload?.error || "Failed to load launch diagnostics.");
         }
+        if (!upgradeFunnelResponse.ok) {
+          throw new Error(upgradeFunnelPayload?.error || "Failed to load upgrade funnel diagnostics.");
+        }
+        if (!opsHealthResponse.ok) {
+          throw new Error(opsHealthPayload?.error || "Failed to load ops health diagnostics.");
+        }
         setOcrSnapshot(ocrPayload);
         setFrictionSnapshot(frictionPayload);
         setTrendSnapshot(trendPayload);
@@ -122,6 +138,8 @@
         setBillingInfo(billingPayload);
         setDeliveryInfo(deliveryPayload);
         setLaunchInfo(launchPayload);
+        setUpgradeFunnel(upgradeFunnelPayload);
+        setOpsHealth(opsHealthPayload);
       } catch (loadError) {
         console.error("Failed to load intake diagnostics", loadError);
         setError(loadError?.message || "Failed to load diagnostics.");
@@ -308,6 +326,9 @@
     );
     const deliveryReady = Boolean(deliveryInfo?.capabilities?.configured && !deliveryInfo?.warning);
     const launchReady = Boolean(launchInfo?.ready);
+    const upgradeClickRate24h = Number(upgradeFunnel?.windows?.last24h?.clickRateFromViews ?? 0);
+    const opsCriticalCount = Number(opsHealth?.summary?.criticalCount ?? 0);
+    const opsWarningCount = Number(opsHealth?.summary?.warningCount ?? 0);
     const migrationBacklog = Boolean(migrationInfo?.migrationStatus?.backlogDetected);
     const ocrLowRatePct = `${(trend24h.lowRate * 100).toFixed(1)}%`;
     const frictionFailedRatePct = `${(frictionTrend24h.failedRate * 100).toFixed(1)}%`;
@@ -412,6 +433,24 @@
                       ? "amber"
                       : "red"
                 }
+              />
+              <StatusPill
+                label="Upgrade click rate (24h)"
+                value={upgradeFunnel?.windows?.last24h?.totalViews > 0 ? `${(upgradeClickRate24h * 100).toFixed(1)}%` : "n/a"}
+                tone={
+                  upgradeFunnel?.windows?.last24h?.totalViews > 0
+                    ? upgradeClickRate24h >= 0.08
+                      ? "green"
+                      : upgradeClickRate24h >= 0.05
+                        ? "amber"
+                        : "red"
+                    : "slate"
+                }
+              />
+              <StatusPill
+                label="Ops health"
+                value={opsCriticalCount > 0 ? `${opsCriticalCount} critical` : opsWarningCount > 0 ? `${opsWarningCount} warning` : "Healthy"}
+                tone={opsCriticalCount > 0 ? "red" : opsWarningCount > 0 ? "amber" : "green"}
               />
             </div>
             {migrationBacklog ? (
@@ -528,6 +567,36 @@
           </div>
 
           <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Ops health alerts</h2>
+            <p className="mt-2 text-xs text-slate-500">
+              Critical: {opsCriticalCount}
+              {" · "}
+              Warning: {opsWarningCount}
+              {" · "}
+              Last check: {opsHealth?.timestamp || "n/a"}
+            </p>
+            {Array.isArray(opsHealth?.alerts) && opsHealth.alerts.length > 0 ? (
+              <div className="mt-3 space-y-2">
+                {opsHealth.alerts.map((alert) => (
+                  <div
+                    key={`${alert.key}-${alert.message}`}
+                    className={`rounded-xl border px-3 py-2 text-xs ${
+                      alert.severity === "critical"
+                        ? "border-rose-200 bg-rose-50 text-rose-800"
+                        : "border-amber-200 bg-amber-50 text-amber-800"
+                    }`}
+                  >
+                    <p className="font-semibold uppercase tracking-wide">{alert.key}</p>
+                    <p className="mt-1">{alert.message}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-emerald-700">No active ops alerts.</p>
+            )}
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-semibold text-slate-900">Billing diagnostics</h2>
             <p className="mt-2 text-xs text-slate-500">
               Provider: {billingInfo?.provider || "n/a"}
@@ -558,6 +627,53 @@
             </p>
             {billingInfo?.warning ? (
               <p className="mt-2 text-xs text-amber-700">{billingInfo.warning}</p>
+            ) : null}
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Upgrade funnel diagnostics</h2>
+            <p className="mt-2 text-xs text-slate-500">
+              Last 24h views: {upgradeFunnel?.windows?.last24h?.totalViews ?? 0}
+              {" · "}
+              Clicks: {upgradeFunnel?.windows?.last24h?.upgradeClicks ?? 0}
+              {" · "}
+              Checkout starts: {upgradeFunnel?.windows?.last24h?.checkoutStarts ?? 0}
+              {" · "}
+              Success returns: {upgradeFunnel?.windows?.last24h?.checkoutSuccesses ?? 0}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Click-through: {upgradeFunnel?.windows?.last24h?.clickRateFromViews !== null && upgradeFunnel?.windows?.last24h?.clickRateFromViews !== undefined
+                ? `${(Number(upgradeFunnel.windows.last24h.clickRateFromViews) * 100).toFixed(1)}%`
+                : "n/a"}
+              {" · "}
+              Start from clicks: {upgradeFunnel?.windows?.last24h?.checkoutStartRateFromClicks !== null && upgradeFunnel?.windows?.last24h?.checkoutStartRateFromClicks !== undefined
+                ? `${(Number(upgradeFunnel.windows.last24h.checkoutStartRateFromClicks) * 100).toFixed(1)}%`
+                : "n/a"}
+              {" · "}
+              Success from starts: {upgradeFunnel?.windows?.last24h?.checkoutSuccessRateFromStarts !== null && upgradeFunnel?.windows?.last24h?.checkoutSuccessRateFromStarts !== undefined
+                ? `${(Number(upgradeFunnel.windows.last24h.checkoutSuccessRateFromStarts) * 100).toFixed(1)}%`
+                : "n/a"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              7d checkout success from starts: {upgradeFunnel?.windows?.last7d?.checkoutSuccessRateFromStarts !== null && upgradeFunnel?.windows?.last7d?.checkoutSuccessRateFromStarts !== undefined
+                ? `${(Number(upgradeFunnel.windows.last7d.checkoutSuccessRateFromStarts) * 100).toFixed(1)}%`
+                : "n/a"}
+            </p>
+            {Array.isArray(upgradeFunnel?.recommendations) && upgradeFunnel.recommendations.length > 0 ? (
+              <div className="mt-3 space-y-2">
+                {upgradeFunnel.recommendations.map((recommendation) => (
+                  <div
+                    key={recommendation.id}
+                    className={`rounded-xl border px-3 py-2 text-xs ${
+                      recommendation.severity === "warning"
+                        ? "border-amber-200 bg-amber-50 text-amber-800"
+                        : "border-slate-200 bg-slate-50 text-slate-700"
+                    }`}
+                  >
+                    {recommendation.message}
+                  </div>
+                ))}
+              </div>
             ) : null}
           </div>
 
@@ -604,6 +720,11 @@
               Reminder scanned sent invoices: {deliveryInfo?.reminders?.scannedCount ?? 0}
               {" · "}
               Owner: {deliveryInfo?.reminders?.ownerId || "n/a"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Reminder settings source: {deliveryInfo?.reminders?.settingsSource || "n/a"}
+              {" · "}
+              Updated: {deliveryInfo?.reminders?.settingsUpdatedAt || "n/a"}
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <button

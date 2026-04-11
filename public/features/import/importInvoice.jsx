@@ -35,7 +35,7 @@
       "Missing /utils/accountPlan.js load. Ensure it is loaded before /features/import/importInvoice.jsx."
     );
   }
-  const { formatPlanSummary, getPlanPrelimitWarning, getPlanUpgradeUrl, getPlanUsageModel } =
+  const { formatPlanSummary, getPlanPrelimitWarning, getPlanUpgradeUrl, getPlanUsageModel, getPlanUpgradeCtaLabel } =
     accountPlanUtils;
   const billingActions = window.InvoiceBillingActions;
   if (!billingActions) {
@@ -44,6 +44,7 @@
     );
   }
   const { hasStripeCheckout, startUpgradeCheckout, readBillingNoticeFromUrl } = billingActions;
+  const upgradeTelemetry = window.InvoiceUpgradeTelemetry;
 
 function ImportInvoice() {
   const navigate = useNavigate();
@@ -136,8 +137,18 @@ function ImportInvoice() {
   const planUsage = getPlanUsageModel(accountPlan);
   const planLimitReached = Boolean(accountPlan?.upgradeRequired);
   const planWarning = getPlanPrelimitWarning(accountPlan);
+  const warningUpgradeLabel = getPlanUpgradeCtaLabel(accountPlan, {
+    source: "import",
+    phase: "warning"
+  });
+  const limitUpgradeLabel = getPlanUpgradeCtaLabel(accountPlan, {
+    source: "import",
+    phase: "limit"
+  });
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
   const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
+  const showUpgradeAction =
+    (planLimitReached || Boolean(planWarning)) && (useStripeUpgradeAction || Boolean(upgradeUrl));
   const usageToneClass =
     planUsage?.statusTone === "limit"
       ? "nb-usage-meter--limit"
@@ -151,6 +162,30 @@ function ImportInvoice() {
       setBillingNotice(notice);
     }
   }, []);
+
+  useEffect(() => {
+    if (!upgradeTelemetry || accountPlan?.plan !== "free") {
+      return;
+    }
+    const remainingSaves = Number.isFinite(accountPlan?.usage?.invoicesRemaining)
+      ? Number(accountPlan.usage.invoicesRemaining)
+      : null;
+    if (planLimitReached) {
+      upgradeTelemetry.trackLimitExposure({
+        source: "import",
+        planTier: "free",
+        remainingSaves
+      });
+      return;
+    }
+    if (planWarning) {
+      upgradeTelemetry.trackWarningExposure({
+        source: "import",
+        planTier: "free",
+        remainingSaves
+      });
+    }
+  }, [accountPlan?.plan, accountPlan?.usage?.invoicesRemaining, planLimitReached, planWarning]);
 
   useEffect(() => {
     let cancelled = false;
@@ -176,7 +211,7 @@ function ImportInvoice() {
   }, []);
 
   const handleUpgradeAction = async () => {
-    if (!planLimitReached || billingBusy) {
+    if (!showUpgradeAction || billingBusy) {
       return;
     }
     setError("");
@@ -184,12 +219,20 @@ function ImportInvoice() {
     try {
       if (useStripeUpgradeAction) {
         await startUpgradeCheckout(accountPlan, {
+          source: "import",
           successPath: "/import?billing=success",
           cancelPath: "/import?billing=cancelled"
         });
         return;
       }
       if (upgradeUrl) {
+        upgradeTelemetry?.trackUpgradeClick?.({
+          source: "import",
+          planTier: "free",
+          remainingSaves: Number.isFinite(accountPlan?.usage?.invoicesRemaining)
+            ? Number(accountPlan.usage.invoicesRemaining)
+            : null
+        });
         window.open(upgradeUrl, "_blank", "noopener,noreferrer");
         return;
       }
@@ -553,7 +596,7 @@ function ImportInvoice() {
                 New saves are locked on free plan this month. You can still import and edit.
               </p>
             ) : null}
-            {planLimitReached && (useStripeUpgradeAction || upgradeUrl) ? (
+            {showUpgradeAction ? (
               useStripeUpgradeAction ? (
                 <button
                   type="button"
@@ -561,14 +604,23 @@ function ImportInvoice() {
                   onClick={handleUpgradeAction}
                   disabled={billingBusy}
                 >
-                  {billingBusy ? "Opening..." : "Upgrade plan"}
+                  {billingBusy ? "Opening..." : planLimitReached ? limitUpgradeLabel : warningUpgradeLabel}
                 </button>
               ) : (
                 <a
                   className="mt-2 inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-blue-800 hover:border-blue-200"
                   href={upgradeUrl}
+                  onClick={() =>
+                    upgradeTelemetry?.trackUpgradeClick?.({
+                      source: "import",
+                      planTier: "free",
+                      remainingSaves: Number.isFinite(accountPlan?.usage?.invoicesRemaining)
+                        ? Number(accountPlan.usage.invoicesRemaining)
+                        : null
+                    })
+                  }
                 >
-                  Upgrade plan
+                  {planLimitReached ? limitUpgradeLabel : warningUpgradeLabel}
                 </a>
               )
             ) : null}

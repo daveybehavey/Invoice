@@ -37,10 +37,21 @@
     );
   }
 
-  const { getBusinessProfile, saveBusinessProfile, clearBusinessProfile, normalizeBusinessProfile } =
-    businessProfileUtils;
+  const {
+    TAX_REGION_PRESETS,
+    getBusinessProfile,
+    saveBusinessProfile,
+    clearBusinessProfile,
+    normalizeBusinessProfile,
+    resolveTaxRegionPresets
+  } = businessProfileUtils;
   const { DEFAULT_ACCENT_COLOR, normalizeAccentColor, buildAccentPalette } = brandThemeUtils;
-  const { STYLE_OPTIONS, STYLE_PRESETS } = styleCatalogUtils;
+  const {
+    STYLE_OPTIONS,
+    STYLE_PRESETS,
+    HEADER_LAYOUT_OPTIONS,
+    SPACING_DENSITY_OPTIONS
+  } = styleCatalogUtils;
   const { readLogoFileForStorage } = logoImageUtils;
 
   function BusinessIdentitySettings() {
@@ -49,7 +60,13 @@
     const [fromDetails, setFromDetails] = useState("");
     const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
     const [stylePreset, setStylePreset] = useState("default");
+    const [headerLayout, setHeaderLayout] = useState("split");
+    const [spacingDensity, setSpacingDensity] = useState("balanced");
     const [logoUrl, setLogoUrl] = useState(null);
+    const [logoVisible, setLogoVisible] = useState(true);
+    const [notesVisible, setNotesVisible] = useState(true);
+    const [defaultTaxRate, setDefaultTaxRate] = useState("0");
+    const [taxRegionRates, setTaxRegionRates] = useState({});
     const [status, setStatus] = useState("");
     const [error, setError] = useState("");
 
@@ -79,11 +96,21 @@
       setFromDetails(profile.fromDetails ?? "");
       setAccentColor(normalizeAccentColor(profile.accentColor ?? DEFAULT_ACCENT_COLOR));
       setStylePreset(profile.stylePreset ?? "default");
+      setHeaderLayout(profile.headerLayout ?? "split");
+      setSpacingDensity(profile.spacingDensity ?? "balanced");
       setLogoUrl(profile.logoUrl ?? null);
+      setLogoVisible(profile.logoVisible !== false);
+      setNotesVisible(profile.notesVisible !== false);
+      setDefaultTaxRate(profile.defaultTaxRate ?? "0");
+      setTaxRegionRates(profile.taxRegionRates ?? {});
     }, []);
 
     const activePreset = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.default;
     const accent = useMemo(() => buildAccentPalette(accentColor), [accentColor]);
+    const regionPresetPreview = useMemo(
+      () => resolveTaxRegionPresets({ taxRegionRates }),
+      [resolveTaxRegionPresets, taxRegionRates]
+    );
 
     const handleSave = () => {
       try {
@@ -91,12 +118,24 @@
           fromDetails,
           accentColor,
           stylePreset,
-          logoUrl
+          headerLayout,
+          spacingDensity,
+          logoUrl,
+          logoVisible,
+          notesVisible,
+          defaultTaxRate,
+          taxRegionRates
         });
         setFromDetails(profile.fromDetails);
         setAccentColor(profile.accentColor);
         setStylePreset(profile.stylePreset);
+        setHeaderLayout(profile.headerLayout);
+        setSpacingDensity(profile.spacingDensity);
         setLogoUrl(profile.logoUrl);
+        setLogoVisible(profile.logoVisible !== false);
+        setNotesVisible(profile.notesVisible !== false);
+        setDefaultTaxRate(profile.defaultTaxRate);
+        setTaxRegionRates(profile.taxRegionRates ?? {});
         setStatus("Business identity saved.");
         setError("");
       } catch (_error) {
@@ -110,7 +149,13 @@
       setFromDetails(resetProfile.fromDetails);
       setAccentColor(resetProfile.accentColor);
       setStylePreset(resetProfile.stylePreset);
+      setHeaderLayout(resetProfile.headerLayout ?? "split");
+      setSpacingDensity(resetProfile.spacingDensity ?? "balanced");
       setLogoUrl(resetProfile.logoUrl);
+      setLogoVisible(resetProfile.logoVisible !== false);
+      setNotesVisible(resetProfile.notesVisible !== false);
+      setDefaultTaxRate(resetProfile.defaultTaxRate);
+      setTaxRegionRates(resetProfile.taxRegionRates ?? {});
       setStatus("Defaults reset.");
       setError("");
     };
@@ -197,6 +242,54 @@
               </div>
 
               <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-900">Header layout</label>
+                <div className="flex flex-wrap gap-2">
+                  {HEADER_LAYOUT_OPTIONS.map((option) => {
+                    const selected = option.id === headerLayout;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        aria-label={`Header layout ${option.label}`}
+                        className={`rounded-lg border px-3 py-2 text-sm font-semibold ${
+                          selected
+                            ? "border-blue-300 bg-blue-100 text-blue-900"
+                            : "border-slate-200 bg-white text-slate-700"
+                        }`}
+                        onClick={() => setHeaderLayout(option.id)}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-900">Spacing density</label>
+                <div className="flex flex-wrap gap-2">
+                  {SPACING_DENSITY_OPTIONS.map((option) => {
+                    const selected = option.id === spacingDensity;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        aria-label={`Spacing density ${option.label}`}
+                        className={`rounded-lg border px-3 py-2 text-sm font-semibold ${
+                          selected
+                            ? "border-blue-300 bg-blue-100 text-blue-900"
+                            : "border-slate-200 bg-white text-slate-700"
+                        }`}
+                        onClick={() => setSpacingDensity(option.id)}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-2">
                 <label className="text-sm font-semibold text-slate-900">Accent color</label>
                 <div className="flex flex-wrap items-center gap-2">
                   {["#093064", "#6993D2", "#ACCCF0", "#1d4ed8", "#be123c", "#111827"].map(
@@ -225,6 +318,62 @@
               </div>
 
               <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-900" htmlFor="business-default-tax-rate">
+                  Default tax rate (%)
+                </label>
+                <p className="text-xs text-slate-500">
+                  Applied to new drafts only. You can still change tax per invoice anytime.
+                </p>
+                <input
+                  id="business-default-tax-rate"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  className="nb-input w-32 rounded-xl px-3 py-2"
+                  value={defaultTaxRate}
+                  onChange={(event) => setDefaultTaxRate(event.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-900">Regional tax presets</label>
+                <p className="text-xs text-slate-500">
+                  Auto-applies when bill-to details include a matching province.
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {TAX_REGION_PRESETS.map((preset) => (
+                    <label
+                      key={preset.key}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                      htmlFor={`business-tax-region-${preset.key}`}
+                    >
+                      <span className="font-semibold text-slate-700">{preset.label}</span>
+                      <span className="flex items-center gap-1 text-xs text-slate-500">
+                        <input
+                          id={`business-tax-region-${preset.key}`}
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.01"
+                          className="nb-input w-20 rounded-lg px-2 py-1 text-right"
+                          value={taxRegionRates?.[preset.key] ?? preset.defaultRate}
+                          onChange={(event) =>
+                            setTaxRegionRates((current) => ({
+                              ...(current && typeof current === "object" ? current : {}),
+                              [preset.key]: event.target.value
+                            }))
+                          }
+                          aria-label={`${preset.label} tax preset (%)`}
+                        />
+                        <span>%</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
                 <label className="text-sm font-semibold text-slate-900">Logo</label>
                 <input
                   type="file"
@@ -241,6 +390,25 @@
                     Remove logo
                   </button>
                 ) : null}
+                <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={logoVisible}
+                    onChange={(event) => setLogoVisible(event.target.checked)}
+                  />
+                  Show logo on invoices by default
+                </label>
+              </div>
+
+              <div className="space-y-2">
+                <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={notesVisible}
+                    onChange={(event) => setNotesVisible(event.target.checked)}
+                  />
+                  Show notes on invoices by default
+                </label>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -288,6 +456,32 @@
                     className="mt-2 h-3 rounded-full"
                     style={{ backgroundColor: accent.primary }}
                   />
+                  <p className="mt-2 text-xs text-slate-500">
+                    Default tax: <span className="font-semibold text-slate-700">{defaultTaxRate || "0"}%</span>
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Layout:{" "}
+                    <span className="font-semibold text-slate-700">
+                      {HEADER_LAYOUT_OPTIONS.find((option) => option.id === headerLayout)?.label ?? "Split"} /{" "}
+                      {SPACING_DENSITY_OPTIONS.find((option) => option.id === spacingDensity)?.label ?? "Standard"}
+                    </span>
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Visibility:{" "}
+                    <span className="font-semibold text-slate-700">
+                      Logo {logoVisible ? "shown" : "hidden"}, notes {notesVisible ? "shown" : "hidden"}
+                    </span>
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {regionPresetPreview.map((preset) => (
+                      <span
+                        key={preset.key}
+                        className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600"
+                      >
+                        {preset.label} {preset.rate}%
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </div>
             </section>

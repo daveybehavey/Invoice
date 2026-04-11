@@ -92,6 +92,27 @@
       { id: "formal", label: "Formal", tone: "More formal" },
       { id: "stronger", label: "Stronger", tone: "Stronger" }
     ];
+    const billieStatusKind = billieStatus?.kind ?? "ready";
+    const billieStatusText =
+      typeof billieStatus?.text === "string" && billieStatus.text.trim()
+        ? billieStatus.text.trim()
+        : "Ready to help.";
+    const billieStatusFace =
+      billieStatusKind === "working"
+        ? "(•ᴗ•)…"
+        : billieStatusKind === "warning"
+          ? "(•_•)"
+          : billieStatusKind === "safe"
+            ? "(•‿◕)"
+            : "(•‿•)";
+    const billieStatusChipClass =
+      billieStatusKind === "working"
+        ? "nb-assistant-chip nb-assistant-chip--working"
+        : billieStatusKind === "safe"
+          ? "nb-assistant-chip nb-assistant-chip--safe"
+          : billieStatusKind === "warning"
+            ? "nb-assistant-chip nb-assistant-chip--warning"
+            : "nb-assistant-chip nb-assistant-chip--ready";
 
     React.useEffect(() => {
       if (!showReviewExpandedSections || isTyping) {
@@ -134,14 +155,10 @@
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Review</p>
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-sm font-semibold text-slate-900">Draft snapshot</p>
-                {billieIsWorking ? (
-                  <span className="nb-chip px-2 py-0.5 normal-case tracking-normal text-sky-700">
-                    Refining
-                    <span className="ml-1 inline-flex w-4 justify-start" aria-hidden="true">
-                      <span className="typing-dot">.</span>
-                      <span className="typing-dot">.</span>
-                      <span className="typing-dot">.</span>
-                    </span>
+                {billieStatus ? (
+                  <span className={billieStatusChipClass}>
+                    <span aria-hidden="true">{billieStatusFace}</span>
+                    <span>{billieIsWorking ? "Billie working" : "Billie ready"}</span>
                   </span>
                 ) : null}
               </div>
@@ -341,19 +358,21 @@
             ) : null}
             {billieStatus && !isCompactViewport ? (
               <div
-                className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
-                  billieStatus.kind === "safe"
+                className={`rounded-xl border px-3 py-2 text-xs ${
+                  billieStatusKind === "safe"
                     ? "border-blue-300 bg-blue-100 text-blue-900"
-                    : billieStatus.kind === "warning"
+                    : billieStatusKind === "warning"
                       ? "border-amber-200 bg-amber-50 text-amber-800"
-                      : billieStatus.kind === "working"
+                      : billieStatusKind === "working"
                         ? "border-sky-200 bg-sky-50 text-sky-700"
                         : "border-slate-200 bg-slate-50 text-slate-600"
                 }`}
               >
-                {billieStatus.kind === "safe" ? "✓ " : billieStatus.kind === "warning" ? "⚠ " : ""}
-                <span>{billieStatus.text}</span>
-                {billieStatus.kind === "working" ? (
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold" aria-hidden="true">{billieStatusFace}</span>
+                  <span className="font-semibold">{billieStatusText}</span>
+                </div>
+                {billieStatusKind === "working" ? (
                   <span className="ml-1 inline-flex w-4 justify-start" aria-hidden="true">
                     <span className="typing-dot">.</span>
                     <span className="typing-dot">.</span>

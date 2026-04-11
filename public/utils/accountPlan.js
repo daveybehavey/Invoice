@@ -39,8 +39,19 @@
     const remaining = Number.isFinite(plan?.usage?.invoicesRemaining)
       ? Number(plan.usage.invoicesRemaining)
       : null;
+    const guidanceThresholdRaw = Number(plan?.upgradeGuidance?.prelimitStartRemaining);
+    const prelimitStartRemaining = Number.isFinite(guidanceThresholdRaw)
+      ? Math.min(10, Math.max(1, Math.round(guidanceThresholdRaw)))
+      : 3;
+    const warningVariant = plan?.upgradeGuidance?.warningVariant === "early" ? "early" : "default";
     if (remaining === null || remaining <= 0) {
       return "";
+    }
+    if (remaining <= prelimitStartRemaining && remaining > 1) {
+      if (warningVariant === "early") {
+        return `${remaining} saves left this month. Upgrade early before save lock.`;
+      }
+      return `${remaining} saves left this month. Upgrade now to avoid a save lock.`;
     }
     if (remaining === 1) {
       return "1 save left this month before upgrade is required.";
@@ -73,7 +84,11 @@
     }
 
     const progressPercent = Math.max(0, Math.min(100, Math.round((used / limit) * 100)));
-    const nearLimit = remaining !== null && remaining <= 3;
+    const guidanceThresholdRaw = Number(plan?.upgradeGuidance?.prelimitStartRemaining);
+    const prelimitStartRemaining = Number.isFinite(guidanceThresholdRaw)
+      ? Math.min(10, Math.max(1, Math.round(guidanceThresholdRaw)))
+      : 3;
+    const nearLimit = remaining !== null && remaining <= prelimitStartRemaining;
     const atLimit = remaining !== null && remaining <= 0;
     const statusTone = atLimit ? "limit" : nearLimit ? "warning" : "normal";
     const progressLabel = `${used}/${limit} saves used this month`;
@@ -91,10 +106,71 @@
       limit,
       remaining,
       progressPercent,
+      prelimitStartRemaining,
       statusTone,
       progressLabel,
       remainingLabel
     };
+  };
+
+  const normalizeUpgradeSource = (value) => {
+    if (value === "launcher" || value === "intake" || value === "manual" || value === "library" || value === "import") {
+      return value;
+    }
+    return "unknown";
+  };
+
+  const normalizeUpgradePhase = (value) => {
+    if (value === "warning" || value === "limit" || value === "primary") {
+      return value;
+    }
+    return "warning";
+  };
+
+  const getPlanUpgradeCtaLabel = (plan, options = {}) => {
+    const phase = normalizeUpgradePhase(options?.phase);
+    const source = normalizeUpgradeSource(options?.source);
+    const reason =
+      plan?.upgradeGuidance?.reason === "low_click_rate" || plan?.upgradeGuidance?.reason === "low_checkout_start_rate"
+        ? plan.upgradeGuidance.reason
+        : "default";
+
+    if (phase === "limit") {
+      if (reason === "low_checkout_start_rate") {
+        return "Open upgrade";
+      }
+      return "Upgrade plan";
+    }
+
+    if (phase === "primary") {
+      if (reason === "low_click_rate") {
+        return "See Pro";
+      }
+      if (reason === "low_checkout_start_rate") {
+        return "View plans";
+      }
+      return "Upgrade";
+    }
+
+    if (reason === "low_checkout_start_rate") {
+      return "See Pro options";
+    }
+    if (reason === "low_click_rate") {
+      if (source === "intake") {
+        return "Keep drafting";
+      }
+      if (source === "import") {
+        return "Import without limits";
+      }
+      if (source === "manual") {
+        return "Keep editing";
+      }
+      if (source === "library") {
+        return "Save more invoices";
+      }
+      return "Unlock Pro";
+    }
+    return "Upgrade early";
   };
 
   window.InvoiceAccountPlanUtils = {
@@ -102,6 +178,7 @@
     getPlanUpgradeUrl,
     getPlanBillingPortalUrl,
     getPlanPrelimitWarning,
-    getPlanUsageModel
+    getPlanUsageModel,
+    getPlanUpgradeCtaLabel
   };
 })();

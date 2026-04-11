@@ -57,12 +57,15 @@
     planSummary,
     planUsage,
     planWarning,
+    warningUpgradeLabel,
+    limitUpgradeLabel,
     showUpgradeAction,
     useStripeUpgradeAction,
     upgradeUrl,
     billingBusy,
     billingError,
-    handleUpgradeAction
+    handleUpgradeAction,
+    handleUpgradeLinkClick
   }) {
     if (!showAssumptionsCard) {
       return null;
@@ -550,7 +553,7 @@
                         onClick={handleUpgradeAction}
                         disabled={billingBusy}
                       >
-                        {billingBusy ? "Opening..." : "Upgrade plan"}
+                        {billingBusy ? "Opening..." : limitUpgradeLabel || "Upgrade plan"}
                       </button>
                     ) : (
                       <a
@@ -558,8 +561,9 @@
                         target="_blank"
                         rel="noreferrer"
                         className="nb-btn-secondary inline-flex rounded-full px-3 py-1 text-xs"
+                        onClick={handleUpgradeLinkClick}
                       >
-                        Upgrade plan
+                        {limitUpgradeLabel || "Upgrade plan"}
                       </a>
                     )}
                   </div>
@@ -587,6 +591,31 @@
                   </div>
                 ) : null}
                 <p className="mt-1 text-xs font-semibold text-amber-900">{planWarning}</p>
+                {showUpgradeAction ? (
+                  <div className="mt-2">
+                    {useStripeUpgradeAction ? (
+                      <button
+                        type="button"
+                        className="nb-btn-secondary rounded-full px-3 py-1 text-xs disabled:cursor-not-allowed disabled:text-amber-300"
+                        onClick={handleUpgradeAction}
+                        disabled={billingBusy}
+                      >
+                        {billingBusy ? "Opening..." : warningUpgradeLabel || "Upgrade early"}
+                      </button>
+                    ) : (
+                      <a
+                        href={upgradeUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="nb-btn-secondary inline-flex rounded-full px-3 py-1 text-xs"
+                        onClick={handleUpgradeLinkClick}
+                      >
+                        {warningUpgradeLabel || "Upgrade early"}
+                      </a>
+                    )}
+                  </div>
+                ) : null}
+                {billingError ? <p className="mt-2 text-xs text-rose-700">{billingError}</p> : null}
               </div>
             ) : null}
           </div>

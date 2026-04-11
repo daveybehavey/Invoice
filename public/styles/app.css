@@ -378,6 +378,41 @@
   .nb-toolbar .is-idle:hover {
     color: var(--nb-text-primary);
   }
+
+  .nb-billie-floating {
+    @apply fixed bottom-4 right-4 z-40 flex max-w-[260px] flex-col items-end gap-2;
+    pointer-events: none;
+  }
+
+  .nb-billie-floating__popover {
+    @apply rounded-2xl border px-3 py-3 shadow-xl;
+    pointer-events: auto;
+    border-color: rgba(9, 48, 100, 0.16);
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 20px 48px rgba(9, 48, 100, 0.16);
+  }
+
+  .nb-billie-floating__button {
+    @apply inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold shadow-lg transition hover:-translate-y-0.5;
+    pointer-events: auto;
+    border-color: rgba(9, 48, 100, 0.2);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(239, 246, 255, 0.95) 100%);
+    color: var(--nb-accent);
+    box-shadow: 0 16px 38px rgba(9, 48, 100, 0.18);
+  }
+
+  .nb-billie-floating__face {
+    @apply inline-flex min-w-[56px] items-center justify-center rounded-full border px-2 py-1 text-xs font-semibold;
+    border-color: rgba(105, 147, 210, 0.34);
+    background: rgba(172, 207, 240, 0.25);
+    color: #093064;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+      monospace;
+  }
+
+  .nb-billie-floating__label {
+    letter-spacing: 0.01em;
+  }
 }
 
 .typing-dot {

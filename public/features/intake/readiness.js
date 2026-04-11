@@ -188,6 +188,21 @@
           rate: rateValue
         };
       }) ?? [];
+    const attachments = Array.isArray(invoice?.attachments)
+      ? invoice.attachments
+          .map((attachment, index) => ({
+            id: attachment?.id ?? `attachment-${Date.now()}-${index}`,
+            label: typeof attachment?.label === "string" ? attachment.label : "",
+            url: typeof attachment?.url === "string" ? attachment.url : "",
+            type:
+              attachment?.type === "photo" ||
+              attachment?.type === "document" ||
+              attachment?.type === "other"
+                ? attachment.type
+                : "link"
+          }))
+          .filter((attachment) => attachment.label.trim() || attachment.url.trim())
+      : [];
 
     const draft = {
       invoiceNumber:
@@ -204,10 +219,31 @@
           : useFreshDraft
             ? today
             : issueDate || today,
+      documentType:
+        typeof options.documentType === "string"
+          ? options.documentType
+          : invoice?.documentType === "estimate"
+            ? "estimate"
+            : "invoice",
       fromDetails: "",
       billToDetails: invoice?.customerName ?? "",
       notes: invoice?.notes ?? "",
+      billingStage:
+        invoice?.billingStage === "deposit" ||
+        invoice?.billingStage === "progress" ||
+        invoice?.billingStage === "final"
+          ? invoice.billingStage
+          : "standard",
+      projectTotal:
+        Number.isFinite(invoice?.projectTotal) && invoice.projectTotal > 0
+          ? String(invoice.projectTotal)
+          : "",
+      projectPaidToDate:
+        Number.isFinite(invoice?.projectPaidToDate) && invoice.projectPaidToDate > 0
+          ? String(invoice.projectPaidToDate)
+          : "",
       paymentLinkUrl: invoice?.paymentLinkUrl ?? "",
+      attachments,
       taxRate: options.taxRate ?? "0",
       lineItems: lineItems.length
         ? lineItems

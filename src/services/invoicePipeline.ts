@@ -558,7 +558,8 @@ export async function changeLineWording(
   ].join("\n");
 
   const modelResponse = await runJsonTask<RewordSingleLineResponse>(taskPrompt, {
-    taskType: "wording"
+    taskType: "wording",
+    maxCompletionTokens: Math.min(260, Math.max(120, Math.ceil(targetLineItem.description.length / 2)))
   });
 
   const updatedInvoice: FinishedInvoice = {
@@ -585,6 +586,16 @@ export async function changeNotesWording(
     return normalizeInvoice(FinishedInvoiceSchema.parse(invoice));
   }
 
+  const deterministicRewrite = rewriteNotesDeterministically(currentNotes, tone);
+  if (deterministicRewrite) {
+    return normalizeInvoice(
+      FinishedInvoiceSchema.parse({
+        ...invoice,
+        notes: deterministicRewrite
+      })
+    );
+  }
+
   const taskPrompt = [
     "Rewrite invoice notes only.",
     "Keep the same meaning and professionalism.",
@@ -596,7 +607,7 @@ export async function changeNotesWording(
 
   const modelResponse = await runJsonTask<{ notes: string }>(taskPrompt, {
     taskType: "wording",
-    maxCompletionTokens: Math.min(500, Math.max(180, Math.ceil(currentNotes.length / 3)))
+    maxCompletionTokens: Math.min(320, Math.max(120, Math.ceil(currentNotes.length / 4)))
   });
 
   const updatedInvoice: FinishedInvoice = {
@@ -649,8 +660,8 @@ export async function changeDescriptionsWording(
   ].join("\n");
 
   const wordingTokenBudget = Math.min(
-    1600,
-    Math.max(500, invoice.lineItems.length * 160)
+    900,
+    Math.max(280, invoice.lineItems.length * 110)
   );
   const modelResponse = await runJsonTask<RewordDescriptionsResponse>(taskPrompt, {
     taskType: "wording",
@@ -675,8 +686,21 @@ export async function changeDescriptionsWording(
 }
 
 export async function rewordFullInvoice(invoice: FinishedInvoice, tone?: string): Promise<FinishedInvoice> {
-  if (!(invoice.notes ?? "").trim() && supportsDeterministicDescriptionWordingTone(tone)) {
-    return changeDescriptionsWording(invoice, tone);
+  const currentNotes = (invoice.notes ?? "").trim();
+  if (supportsDeterministicDescriptionWordingTone(tone)) {
+    const deterministicNotes = currentNotes ? rewriteNotesDeterministically(currentNotes, tone) : currentNotes;
+    if (!currentNotes || deterministicNotes) {
+      const descriptionsUpdated = await changeDescriptionsWording(invoice, tone);
+      if (!currentNotes) {
+        return descriptionsUpdated;
+      }
+      return normalizeInvoice(
+        FinishedInvoiceSchema.parse({
+          ...descriptionsUpdated,
+          notes: deterministicNotes
+        })
+      );
+    }
   }
 
   if (invoice.lineItems.length === 1 && !(invoice.notes ?? "").trim()) {
@@ -704,8 +728,8 @@ export async function rewordFullInvoice(invoice: FinishedInvoice, tone?: string)
     `Wording source JSON: ${JSON.stringify(wordingSource)}`
   ].join("\n");
   const wordingTokenBudget = Math.min(
-    2200,
-    Math.max(700, invoice.lineItems.length * 180 + Math.ceil((invoice.notes ?? "").trim().length / 4))
+    1200,
+    Math.max(420, invoice.lineItems.length * 120 + Math.ceil((invoice.notes ?? "").trim().length / 6))
   );
 
   const modelResponse = await runJsonTask<RewordFullInvoiceResponse>(taskPrompt, {
@@ -3232,9 +3256,60 @@ function polishLineItemDescription(text?: string): string {
   return cleaned ? `${cleaned.charAt(0).toUpperCase()}${cleaned.slice(1)}` : "";
 }
 
+function supportsDeterministicNotesWordingTone(tone?: string): boolean {
+  const normalizedTone = tone?.trim().toLowerCase() ?? "";
+  if (!normalizedTone) {
+    return false;
+  }
+  return /formal|professional|neutral|clear|simple|simpler|plain|concise/.test(normalizedTone);
+}
+
+function rewriteNotesDeterministically(notes: string, tone?: string): string | null {
+  if (!supportsDeterministicNotesWordingTone(tone)) {
+    return null;
+  }
+  const compact = notes.trim().replace(/\s+/g, " ");
+  if (!compact || compact.length > 220) {
+    return null;
+  }
+
+  let rewritten = compact.replace(
+    /\b(?:please\s+)?pay(?:ment)?\s+(?:is\s+)?(?:due\s+)?(?:in|within)\s+(\d{1,3})\s+days?\b/i,
+    "Payment due within $1 days"
+  );
+
+  const hadThanks = /\b(?:thanks|thank you)\b/i.test(rewritten);
+  rewritten = rewritten
+    .replace(/\b(?:thanks|thank you)(?:\s+for\s+your\s+business)?\.?/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!rewritten && hadThanks) {
+    return "Thank you for your business.";
+  }
+  if (!rewritten) {
+    return null;
+  }
+
+  rewritten = `${rewritten.charAt(0).toUpperCase()}${rewritten.slice(1)}`;
+  if (!/[.!?]$/.test(rewritten)) {
+    rewritten = `${rewritten}.`;
+  }
+  if (hadThanks && !/thank you for your business/i.test(rewritten)) {
+    rewritten = `${rewritten} Thank you for your business.`;
+  }
+  return rewritten.replace(/\s+/g, " ").trim();
+}
+
 function supportsDeterministicDescriptionWordingTone(tone?: string): boolean {
-  const normalizedTone = tone?.trim().toLowerCase();
-  return normalizedTone === "formal" || normalizedTone === "neutral";
+  const normalizedTone = tone?.trim().toLowerCase() ?? "";
+  if (!normalizedTone) {
+    return false;
+  }
+  if (/\b(stronger|friendly|warmer|softer)\b/.test(normalizedTone)) {
+    return false;
+  }
+  return /\b(formal|professional|neutral|clear|clearer|simple|simpler|plain|concise)\b/.test(normalizedTone);
 }
 
 function finalizeRewordedLineItemDescription(originalDescription: string, rewrittenDescription?: string): string {

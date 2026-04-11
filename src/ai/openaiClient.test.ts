@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { resolveJsonTaskConfig, resolveJsonTaskModel } from "./openaiClient.js";
+import { resolveJsonTaskConfig, resolveJsonTaskModel, resolveJsonTaskModelChain } from "./openaiClient.js";
 
 const ORIGINAL_OPENAI_MODEL = process.env.OPENAI_MODEL;
 const ORIGINAL_OPENAI_WORDING_MODEL = process.env.OPENAI_WORDING_MODEL;
 const ORIGINAL_OPENAI_WORDING_MODEL_FALLBACK = process.env.OPENAI_WORDING_MODEL_FALLBACK;
+const ORIGINAL_OPENAI_WORDING_FAST_MODEL = process.env.OPENAI_WORDING_FAST_MODEL;
 
 afterEach(() => {
   if (ORIGINAL_OPENAI_MODEL === undefined) {
@@ -23,6 +24,12 @@ afterEach(() => {
     delete process.env.OPENAI_WORDING_MODEL_FALLBACK;
   } else {
     process.env.OPENAI_WORDING_MODEL_FALLBACK = ORIGINAL_OPENAI_WORDING_MODEL_FALLBACK;
+  }
+
+  if (ORIGINAL_OPENAI_WORDING_FAST_MODEL === undefined) {
+    delete process.env.OPENAI_WORDING_FAST_MODEL;
+  } else {
+    process.env.OPENAI_WORDING_FAST_MODEL = ORIGINAL_OPENAI_WORDING_FAST_MODEL;
   }
 });
 
@@ -103,4 +110,23 @@ test("resolveJsonTaskConfig keeps the full system prompt for default tasks", () 
   assert.equal(config.maxCompletionTokens, undefined);
   assert.equal(config.responseFormat, undefined);
   assert.match(config.systemPrompt, /AI Invoice Translator & Generator/i);
+});
+
+test("resolveJsonTaskModelChain prefers fast wording model first when configured", () => {
+  process.env.OPENAI_MODEL = "gpt-main";
+  process.env.OPENAI_WORDING_MODEL = "gpt-wording-quality";
+  process.env.OPENAI_WORDING_FAST_MODEL = "gpt-wording-fast";
+
+  assert.deepEqual(resolveJsonTaskModelChain({ taskType: "wording" }), [
+    "gpt-wording-fast",
+    "gpt-wording-quality"
+  ]);
+});
+
+test("resolveJsonTaskModelChain collapses duplicate wording models", () => {
+  process.env.OPENAI_MODEL = "gpt-main";
+  process.env.OPENAI_WORDING_MODEL = "gpt-main";
+  process.env.OPENAI_WORDING_FAST_MODEL = "gpt-main";
+
+  assert.deepEqual(resolveJsonTaskModelChain({ taskType: "wording" }), ["gpt-main"]);
 });

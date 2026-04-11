@@ -50,7 +50,7 @@ test("rewordFullInvoice uses the single-line wording path when only one line nee
   assert.equal(updated.lineItems[0]?.description, "Kitchen faucet repair service");
   assert.match(capturedPrompt, /Reword a single invoice line item\./);
   assert.doesNotMatch(capturedPrompt, /Rewrite invoice wording only\./);
-  assert.equal((capturedOptions as CapturedTaskOptions | null)?.maxCompletionTokens, undefined);
+  assert.ok(((capturedOptions as CapturedTaskOptions | null)?.maxCompletionTokens ?? 0) >= 120);
 });
 
 test("rewordFullInvoice keeps the full rewrite path when notes are present", async () => {
@@ -90,7 +90,7 @@ test("rewordFullInvoice keeps the full rewrite path when notes are present", asy
   assert.equal(updated.notes, "Thank you for your business.");
   assert.match(capturedPrompt, /Rewrite invoice wording only\./);
   assert.equal((capturedOptions as CapturedTaskOptions | null)?.taskType, "wording");
-  assert.ok(((capturedOptions as CapturedTaskOptions | null)?.maxCompletionTokens ?? 0) >= 500);
+  assert.ok(((capturedOptions as CapturedTaskOptions | null)?.maxCompletionTokens ?? 0) >= 400);
 });
 
 test("rewordFullInvoice falls back to a polished original when the model returns the exact awkward lead-in wording seen in production", async () => {
@@ -228,7 +228,7 @@ test("rewordFullInvoice raises wording token budget for larger multi-line drafts
   });
 
   assert.equal((capturedOptions as CapturedTaskOptions | null)?.taskType, "wording");
-  assert.ok(((capturedOptions as CapturedTaskOptions | null)?.maxCompletionTokens ?? 0) >= 1000);
+  assert.ok(((capturedOptions as CapturedTaskOptions | null)?.maxCompletionTokens ?? 0) >= 700);
 });
 
 test("changeNotesWording rewrites only notes and keeps line items untouched", async () => {
@@ -263,13 +263,46 @@ test("changeNotesWording rewrites only notes and keeps line items untouched", as
       total: 160,
       balanceDue: 160
     },
-    "More formal"
+    "Friendly"
   );
 
   assert.equal(updated.notes, "Payment due within 7 days. Thank you for your business.");
   assert.equal(updated.lineItems[0]?.description, "Faucet repair");
   assert.match(capturedPrompt, /Rewrite invoice notes only\./);
   assert.equal((capturedOptions as CapturedTaskOptions | null)?.taskType, "wording");
+});
+
+test("changeNotesWording uses a deterministic fast path for short Formal notes", async () => {
+  setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
+    throw new Error("Model should not run for deterministic Formal notes wording.");
+  });
+
+  const updated = await changeNotesWording(
+    {
+      invoiceNumber: "INV-4B",
+      issueDate: "2026-03-07",
+      customerName: "Mike Johnson",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line-1",
+          type: "labor",
+          description: "Faucet repair",
+          quantity: 2,
+          unitPrice: 80,
+          amount: 160
+        }
+      ],
+      notes: "pay in 7 days thanks",
+      subtotal: 160,
+      total: 160,
+      balanceDue: 160
+    },
+    "More formal"
+  );
+
+  assert.equal(updated.notes, "Payment due within 7 days. Thank you for your business.");
+  assert.equal(updated.lineItems[0]?.description, "Faucet repair");
 });
 
 test("changeLineWording uses a deterministic fast path for Formal tone", async () => {
@@ -306,6 +339,39 @@ test("changeLineWording uses a deterministic fast path for Formal tone", async (
   assert.equal(updated.lineItems[0]?.quantity, 2);
   assert.equal(updated.lineItems[0]?.unitPrice, 80);
   assert.equal(updated.lineItems[0]?.amount, 160);
+});
+
+test("changeLineWording uses a deterministic fast path for Professional tone", async () => {
+  setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
+    throw new Error("Model should not run for deterministic Professional line wording.");
+  });
+
+  const updated = await changeLineWording(
+    {
+      invoiceNumber: "INV-5B",
+      issueDate: "2026-03-07",
+      customerName: "Mike Johnson",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line-1",
+          type: "labor",
+          description: "replaced faucet cartridge",
+          quantity: 2,
+          unitPrice: 80,
+          amount: 160
+        }
+      ],
+      notes: "",
+      subtotal: 160,
+      total: 160,
+      balanceDue: 160
+    },
+    "line-1",
+    "Professional"
+  );
+
+  assert.equal(updated.lineItems[0]?.description, "Faucet cartridge replacement");
 });
 
 test("changeDescriptionsWording uses a deterministic fast path for Neutral tone", async () => {
@@ -352,6 +418,79 @@ test("changeDescriptionsWording uses a deterministic fast path for Neutral tone"
   assert.equal(updated.notes, "pay in 7 days thanks");
 });
 
+test("changeDescriptionsWording uses a deterministic fast path for Simpler tone", async () => {
+  setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
+    throw new Error("Model should not run for deterministic Simpler description wording.");
+  });
+
+  const updated = await changeDescriptionsWording(
+    {
+      invoiceNumber: "INV-6B",
+      issueDate: "2026-03-07",
+      customerName: "Mike Johnson",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line-1",
+          type: "labor",
+          description: "installed new sink",
+          quantity: 2,
+          unitPrice: 80,
+          amount: 160
+        }
+      ],
+      notes: "",
+      subtotal: 160,
+      total: 160,
+      balanceDue: 160
+    },
+    "Simpler"
+  );
+
+  assert.equal(updated.lineItems[0]?.description, "New sink installation");
+});
+
+test("changeLineWording keeps model path for Stronger tone", async () => {
+  let capturedPrompt = "";
+  let capturedOptions: unknown = null;
+  setJsonTaskRunnerForTests(async <T>(prompt: string, options?: unknown): Promise<T> => {
+    capturedPrompt = prompt;
+    capturedOptions = options ?? null;
+    return {
+      description: "Priority sink repair"
+    } as T;
+  });
+
+  const updated = await changeLineWording(
+    {
+      invoiceNumber: "INV-5C",
+      issueDate: "2026-03-07",
+      customerName: "Mike Johnson",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line-1",
+          type: "labor",
+          description: "fixed sink",
+          quantity: 2,
+          unitPrice: 80,
+          amount: 160
+        }
+      ],
+      notes: "",
+      subtotal: 160,
+      total: 160,
+      balanceDue: 160
+    },
+    "line-1",
+    "Stronger"
+  );
+
+  assert.equal(updated.lineItems[0]?.description, "Priority sink repair");
+  assert.match(capturedPrompt, /Reword a single invoice line item\./);
+  assert.equal((capturedOptions as CapturedTaskOptions | null)?.taskType, "wording");
+});
+
 test("rewordFullInvoice uses deterministic description cleanup when notes are blank and tone is Formal", async () => {
   setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
     throw new Error("Model should not run for deterministic Formal full wording cleanup.");
@@ -393,4 +532,37 @@ test("rewordFullInvoice uses deterministic description cleanup when notes are bl
     updated.lineItems.map((lineItem) => lineItem.description),
     ["Sink repair and cartridge replacement", "Washer kit"]
   );
+});
+
+test("rewordFullInvoice uses deterministic wording cleanup when notes are short and tone is Professional", async () => {
+  setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
+    throw new Error("Model should not run for deterministic Professional full wording cleanup.");
+  });
+
+  const updated = await rewordFullInvoice(
+    {
+      invoiceNumber: "INV-7B",
+      issueDate: "2026-03-07",
+      customerName: "Mike Johnson",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line-1",
+          type: "labor",
+          description: "fixed sink",
+          quantity: 2,
+          unitPrice: 80,
+          amount: 160
+        }
+      ],
+      notes: "pay in 7 days thanks",
+      subtotal: 160,
+      total: 160,
+      balanceDue: 160
+    },
+    "Professional"
+  );
+
+  assert.equal(updated.lineItems[0]?.description, "Sink repair");
+  assert.equal(updated.notes, "Payment due within 7 days. Thank you for your business.");
 });

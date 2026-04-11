@@ -33,7 +33,8 @@
     getPlanUpgradeUrl,
     getPlanBillingPortalUrl,
     getPlanPrelimitWarning,
-    getPlanUsageModel
+    getPlanUsageModel,
+    getPlanUpgradeCtaLabel
   } = accountPlanUtils;
   const billingActions = window.InvoiceBillingActions;
   if (!billingActions) {
@@ -48,6 +49,7 @@
     openBillingPortal,
     readBillingNoticeFromUrl
   } = billingActions;
+  const upgradeTelemetry = window.InvoiceUpgradeTelemetry;
   const deleteSkipStorageKey = "invoiceDeleteSkipConfirm";
   const followUpReminderStorageKey = "invoiceFollowUpReminder";
   const recurringScheduleStorageKey = "invoiceRecurringSchedules";
@@ -175,6 +177,31 @@
     return Math.max(min, Math.min(max, Math.round(parsed)));
   };
 
+  const toReminderToneLabel = (tone) => (tone === "firm" ? "Final reminder" : "Reminder");
+  const formatBillingStageLabel = (stage) => {
+    if (stage === "deposit") {
+      return "Deposit";
+    }
+    if (stage === "progress") {
+      return "Progress";
+    }
+    if (stage === "final") {
+      return "Final";
+    }
+    return "Standard";
+  };
+  const formatLateFeeLabel = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return "";
+    }
+    const normalized = Math.round(parsed * 100) / 100;
+    const percentLabel = Number.isInteger(normalized)
+      ? String(normalized)
+      : normalized.toFixed(2).replace(/\.?0+$/, "");
+    return ` (${percentLabel}% late fee notice included)`;
+  };
+
 function InvoiceLibrary() {
   const navigate = useNavigate();
   const legacyDraftStorageKey = "invoiceDraft";
@@ -225,9 +252,14 @@ function InvoiceLibrary() {
   const [reminderAutomationSettings, setReminderAutomationSettings] = useState(() =>
     readReminderAutomationSettings(reminderAutomationStorageKey)
   );
+  const [csvExportBusy, setCsvExportBusy] = useState(false);
   const [reminderAutomationBusy, setReminderAutomationBusy] = useState(false);
   const [reminderAutomationNotice, setReminderAutomationNotice] = useState("");
+  const [reminderAutomationNoticeTone, setReminderAutomationNoticeTone] = useState("info");
+  const [reminderSettingsSource, setReminderSettingsSource] = useState("local");
+  const [reminderSettingsUpdatedAt, setReminderSettingsUpdatedAt] = useState("");
   const undoTimeoutRef = useRef(null);
+  const reminderAutomationNoticeTimeoutRef = useRef(null);
   const requiresSignIn = (authRequiredByPolicy || authRequiredError) && !authSession?.userId;
 
   const requestJson = async (input, init, fallbackMessage) => {
@@ -281,6 +313,60 @@ function InvoiceLibrary() {
     });
   };
 
+  const formatRelativeTimestamp = (timestamp) => {
+    if (!timestamp) {
+      return "";
+    }
+    const date = new Date(timestamp);
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+    const elapsedMs = Date.now() - date.getTime();
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) {
+      return "";
+    }
+    const elapsedMinutes = Math.floor(elapsedMs / 60000);
+    if (elapsedMinutes < 1) {
+      return "just now";
+    }
+    if (elapsedMinutes < 60) {
+      return `${elapsedMinutes}m ago`;
+    }
+    const elapsedHours = Math.floor(elapsedMinutes / 60);
+    if (elapsedHours < 24) {
+      return `${elapsedHours}h ago`;
+    }
+    const elapsedDays = Math.floor(elapsedHours / 24);
+    if (elapsedDays < 7) {
+      return `${elapsedDays}d ago`;
+    }
+    return formatDate(timestamp);
+  };
+
+  const clearReminderAutomationNoticeTimeout = () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (reminderAutomationNoticeTimeoutRef.current) {
+      window.clearTimeout(reminderAutomationNoticeTimeoutRef.current);
+      reminderAutomationNoticeTimeoutRef.current = null;
+    }
+  };
+
+  const setReminderAutomationNoticeMessage = (message, tone = "info", options = {}) => {
+    clearReminderAutomationNoticeTimeout();
+    setReminderAutomationNotice(message);
+    setReminderAutomationNoticeTone(tone);
+    const autoClearMs = Number(options.autoClearMs);
+    if (typeof window !== "undefined" && Number.isFinite(autoClearMs) && autoClearMs > 0) {
+      reminderAutomationNoticeTimeoutRef.current = window.setTimeout(() => {
+        setReminderAutomationNotice("");
+        setReminderAutomationNoticeTone("info");
+        reminderAutomationNoticeTimeoutRef.current = null;
+      }, autoClearMs);
+    }
+  };
+
   const formatStatusLabel = (status) => {
     if (status === "paid") {
       return "Paid";
@@ -292,6 +378,29 @@ function InvoiceLibrary() {
       return "Deleted";
     }
     return "Draft";
+  };
+  const formatDocumentTypeLabel = (value) => (value === "estimate" ? "Estimate" : "Invoice");
+  const normalizeEstimateApprovalStatus = (value) =>
+    value === "approved" || value === "rejected" ? value : "pending";
+  const formatEstimateApprovalLabel = (value) => {
+    const normalized = normalizeEstimateApprovalStatus(value);
+    if (normalized === "approved") {
+      return "Approved";
+    }
+    if (normalized === "rejected") {
+      return "Rejected";
+    }
+    return "Pending approval";
+  };
+  const resolveEstimateApprovalClassName = (value) => {
+    const normalized = normalizeEstimateApprovalStatus(value);
+    if (normalized === "approved") {
+      return "nb-chip nb-chip--success normal-case tracking-normal";
+    }
+    if (normalized === "rejected") {
+      return "nb-chip nb-chip--danger normal-case tracking-normal";
+    }
+    return "nb-chip nb-chip--warning normal-case tracking-normal";
   };
 
   const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
@@ -343,6 +452,35 @@ function InvoiceLibrary() {
     if (typeof window !== "undefined") {
       window.localStorage.setItem(reminderAutomationStorageKey, JSON.stringify(normalized));
     }
+    clearReminderAutomationNoticeTimeout();
+    setReminderAutomationNotice("");
+    setReminderAutomationNoticeTone("info");
+    void requestJson(
+      "/api/invoices/reminders/settings",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(normalized)
+      },
+      "Failed to save reminder automation settings."
+    )
+      .then((payload) => {
+        setReminderSettingsSource(payload?.source === "stored" ? "stored" : "local");
+        setReminderSettingsUpdatedAt(
+          typeof payload?.updatedAt === "string" && payload.updatedAt.trim() ? payload.updatedAt : ""
+        );
+        setReminderAutomationNoticeMessage("Saved to account.", "success", { autoClearMs: 3200 });
+      })
+      .catch((saveError) => {
+        if (saveError?.status === 403) {
+          setReminderAutomationNoticeMessage(
+            "Owner permission is required to save automation settings.",
+            "warning"
+          );
+          return;
+        }
+        setReminderAutomationNoticeMessage("Could not save reminder settings. Using local values for now.", "warning");
+      });
   };
 
   const setRecurringSchedule = (invoiceId, intervalDays = 30) => {
@@ -481,11 +619,52 @@ function InvoiceLibrary() {
     }
   };
 
+  const loadReminderAutomationSettings = async (shouldApply = () => true) => {
+    try {
+      const payload = await requestJson(
+        "/api/invoices/reminders/settings",
+        undefined,
+        "Failed to load reminder automation settings."
+      );
+      if (!shouldApply()) {
+        return;
+      }
+      const nextSettings = {
+        dueAfterDays: normalizeReminderSetting(payload?.settings?.dueAfterDays, 14, 1, 120),
+        cooldownDays: normalizeReminderSetting(payload?.settings?.cooldownDays, 7, 1, 60),
+        maxPerRun: normalizeReminderSetting(payload?.settings?.maxPerRun, 10, 1, 100)
+      };
+      setReminderAutomationSettings(nextSettings);
+      setReminderSettingsSource(
+        payload?.source === "stored" || payload?.source === "default" ? payload.source : "local"
+      );
+      setReminderSettingsUpdatedAt(
+        typeof payload?.updatedAt === "string" && payload.updatedAt.trim() ? payload.updatedAt : ""
+      );
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(reminderAutomationStorageKey, JSON.stringify(nextSettings));
+      }
+    } catch (_error) {
+      if (!shouldApply()) {
+        return;
+      }
+      setReminderAutomationSettings(readReminderAutomationSettings(reminderAutomationStorageKey));
+      setReminderSettingsSource("local");
+      setReminderSettingsUpdatedAt("");
+    }
+  };
+
   useEffect(() => {
     const notice = readBillingNoticeFromUrl();
     if (notice) {
       setBillingNotice(notice);
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearReminderAutomationNoticeTimeout();
+    };
   }, []);
 
   useEffect(() => {
@@ -522,6 +701,7 @@ function InvoiceLibrary() {
     void syncSession();
     void loadAuthPolicy();
     void loadAccountPlan(() => !cancelled);
+    void loadReminderAutomationSettings(() => !cancelled);
 
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
@@ -565,7 +745,11 @@ function InvoiceLibrary() {
 
   useEffect(() => {
     setReminderAutomationSettings(readReminderAutomationSettings(reminderAutomationStorageKey));
+    setReminderSettingsSource("local");
+    setReminderSettingsUpdatedAt("");
     setReminderAutomationNotice("");
+    setReminderAutomationNoticeTone("info");
+    clearReminderAutomationNoticeTimeout();
   }, [reminderAutomationStorageKey]);
 
   useEffect(() => {
@@ -665,6 +849,96 @@ function InvoiceLibrary() {
       savedInvoiceId: "",
       savedInvoiceStatus: ""
     }, options);
+  const handleConvertToInvoice = async (invoiceId) => {
+    if (!invoiceId) {
+      return;
+    }
+    setActionId(invoiceId);
+    setError("");
+    setDeliveryNotice("");
+    try {
+      const payload = await requestJson(
+        `/api/invoices/${invoiceId}/convert-to-invoice`,
+        {
+          method: "POST"
+        },
+        "Failed to convert estimate."
+      );
+      const updatedInvoice = payload?.invoice;
+      if (updatedInvoice?.invoiceId) {
+        setInvoices((prev) =>
+          prev.map((invoice) =>
+            invoice.invoiceId === updatedInvoice.invoiceId
+              ? {
+                  ...invoice,
+                  documentType: updatedInvoice?.invoiceData?.finishedInvoice?.documentType ?? "invoice",
+                  estimateApprovalStatus:
+                    updatedInvoice?.invoiceData?.finishedInvoice?.estimateApprovalStatus,
+                  estimateApprovedAt: updatedInvoice?.invoiceData?.finishedInvoice?.estimateApprovedAt,
+                  estimateApprovedBy: updatedInvoice?.invoiceData?.finishedInvoice?.estimateApprovedBy,
+                  invoiceNumber:
+                    updatedInvoice?.invoiceData?.finishedInvoice?.invoiceNumber ??
+                    invoice.invoiceNumber,
+                  updatedAt: updatedInvoice.updatedAt ?? invoice.updatedAt
+                }
+              : invoice
+          )
+        );
+        setDeliveryNotice("Estimate converted to invoice.");
+      }
+      setAuthRequiredError(false);
+    } catch (convertError) {
+      handleLibraryError(convertError, "Failed to convert estimate.");
+    } finally {
+      setActionId("");
+    }
+  };
+
+  const handleEstimateApprovalUpdate = async (invoiceId, status) => {
+    if (!invoiceId) {
+      return;
+    }
+    const statusActionKey = `${invoiceId}:estimate-approval:${status}`;
+    setStatusActionId(statusActionKey);
+    setError("");
+    setDeliveryNotice("");
+    try {
+      const payload = await requestJson(
+        `/api/invoices/${invoiceId}/estimate-approval`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status })
+        },
+        "Failed to update estimate approval."
+      );
+      const updatedInvoice = payload?.invoice;
+      if (updatedInvoice?.invoiceId) {
+        const nextApprovalStatus =
+          updatedInvoice?.invoiceData?.finishedInvoice?.estimateApprovalStatus ?? "pending";
+        setInvoices((prev) =>
+          prev.map((invoice) =>
+            invoice.invoiceId === updatedInvoice.invoiceId
+              ? {
+                ...invoice,
+                documentType: updatedInvoice?.invoiceData?.finishedInvoice?.documentType ?? "estimate",
+                estimateApprovalStatus: nextApprovalStatus,
+                estimateApprovedAt: updatedInvoice?.invoiceData?.finishedInvoice?.estimateApprovedAt,
+                estimateApprovedBy: updatedInvoice?.invoiceData?.finishedInvoice?.estimateApprovedBy,
+                updatedAt: updatedInvoice.updatedAt ?? invoice.updatedAt
+              }
+            : invoice
+          )
+        );
+        setDeliveryNotice(`Estimate ${formatEstimateApprovalLabel(nextApprovalStatus).toLowerCase()}.`);
+      }
+      setAuthRequiredError(false);
+    } catch (approvalError) {
+      handleLibraryError(approvalError, "Failed to update estimate approval.");
+    } finally {
+      setStatusActionId("");
+    }
+  };
 
   const handleStatusUpdate = async (invoiceId, status) => {
     const statusActionKey = `${invoiceId}:${status}`;
@@ -707,6 +981,8 @@ function InvoiceLibrary() {
       return;
     }
     const recipientEmail = String(options?.recipientEmail ?? "").trim().toLowerCase();
+    const documentType = invoice?.documentType === "estimate" ? "estimate" : "invoice";
+    const documentLabel = documentType === "estimate" ? "Estimate" : "Invoice";
     if (!recipientEmail || !isValidEmail(recipientEmail)) {
       setError("Enter a valid recipient email.");
       return;
@@ -722,7 +998,7 @@ function InvoiceLibrary() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ recipientEmail })
         },
-        "Failed to send invoice."
+        `Failed to send ${documentType}.`
       );
       setAuthRequiredError(false);
       setInvoices((prev) =>
@@ -738,7 +1014,7 @@ function InvoiceLibrary() {
         )
       );
       if (payload?.mode === "provider") {
-        setDeliveryNotice(`Invoice emailed to ${recipientEmail}.`);
+        setDeliveryNotice(`${documentLabel} emailed to ${recipientEmail} (PDF attached).`);
       } else {
         setDeliveryNotice(
           payload?.warning || "Delivery was recorded. Configure an email provider to send automatically."
@@ -748,7 +1024,7 @@ function InvoiceLibrary() {
         current && current.invoiceId === invoice.invoiceId ? null : current
       );
     } catch (sendError) {
-      handleLibraryError(sendError, "Failed to send invoice.");
+      handleLibraryError(sendError, `Failed to send ${documentType}.`);
     } finally {
       setActionId("");
     }
@@ -785,8 +1061,10 @@ function InvoiceLibrary() {
         )
       );
       const recipient = payload?.delivery?.recipientEmail ?? invoice?.delivery?.recipientEmail ?? "";
+      const reminderToneLabel = toReminderToneLabel(payload?.reminder?.reminderTone);
+      const lateFeeSuffix = formatLateFeeLabel(payload?.reminder?.lateFeePercentApplied);
       if (payload?.mode === "provider") {
-        setDeliveryNotice(`Reminder emailed to ${recipient}.`);
+        setDeliveryNotice(`${reminderToneLabel} emailed to ${recipient}.${lateFeeSuffix}`);
       } else {
         setDeliveryNotice(
           payload?.warning || "Reminder was recorded. Configure an email provider to send automatically."
@@ -831,9 +1109,17 @@ function InvoiceLibrary() {
         return;
       }
       const sentCount = Number(payload?.sentCount ?? 0);
+      const firmCount = Array.isArray(payload?.results)
+        ? payload.results.filter((result) => result?.sent && result?.reminderTone === "firm").length
+        : 0;
+      const lateFeeCount = Array.isArray(payload?.results)
+        ? payload.results.filter((result) => result?.sent && Number(result?.lateFeePercentApplied) > 0).length
+        : 0;
       if (sentCount > 0) {
         setReminderAutomationNotice(
-          `Sent ${sentCount} reminder${sentCount === 1 ? "" : "s"} (from ${dueCount} due).`
+          `Sent ${sentCount} reminder${sentCount === 1 ? "" : "s"} (from ${dueCount} due)${
+            firmCount > 0 ? `, including ${firmCount} final reminder${firmCount === 1 ? "" : "s"}` : ""
+          }${lateFeeCount > 0 ? `, ${lateFeeCount} with late-fee notice` : ""}.`
         );
       } else {
         setReminderAutomationNotice(
@@ -1067,8 +1353,28 @@ function InvoiceLibrary() {
   const allSelected = visibleIds.length > 0 && selectedCount === visibleIds.length;
   const planSummary = formatPlanSummary(accountPlan);
   const planUsage = getPlanUsageModel(accountPlan);
+  const teamRole =
+    accountPlan?.team?.role === "helper"
+      ? "helper"
+      : accountPlan?.team?.role === "owner"
+        ? "owner"
+        : null;
+  const canCreatePaymentLinksByRole = accountPlan?.team?.capabilities?.canCreatePaymentLinks !== false;
+  const canMarkPaidByRole = accountPlan?.team?.capabilities?.canMarkInvoicesPaid !== false;
+  const canApproveEstimatesByRole = accountPlan?.team?.capabilities?.canApproveEstimates !== false;
+  const canConvertEstimatesByRole = accountPlan?.team?.capabilities?.canConvertEstimates !== false;
+  const canRunReminderAutomationByRole =
+    accountPlan?.team?.capabilities?.canRunReminderAutomation !== false;
   const planLimitReached = Boolean(accountPlan?.upgradeRequired);
   const planWarning = getPlanPrelimitWarning(accountPlan);
+  const warningUpgradeLabel = getPlanUpgradeCtaLabel(accountPlan, {
+    source: "library",
+    phase: "warning"
+  });
+  const limitUpgradeLabel = getPlanUpgradeCtaLabel(accountPlan, {
+    source: "library",
+    phase: "limit"
+  });
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
   const billingPortalUrl = getPlanBillingPortalUrl(accountPlan);
   const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
@@ -1083,6 +1389,18 @@ function InvoiceLibrary() {
       : planUsage?.statusTone === "warning"
         ? "nb-usage-meter--warning"
         : "";
+  const reminderAutomationNoticeClassName =
+    reminderAutomationNoticeTone === "success"
+      ? "text-xs font-semibold text-emerald-700"
+      : reminderAutomationNoticeTone === "warning"
+        ? "text-xs font-semibold text-amber-700"
+        : "text-xs font-medium text-blue-900";
+  const reminderSettingsMetaLabel =
+    reminderSettingsSource === "stored"
+      ? `Saved to account${reminderSettingsUpdatedAt ? ` · Updated ${formatDateTime(reminderSettingsUpdatedAt)} (${formatRelativeTimestamp(reminderSettingsUpdatedAt)})` : ""}`
+      : reminderSettingsSource === "default"
+        ? "Using account default settings."
+        : "Using local fallback until account settings are saved.";
   const sentReminderThresholdDays = 14;
   const sentReminderThresholdMs = sentReminderThresholdDays * 24 * 60 * 60 * 1000;
   const staleDraftThresholdDays = 7;
@@ -1154,11 +1472,36 @@ function InvoiceLibrary() {
     !reminderIsSnoozed &&
     !reminderIsDismissed;
 
+  useEffect(() => {
+    if (!upgradeTelemetry || accountPlan?.plan !== "free") {
+      return;
+    }
+    const remainingSaves = Number.isFinite(accountPlan?.usage?.invoicesRemaining)
+      ? Number(accountPlan.usage.invoicesRemaining)
+      : null;
+    if (planLimitReached) {
+      upgradeTelemetry.trackLimitExposure({
+        source: "library",
+        planTier: "free",
+        remainingSaves
+      });
+      return;
+    }
+    if (planWarning) {
+      upgradeTelemetry.trackWarningExposure({
+        source: "library",
+        planTier: "free",
+        remainingSaves
+      });
+    }
+  }, [accountPlan?.plan, accountPlan?.usage?.invoicesRemaining, planLimitReached, planWarning]);
+
   const handleUpgradeAction = async () => {
     setBillingBusy(true);
     setBillingError("");
     try {
       await startUpgradeCheckout(accountPlan, {
+        source: "library",
         successPath: "/invoices?billing=success",
         cancelPath: "/invoices?billing=cancelled"
       });
@@ -1173,11 +1516,56 @@ function InvoiceLibrary() {
     setBillingBusy(true);
     setBillingError("");
     try {
-      await openBillingPortal(accountPlan, { returnPath: "/invoices" });
+      await openBillingPortal(accountPlan, { source: "library", returnPath: "/invoices" });
     } catch (billingActionError) {
       setBillingError(billingActionError?.message || "Unable to open billing settings.");
     } finally {
       setBillingBusy(false);
+    }
+  };
+
+  const handleUpgradeLinkClick = () => {
+    if (accountPlan?.plan !== "free") {
+      return;
+    }
+    upgradeTelemetry?.trackUpgradeClick?.({
+      source: "library",
+      planTier: "free",
+      remainingSaves: Number.isFinite(accountPlan?.usage?.invoicesRemaining)
+        ? Number(accountPlan.usage.invoicesRemaining)
+        : null
+    });
+  };
+
+  const handleAccountingCsvExport = async () => {
+    setCsvExportBusy(true);
+    setError("");
+    setDeliveryNotice("");
+    try {
+      const response = await apiFetch("/api/invoices/export-accounting.csv");
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        const requestError = new Error(payload?.error || "Failed to download accounting CSV.");
+        requestError.status = response.status;
+        throw requestError;
+      }
+      const fileBlob = await response.blob();
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename=\"?([^\";]+)\"?/i);
+      const filename = (match?.[1] || `notebill-accounting-export-${new Date().toISOString().slice(0, 10)}.csv`).trim();
+      const blobUrl = window.URL.createObjectURL(fileBlob);
+      const downloadLink = document.createElement("a");
+      downloadLink.href = blobUrl;
+      downloadLink.download = filename;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
+      window.URL.revokeObjectURL(blobUrl);
+      setDeliveryNotice("Accounting CSV downloaded.");
+    } catch (csvExportError) {
+      handleLibraryError(csvExportError, "Failed to download accounting CSV.");
+    } finally {
+      setCsvExportBusy(false);
     }
   };
 
@@ -1230,12 +1618,25 @@ function InvoiceLibrary() {
               <span className={authSession?.email ? "font-semibold text-blue-800" : "font-semibold text-slate-700"}>
                 {authSession?.email ? authSession.email : "Local mode"}
               </span>
+              {teamRole ? (
+                <span className="font-semibold text-slate-500">
+                  · {teamRole === "helper" ? "Helper" : "Owner"}
+                </span>
+              ) : null}
               <button
                 type="button"
                 className="font-semibold text-blue-800 hover:text-blue-900"
                 onClick={() => navigate("/")}
               >
                 Manage
+              </button>
+              <button
+                type="button"
+                className="font-semibold text-blue-800 hover:text-blue-900 disabled:cursor-not-allowed disabled:text-blue-400"
+                onClick={handleAccountingCsvExport}
+                disabled={csvExportBusy}
+              >
+                {csvExportBusy ? "Downloading..." : "Accounting CSV"}
               </button>
               {showBillingPortalAction ? (
                 useStripePortalAction ? (
@@ -1280,7 +1681,31 @@ function InvoiceLibrary() {
               </div>
             ) : null}
             {planWarning && !planLimitReached ? (
-              <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <p className="text-xs font-semibold text-amber-700">{planWarning}</p>
+                {showUpgradeAction ? (
+                  useStripeUpgradeAction ? (
+                    <button
+                      type="button"
+                      className="nb-btn-secondary rounded-full px-2 py-0.5 text-[11px] disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={handleUpgradeAction}
+                      disabled={billingBusy}
+                    >
+                      {billingBusy ? "Opening..." : warningUpgradeLabel}
+                    </button>
+                  ) : (
+                    <a
+                      href={upgradeUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="nb-btn-secondary inline-flex rounded-full px-2 py-0.5 text-[11px]"
+                      onClick={handleUpgradeLinkClick}
+                    >
+                      {warningUpgradeLabel}
+                    </a>
+                  )
+                ) : null}
+              </div>
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1420,7 +1845,7 @@ function InvoiceLibrary() {
                   onClick={handleUpgradeAction}
                   disabled={billingBusy}
                 >
-                  {billingBusy ? "Opening..." : "Upgrade plan"}
+                  {billingBusy ? "Opening..." : limitUpgradeLabel}
                 </button>
               ) : (
                 <a
@@ -1428,8 +1853,9 @@ function InvoiceLibrary() {
                   target="_blank"
                   rel="noreferrer"
                   className="mt-3 inline-flex rounded-xl border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-400"
+                  onClick={handleUpgradeLinkClick}
                 >
-                  Upgrade plan
+                  {limitUpgradeLabel}
                 </a>
               )
             ) : null}
@@ -1578,6 +2004,9 @@ function InvoiceLibrary() {
                 <p className="mt-1 text-xs text-slate-600">
                   Tune follow-up timing, then preview or run reminders without leaving the library.
                 </p>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {reminderSettingsMetaLabel}
+                </p>
               </div>
               <div className="grid gap-2 sm:grid-cols-3">
                 <label className="text-xs font-medium text-slate-600">
@@ -1640,7 +2069,7 @@ function InvoiceLibrary() {
                   type="button"
                   className="nb-btn-secondary rounded-xl px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => runReminderAutomation({ dryRun: true })}
-                  disabled={reminderAutomationBusy}
+                  disabled={reminderAutomationBusy || !canRunReminderAutomationByRole}
                 >
                   {reminderAutomationBusy ? "Working..." : "Preview due now"}
                 </button>
@@ -1648,12 +2077,15 @@ function InvoiceLibrary() {
                   type="button"
                   className="nb-btn-secondary rounded-xl px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => runReminderAutomation({ dryRun: false })}
-                  disabled={reminderAutomationBusy}
+                  disabled={reminderAutomationBusy || !canRunReminderAutomationByRole}
                 >
                   {reminderAutomationBusy ? "Working..." : "Run due reminders"}
                 </button>
+                {!canRunReminderAutomationByRole ? (
+                  <p className="text-xs font-semibold text-amber-700">Owner permission is required to run automation.</p>
+                ) : null}
                 {reminderAutomationNotice ? (
-                  <p className="text-xs font-medium text-blue-900">{reminderAutomationNotice}</p>
+                  <p className={reminderAutomationNoticeClassName}>{reminderAutomationNotice}</p>
                 ) : null}
               </div>
             </div>
@@ -1796,6 +2228,36 @@ function InvoiceLibrary() {
 
           {!loading && filteredInvoices.length > 0
               ? filteredInvoices.map((invoice) => {
+                const documentType = invoice.documentType === "estimate" ? "estimate" : "invoice";
+                const documentLabel = formatDocumentTypeLabel(documentType);
+                const isEstimate = documentType === "estimate";
+                const billingStage =
+                  invoice.billingStage === "deposit" ||
+                  invoice.billingStage === "progress" ||
+                  invoice.billingStage === "final"
+                    ? invoice.billingStage
+                    : "standard";
+                const billingStageLabel = formatBillingStageLabel(billingStage);
+                const projectTotal = Number(invoice.projectTotal);
+                const projectPaidToDate = Number(invoice.projectPaidToDate);
+                const projectBalanceAfterInvoice = Number(invoice.projectBalanceAfterInvoice);
+                const attachmentCount = Number(
+                  invoice.attachmentCount ??
+                    invoice?.invoiceData?.finishedInvoice?.attachments?.length ??
+                    0
+                );
+                const estimateApprovalStatus = normalizeEstimateApprovalStatus(
+                  invoice.estimateApprovalStatus
+                );
+                const isEstimateApproved = estimateApprovalStatus === "approved";
+                const estimateApprovedBy =
+                  typeof invoice.estimateApprovedBy === "string" && invoice.estimateApprovedBy.trim()
+                    ? invoice.estimateApprovedBy.trim()
+                    : "";
+                const estimateApprovedAt = formatDateTime(invoice.estimateApprovedAt);
+                const estimateApprovalChipClass = resolveEstimateApprovalClassName(
+                  estimateApprovalStatus
+                );
                 const statusClass = statusStyles[invoice.status] ?? statusStyles.draft;
                 const totalLabel = Number.isFinite(invoice.total)
                   ? formatMoney(invoice.total)
@@ -1808,9 +2270,15 @@ function InvoiceLibrary() {
                   : Number.isFinite(invoice.total)
                     ? Math.max(Number(invoice.total), 0)
                     : 0;
-                const paymentLabel = invoice.status === "paid" ? "Paid in full" : `${formatMoney(balanceDue)} due`;
+                const paymentLabel = isEstimate
+                  ? `Estimated ${formatMoney(balanceDue)}`
+                  : invoice.status === "paid"
+                    ? "Paid in full"
+                    : `${formatMoney(balanceDue)} due`;
                 const paymentLabelClass =
-                  invoice.status === "paid"
+                  isEstimate
+                    ? "nb-chip nb-chip--soft normal-case tracking-normal"
+                    : invoice.status === "paid"
                     ? "nb-chip nb-chip--success normal-case tracking-normal"
                     : "nb-chip nb-chip--warning normal-case tracking-normal";
                 const recurringEntry = recurringSchedulesByInvoiceId[invoice.invoiceId] ?? null;
@@ -1831,7 +2299,7 @@ function InvoiceLibrary() {
                 const isSelected = selectedIds.includes(invoice.invoiceId);
                 const isStatusBusy = statusActionId.startsWith(`${invoice.invoiceId}:`);
                 const showMarkSent = invoice.status === "draft" || invoice.status === "paid";
-                const showMarkPaid = invoice.status === "sent";
+                const showMarkPaid = !isEstimate && invoice.status === "sent" && canMarkPaidByRole;
                 const showMarkDraft = invoice.status === "sent" || invoice.status === "paid";
                 return (
                   <div
@@ -1853,7 +2321,9 @@ function InvoiceLibrary() {
                         ) : null}
                         <div>
                           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            {invoice.sourceType === "upload" ? "Imported invoice" : "Invoice draft"}
+                            {invoice.sourceType === "upload"
+                              ? `Imported ${documentType}`
+                              : `${documentLabel} draft`}
                           </p>
                           <p className="mt-1 text-lg font-semibold text-slate-900">
                             {invoice.invoiceNumber || "Draft invoice"}
@@ -1861,6 +2331,20 @@ function InvoiceLibrary() {
                           <p className="text-xs text-slate-500">
                             Updated {formatDate(invoice.updatedAt)}
                           </p>
+                          {isEstimate && isEstimateApproved ? (
+                            <p className="mt-1 text-xs text-slate-600">
+                              Approved{estimateApprovedBy ? ` by ${estimateApprovedBy}` : ""}
+                              {estimateApprovedAt ? ` · ${estimateApprovedAt}` : ""}
+                            </p>
+                          ) : null}
+                          {billingStage !== "standard" ? (
+                            <p className="mt-1 text-xs text-slate-600">
+                              {billingStageLabel} billing stage
+                              {Number.isFinite(projectBalanceAfterInvoice)
+                                ? ` · Remaining ${formatMoney(Math.max(projectBalanceAfterInvoice, 0))}`
+                                : ""}
+                            </p>
+                          ) : null}
                           {hasDelivery ? (
                           <p className="mt-1 text-xs text-slate-600">
                               {providerDelivery
@@ -1877,9 +2361,24 @@ function InvoiceLibrary() {
                         <span className={statusClass}>
                           {formatStatusLabel(invoice.status)}
                         </span>
+                        {isEstimate ? (
+                          <span className={estimateApprovalChipClass}>
+                            {formatEstimateApprovalLabel(estimateApprovalStatus)}
+                          </span>
+                        ) : null}
                         {recurringEntry ? (
                           <span className="nb-chip nb-chip--soft normal-case tracking-normal">
                             Recurring {recurringIntervalLabel}
+                          </span>
+                        ) : null}
+                        {billingStage !== "standard" ? (
+                          <span className="nb-chip nb-chip--soft normal-case tracking-normal">
+                            {billingStageLabel}
+                          </span>
+                        ) : null}
+                        {attachmentCount > 0 ? (
+                          <span className="nb-chip nb-chip--soft normal-case tracking-normal">
+                            {attachmentCount} attachment{attachmentCount === 1 ? "" : "s"}
                           </span>
                         ) : null}
                         <span className={paymentLabelClass}>
@@ -1888,6 +2387,17 @@ function InvoiceLibrary() {
                         <span className="text-sm font-semibold text-slate-900">{totalLabel}</span>
                       </div>
                     </div>
+                    {billingStage !== "standard" &&
+                    (Number.isFinite(projectTotal) || Number.isFinite(projectPaidToDate)) ? (
+                      <p className="mt-2 text-xs text-slate-600">
+                        {Number.isFinite(projectTotal)
+                          ? `Project ${formatMoney(projectTotal)}`
+                          : "Project total not set"}
+                        {Number.isFinite(projectPaidToDate)
+                          ? ` · Paid to date ${formatMoney(Math.max(projectPaidToDate, 0))}`
+                          : ""}
+                      </p>
+                    ) : null}
                     {recurringEntry ? (
                       <p className="mt-3 text-xs text-slate-600">Next due {recurringNextDue || "soon"}</p>
                     ) : null}
@@ -1927,13 +2437,66 @@ function InvoiceLibrary() {
                           >
                             {actionId === invoice.invoiceId ? "Opening…" : "Open"}
                           </button>
+                          {isEstimate ? (
+                            <>
+                              <button
+                                type="button"
+                                className="nb-btn-secondary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:text-slate-300"
+                                onClick={() => handleEstimateApprovalUpdate(invoice.invoiceId, "approved")}
+                                disabled={
+                                  actionId === invoice.invoiceId ||
+                                  isStatusBusy ||
+                                  estimateApprovalStatus === "approved" ||
+                                  !canApproveEstimatesByRole
+                                }
+                                aria-label={`Approve estimate ${invoice.invoiceNumber || "Draft estimate"}`}
+                              >
+                                Approve estimate
+                              </button>
+                              <button
+                                type="button"
+                                className="nb-btn-secondary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:text-slate-300"
+                                onClick={() => handleEstimateApprovalUpdate(invoice.invoiceId, "rejected")}
+                                disabled={
+                                  actionId === invoice.invoiceId ||
+                                  isStatusBusy ||
+                                  estimateApprovalStatus === "rejected" ||
+                                  !canApproveEstimatesByRole
+                                }
+                                aria-label={`Reject estimate ${invoice.invoiceNumber || "Draft estimate"}`}
+                              >
+                                Reject estimate
+                              </button>
+                              <button
+                                type="button"
+                                className="nb-btn-secondary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:text-slate-300"
+                                onClick={() => handleConvertToInvoice(invoice.invoiceId)}
+                                disabled={
+                                  actionId === invoice.invoiceId ||
+                                  isStatusBusy ||
+                                  !isEstimateApproved ||
+                                  !canConvertEstimatesByRole
+                                }
+                                title={
+                                  !canConvertEstimatesByRole
+                                    ? "Owner permission is required."
+                                    : isEstimateApproved
+                                      ? undefined
+                                      : "Approve estimate before converting."
+                                }
+                                aria-label={`Convert estimate ${invoice.invoiceNumber || "Draft estimate"} to invoice`}
+                              >
+                                Convert to invoice
+                              </button>
+                            </>
+                          ) : null}
                           <button
                             type="button"
                             className="nb-btn-secondary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:text-slate-300"
                             onClick={() => handleInvoiceAgain(invoice.invoiceId)}
                             disabled={actionId === invoice.invoiceId || isStatusBusy}
                           >
-                            Invoice again
+                            {isEstimate ? "Estimate again" : "Invoice again"}
                           </button>
                           <button
                             type="button"
@@ -1946,13 +2509,13 @@ function InvoiceLibrary() {
                               startSendComposer(invoice);
                             }}
                             disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
-                            aria-label={`${hasDelivery ? "Resend invoice" : "Send invoice"} ${invoice.invoiceNumber || "Draft invoice"}`}
+                            aria-label={`${hasDelivery ? `Resend ${documentType}` : `Send ${documentType}`} ${invoice.invoiceNumber || `Draft ${documentType}`}`}
                           >
                             {actionId === invoice.invoiceId
                               ? "Sending…"
                               : hasDelivery
-                                ? "Resend invoice"
-                                : "Send invoice"}
+                                ? `Resend ${documentType}`
+                                : `Send ${documentType}`}
                           </button>
                           {hasDelivery && !deliveryOpened ? (
                             <button
@@ -1965,7 +2528,7 @@ function InvoiceLibrary() {
                               Mark opened
                             </button>
                           ) : null}
-                          {invoice.paymentLinkUrl ? (
+                          {!isEstimate && invoice.paymentLinkUrl ? (
                             <a
                               href={invoice.paymentLinkUrl}
                               target="_blank"
@@ -1974,6 +2537,11 @@ function InvoiceLibrary() {
                             >
                               Open pay link
                             </a>
+                          ) : null}
+                          {!isEstimate && !canCreatePaymentLinksByRole ? (
+                            <span className="nb-chip nb-chip--warning normal-case tracking-normal text-xs">
+                              Owner handles payment links
+                            </span>
                           ) : null}
                           {recurringEntry ? (
                             <>
@@ -2071,6 +2639,11 @@ function InvoiceLibrary() {
                               Mark draft
                             </button>
                           ) : null}
+                          {!showMarkPaid && !isEstimate && invoice.status === "sent" && !canMarkPaidByRole ? (
+                            <span className="nb-chip nb-chip--warning normal-case tracking-normal text-xs">
+                              Owner marks paid
+                            </span>
+                          ) : null}
                           <button
                             type="button"
                             className="nb-btn-secondary rounded-xl border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700 hover:border-rose-300 disabled:cursor-not-allowed disabled:text-rose-300"
@@ -2092,6 +2665,9 @@ function InvoiceLibrary() {
                       <div className="nb-surface nb-surface--muted mt-3 rounded-xl p-3">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                           Recipient email
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          A PDF of this {documentType} will be attached automatically.
                         </p>
                         <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                           <input
