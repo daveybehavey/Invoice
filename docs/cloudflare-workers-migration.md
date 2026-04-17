@@ -37,10 +37,26 @@ Old production flow:
 Current production flow:
 
 - GitHub repository
-- Cloudflare Worker deployment via Wrangler
+- Cloudflare Worker deployment via Wrangler or Cloudflare Workers Builds
 - Cloudflare zone routes on the real hostnames
 
 That means your laptop or VM no longer has to stay online for the public site to work.
+
+## GitHub deployment source of truth
+
+The intended steady state is:
+
+- development happens locally
+- code is pushed to GitHub
+- Cloudflare Workers Builds pulls from GitHub and deploys the Worker
+
+If you are connecting the existing Worker in the dashboard, use:
+
+- Worker: `notebill-app`
+- repository: `daveybehavey/Invoice`
+- production branch: `main`
+- build command: `npm run build`
+- deploy command: `npx wrangler deploy`
 
 ## Remaining cleanup
 

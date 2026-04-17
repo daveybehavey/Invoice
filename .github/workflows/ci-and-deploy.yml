@@ -1,10 +1,7 @@
-name: CI and Deploy
+name: Manual CI and Deploy
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: notebill-${{ github.workflow }}-${{ github.ref }}
@@ -36,7 +33,7 @@ jobs:
         run: npm test
 
   deploy-worker:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-latest
     permissions:

@@ -56,23 +56,34 @@ The Worker deploy should publish:
 - `https://notebill-app.davidiheslop.workers.dev`
 - zone routes for `app.notebill.app/*`, `notebill.app/*`, and `www.notebill.app/*`
 
-## GitHub auto-deploy
+## GitHub + Cloudflare Builds
 
-This repo includes a GitHub Actions workflow at `.github/workflows/ci-and-deploy.yml`.
+The preferred automation path is now:
 
-It will:
+- push code to `https://github.com/daveybehavey/Invoice`
+- let Cloudflare Workers Builds pull from GitHub
+- let Cloudflare publish the new Worker version automatically
 
-- run `npm run build`
-- run `npm test`
-- deploy on pushes to `main`
+One-time Cloudflare dashboard setup:
 
-For deploys to work, the GitHub repository must have these Actions secrets:
+1. Go to Cloudflare `Workers & Pages`.
+2. Open the existing Worker: `notebill-app`.
+3. Go to `Settings` > `Builds`.
+4. Select `Connect`.
+5. Authorize the Cloudflare GitHub app if prompted.
+6. Select the GitHub repository: `daveybehavey/Invoice`.
+7. Use the production branch: `main`.
+8. Keep the Worker name matched to `wrangler.jsonc`: `notebill-app`.
+9. Use the repo root as the build root.
+10. Use:
+    - build command: `npm run build`
+    - deploy command: `npx wrangler deploy`
 
-- `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_API_TOKEN`
+After that, a normal push to `main` should trigger Cloudflare to build and deploy directly from GitHub.
 
-Use a dedicated Cloudflare API token for CI/CD with Worker deploy permissions scoped to the
-`notebill.app` account/zone. Do not reuse a local Wrangler login token for GitHub Actions.
+This repo still includes `.github/workflows/ci-and-deploy.yml`, but it is now manual-only.
+That workflow is a fallback for later, once GitHub Actions billing is healthy again and a dedicated
+`CLOUDFLARE_API_TOKEN` has been created for CI.
 
 ## Verify production
 
