@@ -214,6 +214,9 @@ async function ensureSchema(pool) {
     );
   `);
   await pool.query(`
+    alter table saved_invoices enable row level security;
+  `);
+  await pool.query(`
     create index if not exists saved_invoices_owner_updated_idx
     on saved_invoices(owner_id, updated_at desc);
   `);

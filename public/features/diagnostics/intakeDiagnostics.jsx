@@ -811,17 +811,37 @@
                   <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
                     <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Issues</p>
                     <ul className="mt-1 list-disc pl-5 text-sm text-amber-800">
-                      {frictionSnapshot.issues.map((issue) => (
-                        <li key={issue}>{issue}</li>
-                      ))}
+                      {frictionSnapshot.issues.map((issue, index) => {
+                        const severity =
+                          issue && typeof issue === "object" && typeof issue.severity === "string"
+                            ? issue.severity.trim()
+                            : "";
+                        const message =
+                          typeof issue === "string"
+                            ? issue
+                            : issue && typeof issue === "object" && typeof issue.message === "string"
+                              ? issue.message
+                              : "";
+                        const details =
+                          issue && typeof issue === "object" && typeof issue.details === "string"
+                            ? issue.details.trim()
+                            : "";
+                        const label = severity ? `[${severity}] ${message}` : message;
+                        return (
+                          <li key={`${label || "issue"}-${index}`}>
+                            {label}
+                            {details ? ` (${details})` : ""}
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
                 ) : null}
               </>
             ) : (
               <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                No friction snapshot found yet. Run <code>npm run test:friction</code> to generate
-                <code> docs/flow-friction-latest.json</code>.
+                No friction snapshot found yet. Run <code>npm run test:friction</code> to generate a
+                fresh diagnostics snapshot.
               </div>
             )}
           </section>

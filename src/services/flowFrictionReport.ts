@@ -1,11 +1,23 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import {
+  isRuntimeStatePostgresEnabled,
+  mutateRuntimeSnapshot,
+  readRuntimeSnapshot
+} from "./postgresRuntimeState.js";
 
 const configuredReportPath = process.env.FLOW_FRICTION_REPORT_FILE;
 const reportFilePath = configuredReportPath
   ? path.resolve(process.cwd(), configuredReportPath)
   : path.resolve(process.cwd(), "docs/flow-friction-latest.json");
+const reportDir = path.dirname(reportFilePath);
+const runtimeStateBackend = isRuntimeStatePostgresEnabled() ? "postgres" : "file";
+const FLOW_FRICTION_REPORT_SNAPSHOT_KEY = "flow_friction_report";
+const reportSource =
+  runtimeStateBackend === "postgres"
+    ? `postgres:app_runtime_snapshots/${FLOW_FRICTION_REPORT_SNAPSHOT_KEY}`
+    : reportFilePath;
 
 const FlowFrictionCheckSchema = z.object({
   name: z.string(),
@@ -13,14 +25,28 @@ const FlowFrictionCheckSchema = z.object({
   details: z.string().default("")
 });
 
+const FlowFrictionIssueSchema = z.union([
+  z.string().transform((message) => ({
+    severity: "info",
+    message,
+    details: ""
+  })),
+  z.object({
+    severity: z.string().default("info"),
+    message: z.string(),
+    details: z.string().default("")
+  })
+]);
+
 const FlowFrictionReportSchema = z.object({
   timestamp: z.string().default(""),
   baseUrl: z.string().default(""),
   checks: z.array(FlowFrictionCheckSchema).default([]),
-  issues: z.array(z.string()).default([])
+  issues: z.array(FlowFrictionIssueSchema).default([])
 });
 
 type FlowFrictionReport = z.infer<typeof FlowFrictionReportSchema>;
+export type FlowFrictionIssue = z.infer<typeof FlowFrictionIssueSchema>;
 
 export type FlowFrictionSnapshot = FlowFrictionReport & {
   available: boolean;
@@ -34,14 +60,42 @@ export type FlowFrictionSnapshot = FlowFrictionReport & {
   };
 };
 
+const EMPTY_FLOW_FRICTION_REPORT: FlowFrictionReport = {
+  timestamp: "",
+  baseUrl: "",
+  checks: [],
+  issues: []
+};
+
 export async function getFlowFrictionSnapshot(): Promise<FlowFrictionSnapshot> {
+  if (runtimeStateBackend === "postgres") {
+    try {
+      const parsed = await readRuntimeSnapshot(
+        FLOW_FRICTION_REPORT_SNAPSHOT_KEY,
+        FlowFrictionReportSchema,
+        EMPTY_FLOW_FRICTION_REPORT
+      );
+      if (isEmptyReport(parsed)) {
+        return emptySnapshot("missing_report");
+      }
+      return {
+        ...parsed,
+        available: true,
+        source: reportSource,
+        summary: summarizeReport(parsed)
+      };
+    } catch (_error) {
+      return emptySnapshot("invalid_report");
+    }
+  }
+
   try {
     const raw = await fs.readFile(reportFilePath, "utf8");
     const parsed = FlowFrictionReportSchema.parse(JSON.parse(raw));
     return {
       ...parsed,
       available: true,
-      source: reportFilePath,
+      source: reportSource,
       summary: summarizeReport(parsed)
     };
   } catch (error) {
@@ -50,6 +104,30 @@ export async function getFlowFrictionSnapshot(): Promise<FlowFrictionSnapshot> {
     }
     return emptySnapshot("invalid_report");
   }
+}
+
+export async function writeFlowFrictionReport(
+  report: z.input<typeof FlowFrictionReportSchema>
+): Promise<FlowFrictionReport> {
+  const parsed = FlowFrictionReportSchema.parse(report);
+
+  if (runtimeStateBackend === "postgres") {
+    await mutateRuntimeSnapshot(
+      FLOW_FRICTION_REPORT_SNAPSHOT_KEY,
+      FlowFrictionReportSchema,
+      EMPTY_FLOW_FRICTION_REPORT,
+      async () => parsed
+    );
+    return parsed;
+  }
+
+  await fs.mkdir(reportDir, { recursive: true });
+  await fs.writeFile(reportFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+  return parsed;
+}
+
+export function getFlowFrictionReportSource(): string {
+  return reportSource;
 }
 
 function summarizeReport(report: FlowFrictionReport) {
@@ -68,7 +146,7 @@ function emptySnapshot(reason: FlowFrictionSnapshot["reason"]): FlowFrictionSnap
   return {
     available: false,
     reason,
-    source: reportFilePath,
+    source: reportSource,
     timestamp: "",
     baseUrl: "",
     checks: [],
@@ -89,4 +167,8 @@ function isFileMissingError(error: unknown): error is NodeJS.ErrnoException {
       "code" in error &&
       (error as NodeJS.ErrnoException).code === "ENOENT"
   );
+}
+
+function isEmptyReport(report: FlowFrictionReport): boolean {
+  return !report.timestamp && !report.baseUrl && report.checks.length === 0 && report.issues.length === 0;
 }

@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="/home/davidheslop/Invoice"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 NODE_BIN="$(command -v node)"
+NODE_DIR="$(dirname "${NODE_BIN}")"
 CLOUDFLARED_BIN="$(command -v cloudflared)"
-NPM_CLI="$HOME/.nvm/versions/node/v24.12.0/lib/node_modules/npm/bin/npm-cli.js"
+NPM_BIN="$(command -v npm)"
 
-if [[ -z "${NODE_BIN}" || -z "${CLOUDFLARED_BIN}" ]]; then
-  echo "node or cloudflared binary not found in PATH."
+if [[ -z "${NODE_BIN}" || -z "${NPM_BIN}" || -z "${CLOUDFLARED_BIN}" ]]; then
+  echo "node, npm, or cloudflared binary not found in PATH."
   exit 1
 fi
 
-if [[ ! -f "${NPM_CLI}" ]]; then
-  echo "npm CLI not found at ${NPM_CLI}"
+if [[ ! -x "${NPM_BIN}" ]]; then
+  echo "npm binary is not executable at ${NPM_BIN}"
   exit 1
 fi
 
@@ -28,8 +30,8 @@ After=network.target
 Type=simple
 WorkingDirectory=${ROOT_DIR}
 Environment=NODE_ENV=production
-Environment=PATH=/home/davidheslop/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=${NODE_BIN} ${NPM_CLI} run start
+Environment=PATH=${NODE_DIR}:/usr/local/bin:/usr/bin:/bin
+ExecStart=${NPM_BIN} run start
 Restart=always
 RestartSec=2
 

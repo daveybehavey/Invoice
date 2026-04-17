@@ -36,7 +36,7 @@ export type ReminderRunResult = {
     invoiceUpdatedAt?: string;
     delivery?: DeliverySummary;
     mode?: "provider" | "record_only";
-    provider?: "none" | "resend";
+    provider?: "none" | "resend" | "smtp2go";
     error?: string;
   }>;
 };
@@ -199,7 +199,7 @@ export async function sendInvoiceReminderById(
   delivery: DeliverySummary;
   recipientEmail: string;
   mode: "provider" | "record_only";
-  provider: "none" | "resend";
+  provider: "none" | "resend" | "smtp2go";
   warning?: string;
 }> {
   const saved = await context.repository.getSavedInvoiceById(context.invoiceId, context.ownerId);

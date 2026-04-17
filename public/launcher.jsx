@@ -645,6 +645,272 @@ function Placeholder({ title, description }) {
   );
 }
 
+const PUBLIC_INFO_LAST_UPDATED = "2026-04-14";
+const SUPPORT_EMAIL = "support@notebill.app";
+const CONTACT_EMAIL = "contact@notebill.app";
+const INFO_EMAIL = "info@notebill.app";
+const DIRECT_CONTACT_EMAIL = "david@notebill.app";
+const NOTE_BILL_SITE_URL = "https://notebill.app";
+
+function PublicInfoPage({ kicker, title, intro, sections, footerNote, actions }) {
+  const pageActions = actions ?? [
+    { href: "/", label: "Open NoteBill", tone: "primary" },
+    { href: "/support", label: "Support", tone: "ghost" }
+  ];
+  return (
+    <div className="nb-page nb-page--quiet">
+      <main className="nb-page-shell nb-page-shell--medium py-8 md:py-10">
+        <div className="nb-surface nb-surface--elevated">
+          <div className="flex flex-col gap-3 border-b border-slate-200/80 pb-5 md:flex-row md:items-end md:justify-between">
+            <div>
+              <p className="nb-kicker">{kicker}</p>
+              <h1 className="nb-title mt-3 text-4xl md:text-5xl">{title}</h1>
+              <p className="nb-copy mt-4 max-w-3xl">{intro}</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {pageActions.map((action) => (
+                <a
+                  key={`${action.href}:${action.label}`}
+                  className={action.tone === "primary" ? "nb-btn-primary" : "nb-btn-ghost"}
+                  href={action.href}
+                >
+                  {action.label}
+                </a>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-6 space-y-4">
+            {sections.map((section) => (
+              <section key={section.title} className="nb-subcard">
+                <h2 className="text-lg font-semibold text-slate-900">{section.title}</h2>
+                {section.paragraphs.map((paragraph) => (
+                  <p key={paragraph} className="mt-3 text-sm leading-7 text-slate-700 md:text-[15px]">
+                    {paragraph}
+                  </p>
+                ))}
+                {section.items?.length ? (
+                  <ul className="mt-3 space-y-2 text-sm leading-7 text-slate-700 md:text-[15px]">
+                    {section.items.map((item) => (
+                      <li key={item} className="flex items-start gap-3">
+                        <span className="mt-[0.55rem] inline-flex h-2 w-2 rounded-full bg-[#6993d2]" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </section>
+            ))}
+          </div>
+
+          {footerNote ? <p className="mt-6 text-xs leading-6 text-slate-500">{footerNote}</p> : null}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function PrivacyPage() {
+  return (
+    <PublicInfoPage
+      kicker="Privacy"
+      title="NoteBill Privacy Policy"
+      intro="NoteBill helps you turn rough notes, imports, and draft invoice details into professional invoices. This policy explains what information we may collect, how it may be used, and what choices you have when using the product."
+      footerNote={`Last updated: ${PUBLIC_INFO_LAST_UPDATED}. For privacy or deletion requests, email ${SUPPORT_EMAIL} or use the public data deletion page.`}
+      actions={[
+        { href: "/", label: "Open NoteBill", tone: "primary" },
+        { href: "/support", label: "Support", tone: "ghost" },
+        { href: "/data-deletion", label: "Data deletion", tone: "ghost" }
+      ]}
+      sections={[
+        {
+          title: "Information we may collect",
+          items: [
+            "Email address and session-related identifiers when you sign in or keep invoices tied to your account.",
+            "Content you provide, including notes, invoice details, uploaded invoice files, images, and saved drafts.",
+            "Audio notes and transcripts if audio transcription is enabled.",
+            "Billing and subscription metadata if paid plans, payment links, or Stripe checkout are enabled.",
+            "Limited diagnostic or quality information used to run, secure, and improve the product."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "How we use information",
+          items: [
+            "To generate, edit, save, export, send, and reopen invoices.",
+            "To authenticate users and scope invoice data to the correct account.",
+            "To process imports, transcription, OCR, and invoice-generation workflows.",
+            "To support subscription billing, payment-link creation, and invoice email delivery when those features are enabled.",
+            "To troubleshoot issues, prevent abuse, and improve reliability."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "Service providers",
+          paragraphs: [
+            "Depending on which features are enabled in production, NoteBill may use service providers such as OpenAI for AI-assisted processing, Stripe for billing and payment features, and SMTP2GO, Resend, or another email delivery provider for sending invoices or reminders.",
+            "These providers are used to operate the service, not to sell your information."
+          ]
+        },
+        {
+          title: "Sharing and disclosure",
+          items: [
+            "We do not sell your personal information.",
+            "We may share information with service providers that help us operate NoteBill.",
+            "We may disclose information when required to comply with law, protect the service, investigate abuse, or support a business transfer."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "Your choices",
+          items: [
+            "You can delete saved invoices from the app.",
+            "You can avoid optional features like uploads, transcription, billing, or email sending if you do not want to use them.",
+            "You can request account-related privacy help through the support channel listed on the support page.",
+            "You can request account and associated data deletion through the public data deletion page or by emailing support@notebill.app."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "Security and retention",
+          paragraphs: [
+            "NoteBill uses reasonable safeguards designed to protect information in transit and at rest, but no system can guarantee absolute security.",
+            "Information is kept only as long as needed to provide the service, comply with legal obligations, resolve disputes, and maintain backups or security records where necessary."
+          ]
+        },
+        {
+          title: "Children's privacy",
+          paragraphs: [
+            "NoteBill is not directed to children under 13, and we do not knowingly collect personal information from children under 13."
+          ]
+        }
+      ]}
+    />
+  );
+}
+
+function SupportPage() {
+  return (
+    <PublicInfoPage
+      kicker="Support"
+      title="NoteBill Support"
+      intro="If you need help with NoteBill, billing, invoice delivery, or account-related questions, use the contact details below. The support inbox is also the public request path for privacy and account deletion issues."
+      footerNote={`Last updated: ${PUBLIC_INFO_LAST_UPDATED}.`}
+      actions={[
+        { href: "/", label: "Open NoteBill", tone: "primary" },
+        { href: "/privacy", label: "Privacy", tone: "ghost" },
+        { href: "/data-deletion", label: "Data deletion", tone: "ghost" }
+      ]}
+      sections={[
+        {
+          title: "Contact",
+          items: [
+            `Support email: ${SUPPORT_EMAIL}`,
+            `Contact email: ${CONTACT_EMAIL}`,
+            `Info email: ${INFO_EMAIL}`,
+            `Direct contact: ${DIRECT_CONTACT_EMAIL}`,
+            `Website: ${NOTE_BILL_SITE_URL}`,
+            "Service name: NoteBill"
+          ],
+          paragraphs: []
+        },
+        {
+          title: "What to include when you contact support",
+          items: [
+            "The email address used with your NoteBill account, if applicable.",
+            "A short description of the problem and what you were trying to do.",
+            "The device model and Android version if the issue is mobile-specific.",
+            "Screenshots or the invoice ID if the problem relates to a saved draft or send flow."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "Privacy and account deletion requests",
+          paragraphs: [
+            "If you want your NoteBill account and associated data deleted, email support@notebill.app or use the public data deletion page.",
+            "For account-level deletion requests, include the email address tied to your NoteBill account so we can verify ownership before acting on the request."
+          ],
+          items: []
+        },
+        {
+          title: "Typical support topics",
+          items: [
+            "Signing in or session issues",
+            "Invoice import, OCR, or transcription questions",
+            "Saved drafts, export, and send behavior",
+            "Billing, subscription, or payment-link questions",
+            "Privacy or data deletion requests"
+          ],
+          paragraphs: []
+        }
+      ]}
+    />
+  );
+}
+
+function DataDeletionPage() {
+  return (
+    <PublicInfoPage
+      kicker="Data deletion"
+      title="NoteBill Account and Data Deletion"
+      intro="If you want your NoteBill account and associated data deleted, use the request path below. This page is intended to satisfy the public account-deletion URL requirement for app marketplaces and to give users a clear way to start a deletion request outside the app."
+      footerNote={`Last updated: ${PUBLIC_INFO_LAST_UPDATED}.`}
+      actions={[
+        { href: "/", label: "Open NoteBill", tone: "primary" },
+        { href: "/support", label: "Support", tone: "ghost" },
+        { href: "/privacy", label: "Privacy", tone: "ghost" }
+      ]}
+      sections={[
+        {
+          title: "How to request deletion",
+          paragraphs: [
+            `Email ${SUPPORT_EMAIL} with a subject such as "NoteBill data deletion request" or "Delete my NoteBill account".`
+          ],
+          items: [
+            "Include the email address associated with your NoteBill account.",
+            "If your request relates to billing, include any recent invoice, subscription, or payment details that help us locate the account.",
+            "If you no longer have access to the original email address, include enough detail for us to verify ownership before we act on the request."
+          ]
+        },
+        {
+          title: "What happens after you contact us",
+          items: [
+            "We may ask you to verify account ownership before processing the request.",
+            "After verification, we will delete or de-identify account-linked data that we are not required to keep.",
+            "If your account includes saved invoices, drafts, or imported source material tied to the verified account, those records are included in the account-level deletion workflow."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "What may be retained",
+          items: [
+            "Security, fraud-prevention, legal, tax, dispute, and backup records may be retained where required or reasonably necessary.",
+            "Payment and subscription records may be retained by us or our billing providers for accounting, compliance, or audit obligations."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "What you can delete directly in the app",
+          items: [
+            "Saved invoices can be removed from within NoteBill.",
+            "Deleting invoices inside the app is separate from an account-level deletion request."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "Related pages",
+          items: [
+            "Privacy policy: /privacy",
+            "Support: /support",
+            `Website: ${NOTE_BILL_SITE_URL}`
+          ],
+          paragraphs: []
+        }
+      ]}
+    />
+  );
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -656,6 +922,10 @@ function App() {
         <Route path="/import" element={<ImportInvoice />} />
         <Route path="/diagnostics" element={<IntakeDiagnostics />} />
         <Route path="/settings/business" element={<BusinessIdentitySettings />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/support" element={<SupportPage />} />
+        <Route path="/data-deletion" element={<DataDeletionPage />} />
+        <Route path="/delete-account" element={<DataDeletionPage />} />
         <Route
           path="*"
           element={<Placeholder title="Page not found" description="Return to the launcher to continue." />}

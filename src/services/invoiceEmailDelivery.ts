@@ -1,6 +1,6 @@
 import { FinishedInvoice } from "../models/invoice.js";
 
-export type InvoiceEmailProvider = "none" | "resend";
+export type InvoiceEmailProvider = "none" | "resend" | "smtp2go";
 
 export type InvoiceEmailCapabilities = {
   provider: InvoiceEmailProvider;
@@ -47,6 +47,7 @@ type SendInvoiceEmailInput = {
 
 const RESEND_API_URL = "https://api.resend.com/emails";
 const RESEND_DOMAINS_API_URL = "https://api.resend.com/domains";
+const SMTP2GO_API_URL = "https://api.smtp2go.com/v3/email/send";
 const DEFAULT_FROM_EMAIL = "NoteBill <invoices@notebill.app>";
 const RESEND_REQUEST_TIMEOUT_MS = 12_000;
 const RESEND_VERIFICATION_CACHE_TTL_MS = 60_000;
@@ -71,6 +72,17 @@ export function getInvoiceEmailCapabilities(): InvoiceEmailCapabilities {
   const launchTestRecipientConfigured = Boolean(getOptionalEnv(process.env.INVOICE_LAUNCH_TEST_EMAIL));
   if (provider === "resend") {
     const apiKey = getOptionalEnv(process.env.RESEND_API_KEY);
+    return {
+      provider,
+      configured: Boolean(apiKey && fromAddress),
+      fromEmail,
+      fromAddress,
+      fromDomain,
+      launchTestRecipientConfigured
+    };
+  }
+  if (provider === "smtp2go") {
+    const apiKey = getOptionalEnv(process.env.SMTP2GO_API_KEY);
     return {
       provider,
       configured: Boolean(apiKey && fromAddress),
@@ -111,11 +123,54 @@ export async function sendInvoiceEmail(input: SendInvoiceEmailInput): Promise<In
   if (capabilities.provider === "resend") {
     return sendViaResend(input, capabilities.fromEmail ?? DEFAULT_FROM_EMAIL);
   }
+  if (capabilities.provider === "smtp2go") {
+    return sendViaSmtp2go(input, capabilities.fromEmail ?? DEFAULT_FROM_EMAIL);
+  }
   return {
     mode: "record_only",
     provider: "none",
     warning: "Email provider is not configured; delivery is tracked without sending."
   };
+}
+
+async function sendViaSmtp2go(input: SendInvoiceEmailInput, fromEmail: string): Promise<InvoiceEmailSendResult> {
+  const apiKey = getOptionalEnv(process.env.SMTP2GO_API_KEY);
+  if (!apiKey) {
+    return {
+      mode: "record_only",
+      provider: "none",
+      warning: "SMTP2GO_API_KEY is missing; delivery is tracked without sending."
+    };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error("timeout"));
+  }, RESEND_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(SMTP2GO_API_URL, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      },
+      body: JSON.stringify(buildSmtp2goPayload(input, fromEmail, apiKey))
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(resolveSmtp2goErrorMessage(payload, response.status));
+    }
+    const providerMessageId = resolveSmtp2goMessageId(payload);
+    return {
+      mode: "provider",
+      provider: "smtp2go",
+      providerMessageId
+    };
+  } catch (error) {
+    throw new Error(`Failed to send email via SMTP2GO: ${getErrorMessage(error)}`);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function sendLaunchTestEmail(
@@ -203,6 +258,16 @@ async function getInvoiceEmailVerification(
   capabilities: InvoiceEmailCapabilities
 ): Promise<InvoiceEmailVerification> {
   if (!capabilities.configured || capabilities.provider !== "resend") {
+    if (capabilities.configured && capabilities.provider === "smtp2go") {
+      return {
+        checked: false,
+        ready: true,
+        domainId: null,
+        domainStatus: "configured",
+        sendingCapability: "enabled",
+        warning: null
+      };
+    }
     return {
       checked: false,
       ready: false,
@@ -328,6 +393,21 @@ function buildResendPayload(input: SendInvoiceEmailInput, fromEmail: string): Re
   };
 }
 
+function buildSmtp2goPayload(
+  input: SendInvoiceEmailInput,
+  fromEmail: string,
+  apiKey: string
+): Record<string, unknown> {
+  return {
+    api_key: apiKey,
+    sender: fromEmail,
+    to: [input.recipientEmail],
+    subject: buildInvoiceEmailSubject(input),
+    text_body: buildInvoiceEmailText(input),
+    html_body: buildInvoiceEmailHtml(input)
+  };
+}
+
 function buildInvoiceEmailSubject(input: SendInvoiceEmailInput): string {
   const invoice = input.invoice;
   const invoiceNumber = toOptionalTrimmedString(invoice.invoiceNumber);
@@ -433,10 +513,19 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
 function resolveInvoiceEmailProvider(): InvoiceEmailProvider {
   const configured = getOptionalEnv(process.env.INVOICE_EMAIL_PROVIDER);
   if (!configured) {
-    return getOptionalEnv(process.env.RESEND_API_KEY) ? "resend" : "none";
+    if (getOptionalEnv(process.env.RESEND_API_KEY)) {
+      return "resend";
+    }
+    if (getOptionalEnv(process.env.SMTP2GO_API_KEY)) {
+      return "smtp2go";
+    }
+    return "none";
   }
   if (configured === "resend") {
     return "resend";
+  }
+  if (configured === "smtp2go") {
+    return "smtp2go";
   }
   return "none";
 }
@@ -503,6 +592,39 @@ function resolveResendErrorMessage(payload: unknown, statusCode: number): string
     return `${message} (status ${statusCode})`;
   }
   return `Request failed with status ${statusCode}.`;
+}
+
+function resolveSmtp2goErrorMessage(payload: unknown, statusCode: number): string {
+  const data =
+    typeof payload === "object" && payload && "data" in payload && payload.data && typeof payload.data === "object"
+      ? payload.data
+      : null;
+  const errorMessage =
+    data && "error" in data && typeof data.error === "string"
+      ? data.error
+      : typeof payload === "object" && payload && "error" in payload && typeof payload.error === "string"
+        ? payload.error
+        : "";
+  if (errorMessage) {
+    return `${errorMessage} (status ${statusCode})`;
+  }
+  return `Request failed with status ${statusCode}.`;
+}
+
+function resolveSmtp2goMessageId(payload: unknown): string | undefined {
+  const data =
+    typeof payload === "object" && payload && "data" in payload && payload.data && typeof payload.data === "object"
+      ? payload.data
+      : null;
+  const candidate =
+    data && "email_id" in data && typeof data.email_id === "string"
+      ? data.email_id
+      : data && "message_id" in data && typeof data.message_id === "string"
+        ? data.message_id
+        : typeof payload === "object" && payload && "request_id" in payload && typeof payload.request_id === "string"
+          ? payload.request_id
+          : undefined;
+  return candidate?.trim() ? candidate.trim() : undefined;
 }
 
 function getErrorMessage(error: unknown): string {

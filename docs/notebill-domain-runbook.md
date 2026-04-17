@@ -1,78 +1,114 @@
 # NoteBill Public Domain Runbook
 
-This runbook keeps local NoteBill reachable at:
+NoteBill production traffic now runs on Cloudflare Workers, with GitHub as the deployment source of truth.
+Your local machine is for development only.
+
+Live hostnames:
 
 - `https://app.notebill.app`
 - `https://notebill.app`
 - `https://www.notebill.app`
+- `https://notebill-app.davidiheslop.workers.dev`
 
-## Prerequisites
+## Production shape
 
-- Cloudflare named tunnel `notebill-app` exists.
-- `~/.cloudflared/config.yml` maps all three hostnames to `http://localhost:3000`.
-- DNS records exist (proxied CNAME) for:
-  - `app.notebill.app`
-  - `notebill.app`
-  - `www.notebill.app`
+- Cloudflare Workers runs the Express app through `src/worker.ts`.
+- Cloudflare Static Assets serves the built frontend from `public/`.
+- Worker routes are attached at:
+  - `app.notebill.app/*`
+  - `notebill.app/*`
+  - `www.notebill.app/*`
+- Supabase Postgres remains the durable data store.
 
-## Start Services
+## Local development
 
-Install/refresh user services first (safe to run repeatedly):
+Run the local app when you want to develop or test changes on your machine:
 
-```bash
-npm run public:install-services
+```powershell
+npm run dev
 ```
 
-```bash
-systemctl --user enable --now notebill-dev.service
-systemctl --user enable --now notebill-tunnel.service
+Or run the Worker locally:
+
+```powershell
+npm run cf:dev
 ```
 
-Or use:
+Local production hosting through `cloudflared` is no longer the primary path.
+The legacy `public:*` scripts remain available only as a fallback while old tunnel-era DNS records still exist.
 
-```bash
-npm run public:start
+## Deploy to Cloudflare
+
+Dry-run the Worker bundle:
+
+```powershell
+npm run cf:check
 ```
 
-## Check Status
+Deploy the Worker:
 
-```bash
-systemctl --user status notebill-dev.service --no-pager
-systemctl --user status notebill-tunnel.service --no-pager
+```powershell
+npm run cf:deploy
+```
+
+The Worker deploy should publish:
+
+- `https://notebill-app.davidiheslop.workers.dev`
+- zone routes for `app.notebill.app/*`, `notebill.app/*`, and `www.notebill.app/*`
+
+## GitHub auto-deploy
+
+This repo includes a GitHub Actions workflow at `.github/workflows/ci-and-deploy.yml`.
+
+It will:
+
+- run `npm run build`
+- run `npm test`
+- deploy on pushes to `main`
+
+For deploys to work, the GitHub repository must have these Actions secrets:
+
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
+
+Use a dedicated Cloudflare API token for CI/CD with Worker deploy permissions scoped to the
+`notebill.app` account/zone. Do not reuse a local Wrangler login token for GitHub Actions.
+
+## Verify production
+
+Run the release checks against the live Cloudflare-hosted app:
+
+```powershell
 npm run check:launch
-npm run send:launch-email-test
-npm run check:release
 npm run check:public-domain
+npm run check:release
 ```
 
-`check:launch` verifies:
-- local `/health` is reachable
-- local `/api/system/launch` reports persistence/auth/billing/delivery/public-base-url readiness in one payload
-- Stripe launch policy surfaces test-vs-live billing mode when enabled
+`check:launch` now defaults to `APP_BASE_URL` and validates:
 
-`check:public-domain` verifies:
-- both user services are active
-- local app responds on `localhost:3000`
-- all three public URLs return HTTP success
+- `/health`
+- `/api/system/launch`
+- persistence, billing, auth, email, and public-base-url readiness
 
-`send:launch-email-test`:
-- sends one provider-backed launch verification email to `INVOICE_LAUNCH_TEST_EMAIL`
-- fails fast when delivery is still tracking-only or email provider config is incomplete
+`check:public-domain` validates:
 
-`check:release` runs `check:launch` and `check:public-domain` together.
+- the Worker route bindings exist in Cloudflare
+- `workers.dev` is healthy
+- `https://app.notebill.app/health`
+- `https://app.notebill.app/privacy`
+- `https://notebill.app`
+- `https://www.notebill.app`
 
-## Stop Services
+## Legacy tunnel fallback
 
-```bash
-systemctl --user stop notebill-tunnel.service
-systemctl --user stop notebill-dev.service
-```
+These commands are no longer the recommended production path, but they are still available if you need a temporary local-origin fallback:
 
-Or use:
-
-```bash
+```powershell
+npm run public:start
 npm run public:stop
 ```
+
+Use them only if you intentionally want to serve traffic from your machine again.
 
 ## Email Routing (Cloudflare)
 
@@ -85,6 +121,3 @@ Cloudflare Email Routing is enabled for `notebill.app` and forwards these aliase
 - `hello@notebill.app`
 - `billing@notebill.app`
 - `sales@notebill.app`
-
-To add another alias later, create a new Email Routing rule in Cloudflare for that
-exact address and forward to the same destination mailbox.

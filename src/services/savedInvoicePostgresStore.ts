@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Pool } from "pg";
+import { Client, type QueryResultRow } from "pg";
 import {
   InvoiceListItem,
   InvoiceListItemSchema,
@@ -31,13 +31,11 @@ type SaveInvoiceInput = {
 
 export class PostgresSavedInvoiceRepository {
   readonly backend = "postgres" as const;
-  private readonly pool: Pool;
+  private readonly connectionString: string;
   private readyPromise: Promise<void> | null = null;
 
   constructor(connectionString: string) {
-    this.pool = new Pool({
-      connectionString
-    });
+    this.connectionString = connectionString;
   }
 
   async saveInvoiceDocument(input: SaveInvoiceInput): Promise<SavedInvoice> {
@@ -45,7 +43,7 @@ export class PostgresSavedInvoiceRepository {
     const now = new Date().toISOString();
 
     if (input.invoiceId) {
-      const result = await this.pool.query<SavedInvoiceRow>(
+      const result = await this.query<SavedInvoiceRow>(
         `
           update saved_invoices
           set source_type = $3,
@@ -83,7 +81,7 @@ export class PostgresSavedInvoiceRepository {
       invoiceData: input.invoiceData
     });
 
-    const result = await this.pool.query<SavedInvoiceRow>(
+    const result = await this.query<SavedInvoiceRow>(
       `
         insert into saved_invoices (
           invoice_id,
@@ -126,7 +124,7 @@ export class PostgresSavedInvoiceRepository {
 
   async listSavedInvoiceMetadata(includeDeleted = false, ownerId: string): Promise<InvoiceListItem[]> {
     await this.ensureReady();
-    const result = await this.pool.query<SavedInvoiceRow>(
+    const result = await this.query<SavedInvoiceRow>(
       `
         select
           invoice_id,
@@ -172,7 +170,7 @@ export class PostgresSavedInvoiceRepository {
       return [];
     }
     const clampedLimit = Math.max(1, Math.min(limit, 5));
-    const result = await this.pool.query<SavedInvoiceRow>(
+    const result = await this.query<SavedInvoiceRow>(
       `
         select
           invoice_id,
@@ -213,7 +211,7 @@ export class PostgresSavedInvoiceRepository {
 
   async getSavedInvoiceById(invoiceId: string, ownerId: string): Promise<SavedInvoice> {
     await this.ensureReady();
-    const result = await this.pool.query<SavedInvoiceRow>(
+    const result = await this.query<SavedInvoiceRow>(
       `
         select
           invoice_id,
@@ -251,7 +249,7 @@ export class PostgresSavedInvoiceRepository {
       invoiceData: existing.invoiceData
     });
 
-    const result = await this.pool.query<SavedInvoiceRow>(
+    const result = await this.query<SavedInvoiceRow>(
       `
         insert into saved_invoices (
           invoice_id,
@@ -300,7 +298,7 @@ export class PostgresSavedInvoiceRepository {
     await this.ensureReady();
     const now = new Date().toISOString();
 
-    const result = await this.pool.query<SavedInvoiceRow>(
+    const result = await this.query<SavedInvoiceRow>(
       `
         update saved_invoices
         set status = $3,
@@ -342,7 +340,7 @@ export class PostgresSavedInvoiceRepository {
   async restoreSavedInvoice(invoiceId: string, ownerId: string): Promise<SavedInvoice> {
     await this.ensureReady();
     const now = new Date().toISOString();
-    const result = await this.pool.query<SavedInvoiceRow>(
+    const result = await this.query<SavedInvoiceRow>(
       `
         update saved_invoices
         set status = coalesce(previous_status, 'draft'),
@@ -374,7 +372,7 @@ export class PostgresSavedInvoiceRepository {
 
   async deleteSavedInvoice(invoiceId: string, ownerId: string): Promise<void> {
     await this.ensureReady();
-    const result = await this.pool.query(
+    const result = await this.query(
       `
         delete from saved_invoices
         where invoice_id = $1 and owner_id = $2
@@ -388,7 +386,7 @@ export class PostgresSavedInvoiceRepository {
   }
 
   async dispose(): Promise<void> {
-    await this.pool.end();
+    // One-shot clients are created per operation, so there is no shared pool to drain.
   }
 
   private async ensureReady(): Promise<void> {
@@ -399,27 +397,54 @@ export class PostgresSavedInvoiceRepository {
   }
 
   private async ensureSchema(): Promise<void> {
-    await this.pool.query(`
-      create table if not exists saved_invoices (
-        invoice_id uuid primary key,
-        owner_id text not null,
-        created_at timestamptz not null,
-        updated_at timestamptz not null,
-        status text not null check (status in ('draft', 'sent', 'paid', 'deleted')),
-        previous_status text check (previous_status is null or previous_status in ('draft', 'sent', 'paid', 'deleted')),
-        deleted_at timestamptz null,
-        source_type text not null check (source_type in ('text_input', 'upload')),
-        invoice_data jsonb not null
-      );
-    `);
-    await this.pool.query(`
-      create index if not exists saved_invoices_owner_updated_idx
-      on saved_invoices(owner_id, updated_at desc);
-    `);
-    await this.pool.query(`
-      create index if not exists saved_invoices_owner_status_idx
-      on saved_invoices(owner_id, status);
-    `);
+    await this.withClient(async (client) => {
+      await client.query(`
+        create table if not exists saved_invoices (
+          invoice_id uuid primary key,
+          owner_id text not null,
+          created_at timestamptz not null,
+          updated_at timestamptz not null,
+          status text not null check (status in ('draft', 'sent', 'paid', 'deleted')),
+          previous_status text check (previous_status is null or previous_status in ('draft', 'sent', 'paid', 'deleted')),
+          deleted_at timestamptz null,
+          source_type text not null check (source_type in ('text_input', 'upload')),
+          invoice_data jsonb not null
+        );
+      `);
+      // This table lives in Supabase's exposed public schema, so RLS must stay on.
+      await client.query(`
+        alter table saved_invoices enable row level security;
+      `);
+      await client.query(`
+        create index if not exists saved_invoices_owner_updated_idx
+        on saved_invoices(owner_id, updated_at desc);
+      `);
+      await client.query(`
+        create index if not exists saved_invoices_owner_status_idx
+        on saved_invoices(owner_id, status);
+      `);
+    });
+  }
+
+  private async query<TResult extends QueryResultRow>(
+    sql: string,
+    params?: unknown[]
+  ): Promise<{
+    rows: TResult[];
+    rowCount: number | null;
+  }> {
+    await this.ensureReady();
+    return this.withClient(async (client) => client.query<TResult>(sql, params));
+  }
+
+  private async withClient<TResult>(callback: (client: Client) => Promise<TResult>): Promise<TResult> {
+    const client = new Client({ connectionString: this.connectionString });
+    await client.connect();
+    try {
+      return await callback(client);
+    } finally {
+      await client.end().catch(() => undefined);
+    }
   }
 }
 

@@ -1,8 +1,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import {
+  isRuntimeStatePostgresEnabled,
+  mutateRuntimeSnapshot,
+  readRuntimeSnapshot
+} from "./postgresRuntimeState.js";
 
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing", "past_due", "unpaid"]);
+const runtimeStateBackend = isRuntimeStatePostgresEnabled() ? "postgres" : "file";
+const BILLING_ENTITLEMENTS_SNAPSHOT_KEY = "billing_entitlements";
 const configuredStorePath = process.env.STRIPE_ENTITLEMENTS_STORE_FILE;
 const storeFilePath = configuredStorePath
   ? path.resolve(process.cwd(), configuredStorePath)
@@ -45,6 +52,11 @@ export type BillingEntitlementsSummary = {
 };
 
 let mutationQueue: Promise<void> = Promise.resolve();
+const EMPTY_BILLING_ENTITLEMENTS_SNAPSHOT: BillingEntitlementsSnapshot = {
+  updatedAt: "",
+  customers: {},
+  subscriptions: {}
+};
 
 export async function hasActiveStripeEntitlement(input: {
   ownerId?: string;
@@ -62,8 +74,7 @@ export async function applyCheckoutSessionEntitlement(input: {
   ownerId?: string;
   userId?: string;
 }): Promise<void> {
-  await withMutationLock(async () => {
-    const snapshot = await readSnapshot();
+  await mutateSnapshot(async (snapshot) => {
     const now = new Date().toISOString();
     const customerId = normalizeValue(input.customerId);
     const subscriptionId = normalizeValue(input.subscriptionId);
@@ -97,7 +108,6 @@ export async function applyCheckoutSessionEntitlement(input: {
     }
 
     snapshot.updatedAt = now;
-    await writeSnapshot(snapshot);
   });
 }
 
@@ -109,8 +119,7 @@ export async function applySubscriptionEntitlement(input: {
   userId?: string;
   status?: string;
 }): Promise<void> {
-  await withMutationLock(async () => {
-    const snapshot = await readSnapshot();
+  await mutateSnapshot(async (snapshot) => {
     const now = new Date().toISOString();
     const subscriptionId = normalizeValue(input.subscriptionId);
     if (!subscriptionId) {
@@ -149,7 +158,6 @@ export async function applySubscriptionEntitlement(input: {
     }
 
     snapshot.updatedAt = now;
-    await writeSnapshot(snapshot);
   });
 }
 
@@ -227,6 +235,14 @@ async function withMutationLock<T>(mutation: () => Promise<T>): Promise<T> {
 }
 
 async function readSnapshot(): Promise<BillingEntitlementsSnapshot> {
+  if (runtimeStateBackend === "postgres") {
+    return readRuntimeSnapshot(
+      BILLING_ENTITLEMENTS_SNAPSHOT_KEY,
+      BillingEntitlementsSnapshotSchema,
+      EMPTY_BILLING_ENTITLEMENTS_SNAPSHOT
+    );
+  }
+
   await ensureStoreExists();
   const raw = await fs.readFile(storeFilePath, "utf8");
   const parsed = JSON.parse(raw);
@@ -238,6 +254,30 @@ async function writeSnapshot(snapshot: BillingEntitlementsSnapshot): Promise<voi
   const tempPath = `${storeFilePath}.tmp`;
   await fs.writeFile(tempPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
   await fs.rename(tempPath, storeFilePath);
+}
+
+async function mutateSnapshot(
+  mutator: (snapshot: BillingEntitlementsSnapshot) => void | Promise<void>
+): Promise<void> {
+  if (runtimeStateBackend === "postgres") {
+    await mutateRuntimeSnapshot(
+      BILLING_ENTITLEMENTS_SNAPSHOT_KEY,
+      BillingEntitlementsSnapshotSchema,
+      EMPTY_BILLING_ENTITLEMENTS_SNAPSHOT,
+      async (current) => {
+        const next = BillingEntitlementsSnapshotSchema.parse(structuredClone(current));
+        await mutator(next);
+        return next;
+      }
+    );
+    return;
+  }
+
+  await withMutationLock(async () => {
+    const snapshot = await readSnapshot();
+    await mutator(snapshot);
+    await writeSnapshot(snapshot);
+  });
 }
 
 async function ensureStoreExists(): Promise<void> {

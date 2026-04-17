@@ -109,6 +109,34 @@ after(async () => {
   }
 });
 
+test("public policy pages render from their routes", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${baseUrl}/privacy`);
+    await page.waitForSelector("h1");
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Privacy Policy");
+    assert.equal(await page.getByRole("link", { name: "Data deletion" }).isVisible(), true);
+
+    await page.goto(`${baseUrl}/support`);
+    await page.waitForSelector("h1");
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Support");
+    assert.equal(await page.getByText("Support email: support@notebill.app", { exact: true }).isVisible(), true);
+
+    await page.goto(`${baseUrl}/data-deletion`);
+    await page.waitForSelector("h1");
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Account and Data Deletion");
+    assert.equal(await page.locator(`text=${"Delete my NoteBill account"}`).isVisible(), true);
+
+    await page.goto(`${baseUrl}/delete-account`);
+    await page.waitForSelector("h1");
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Account and Data Deletion");
+  } finally {
+    await context.close();
+  }
+});
+
 test("decision CTA switches and undo restores unresolved decision state", async () => {
   useMockResponses([
     structuredDecisionDraft(),

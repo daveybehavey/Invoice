@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build:frontend": "node scripts/build-frontend.mjs",
+    "postinstall": "patch-package",
     "predev": "npm run build:frontend",
     "dev": "tsx watch src/server.ts",
     "prestart": "npm run build:frontend",
@@ -12,15 +13,20 @@
     "prebuild": "npm run build:frontend",
     "build": "tsc --noEmit",
     "pretest": "npm run build:frontend",
-    "test": "tsx --test --test-concurrency=1 src/*.test.ts src/**/*.test.ts",
-    "test:friction": "node scripts/ai-intake-friction-pass.mjs",
+    "test": "tsx --test --test-concurrency=1 src/**/*.test.ts",
+    "test:friction": "tsx scripts/ai-intake-friction-pass.mjs",
     "check:mobile-wrapper": "node scripts/check-mobile-wrapper-readiness.mjs",
     "cap:sync": "npm run build:frontend && npx cap sync",
     "cap:open:ios": "npx cap open ios",
     "cap:open:android": "npx cap open android",
-    "public:install-services": "bash scripts/install-notebill-user-services.sh",
-    "public:start": "bash scripts/start-notebill-public.sh",
-    "public:stop": "bash scripts/stop-notebill-public.sh",
+    "public:install-services": "node scripts/public-host.mjs install",
+    "public:start": "node scripts/public-host.mjs start",
+    "public:stop": "node scripts/public-host.mjs stop",
+    "public:tunnel:login": "node scripts/public-host.mjs tunnel-login",
+    "public:tunnel:bootstrap": "node scripts/public-host.mjs tunnel-bootstrap",
+    "cf:dev": "npx wrangler dev",
+    "cf:deploy": "npx wrangler deploy",
+    "cf:check": "npx wrangler deploy --dry-run",
     "check:launch": "node scripts/check-launch-readiness.mjs",
     "send:launch-email-test": "tsx scripts/send-launch-test-email.ts",
     "check:release": "npm run check:launch && npm run check:public-domain",
@@ -33,6 +39,7 @@
     "@capacitor/android": "^8.2.0",
     "@capacitor/core": "^8.2.0",
     "@capacitor/ios": "^8.2.0",
+    "abort-controller": "^3.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
@@ -42,6 +49,7 @@
     "pdf-parse": "^1.1.1",
     "pg": "^8.18.0",
     "stripe": "^20.4.1",
+    "ts-interface-checker": "^0.1.13",
     "zod": "^3.24.1"
   },
   "devDependencies": {
@@ -54,10 +62,12 @@
     "@types/pg": "^8.16.0",
     "@types/supertest": "^6.0.3",
     "esbuild": "^0.27.3",
+    "patch-package": "^8.0.1",
     "playwright": "^1.58.2",
     "supertest": "^7.0.0",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "wrangler": "^4.83.0"
   }
 }

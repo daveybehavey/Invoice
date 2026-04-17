@@ -9,10 +9,7 @@ const distDir = path.join(publicDir, "dist");
 const tailwindInput = path.join(publicDir, "styles", "app.css");
 const tailwindConfig = path.join(rootDir, "tailwind.config.cjs");
 const tailwindOutput = path.join(distDir, "app.css");
-const tailwindBin =
-  process.platform === "win32"
-    ? path.join(rootDir, "node_modules", ".bin", "tailwindcss.cmd")
-    : path.join(rootDir, "node_modules", ".bin", "tailwindcss");
+const tailwindCli = path.join(rootDir, "node_modules", "tailwindcss", "lib", "cli.js");
 
 async function main() {
   await fs.mkdir(distDir, { recursive: true });
@@ -77,11 +74,14 @@ async function clearDirectory(directory) {
 
 async function runTailwindBuild() {
   await new Promise((resolve, reject) => {
-    const child = spawn(
-      tailwindBin,
-      ["-c", tailwindConfig, "-i", tailwindInput, "-o", tailwindOutput, "--minify"],
-      { stdio: "inherit" }
-    );
+    const args = ["-c", tailwindConfig, "-i", tailwindInput, "-o", tailwindOutput, "--minify"];
+    const child = spawn(process.execPath, [tailwindCli, ...args], {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        BROWSERSLIST_IGNORE_OLD_DATA: "1"
+      }
+    });
 
     child.on("error", (error) => {
       reject(error);

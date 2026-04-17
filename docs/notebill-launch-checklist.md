@@ -14,8 +14,8 @@ This is the final web-launch gate for `notebill.app`.
   - `STRIPE_PRICE_ID`
   - `STRIPE_WEBHOOK_SECRET`
 - Email delivery configured:
-  - `INVOICE_EMAIL_PROVIDER=resend`
-  - `RESEND_API_KEY`
+  - `INVOICE_EMAIL_PROVIDER=smtp2go` or `resend`
+  - `SMTP2GO_API_KEY` or `RESEND_API_KEY`
   - `INVOICE_FROM_EMAIL`
   - `INVOICE_LAUNCH_TEST_EMAIL`
 
@@ -32,7 +32,7 @@ This will:
 - create or reuse a managed live `NoteBill Pro` product/price
 - create a fresh managed live webhook endpoint for `https://app.notebill.app/api/billing/stripe/webhook` based on `APP_BASE_URL`
 - write `STRIPE_PRICE_ID` and `STRIPE_WEBHOOK_SECRET` back into `.env`
-- set `INVOICE_EMAIL_PROVIDER=resend` automatically when `RESEND_API_KEY` is already present
+- set the email provider env vars for your chosen delivery provider
 
 Default launch price is `1900 USD / month`. Override with:
 

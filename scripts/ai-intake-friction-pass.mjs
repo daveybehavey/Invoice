@@ -1,14 +1,14 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import { chromium, devices } from "playwright";
+import {
+  getFlowFrictionReportSource,
+  writeFlowFrictionReport
+} from "../src/services/flowFrictionReport.js";
+import {
+  appendFlowFrictionHistoryEntry,
+  getFlowFrictionHistoryPath
+} from "../src/services/flowFrictionHistory.js";
 
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
-const OUTPUT_PATH =
-  process.env.FRICTION_OUTPUT ?? path.join(process.cwd(), "docs", "flow-friction-latest.json");
-const HISTORY_OUTPUT_PATH =
-  process.env.FRICTION_HISTORY_OUTPUT ??
-  process.env.FLOW_FRICTION_HISTORY_FILE ??
-  path.join(process.cwd(), "data", "flow-friction-history.json");
 const DEFAULT_TIMEOUT = 15000;
 
 const fixtureWithDecision = {
@@ -148,30 +148,6 @@ function createRecorder() {
 function containsAny(text, terms) {
   const normalized = text.toLowerCase();
   return terms.some((term) => normalized.includes(term.toLowerCase()));
-}
-
-async function appendHistorySnapshot(report) {
-  await fs.mkdir(path.dirname(HISTORY_OUTPUT_PATH), { recursive: true });
-  let history = [];
-  try {
-    const raw = await fs.readFile(HISTORY_OUTPUT_PATH, "utf8");
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      history = parsed;
-    }
-  } catch {}
-
-  const totalChecks = report.checks.length;
-  const failedChecks = report.checks.filter((check) => !check.pass).length;
-  const nextEntry = {
-    timestamp: report.timestamp,
-    totalChecks,
-    failedChecks,
-    issueCount: report.issues.length
-  };
-
-  const nextHistory = [...history, nextEntry].slice(-400);
-  await fs.writeFile(HISTORY_OUTPUT_PATH, `${JSON.stringify(nextHistory, null, 2)}\n`, "utf8");
 }
 
 async function getVisiblePrimaryButtons(page) {
@@ -433,8 +409,13 @@ async function run() {
       issues: recorder.issues
     };
 
-    await fs.writeFile(OUTPUT_PATH, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-    await appendHistorySnapshot(report);
+    await writeFlowFrictionReport(report);
+    await appendFlowFrictionHistoryEntry({
+      timestamp: report.timestamp,
+      totalChecks: report.checks.length,
+      failedChecks: report.checks.filter((check) => !check.pass).length,
+      issueCount: report.issues.length
+    });
 
     console.log("Flow friction pass complete.");
     console.log(`Checks: ${report.checks.length}`);
@@ -444,8 +425,8 @@ async function run() {
         console.log(`- [${issue.severity}] ${issue.message}${issue.details ? ` (${issue.details})` : ""}`);
       });
     }
-    console.log(`Saved report: ${OUTPUT_PATH}`);
-    console.log(`Updated history: ${HISTORY_OUTPUT_PATH}`);
+    console.log(`Saved report: ${getFlowFrictionReportSource()}`);
+    console.log(`Updated history: ${getFlowFrictionHistoryPath()}`);
 
     const hasMajorIssue = report.issues.some((issue) => issue.severity === "major");
     if (hasMajorIssue) {

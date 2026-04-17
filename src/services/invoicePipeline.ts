@@ -830,7 +830,7 @@ async function auditInvoiceInterpretation(
     const modelResponse = await runJsonTask<InvoiceAudit>(taskPrompt);
     return InvoiceAuditSchema.parse(modelResponse);
   } catch (error) {
-    console.warn("Invoice audit failed", error);
+    warnInvoiceAuditFailure(error);
     return null;
   }
 }
@@ -856,10 +856,22 @@ async function auditInvoiceInterpretationWithTimeout(
       })
       .catch((error) => {
         clearTimeout(timeoutId);
-        console.warn("Invoice audit failed", error);
+        warnInvoiceAuditFailure(error);
         resolve({ audit: null, status: "failed" });
       });
   });
+}
+
+function warnInvoiceAuditFailure(error: unknown): void {
+  if (
+    process.env.NODE_ENV === "test" &&
+    error instanceof Error &&
+    /Mock response queue is empty/i.test(error.message)
+  ) {
+    return;
+  }
+
+  console.warn("Invoice audit failed", error);
 }
 
 export async function runInvoiceAuditOverlay(input: {

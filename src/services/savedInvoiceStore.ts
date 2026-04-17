@@ -36,7 +36,7 @@ export async function getSavedInvoiceStoreSummary(): Promise<{
   ownerCount: number;
   deletedCount: number;
 }> {
-  const collection = await readCollection();
+  const collection = await readCollection({ createIfMissing: false });
   const owners = new Set(collection.invoices.map((invoice) => invoice.ownerId));
   const deletedCount = collection.invoices.reduce(
     (count, invoice) => (invoice.status === "deleted" ? count + 1 : count),
@@ -288,11 +288,21 @@ async function withMutationLock<T>(mutation: () => Promise<T>): Promise<T> {
   return runMutation;
 }
 
-async function readCollection(): Promise<SavedInvoiceCollection> {
-  await ensureStoreExists();
-  const raw = await fs.readFile(storeFilePath, "utf8");
-  const parsed = JSON.parse(raw);
-  return SavedInvoiceCollectionSchema.parse(parsed);
+async function readCollection(options: { createIfMissing?: boolean } = {}): Promise<SavedInvoiceCollection> {
+  const shouldCreateIfMissing = options.createIfMissing !== false;
+  if (shouldCreateIfMissing) {
+    await ensureStoreExists();
+  }
+  try {
+    const raw = await fs.readFile(storeFilePath, "utf8");
+    const parsed = JSON.parse(raw);
+    return SavedInvoiceCollectionSchema.parse(parsed);
+  } catch (error) {
+    if (!shouldCreateIfMissing && isFileMissingError(error)) {
+      return SavedInvoiceCollectionSchema.parse({ invoices: [] });
+    }
+    throw error;
+  }
 }
 
 async function writeCollection(collection: SavedInvoiceCollection): Promise<void> {
@@ -315,4 +325,13 @@ async function ensureStoreExists(): Promise<void> {
   } catch {
     await fs.writeFile(storeFilePath, '{\n  "invoices": []\n}\n', "utf8");
   }
+}
+
+function isFileMissingError(error: unknown): error is NodeJS.ErrnoException {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }

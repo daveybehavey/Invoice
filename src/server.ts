@@ -134,7 +134,18 @@ app.post(
 app.use(express.json({ limit: "4mb" }));
 app.use(express.static(publicDir));
 
-const spaRoutes = ["/", "/ai-intake", "/manual", "/import", "/diagnostics", "/settings/business"];
+const spaRoutes = [
+  "/",
+  "/ai-intake",
+  "/manual",
+  "/import",
+  "/diagnostics",
+  "/settings/business",
+  "/privacy",
+  "/support",
+  "/data-deletion",
+  "/delete-account"
+];
 app.get(spaRoutes, (_req: Request, res: Response) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });

@@ -1,7 +1,11 @@
 import process from "node:process";
 
 const timeoutMs = 12_000;
-const baseUrl = (process.env.LAUNCH_CHECK_BASE_URL ?? "http://localhost:3000").trim();
+const baseUrl = (
+  process.env.LAUNCH_CHECK_BASE_URL ??
+  process.env.APP_BASE_URL ??
+  "https://app.notebill.app"
+).trim();
 
 async function fetchJson(pathname) {
   const controller = new AbortController();

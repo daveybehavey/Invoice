@@ -1,12 +1,19 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import {
+  isRuntimeStatePostgresEnabled,
+  mutateRuntimeSnapshot,
+  readRuntimeSnapshot
+} from "./postgresRuntimeState.js";
 
 const configuredStorePath = process.env.INVOICE_DELIVERY_STORE_FILE;
 const storeFilePath = configuredStorePath
   ? path.resolve(process.cwd(), configuredStorePath)
   : path.resolve(process.cwd(), "data/invoice-delivery.json");
 const storeDir = path.dirname(storeFilePath);
+const runtimeStateBackend = isRuntimeStatePostgresEnabled() ? "postgres" : "file";
+const INVOICE_DELIVERY_SNAPSHOT_KEY = "invoice_delivery";
 
 const DeliveryEntrySchema = z.object({
   invoiceId: z.string().uuid(),
@@ -16,7 +23,7 @@ const DeliveryEntrySchema = z.object({
   openedAt: z.string().datetime().optional(),
   trackingToken: z.string().min(8).optional(),
   mode: z.enum(["record_only", "provider"]).default("record_only"),
-  provider: z.enum(["none", "resend"]).default("none"),
+  provider: z.enum(["none", "resend", "smtp2go"]).default("none"),
   providerMessageId: z.string().min(1).optional(),
   sendCount: z.number().int().nonnegative().default(1),
   openCount: z.number().int().nonnegative().default(0)
@@ -31,7 +38,7 @@ export const DeliverySummarySchema = z.object({
   sentAt: z.string().datetime(),
   openedAt: z.string().datetime().optional(),
   mode: z.enum(["record_only", "provider"]).default("record_only"),
-  provider: z.enum(["none", "resend"]).default("none"),
+  provider: z.enum(["none", "resend", "smtp2go"]).default("none"),
   providerMessageId: z.string().min(1).optional(),
   sendCount: z.number().int().nonnegative(),
   openCount: z.number().int().nonnegative(),
@@ -43,6 +50,9 @@ type DeliveryEntry = z.infer<typeof DeliveryEntrySchema>;
 export type DeliverySummary = z.infer<typeof DeliverySummarySchema>;
 
 let mutationQueue: Promise<void> = Promise.resolve();
+const EMPTY_DELIVERY_STORE: DeliveryStore = {
+  entries: []
+};
 
 export async function recordInvoiceDeliverySend(input: {
   ownerId: string;
@@ -50,11 +60,11 @@ export async function recordInvoiceDeliverySend(input: {
   recipientEmail: string;
   trackingToken?: string;
   mode?: "record_only" | "provider";
-  provider?: "none" | "resend";
+  provider?: "none" | "resend" | "smtp2go";
   providerMessageId?: string;
 }): Promise<DeliverySummary> {
-  return withMutationLock(async () => {
-    const store = await readStore();
+  let summary: DeliverySummary | null = null;
+  await mutateStore(async (store) => {
     const now = new Date().toISOString();
     const normalizedEmail = input.recipientEmail.trim().toLowerCase();
     const existingIndex = store.entries.findIndex(
@@ -88,23 +98,26 @@ export async function recordInvoiceDeliverySend(input: {
         sendCount: (existing.sendCount ?? 0) + 1
       });
     }
-    await writeStore(store);
     const entry = store.entries.find(
       (candidate) => candidate.ownerId === input.ownerId && candidate.invoiceId === input.invoiceId
     );
     if (!entry) {
       throw new Error("Unable to store invoice delivery state.");
     }
-    return toSummary(entry);
+    summary = toSummary(entry);
   });
+  if (!summary) {
+    throw new Error("Unable to store invoice delivery state.");
+  }
+  return summary;
 }
 
 export async function markInvoiceDeliveryOpened(input: {
   ownerId: string;
   invoiceId: string;
 }): Promise<DeliverySummary> {
-  return withMutationLock(async () => {
-    const store = await readStore();
+  let summary: DeliverySummary | null = null;
+  await mutateStore(async (store) => {
     const index = store.entries.findIndex(
       (entry) => entry.ownerId === input.ownerId && entry.invoiceId === input.invoiceId
     );
@@ -118,22 +131,26 @@ export async function markInvoiceDeliveryOpened(input: {
       openedAt: existing.openedAt || now,
       openCount: (existing.openCount ?? 0) + 1
     });
-    await writeStore(store);
-    return toSummary(store.entries[index]);
+    summary = toSummary(store.entries[index]);
   });
+  if (!summary) {
+    throw new Error("No delivery record found for this invoice.");
+  }
+  return summary;
 }
 
 export async function markInvoiceDeliveryOpenedByTrackingToken(input: {
   invoiceId: string;
   trackingToken: string;
 }): Promise<DeliverySummary | null> {
-  return withMutationLock(async () => {
-    const store = await readStore();
+  let summary: DeliverySummary | null = null;
+  await mutateStore(async (store) => {
     const index = store.entries.findIndex(
       (entry) => entry.invoiceId === input.invoiceId && entry.trackingToken === input.trackingToken
     );
     if (index === -1) {
-      return null;
+      summary = null;
+      return;
     }
     const now = new Date().toISOString();
     const existing = store.entries[index];
@@ -142,9 +159,9 @@ export async function markInvoiceDeliveryOpenedByTrackingToken(input: {
       openedAt: existing.openedAt || now,
       openCount: (existing.openCount ?? 0) + 1
     });
-    await writeStore(store);
-    return toSummary(store.entries[index]);
+    summary = toSummary(store.entries[index]);
   });
+  return summary;
 }
 
 export async function getInvoiceDeliverySummary(input: {
@@ -244,6 +261,10 @@ function toSummary(entry: DeliveryEntry): DeliverySummary {
 }
 
 async function readStore(): Promise<DeliveryStore> {
+  if (runtimeStateBackend === "postgres") {
+    return readRuntimeSnapshot(INVOICE_DELIVERY_SNAPSHOT_KEY, DeliveryStoreSchema, EMPTY_DELIVERY_STORE);
+  }
+
   await ensureStoreExists();
   const raw = await fs.readFile(storeFilePath, "utf8");
   const parsed = JSON.parse(raw);
@@ -256,6 +277,28 @@ async function writeStore(store: DeliveryStore): Promise<void> {
   const content = JSON.stringify(store, null, 2);
   await fs.writeFile(tempPath, `${content}\n`, "utf8");
   await fs.rename(tempPath, storeFilePath);
+}
+
+async function mutateStore(mutator: (store: DeliveryStore) => void | Promise<void>): Promise<void> {
+  if (runtimeStateBackend === "postgres") {
+    await mutateRuntimeSnapshot(
+      INVOICE_DELIVERY_SNAPSHOT_KEY,
+      DeliveryStoreSchema,
+      EMPTY_DELIVERY_STORE,
+      async (current) => {
+        const next = DeliveryStoreSchema.parse(structuredClone(current));
+        await mutator(next);
+        return next;
+      }
+    );
+    return;
+  }
+
+  await withMutationLock(async () => {
+    const store = await readStore();
+    await mutator(store);
+    await writeStore(store);
+  });
 }
 
 async function ensureStoreExists(): Promise<void> {

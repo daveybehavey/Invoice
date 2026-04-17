@@ -104,6 +104,7 @@ beforeEach(async () => {
   delete process.env.INVOICE_LAUNCH_REQUIRE_LIVE_BILLING;
   delete process.env.INVOICE_EMAIL_PROVIDER;
   delete process.env.RESEND_API_KEY;
+  delete process.env.SMTP2GO_API_KEY;
   delete process.env.INVOICE_FROM_EMAIL;
   delete process.env.INVOICE_LAUNCH_TEST_EMAIL;
   delete process.env.APP_BASE_URL;
@@ -2523,6 +2524,78 @@ test("send endpoint uses resend provider when configured", async () => {
   assert.match(String(body.html), /delivery\/opened\/pixel\?token=/);
 });
 
+test("send endpoint uses smtp2go provider when configured", async () => {
+  const ownerId = "delivery-smtp2go-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "smtp2go";
+  process.env.SMTP2GO_API_KEY = "smtp2go_test_key";
+  process.env.INVOICE_FROM_EMAIL = "NoteBill <invoices@notebill.app>";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ data: { email_id: "smtp2go_email_123" } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "SMTP2GO Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-SMTP2GO-1",
+          issueDate: "2026-03-11",
+          customerName: "SMTP2GO Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-delivery-smtp2go-1",
+              type: "labor",
+              description: "SMTP2GO provider baseline",
+              quantity: 1,
+              unitPrice: 160,
+              amount: 160
+            }
+          ],
+          subtotal: 160,
+          total: 160,
+          balanceDue: 160
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "smtp2go@example.com" });
+  assert.equal(sendResponse.status, 200);
+  assert.equal(sendResponse.body.mode, "provider");
+  assert.equal(sendResponse.body.provider, "smtp2go");
+  assert.equal(sendResponse.body.delivery.mode, "provider");
+  assert.equal(sendResponse.body.delivery.provider, "smtp2go");
+
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.url, "https://api.smtp2go.com/v3/email/send");
+  const fetchInit = fetchCalls[0]?.init as RequestInit | undefined;
+  assert.equal(fetchInit?.method, "POST");
+  const body = JSON.parse(String(fetchInit?.body ?? "{}"));
+  assert.equal(body.sender, "NoteBill <invoices@notebill.app>");
+  assert.equal(Array.isArray(body.to), true);
+  assert.equal(body.to[0], "smtp2go@example.com");
+  assert.match(String(body.html_body), /delivery\/opened\/pixel\?token=/);
+});
+
 test("delivery pixel endpoint marks matching token as opened", async () => {
   const ownerId = "delivery-pixel-owner";
   const saveResponse = await request(app)
@@ -2829,6 +2902,22 @@ test("delivery diagnostics exposes launch test recipient readiness", async () =>
   assert.equal(response.body.warning, null);
 });
 
+test("delivery diagnostics reports smtp2go provider as ready when configured", async () => {
+  process.env.INVOICE_EMAIL_PROVIDER = "smtp2go";
+  process.env.SMTP2GO_API_KEY = "smtp2go_test_key";
+  process.env.INVOICE_FROM_EMAIL = "NoteBill <invoices@notebill.app>";
+  process.env.INVOICE_LAUNCH_TEST_EMAIL = "launch-test@example.com";
+
+  const response = await request(app).get("/api/system/delivery");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.provider, "smtp2go");
+  assert.equal(response.body.capabilities?.configured, true);
+  assert.equal(response.body.capabilities?.fromDomain, "notebill.app");
+  assert.equal(response.body.capabilities?.launchTestRecipientConfigured, true);
+  assert.equal(response.body.verification?.ready, true);
+  assert.equal(response.body.warning, null);
+});
+
 test("delivery diagnostics warns when resend domain is not verified", async () => {
   process.env.APP_BASE_URL = "https://app.notebill.app";
   process.env.INVOICE_EMAIL_PROVIDER = "resend";
@@ -2884,6 +2973,37 @@ test("delivery test endpoint sends a provider-backed launch verification email w
   assert.equal(response.body.provider, "resend");
   assert.equal(response.body.recipientEmail, "qa-launch@example.com");
   assert.equal(fetchCalls.length, 1);
+  const fetchInit = fetchCalls[0]?.init as RequestInit | undefined;
+  const body = JSON.parse(String(fetchInit?.body ?? "{}"));
+  assert.equal(body.to[0], "qa-launch@example.com");
+  assert.match(String(body.subject), /Invoice NOTEBILL-LAUNCH/);
+});
+
+test("delivery test endpoint sends a provider-backed launch verification email via smtp2go", async () => {
+  process.env.INVOICE_EMAIL_PROVIDER = "smtp2go";
+  process.env.SMTP2GO_API_KEY = "smtp2go_test_key";
+  process.env.INVOICE_FROM_EMAIL = "NoteBill <invoices@notebill.app>";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ data: { email_id: "smtp2go_launch_test_123" } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const response = await request(app).post("/api/system/delivery/test").send({
+    recipientEmail: "qa-launch@example.com"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.ok, true);
+  assert.equal(response.body.mode, "provider");
+  assert.equal(response.body.provider, "smtp2go");
+  assert.equal(response.body.recipientEmail, "qa-launch@example.com");
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0]?.url, "https://api.smtp2go.com/v3/email/send");
   const fetchInit = fetchCalls[0]?.init as RequestInit | undefined;
   const body = JSON.parse(String(fetchInit?.body ?? "{}"));
   assert.equal(body.to[0], "qa-launch@example.com");

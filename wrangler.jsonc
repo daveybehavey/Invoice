@@ -1,0 +1,56 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "notebill-app",
+  "main": "./src/worker.ts",
+  "compatibility_date": "2026-04-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "app.notebill.app/*",
+      "zone_name": "notebill.app"
+    },
+    {
+      "pattern": "notebill.app/*",
+      "zone_name": "notebill.app"
+    },
+    {
+      "pattern": "www.notebill.app/*",
+      "zone_name": "notebill.app"
+    }
+  ],
+  "vars": {
+    "APP_BASE_URL": "https://app.notebill.app",
+    "INVOICE_EMAIL_PROVIDER": "smtp2go",
+    "INVOICE_FROM_EMAIL": "NoteBill <invoices@notebill.app>",
+    "INVOICE_LAUNCH_TEST_EMAIL": "davidiheslop@gmail.com",
+    "INVOICE_REQUIRE_AUTH": "false",
+    "INVOICE_SESSION_TTL_HOURS": "720",
+    "INVOICE_STORE_BACKEND": "auto",
+    "INVOICE_STORE_REQUIRE_POSTGRES": "false",
+    "OPENAI_MODEL": "gpt-5-nano",
+    "OPENAI_WORDING_MODEL": "gpt-4.1-mini"
+  },
+  "secrets": {
+    "required": [
+      "OPENAI_API_KEY",
+      "INVOICE_SESSION_SECRET",
+      "INVOICE_STORE_POSTGRES_URL",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_PUBLISHABLE_KEY",
+      "STRIPE_PRICE_ID",
+      "STRIPE_WEBHOOK_SECRET",
+      "RESEND_API_KEY",
+      "SMTP2GO_API_KEY"
+    ]
+  },
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/health"]
+  }
+}
