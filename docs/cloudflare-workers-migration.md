@@ -49,6 +49,7 @@ The intended steady state is:
 - development happens locally
 - code is pushed to GitHub
 - Cloudflare Workers Builds pulls from GitHub and deploys the Worker
+- production no longer depends on a local tunnel host
 
 If you are connecting the existing Worker in the dashboard, use:
 
