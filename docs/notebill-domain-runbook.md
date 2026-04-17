@@ -81,10 +81,6 @@ One-time Cloudflare dashboard setup:
 
 After that, a normal push to `main` should trigger Cloudflare to build and deploy directly from GitHub.
 
-This repo still includes `.github/workflows/ci-and-deploy.yml`, but it is now manual-only.
-That workflow is a fallback for later, once GitHub Actions billing is healthy again and a dedicated
-`CLOUDFLARE_API_TOKEN` has been created for CI.
-
 ## Verify production
 
 Run the release checks against the live Cloudflare-hosted app:
