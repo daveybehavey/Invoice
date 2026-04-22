@@ -7,7 +7,7 @@ This checklist is for shipping `NoteBill` to the Google Play Store from a Window
 - Confirm latest signed bundle exists:
   - `android/app/build/outputs/bundle/release/app-release.aab`
 - Confirm package/application id is correct:
-  - `com.notebill.app`
+  - `app.notebill.app`
 - Confirm app name is correct:
   - `NoteBill`
 

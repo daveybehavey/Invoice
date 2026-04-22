@@ -13,7 +13,7 @@ Use this while filling out Play Console so nothing gets skipped.
 ## 2. Package and artifact
 
 - Confirm package name matches the Android app:
-  - `com.notebill.app`
+  - `app.notebill.app`
 - Upload the signed release bundle:
   - `C:\Users\david\StudioProjects\Invoice\android\app\build\outputs\bundle\release\app-release.aab`
 

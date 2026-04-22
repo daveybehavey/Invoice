@@ -15,7 +15,8 @@
 - Inventory/expense management.
 - CRM/client lifecycle management.
 - Team collaboration and role permissions.
-- Payment processing.
+- Banking, lending, payroll, or financial account management.
+- Fully autonomous AI invoicing without user review.
 
 ## Product Principles
 
@@ -55,28 +56,38 @@
 ## Platform Direction
 
 ### Near-term
-- Responsive web app remains primary build target.
+- Cloudflare-hosted web app remains the primary production surface.
+- Android wrapper supports Play Console testing and store distribution.
+- Keep one core product flow shared across web and Android.
 - Keep flows mobile-first while preserving desktop usability.
 
 ### Mid-term
-- Add app-store distribution via a wrapper approach (e.g., Capacitor) after web flow is stable.
-- Keep one core product flow shared between web and app wrapper.
+- Improve app-store release cadence, crash mapping, and tester feedback loops.
+- Continue packaging work only when it preserves the shared web/app core.
 
 ## Data, Auth, and Persistence Direction
 
 ### Current state
-- Local file-backed storage is acceptable for local/dev.
+- Local file-backed storage is acceptable for local/dev only.
+- Production direction is server-side persistence, verified email-link auth, and provider-backed email delivery.
+- Hosted payment links are optional invoice workflow features; NoteBill is not a banking, lending, or accounting product.
 
 ### Target state
 - Per-user server-side persistence (Postgres/Supabase class architecture).
 - User authentication (magic-link or equivalent low-friction auth).
 - Multi-device continuity for saved invoices.
+- Operational diagnostics for billing, delivery, AI, persistence, reminders, and Android releases.
+- Privacy-conscious revenue diagnostics that track workflow milestones without invoice/customer content.
 
 ## Monetization (provisional)
 
 - Free tier with practical usage limits.
 - Paid tier for unlimited/higher limits and advanced workflow features.
 - Do not block core trust/safety behavior behind paywalls.
+- Revenue strategy lives in `docs/revenue-roadmap.md`; engineering choices should support retention before aggressive monetization.
+- Paid features should map to repeated operational value: sync, saved memory, sends, reminders, payment links, and advanced workflow polish.
+- The first serious revenue target is not mass scale; it is a few hundred loyal users with low support burden.
+- Do not add aggressive paywalls before activation and repeat-use signals show where users actually feel value.
 
 ## Roadmap Guardrails
 

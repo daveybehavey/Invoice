@@ -8,7 +8,7 @@
 
 ## Tactical actions
 1. Reduce hero copy from long paragraphs to a succinct headline + one-sentence support plus `Get started` CTA that triggers the Billie intake path.
-2. Audit launcher, intake, manual, and library surfaces for competing card borders/shadows; align with shared surface tokens; ensure there’s only one dominant action per screen.
+2. Audit launcher, intake, manual, and library surfaces for competing card borders/shadows; align with shared surface tokens; ensure there's only one dominant action per screen.
 3. Update library invoice card template (amount/title/status) to use accent color for totals, muted text for metadata, and a consistent CTA area.
 4. Add or strengthen assistant status chip text (e.g., "Billie is ready to refine") near the billie workspace and decision panels.
 5. Ensure unpaid/paid states use the same chip/alert pattern across library/manual/preview to avoid confusion.

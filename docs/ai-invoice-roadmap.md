@@ -135,7 +135,7 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - API requests now send `x-invoice-user-id` automatically from the shared request helper.
    - Per-user invoice library scoping now works end-to-end without manual headers.
 44. Lightweight auth session scaffolding
-   - Added `/api/auth/session` endpoints with signed session tokens from user email.
+   - Added the first `/api/auth/session` groundwork for authenticated account-scoped invoice access.
    - Request owner resolution now prefers authenticated user identity over spoofable owner headers.
    - Launcher now supports basic sign-in/sign-out and propagates auth automatically on API requests.
 45. Inline launcher sign-in modal
@@ -258,6 +258,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added account-plan policy endpoint (`GET /api/account/plan`) with per-account monthly usage.
    - Added optional free-tier monthly save-limit enforcement for new invoices on `/api/invoices/save` (updates still allowed).
    - Launcher now surfaces plan usage status; manual save now shows plan-limit API errors directly.
+74. Verified email-link auth hardening
+   - Replaced insecure email-only session minting with verified email-link sign-in (`/api/auth/session` + `/api/auth/session/verify`).
+   - Production auth readiness now requires both a strong session secret and a configured email delivery provider.
+   - Frontend auth state now clears expired local sessions proactively and keeps request auth headers consistent across shared fetch paths.
    - Added API/UI coverage for plan usage display and save-limit behavior.
 74. Freemium upgrade-gate UX surfaces
    - Invoice Library now shows free-plan usage and a focused limit-reached banner when monthly save cap is exhausted.
@@ -555,6 +559,27 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added a shared Billie status-chip treatment (`ready`, `working`, `safe`, `warning`) and applied it across intake, manual workspace, launcher/import/library cues.
    - Added local refine telemetry (`last`, `p50`, `p95`) for intake/manual wording actions and surfaced summary labels in active Billie UI states.
    - Diagnostics now includes a Billie refine-latency panel so perceived assistant responsiveness can be tracked over time.
+138. Client memory trust controls
+   - Added a launcher-accessible Memory screen at `/settings/memory`.
+   - Users can inspect remembered client details, send emails, prior notes, and recurring cadences.
+   - Users can delete one remembered client or clear all remembered clients for the current local/account scope.
+139. Quick payment terms
+   - Added one-tap `Due on receipt`, `Net 7`, `Net 14`, and `Net 30` terms in the manual editor.
+   - Terms are added to invoice notes and now set a structured due date without changing totals, tax, discounts, line items, or payment status.
+   - Reapplying a term replaces the prior quick-term line instead of duplicating stale due-date language.
+   - Due dates now persist through saved invoice metadata and show in the invoice library.
+140. Due-date-aware follow-up reminders
+   - Reminder candidate selection now uses structured due dates as first-class triggers when the due date falls after the original send.
+   - Launcher and Invoice Library follow-up cues prioritize past-due sent invoices before generic stale sent invoices.
+   - Date-only due dates render as local calendar dates in the UI so mobile users do not see off-by-one due dates.
+141. Open-balance reminder safety
+   - Saved invoice metadata now includes `balanceDue` so lightweight lists can distinguish outstanding work from cleared work.
+   - Reminder automation skips sent invoices with no open balance even if they are stale or past due.
+   - Launcher and Invoice Library follow-up cues now use open balance instead of raw invoice total for collections prompts.
+142. Launcher quick paid action
+   - Follow-up cards in the launcher now include a secondary `Mark paid` action for fast offline-payment cleanup.
+   - Generic status updates now clear `balanceDue` when marked paid and restore it from total when moved back to sent/draft from paid.
+   - Added regression coverage for status/balance consistency and launcher action visibility.
 
 ## Next (current priorities)
 1. Optional modularization continuation
