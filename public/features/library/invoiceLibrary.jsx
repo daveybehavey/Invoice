@@ -48,6 +48,18 @@
     openBillingPortal,
     readBillingNoticeFromUrl
   } = billingActions;
+  const clientMemoryUtils = window.InvoiceClientMemory;
+  if (!clientMemoryUtils) {
+    throw new Error(
+      "Missing /utils/clientMemory.js load. Ensure it is loaded before /features/library/invoiceLibrary.jsx."
+    );
+  }
+  const {
+    getClientRecipientEmail,
+    rememberClientRecipientEmail,
+    getClientRecurringInterval,
+    rememberClientRecurringInterval
+  } = clientMemoryUtils;
   const deleteSkipStorageKey = "invoiceDeleteSkipConfirm";
   const followUpReminderStorageKey = "invoiceFollowUpReminder";
   const recurringScheduleStorageKey = "invoiceRecurringSchedules";
@@ -83,6 +95,60 @@
   const parseRecurringTimestamp = (value) => {
     const parsed = Date.parse(value ?? "");
     return Number.isFinite(parsed) ? parsed : Date.now();
+  };
+
+  const parseDisplayTimestamp = (value) => {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      const [year, month, day] = text.split("-").map(Number);
+      return new Date(year, month - 1, day).getTime();
+    }
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : NaN;
+  };
+
+  const getInvoiceDueDateValue = (invoice) =>
+    invoice?.dueDate ?? invoice?.invoiceData?.finishedInvoice?.dueDate ?? "";
+
+  const getInvoiceOpenBalance = (invoice) => {
+    const amount = Number(
+      invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? invoice?.total
+    );
+    return Number.isFinite(amount) ? Math.max(amount, 0) : 0;
+  };
+
+  const mergeUpdatedInvoiceMetadata = (currentInvoice, updatedInvoice) => {
+    const finishedInvoice = updatedInvoice?.invoiceData?.finishedInvoice ?? {};
+    const structuredInvoice = updatedInvoice?.invoiceData?.structuredInvoice ?? {};
+    return {
+      ...currentInvoice,
+      ...updatedInvoice,
+      invoiceNumber:
+        finishedInvoice.invoiceNumber ??
+        structuredInvoice.invoiceNumber ??
+        updatedInvoice?.invoiceNumber ??
+        currentInvoice.invoiceNumber,
+      customerName:
+        finishedInvoice.customerName ??
+        structuredInvoice.customerName ??
+        updatedInvoice?.customerName ??
+        currentInvoice.customerName,
+      total: finishedInvoice.total ?? updatedInvoice?.total ?? currentInvoice.total,
+      balanceDue:
+        finishedInvoice.balanceDue ?? updatedInvoice?.balanceDue ?? currentInvoice.balanceDue,
+      dueDate:
+        finishedInvoice.dueDate ??
+        structuredInvoice.dueDate ??
+        updatedInvoice?.dueDate ??
+        currentInvoice.dueDate,
+      paymentLinkUrl:
+        finishedInvoice.paymentLinkUrl ?? updatedInvoice?.paymentLinkUrl ?? currentInvoice.paymentLinkUrl
+    };
+  };
+
+  const parseInvoiceDueTimestamp = (value) => {
+    const parsed = parseDisplayTimestamp(value);
+    return Number.isFinite(parsed) ? parsed : null;
   };
 
   const readRecurringSchedules = (storageKey) => {
@@ -257,10 +323,11 @@ function InvoiceLibrary() {
     if (!timestamp) {
       return "";
     }
-    const date = new Date(timestamp);
-    if (Number.isNaN(date.getTime())) {
+    const parsed = parseDisplayTimestamp(timestamp);
+    if (!Number.isFinite(parsed)) {
       return "";
     }
+    const date = new Date(parsed);
     return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
   };
 
@@ -345,9 +412,13 @@ function InvoiceLibrary() {
     }
   };
 
-  const setRecurringSchedule = (invoiceId, intervalDays = 30) => {
+  const setRecurringSchedule = (invoiceId, intervalDays = 30, options = {}) => {
     const normalizedInterval = normalizeRecurringInterval(intervalDays);
     const nextDueAt = new Date(Date.now() + normalizedInterval * recurringDayMs).toISOString();
+    const invoice = invoices.find((candidate) => candidate.invoiceId === invoiceId);
+    if (invoice?.customerName) {
+      rememberClientRecurringInterval(invoice.customerName, normalizedInterval);
+    }
     persistRecurringSchedules({
       ...recurringSchedules,
       [invoiceId]: {
@@ -355,6 +426,14 @@ function InvoiceLibrary() {
         nextDueAt
       }
     });
+    void apiFetch("/api/telemetry/revenue-signals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "recurring_schedule_set",
+        source: options?.source ?? "library_recurring_schedule"
+      })
+    }).catch(() => {});
   };
 
   const setCustomRecurringSchedule = (invoiceId, currentIntervalDays = 30) => {
@@ -686,11 +765,7 @@ function InvoiceLibrary() {
         setInvoices((prev) =>
           prev.map((invoice) =>
             invoice.invoiceId === updatedInvoice.invoiceId
-              ? {
-                  ...invoice,
-                  status: updatedInvoice.status ?? invoice.status,
-                  updatedAt: updatedInvoice.updatedAt ?? invoice.updatedAt
-                }
+              ? mergeUpdatedInvoiceMetadata(invoice, updatedInvoice)
               : invoice
           )
         );
@@ -743,6 +818,9 @@ function InvoiceLibrary() {
         setDeliveryNotice(
           payload?.warning || "Delivery was recorded. Configure an email provider to send automatically."
         );
+      }
+      if (invoice.customerName) {
+        rememberClientRecipientEmail(invoice.customerName, recipientEmail);
       }
       setSendComposer((current) =>
         current && current.invoiceId === invoice.invoiceId ? null : current
@@ -854,9 +932,12 @@ function InvoiceLibrary() {
     if (!invoice?.invoiceId) {
       return;
     }
+    const trackedRecipient = (invoice?.delivery?.recipientEmail ?? "").trim().toLowerCase();
+    const rememberedRecipient = getClientRecipientEmail(invoice?.customerName ?? "").trim().toLowerCase();
     setSendComposer({
       invoiceId: invoice.invoiceId,
-      recipientEmail: (invoice?.delivery?.recipientEmail ?? "").trim().toLowerCase()
+      recipientEmail: trackedRecipient || rememberedRecipient,
+      prefilledFrom: trackedRecipient ? "delivery" : rememberedRecipient ? "client_memory" : ""
     });
     setError("");
     setDeliveryNotice("");
@@ -1043,6 +1124,70 @@ function InvoiceLibrary() {
     paid: "nb-chip nb-chip--success normal-case tracking-normal rounded-full",
     deleted: "nb-chip nb-chip--danger normal-case tracking-normal rounded-full"
   };
+  const getInvoiceLifecycleLabel = (invoice) => {
+    if (invoice?.status === "deleted") {
+      return "Deleted invoice";
+    }
+    if (invoice?.status === "paid") {
+      return "Paid invoice";
+    }
+    if (invoice?.status === "sent") {
+      return "Sent invoice";
+    }
+    if (invoice?.sourceType === "upload") {
+      return "Imported draft";
+    }
+    return "Draft invoice";
+  };
+  const getPaymentStatusView = ({ status, balanceDue, isPastDue }) => {
+    const amountLabel = formatMoney(balanceDue);
+    if (status === "paid") {
+      return {
+        label: "Paid in full",
+        className: "nb-chip nb-chip--success normal-case tracking-normal"
+      };
+    }
+    if (status === "deleted") {
+      return {
+        label: "In trash",
+        className: "nb-chip nb-chip--danger normal-case tracking-normal"
+      };
+    }
+    if (status === "sent" && isPastDue) {
+      return {
+        label: `${amountLabel} past due`,
+        className: "nb-chip nb-chip--warning normal-case tracking-normal"
+      };
+    }
+    if (status === "sent") {
+      return {
+        label: `${amountLabel} open`,
+        className: "nb-chip nb-chip--info normal-case tracking-normal"
+      };
+    }
+    return {
+      label: `${amountLabel} draft total`,
+      className: "nb-chip nb-chip--soft normal-case tracking-normal"
+    };
+  };
+  const getInvoiceNextActionHint = ({ invoice, hasDelivery, isPastDue }) => {
+    if (invoice?.status === "deleted") {
+      return "Restore to edit, export, or send again.";
+    }
+    if (invoice?.status === "paid") {
+      return "Paid. Use Invoice again for repeat work.";
+    }
+    if (invoice?.status === "sent" && isPastDue) {
+      return "Follow up, or mark paid if the payment already arrived.";
+    }
+    if (invoice?.status === "sent" && hasDelivery) {
+      return "Waiting on payment. Resend only if the client needs another copy.";
+    }
+    if (invoice?.status === "sent") {
+      return "Marked sent. Add a recipient if you want reminders or tracked delivery.";
+    }
+    return "Open to finish, then send or export.";
+  };
   const statusFilterOptions = [
     { id: "all", label: "All" },
     { id: "draft", label: "Draft" },
@@ -1087,6 +1232,7 @@ function InvoiceLibrary() {
   const sentReminderThresholdMs = sentReminderThresholdDays * 24 * 60 * 60 * 1000;
   const staleDraftThresholdDays = 7;
   const staleDraftThresholdMs = staleDraftThresholdDays * 24 * 60 * 60 * 1000;
+  const nowMs = Date.now();
   const recurringSchedulesByInvoiceId = recurringSchedules;
   const recurringReminderInvoices = invoices
     .filter((invoice) => invoice?.status !== "deleted")
@@ -1104,7 +1250,7 @@ function InvoiceLibrary() {
     .filter(Boolean)
     .sort((left, right) => left.nextDueMs - right.nextDueMs);
   const dueRecurringInvoices = recurringReminderInvoices.filter(
-    (invoice) => invoice.nextDueMs <= Date.now()
+    (invoice) => invoice.nextDueMs <= nowMs
   );
   const recurringDueCount = dueRecurringInvoices.length;
   const nextRecurringCandidate = (dueRecurringInvoices[0] ?? recurringReminderInvoices[0]) || null;
@@ -1119,7 +1265,7 @@ function InvoiceLibrary() {
       if (!Number.isFinite(updatedAtMs)) {
         return false;
       }
-      return Date.now() - updatedAtMs >= staleDraftThresholdMs;
+      return nowMs - updatedAtMs >= staleDraftThresholdMs;
     })
     .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
   const oldestStaleDraft = staleDraftInvoices[0] ?? null;
@@ -1129,15 +1275,45 @@ function InvoiceLibrary() {
     staleDraftInvoices.length > 0;
   const sentFollowUpInvoices = invoices
     .filter((invoice) => invoice?.status === "sent")
-    .filter((invoice) => {
+    .map((invoice) => {
+      const openBalance = getInvoiceOpenBalance(invoice);
       const updatedAtMs = Date.parse(invoice?.updatedAt ?? "");
-      if (!Number.isFinite(updatedAtMs)) {
-        return false;
-      }
-      return Date.now() - updatedAtMs >= sentReminderThresholdMs;
+      const dueDateValue = getInvoiceDueDateValue(invoice);
+      const dueDateMs = parseInvoiceDueTimestamp(dueDateValue);
+      const daysSinceUpdate = Number.isFinite(updatedAtMs)
+        ? Math.max(0, Math.floor((nowMs - updatedAtMs) / recurringDayMs))
+        : 0;
+      const isPastDue = Number.isFinite(dueDateMs) && dueDateMs <= nowMs;
+      return {
+        ...invoice,
+        dueDateValue,
+        dueDateMs,
+        daysSinceUpdate,
+        openBalance,
+        isPastDue,
+        followUpReason:
+          isPastDue || daysSinceUpdate >= sentReminderThresholdDays ? "follow_up" : ""
+      };
     })
-    .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
+    .filter(
+      (invoice) =>
+        invoice.openBalance > 0 &&
+        (invoice.isPastDue || invoice.daysSinceUpdate >= sentReminderThresholdDays)
+    )
+    .sort((left, right) => {
+      if (left.isPastDue !== right.isPastDue) {
+        return left.isPastDue ? -1 : 1;
+      }
+      if (left.isPastDue && right.isPastDue) {
+        return (left.dueDateMs ?? Number.MAX_SAFE_INTEGER) - (right.dueDateMs ?? Number.MAX_SAFE_INTEGER);
+      }
+      return Date.parse(left.updatedAt ?? "") - Date.parse(right.updatedAt ?? "");
+    });
   const oldestSentReminder = sentFollowUpInvoices[0] ?? null;
+  const pastDueSentFollowUpCount = sentFollowUpInvoices.filter((invoice) => invoice.isPastDue).length;
+  const oldestSentReminderDueLabel = oldestSentReminder?.dueDateValue
+    ? formatDate(oldestSentReminder.dueDateValue)
+    : "";
   const recurringCandidateInvoice = oldestSentReminder;
   const oldestSentRecipient = oldestSentReminder?.delivery?.recipientEmail ?? "";
   const canQuickSendReminderOldest = Boolean(
@@ -1451,7 +1627,7 @@ function InvoiceLibrary() {
                   onClick={() => handleOpen(oldestStaleDraft.invoiceId)}
                   disabled={actionId === oldestStaleDraft.invoiceId}
                 >
-                  {actionId === oldestStaleDraft.invoiceId ? "Opening…" : "Resume oldest draft"}
+                  {actionId === oldestStaleDraft.invoiceId ? "Opening..." : "Resume oldest draft"}
                 </button>
               ) : null}
               <button
@@ -1497,7 +1673,7 @@ function InvoiceLibrary() {
                   disabled={actionId === nextRecurringCandidate.invoiceId}
                 >
                   {actionId === nextRecurringCandidate.invoiceId
-                    ? "Opening…"
+                    ? "Opening..."
                     : "Invoice again next due"}
                 </button>
               ) : null}
@@ -1514,8 +1690,12 @@ function InvoiceLibrary() {
             <p className="text-sm font-semibold text-blue-900">Follow-up reminders</p>
             <p className="mt-1 text-sm text-blue-900">
               {sentFollowUpInvoices.length === 1
-                ? "1 sent invoice may need follow-up."
-                : `${sentFollowUpInvoices.length} sent invoices may need follow-up.`}
+                ? oldestSentReminder?.isPastDue
+                  ? "1 sent invoice is past due."
+                  : "1 sent invoice may need follow-up."
+                : pastDueSentFollowUpCount > 0
+                  ? `${sentFollowUpInvoices.length} sent invoices need follow-up (${pastDueSentFollowUpCount} past due).`
+                  : `${sentFollowUpInvoices.length} sent invoices may need follow-up.`}
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <button
@@ -1536,7 +1716,7 @@ function InvoiceLibrary() {
                   disabled={actionId === recurringCandidateInvoice.invoiceId}
                 >
                   {actionId === recurringCandidateInvoice.invoiceId
-                    ? "Opening…"
+                    ? "Opening..."
                     : "Invoice again oldest"}
                 </button>
               ) : null}
@@ -1547,7 +1727,7 @@ function InvoiceLibrary() {
                   onClick={() => handleSendReminder(oldestSentReminder)}
                   disabled={actionId === oldestSentReminder.invoiceId}
                 >
-                  {actionId === oldestSentReminder.invoiceId ? "Sending…" : "Send reminder"}
+                  {actionId === oldestSentReminder.invoiceId ? "Sending..." : "Send reminder"}
                 </button>
               ) : null}
               <button
@@ -1566,7 +1746,9 @@ function InvoiceLibrary() {
               </button>
               {oldestSentReminder ? (
                 <p className="text-xs text-blue-800">
-                  Oldest sent update: {formatDate(oldestSentReminder.updatedAt)}
+                  {oldestSentReminder.isPastDue && oldestSentReminderDueLabel
+                    ? `${oldestSentReminder.invoiceNumber || "Sent invoice"} was due ${oldestSentReminderDueLabel}.`
+                    : `Oldest sent update: ${formatDate(oldestSentReminder.updatedAt)}`}
                 </p>
               ) : null}
             </div>
@@ -1757,7 +1939,7 @@ function InvoiceLibrary() {
           <div className="mt-6 space-y-4">
           {loading ? (
             <div className="nb-surface nb-surface--muted rounded-[28px] p-6 text-sm text-slate-500">
-              Loading saved invoices…
+              Loading saved invoices...
             </div>
           ) : null}
 
@@ -1781,13 +1963,22 @@ function InvoiceLibrary() {
                       : `Try another status filter or update an invoice to ${statusFilter}.`}
                   </p>
                   {statusFilter === "all" ? (
-                    <button
-                      type="button"
-                      className="nb-btn-primary mt-4 inline-flex h-10 px-4"
-                      onClick={() => navigate("/ai-intake")}
-                    >
-                      Create your first draft
-                    </button>
+                    <div className="mt-4 flex flex-wrap justify-center gap-2">
+                      <button
+                        type="button"
+                        className="nb-btn-primary inline-flex h-10 px-4"
+                        onClick={() => navigate("/ai-intake")}
+                      >
+                        Create your first draft
+                      </button>
+                      <button
+                        type="button"
+                        className="nb-btn-secondary inline-flex h-10 rounded-full px-4"
+                        onClick={() => navigate("/ai-intake?sample=starter")}
+                      >
+                        Try sample notes
+                      </button>
+                    </div>
                   ) : null}
                 </>
               )}
@@ -1799,25 +1990,29 @@ function InvoiceLibrary() {
                 const statusClass = statusStyles[invoice.status] ?? statusStyles.draft;
                 const totalLabel = Number.isFinite(invoice.total)
                   ? formatMoney(invoice.total)
-                  : "—";
-                const balanceDueRaw = Number(
-                  invoice.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue
-                );
-                const balanceDue = Number.isFinite(balanceDueRaw)
-                  ? Math.max(balanceDueRaw, 0)
-                  : Number.isFinite(invoice.total)
-                    ? Math.max(Number(invoice.total), 0)
-                    : 0;
-                const paymentLabel = invoice.status === "paid" ? "Paid in full" : `${formatMoney(balanceDue)} due`;
-                const paymentLabelClass =
-                  invoice.status === "paid"
-                    ? "nb-chip nb-chip--success normal-case tracking-normal"
-                    : "nb-chip nb-chip--warning normal-case tracking-normal";
+                  : "-";
+                const balanceDue = getInvoiceOpenBalance(invoice);
+                const dueDateValue = getInvoiceDueDateValue(invoice);
+                const dueDateLabel = formatDate(dueDateValue);
+                const dueDateMs = parseInvoiceDueTimestamp(dueDateValue);
+                const isPastDue = invoice.status === "sent" && Number.isFinite(dueDateMs) && dueDateMs <= Date.now();
+                const paymentStatusView = getPaymentStatusView({
+                  status: invoice.status,
+                  balanceDue,
+                  isPastDue
+                });
+                const lifecycleLabel = getInvoiceLifecycleLabel(invoice);
                 const recurringEntry = recurringSchedulesByInvoiceId[invoice.invoiceId] ?? null;
                 const recurringIntervalLabel = recurringEntry
                   ? formatRecurringCadence(recurringEntry.intervalDays)
                   : "";
                 const recurringNextDue = recurringEntry ? formatDate(recurringEntry.nextDueAt) : "";
+                const rememberedRecurringInterval = !recurringEntry
+                  ? getClientRecurringInterval(invoice.customerName ?? "")
+                  : null;
+                const rememberedRecurringLabel = rememberedRecurringInterval
+                  ? formatRecurringCadence(rememberedRecurringInterval)
+                  : "";
                 const delivery = invoice?.delivery ?? null;
                 const hasDelivery = Boolean(delivery?.recipientEmail) && Boolean(delivery?.sentAt);
                 const deliverySentAt = hasDelivery ? formatDateTime(delivery.sentAt) : "";
@@ -1833,6 +2028,7 @@ function InvoiceLibrary() {
                 const showMarkSent = invoice.status === "draft" || invoice.status === "paid";
                 const showMarkPaid = invoice.status === "sent";
                 const showMarkDraft = invoice.status === "sent" || invoice.status === "paid";
+                const nextActionHint = getInvoiceNextActionHint({ invoice, hasDelivery, isPastDue });
                 return (
                   <div
                     key={invoice.invoiceId}
@@ -1853,7 +2049,7 @@ function InvoiceLibrary() {
                         ) : null}
                         <div>
                           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            {invoice.sourceType === "upload" ? "Imported invoice" : "Invoice draft"}
+                            {lifecycleLabel}
                           </p>
                           <p className="mt-1 text-lg font-semibold text-slate-900">
                             {invoice.invoiceNumber || "Draft invoice"}
@@ -1861,16 +2057,28 @@ function InvoiceLibrary() {
                           <p className="text-xs text-slate-500">
                             Updated {formatDate(invoice.updatedAt)}
                           </p>
+                          {dueDateLabel ? (
+                            <p
+                              className={`mt-1 text-xs font-semibold ${
+                                isPastDue ? "text-amber-700" : "text-slate-600"
+                              }`}
+                            >
+                              {isPastDue ? "Past due" : "Due"} {dueDateLabel}
+                            </p>
+                          ) : null}
                           {hasDelivery ? (
                           <p className="mt-1 text-xs text-slate-600">
                               {providerDelivery
                                 ? `Sent to ${delivery.recipientEmail}`
                                 : `Prepared for ${delivery.recipientEmail} (tracking only)`}
                               {deliveryOpened
-                                ? ` · Opened ${deliveryOpenedAt || "recently"}`
-                                : ` · Sent ${deliverySentAt || "recently"}`}
+                                ? ` - Opened ${deliveryOpenedAt || "recently"}`
+                                : ` - Sent ${deliverySentAt || "recently"}`}
                             </p>
                           ) : null}
+                          <p className="mt-2 text-xs leading-5 text-slate-500">
+                            <span className="font-semibold text-slate-600">Next:</span> {nextActionHint}
+                          </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
@@ -1882,8 +2090,8 @@ function InvoiceLibrary() {
                             Recurring {recurringIntervalLabel}
                           </span>
                         ) : null}
-                        <span className={paymentLabelClass}>
-                          {paymentLabel}
+                        <span className={paymentStatusView.className}>
+                          {paymentStatusView.label}
                         </span>
                         <span className="text-sm font-semibold text-slate-900">{totalLabel}</span>
                       </div>
@@ -1925,7 +2133,7 @@ function InvoiceLibrary() {
                             onClick={() => handleOpen(invoice.invoiceId)}
                             disabled={actionId === invoice.invoiceId}
                           >
-                            {actionId === invoice.invoiceId ? "Opening…" : "Open"}
+                            {actionId === invoice.invoiceId ? "Opening..." : "Open"}
                           </button>
                           <button
                             type="button"
@@ -1949,7 +2157,7 @@ function InvoiceLibrary() {
                             aria-label={`${hasDelivery ? "Resend invoice" : "Send invoice"} ${invoice.invoiceNumber || "Draft invoice"}`}
                           >
                             {actionId === invoice.invoiceId
-                              ? "Sending…"
+                              ? "Sending..."
                               : hasDelivery
                                 ? "Resend invoice"
                                 : "Send invoice"}
@@ -2031,15 +2239,32 @@ function InvoiceLibrary() {
                               </button>
                             </>
                           ) : (
-                            <button
-                              type="button"
-                              className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"
-                              onClick={() => setRecurringSchedule(invoice.invoiceId, 30)}
-                              disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
-                              aria-label={`Set monthly recurring for ${invoice.invoiceNumber || "Draft invoice"}`}
-                            >
-                              Set monthly recurring
-                            </button>
+                            <>
+                              {rememberedRecurringInterval ? (
+                                <button
+                                  type="button"
+                                  className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm transition hover:border-emerald-300 disabled:cursor-not-allowed disabled:text-emerald-300"
+                                  onClick={() =>
+                                    setRecurringSchedule(invoice.invoiceId, rememberedRecurringInterval, {
+                                      source: "library_client_cadence_reuse"
+                                    })
+                                  }
+                                  disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                                  aria-label={`Use ${rememberedRecurringLabel} cadence for ${invoice.invoiceNumber || "Draft invoice"}`}
+                                >
+                                  Use {rememberedRecurringLabel} cadence
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"
+                                onClick={() => setRecurringSchedule(invoice.invoiceId, 30)}
+                                disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                                aria-label={`Set monthly recurring for ${invoice.invoiceNumber || "Draft invoice"}`}
+                              >
+                                Set monthly recurring
+                              </button>
+                            </>
                           )}
                           {showMarkSent ? (
                             <button
@@ -2093,6 +2318,15 @@ function InvoiceLibrary() {
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                           Recipient email
                         </p>
+                        {sendComposer?.prefilledFrom === "client_memory" ? (
+                          <p className="mt-1 text-xs text-emerald-700">
+                            Filled from client memory. Change it if this invoice should go somewhere else.
+                          </p>
+                        ) : sendComposer?.prefilledFrom === "delivery" ? (
+                          <p className="mt-1 text-xs text-slate-500">
+                            Reusing the last tracked recipient for this invoice.
+                          </p>
+                        ) : null}
                         <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                           <input
                             type="email"
@@ -2114,7 +2348,7 @@ function InvoiceLibrary() {
                               onClick={() => void submitSendComposer(invoice.invoiceId)}
                               disabled={actionId === invoice.invoiceId}
                             >
-                              {actionId === invoice.invoiceId ? "Sending…" : "Send now"}
+                              {actionId === invoice.invoiceId ? "Sending..." : "Send now"}
                             </button>
                             <button
                               type="button"
@@ -2147,7 +2381,7 @@ function InvoiceLibrary() {
                     <span className="font-semibold text-slate-800">
                       {deleteTarget.label || "the selected invoices"}
                     </span>
-                    . This can’t be undone.
+                    . This can't be undone.
                   </>
                 ) : (
                   <>
@@ -2167,7 +2401,7 @@ function InvoiceLibrary() {
                     checked={confirmSkipChecked}
                     onChange={(event) => setConfirmSkipChecked(event.target.checked)}
                   />
-                  Don’t ask me again
+                  Don't ask me again
                 </label>
               ) : null}
               <div className="mt-5 flex flex-wrap justify-end gap-3">
@@ -2186,7 +2420,7 @@ function InvoiceLibrary() {
                   disabled={isDeleting}
                 >
                   {isDeleting
-                    ? "Deleting…"
+                    ? "Deleting..."
                     : deleteTarget.mode === "permanent"
                       ? "Delete permanently"
                       : "Move to Trash"}

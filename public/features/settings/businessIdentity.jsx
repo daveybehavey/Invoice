@@ -16,6 +16,13 @@
     );
   }
 
+  const clientMemoryUtils = window.InvoiceClientMemory;
+  if (!clientMemoryUtils) {
+    throw new Error(
+      "Missing /utils/clientMemory.js load. Ensure it is loaded before /features/settings/businessIdentity.jsx."
+    );
+  }
+
   const brandThemeUtils = window.InvoiceBrandTheme;
   if (!brandThemeUtils) {
     throw new Error(
@@ -39,9 +46,51 @@
 
   const { getBusinessProfile, saveBusinessProfile, clearBusinessProfile, normalizeBusinessProfile } =
     businessProfileUtils;
+  const { getClientMemory, deleteClientMemoryEntry, clearClientMemory } = clientMemoryUtils;
   const { DEFAULT_ACCENT_COLOR, normalizeAccentColor, buildAccentPalette } = brandThemeUtils;
   const { STYLE_OPTIONS, STYLE_PRESETS } = styleCatalogUtils;
   const { readLogoFileForStorage } = logoImageUtils;
+
+  const formatMemoryDate = (value) => {
+    if (!value) {
+      return "Saved recently";
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return "Saved recently";
+    }
+    return `Updated ${parsed.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
+  };
+
+  const formatRecurringCadence = (intervalDays) => {
+    const days = Number(intervalDays);
+    if (!Number.isFinite(days) || days <= 0) {
+      return "";
+    }
+    if (days === 7) {
+      return "Weekly";
+    }
+    if (days === 14) {
+      return "Biweekly";
+    }
+    if (days === 30) {
+      return "Monthly";
+    }
+    if (days === 90) {
+      return "Quarterly";
+    }
+    return `Every ${Math.round(days)} days`;
+  };
+
+  const buildMemoryStats = (memory) => {
+    const entries = Array.isArray(memory) ? memory : [];
+    return {
+      total: entries.length,
+      withEmail: entries.filter((entry) => entry.recipientEmail).length,
+      withNotes: entries.filter((entry) => entry.defaultNotes).length,
+      withCadence: entries.filter((entry) => entry.recurringIntervalDays).length
+    };
+  };
 
   function BusinessIdentitySettings() {
     const navigate = useNavigate();
@@ -297,5 +346,224 @@
     );
   }
 
-  window.InvoiceBusinessIdentityFeature = { BusinessIdentitySettings };
+  function ClientMemorySettings() {
+    const navigate = useNavigate();
+    const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
+    const [clientMemory, setClientMemory] = useState(() => getClientMemory());
+    const [status, setStatus] = useState("");
+    const [clearArmed, setClearArmed] = useState(false);
+
+    useEffect(() => {
+      let active = true;
+      requestIdentity
+        .refreshSession()
+        .then((session) => {
+          if (active) {
+            setAuthSession(session);
+          }
+        })
+        .catch(() => {
+          if (active) {
+            setAuthSession(null);
+          }
+        });
+      return () => {
+        active = false;
+      };
+    }, []);
+
+    const stats = useMemo(() => buildMemoryStats(clientMemory), [clientMemory]);
+
+    const handleDeleteClient = (entry) => {
+      setClientMemory(deleteClientMemoryEntry(entry.name));
+      setStatus(`${entry.name} removed from memory.`);
+      setClearArmed(false);
+    };
+
+    const handleClearAll = () => {
+      if (!clearArmed) {
+        setClearArmed(true);
+        setStatus("Tap confirm to clear all remembered clients on this device.");
+        return;
+      }
+      setClientMemory(clearClientMemory());
+      setStatus("Client memory cleared.");
+      setClearArmed(false);
+    };
+
+    return (
+      <div className="nb-page nb-page--quiet min-h-screen">
+        <main className="nb-page-shell nb-page-shell--medium max-w-5xl py-6 md:py-10">
+          <button
+            type="button"
+            className="nb-btn-ghost"
+            onClick={() => navigate("/")}
+          >
+            Back to launcher
+          </button>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_320px]">
+            <section className="nb-surface nb-surface--elevated rounded-[26px] p-4 md:rounded-[30px] md:p-6">
+              <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">Memory controls</p>
+              <h1 className="nb-section-title mt-2 text-2xl md:text-3xl">Review remembered clients</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                NoteBill can remember repeat-client details to save typing. You can review or clear that memory
+                anytime. It never silently changes invoice totals.
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                Account: {authSession?.email ? authSession.email : "local mode"}
+              </p>
+            </section>
+
+            <aside className="nb-surface nb-surface--muted rounded-[26px] p-4 md:rounded-[30px] md:p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Trust note</p>
+              <p className="mt-3 text-sm leading-6 text-slate-700">
+                Remembered notes are only added when you choose them. Billie still follows the rule: money changes
+                require explicit user action.
+              </p>
+            </aside>
+          </div>
+
+          <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              ["Clients", stats.total],
+              ["Send emails", stats.withEmail],
+              ["Prior notes", stats.withNotes],
+              ["Cadences", stats.withCadence]
+            ].map(([label, value]) => (
+              <div key={label} className="nb-subcard bg-white/85 p-3 text-center md:p-4">
+                <p className="text-xl font-semibold text-[#093064] md:text-2xl">{value}</p>
+                <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  {label}
+                </p>
+              </div>
+            ))}
+          </section>
+
+          <section className="nb-surface mt-5 rounded-[26px] p-4 md:rounded-[30px] md:p-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Remembered client data</h2>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Clear anything that feels stale, private, or no longer useful.
+                </p>
+              </div>
+              {clientMemory.length > 0 ? (
+                <button
+                  type="button"
+                  className={`min-h-11 w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto ${
+                    clearArmed
+                      ? "bg-rose-600 text-white"
+                      : "border border-rose-200 bg-white text-rose-700"
+                  }`}
+                  onClick={handleClearAll}
+                >
+                  {clearArmed ? "Confirm clear all" : "Clear all remembered clients"}
+                </button>
+              ) : null}
+            </div>
+
+            {status ? <p className="mt-3 text-sm font-semibold text-[#093064]">{status}</p> : null}
+
+            {clientMemory.length === 0 ? (
+                <div className="nb-subcard mt-5 bg-slate-50/90 p-4 md:p-5">
+                <p className="text-sm font-semibold text-slate-900">No remembered clients yet.</p>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  NoteBill will start building memory as you save invoices, reuse client details, or send to a
+                  client email.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-5 grid gap-3">
+                {clientMemory.map((entry) => {
+                  const cadenceLabel = formatRecurringCadence(entry.recurringIntervalDays);
+                  const tags = [
+                    entry.recipientEmail ? "Send email" : "",
+                    entry.defaultNotes ? "Prior note" : "",
+                    cadenceLabel ? cadenceLabel : ""
+                  ].filter(Boolean);
+                  return (
+                    <article key={entry.lookupKey} className="nb-subcard bg-white/90 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-base font-semibold text-slate-900">{entry.name}</p>
+                          <p className="mt-1 text-xs text-slate-500">{formatMemoryDate(entry.updatedAt)}</p>
+                          {tags.length > 0 ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {tags.map((tag) => (
+                                <span
+                                  key={tag}
+                                  className="rounded-full bg-[#edf5ff] px-2.5 py-1 text-xs font-semibold text-[#093064]"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          className="min-h-10 w-full rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 sm:w-auto"
+                          onClick={() => handleDeleteClient(entry)}
+                          aria-label={`Delete remembered client ${entry.name}`}
+                        >
+                          Delete
+                        </button>
+                      </div>
+
+                      <details className="mt-4 rounded-2xl border border-slate-100 bg-slate-50/70 p-3">
+                        <summary className="cursor-pointer text-sm font-semibold text-[#093064]">
+                          Show saved details
+                        </summary>
+                        <div className="mt-3 grid gap-3 md:grid-cols-2">
+                          <div className="rounded-2xl border border-slate-100 bg-white/80 p-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              Client details
+                            </p>
+                            <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-700">
+                              {entry.details || entry.name}
+                            </p>
+                          </div>
+                          <div className="space-y-3">
+                            {entry.recipientEmail ? (
+                              <div className="rounded-2xl border border-slate-100 bg-white/80 p-3">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                  Send email
+                                </p>
+                                <p className="mt-2 break-all text-sm font-semibold text-slate-700">
+                                  {entry.recipientEmail}
+                                </p>
+                              </div>
+                            ) : null}
+                            {entry.defaultNotes ? (
+                              <div className="rounded-2xl border border-slate-100 bg-white/80 p-3">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                  Prior note
+                                </p>
+                                <p className="mt-2 text-sm leading-6 text-slate-700">{entry.defaultNotes}</p>
+                              </div>
+                            ) : null}
+                            {cadenceLabel ? (
+                              <div className="rounded-2xl border border-slate-100 bg-white/80 p-3">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                  Recurring cadence
+                                </p>
+                                <p className="mt-2 text-sm font-semibold text-slate-700">{cadenceLabel}</p>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      </details>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  window.InvoiceBusinessIdentityFeature = { BusinessIdentitySettings, ClientMemorySettings };
 })();

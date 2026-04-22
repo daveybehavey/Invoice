@@ -27,20 +27,60 @@
 
   const normalizeClientName = (value) => normalizeText(value).split("\n")[0] ?? "";
 
+  const normalizeEmail = (value) => {
+    if (typeof value !== "string") {
+      return "";
+    }
+    const trimmed = value.trim().toLowerCase();
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed) ? trimmed : "";
+  };
+  const normalizeIntervalDays = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+    const rounded = Math.round(parsed);
+    return rounded >= 1 && rounded <= 365 ? rounded : null;
+  };
+
   const normalizeClientEntry = (value) => {
     const details = normalizeText(value?.details ?? value);
     const name = normalizeClientName(value?.name ?? details);
-    if (!name || !details) {
+    if (!name) {
       return null;
     }
+    const recipientEmail = normalizeEmail(value?.recipientEmail);
+    const defaultNotes = normalizeText(value?.defaultNotes);
+    const recurringIntervalDays = normalizeIntervalDays(value?.recurringIntervalDays);
     return {
       name,
       lookupKey: name.toLocaleLowerCase(),
-      details,
+      details: details || name,
+      ...(recipientEmail ? { recipientEmail } : {}),
+      ...(defaultNotes ? { defaultNotes } : {}),
+      ...(recurringIntervalDays ? { recurringIntervalDays } : {}),
       updatedAt:
         typeof value?.updatedAt === "string" && value.updatedAt.trim()
           ? value.updatedAt
           : new Date().toISOString()
+    };
+  };
+
+  const mergeEntries = (current, next) => {
+    if (!current) {
+      return next;
+    }
+    if (!next) {
+      return current;
+    }
+    const preferred = current.updatedAt < next.updatedAt ? next : current;
+    const fallback = preferred === next ? current : next;
+    return {
+      ...preferred,
+      details: preferred.details || fallback.details,
+      recipientEmail: preferred.recipientEmail || fallback.recipientEmail,
+      defaultNotes: preferred.defaultNotes || fallback.defaultNotes,
+      recurringIntervalDays: preferred.recurringIntervalDays || fallback.recurringIntervalDays
     };
   };
 
@@ -52,10 +92,7 @@
       if (!entry) {
         return;
       }
-      const existing = deduped.get(entry.lookupKey);
-      if (!existing || existing.updatedAt < entry.updatedAt) {
-        deduped.set(entry.lookupKey, entry);
-      }
+      deduped.set(entry.lookupKey, mergeEntries(deduped.get(entry.lookupKey), entry));
     });
     return Array.from(deduped.values())
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
@@ -105,13 +142,70 @@
     return normalized;
   };
 
-  const rememberClientDetails = (details) => {
-    const entry = normalizeClientEntry(details);
+  const deleteClientMemoryEntry = (nameOrDetails) => {
+    const normalizedName = normalizeClientName(nameOrDetails).toLocaleLowerCase();
+    if (!normalizedName) {
+      return getClientMemory();
+    }
+    return saveClientMemory(getClientMemory().filter((entry) => entry.lookupKey !== normalizedName));
+  };
+
+  const clearClientMemory = () => {
+    const scopedStorageKey = buildStorageKey();
+    try {
+      window.localStorage.removeItem(scopedStorageKey);
+      if (scopedStorageKey !== legacyStorageKey) {
+        window.localStorage.removeItem(legacyStorageKey);
+      }
+    } catch (_error) {
+      // Best-effort clear only.
+    }
+    return [];
+  };
+
+  const mergeClientEntry = (entry) => {
     if (!entry) {
       return getClientMemory();
     }
-    const nextMemory = [entry, ...getClientMemory().filter((item) => item.lookupKey !== entry.lookupKey)];
-    return saveClientMemory(nextMemory);
+    const existing = getClientMemory().find((item) => item.lookupKey === entry.lookupKey);
+    const nextEntry = mergeEntries(existing, entry);
+    return saveClientMemory([
+      nextEntry,
+      ...getClientMemory().filter((item) => item.lookupKey !== entry.lookupKey)
+    ]);
+  };
+
+  const rememberClientDetails = (details, options = {}) => {
+    return mergeClientEntry(
+      normalizeClientEntry({
+        details,
+        recipientEmail: options?.recipientEmail,
+        defaultNotes: options?.defaultNotes,
+        recurringIntervalDays: options?.recurringIntervalDays
+      })
+    );
+  };
+
+  const rememberClientRecipientEmail = (nameOrDetails, recipientEmail) => {
+    const currentDetails = getClientDetails(nameOrDetails) || normalizeText(nameOrDetails);
+    return mergeClientEntry(
+      normalizeClientEntry({
+        name: normalizeClientName(nameOrDetails),
+        details: currentDetails,
+        recipientEmail
+      })
+    );
+  };
+
+  const rememberClientRecurringInterval = (nameOrDetails, intervalDays) => {
+    const currentDetails = getClientDetails(nameOrDetails) || normalizeText(nameOrDetails);
+    return mergeClientEntry(
+      normalizeClientEntry({
+        name: normalizeClientName(nameOrDetails),
+        details: currentDetails,
+        recurringIntervalDays: intervalDays
+      })
+    );
   };
 
   const getClientDetails = (name) => {
@@ -121,6 +215,33 @@
     }
     const match = getClientMemory().find((entry) => entry.lookupKey === normalizedName);
     return match?.details ?? "";
+  };
+
+  const getClientRecipientEmail = (name) => {
+    const normalizedName = normalizeClientName(name).toLocaleLowerCase();
+    if (!normalizedName) {
+      return "";
+    }
+    const match = getClientMemory().find((entry) => entry.lookupKey === normalizedName);
+    return match?.recipientEmail ?? "";
+  };
+
+  const getClientDefaultNotes = (name) => {
+    const normalizedName = normalizeClientName(name).toLocaleLowerCase();
+    if (!normalizedName) {
+      return "";
+    }
+    const match = getClientMemory().find((entry) => entry.lookupKey === normalizedName);
+    return match?.defaultNotes ?? "";
+  };
+
+  const getClientRecurringInterval = (name) => {
+    const normalizedName = normalizeClientName(name).toLocaleLowerCase();
+    if (!normalizedName) {
+      return null;
+    }
+    const match = getClientMemory().find((entry) => entry.lookupKey === normalizedName);
+    return normalizeIntervalDays(match?.recurringIntervalDays);
   };
 
   const applyClientMemoryToDraft = (draft) => {
@@ -143,8 +264,15 @@
     legacyStorageKey,
     getClientMemory,
     saveClientMemory,
+    deleteClientMemoryEntry,
+    clearClientMemory,
     rememberClientDetails,
+    rememberClientRecipientEmail,
+    rememberClientRecurringInterval,
     getClientDetails,
+    getClientRecipientEmail,
+    getClientDefaultNotes,
+    getClientRecurringInterval,
     applyClientMemoryToDraft
   };
 })();

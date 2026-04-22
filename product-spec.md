@@ -1,7 +1,7 @@
 # Product Spec: AI Invoice Translator & Generator
 
 ## Core Purpose
-- This app turns messy, unstructured job notes or an uploaded invoice into a clean, professional, itemized invoice that a small service business owner is comfortable sending to a client.
+- This app turns messy, unstructured job notes into a clean, professional, itemized invoice that a small service business owner is comfortable sending to a client.
 - This app is not accounting software.
 - This app is not a template editor.
 - Product definition: "Paste messy job notes or upload an invoice and get a professional, itemized invoice you're comfortable sending - with control to tweak wording if needed."
@@ -13,7 +13,7 @@
   - Individual tasks (itemized, not overly grouped)
   - Labor (hours x rate, if provided)
   - Materials
-- The AI outputs a finished invoice, not suggestions.
+- The AI outputs a reviewable invoice draft. Any ambiguous money decision must stay explicit until the user resolves it.
 - Tone defaults to neutral professional.
 - Do not use legal language, threats, pressure, emotional wording, or defensive wording.
 - Do not add justification unless explicitly requested.
@@ -23,6 +23,7 @@
   - Dates and service periods
   - Materials line items
   - Balance due (if user specifies)
+  - Optional hosted payment links and paid/unpaid status tracking
 
 ## Editing Model
 - The AI is the primary author.
@@ -50,5 +51,5 @@
 - Dashboards or reports
 - Template galleries
 - Visual invoice designers
-- Payment processing
+- Banking, lending, payroll, or financial account management
 - Any feature that does not directly improve the clarity, professionalism, or sendability of an invoice

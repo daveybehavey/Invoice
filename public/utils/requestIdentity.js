@@ -4,9 +4,55 @@
   const sessionStorageKey = "invoiceAuthSession";
   const ownerHeader = "x-invoice-user-id";
   const authHeader = "authorization";
+  const productionApiOrigin = "https://app.notebill.app";
   let cachedOwnerId = null;
   let cachedSessionToken = null;
   let cachedSession = null;
+
+  const isCapacitorLocalApiOrigin = () => {
+    const origin = window.location?.origin || "";
+    return origin === "https://localhost" && Boolean(window.Capacitor || window.WEBVIEW_SERVER_URL);
+  };
+
+  const resolveApiUrl = (value) => {
+    if (!isCapacitorLocalApiOrigin()) {
+      return value;
+    }
+    try {
+      const currentOrigin = window.location?.origin || "https://localhost";
+      if (typeof value === "string") {
+        if (value.startsWith("/api/")) {
+          return `${productionApiOrigin}${value}`;
+        }
+        const parsed = new URL(value, currentOrigin);
+        if (parsed.origin === currentOrigin && parsed.pathname.startsWith("/api/")) {
+          return `${productionApiOrigin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+        }
+        return value;
+      }
+      if (value instanceof URL) {
+        if (value.origin === currentOrigin && value.pathname.startsWith("/api/")) {
+          return new URL(`${productionApiOrigin}${value.pathname}${value.search}${value.hash}`);
+        }
+        return value;
+      }
+    } catch (_error) {
+      return value;
+    }
+    return value;
+  };
+
+  const isExpiredSession = (session) => {
+    if (!session || typeof session !== "object") {
+      return false;
+    }
+    const expiresAt = typeof session.expiresAt === "string" ? session.expiresAt.trim() : "";
+    if (!expiresAt) {
+      return false;
+    }
+    const expiresAtMs = Date.parse(expiresAt);
+    return Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
+  };
 
   const readStoredOwnerId = () => {
     try {
@@ -82,6 +128,13 @@
   };
 
   const getSessionToken = () => {
+    const session = getAuthSession();
+    if (!session?.userId) {
+      if (cachedSessionToken || readStoredSessionToken()) {
+        clearAuthSession();
+      }
+      return null;
+    }
     if (cachedSessionToken) {
       return cachedSessionToken;
     }
@@ -90,10 +143,18 @@
   };
 
   const getAuthSession = () => {
+    if (cachedSession && isExpiredSession(cachedSession)) {
+      clearAuthSession();
+      return null;
+    }
     if (cachedSession) {
       return cachedSession;
     }
     cachedSession = readStoredSession();
+    if (isExpiredSession(cachedSession)) {
+      clearAuthSession();
+      return null;
+    }
     return cachedSession;
   };
 
@@ -180,20 +241,55 @@
 
   const apiFetch = (input, init) => {
     if (input instanceof Request) {
-      const headers = mergeHeaders(input.headers, init?.headers);
-      if (!headers.has(ownerHeader)) {
-        headers.set(ownerHeader, getInvoiceOwnerId());
+      const resolvedInput = resolveApiUrl(input.url);
+      const requestInit = withOwnerHeaders({
+        ...(init || {}),
+        headers: mergeHeaders(input.headers, init?.headers)
+      });
+      if (resolvedInput === input.url) {
+        return window.fetch(new Request(input, requestInit));
       }
-      return window.fetch(new Request(input, { ...init, headers }));
+      const requestWithHeaders = new Request(input, requestInit);
+      return window.fetch(
+        new Request(resolvedInput, {
+          method: requestWithHeaders.method,
+          headers: requestWithHeaders.headers,
+          body:
+            requestWithHeaders.method === "GET" || requestWithHeaders.method === "HEAD"
+              ? undefined
+              : requestWithHeaders.clone().body,
+          credentials: requestWithHeaders.credentials,
+          cache: requestWithHeaders.cache,
+          redirect: requestWithHeaders.redirect,
+          referrer: requestWithHeaders.referrer,
+          referrerPolicy: requestWithHeaders.referrerPolicy,
+          integrity: requestWithHeaders.integrity,
+          keepalive: requestWithHeaders.keepalive,
+          mode: requestWithHeaders.mode
+        })
+      );
     }
-    return window.fetch(input, withOwnerHeaders(init || {}));
+    return window.fetch(resolveApiUrl(input), withOwnerHeaders(init || {}));
   };
 
-  const signInWithEmail = async (email) => {
-    const response = await window.fetch("/api/auth/session", {
+  const requestSignInLink = async (email) => {
+    const response = await apiFetch("/api/auth/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email })
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload?.error || "Sign in failed.");
+    }
+    return payload;
+  };
+
+  const completeEmailLinkSignIn = async (linkToken) => {
+    const response = await apiFetch("/api/auth/session/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: linkToken })
     });
     const payload = await response.json();
     if (!response.ok) {
@@ -214,7 +310,7 @@
       clearAuthSession();
       return null;
     }
-    const response = await window.fetch("/api/auth/session", {
+    const response = await apiFetch("/api/auth/session", {
       headers: {
         authorization: `Bearer ${token}`
       }
@@ -237,7 +333,7 @@
     const token = getSessionToken();
     try {
       if (token) {
-        await window.fetch("/api/auth/session", {
+        await apiFetch("/api/auth/session", {
           method: "DELETE",
           headers: {
             authorization: `Bearer ${token}`
@@ -261,10 +357,12 @@
     getInvoiceOwnerId,
     getSessionToken,
     getAuthSession,
-    signInWithEmail,
+    requestSignInLink,
+    completeEmailLinkSignIn,
     signOut,
     refreshSession,
     withOwnerHeaders,
+    resolveApiUrl,
     apiFetch
   };
 })();

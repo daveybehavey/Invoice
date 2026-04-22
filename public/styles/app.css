@@ -74,6 +74,22 @@
     @apply max-w-7xl;
   }
 
+  .nb-page-shell--with-billie-composer {
+    padding-bottom: calc(13rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  @media (min-width: 768px) {
+    .nb-page-shell--with-billie-composer {
+      padding-bottom: calc(10rem + env(safe-area-inset-bottom, 0px));
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .nb-page-shell--with-billie-composer {
+      padding-bottom: 7rem;
+    }
+  }
+
   .nb-page-header {
     @apply border-b backdrop-blur;
     border-color: var(--nb-border-soft);
@@ -202,6 +218,11 @@
     color: #1d4ed8;
   }
 
+  .nb-chip button,
+  .nb-chip a {
+    @apply inline-flex min-h-9 items-center justify-center rounded-full px-2;
+  }
+
   .nb-assistant-chip {
     @apply inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold;
     border-color: rgba(105, 147, 210, 0.2);
@@ -239,23 +260,37 @@
   }
 
   .nb-usage-meter {
-    @apply rounded-xl border px-3 py-2;
+    @apply min-w-0 overflow-hidden rounded-xl border px-3 py-2;
     border-color: rgba(9, 48, 100, 0.1);
     background: rgba(255, 255, 255, 0.72);
   }
 
   .nb-usage-meter__row {
-    @apply flex items-center justify-between gap-2 text-[11px];
+    @apply grid items-center gap-x-2 gap-y-1 text-[11px];
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .nb-usage-meter__label {
-    @apply font-semibold;
+    @apply min-w-0 font-semibold;
     color: #334155;
+    overflow-wrap: anywhere;
   }
 
   .nb-usage-meter__remaining {
-    @apply font-medium;
+    @apply max-w-full justify-self-end text-right font-medium;
     color: #64748b;
+    overflow-wrap: anywhere;
+  }
+
+  @media (max-width: 380px) {
+    .nb-usage-meter__row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .nb-usage-meter__remaining {
+      justify-self: start;
+      text-align: left;
+    }
   }
 
   .nb-usage-meter__track {
@@ -278,7 +313,7 @@
   }
 
   .nb-btn-primary {
-    @apply inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-semibold text-white transition duration-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex min-h-10 items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-semibold text-white transition duration-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60;
     background: linear-gradient(180deg, #14447d 0%, #093064 100%);
     box-shadow: 0 18px 44px rgba(9, 48, 100, 0.18);
   }
@@ -288,7 +323,7 @@
   }
 
   .nb-btn-secondary {
-    @apply inline-flex items-center justify-center rounded-2xl border px-4 py-2.5 text-sm font-semibold transition duration-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex min-h-10 items-center justify-center rounded-2xl border px-4 py-2.5 text-sm font-semibold transition duration-200 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60;
     border-color: rgba(9, 48, 100, 0.1);
     background: rgba(255, 255, 255, 0.88);
     color: var(--nb-text-secondary);
@@ -300,8 +335,12 @@
     color: var(--nb-text-primary);
   }
 
+  .nb-billie-composer {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
   .nb-btn-ghost {
-    @apply inline-flex items-center justify-center rounded-full border px-3 py-1.5 text-xs font-semibold transition duration-200 disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex min-h-10 items-center justify-center rounded-full border px-3 py-1.5 text-xs font-semibold transition duration-200 disabled:cursor-not-allowed disabled:opacity-60;
     border-color: rgba(105, 147, 210, 0.22);
     background: var(--nb-accent-ghost);
     color: var(--nb-accent);
@@ -363,7 +402,7 @@
 
   .nb-toolbar button,
   .nb-toolbar a {
-    @apply rounded-xl px-3 py-1.5 text-xs font-semibold transition;
+    @apply min-h-10 rounded-xl px-3 py-2 text-xs font-semibold transition;
   }
 
   .nb-toolbar .is-active {

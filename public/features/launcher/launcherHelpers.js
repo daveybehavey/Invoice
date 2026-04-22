@@ -51,6 +51,22 @@
       icon: icons.swatch,
       onClick: () => navigate("/settings/business"),
       disabled: false
+    },
+    {
+      key: "memory",
+      title: "Memory",
+      description: "Review or clear remembered clients, notes, send emails, and repeat cadences.",
+      icon: icons.archive,
+      onClick: () => navigate("/settings/memory"),
+      disabled: false
+    },
+    {
+      key: "feedback",
+      title: "Feedback",
+      description: "Send a quick bug report, screenshot note, or tester reaction.",
+      icon: icons.feedback,
+      onClick: () => navigate("/feedback"),
+      disabled: false
     }
   ];
 

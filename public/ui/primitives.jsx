@@ -99,6 +99,25 @@
     );
   }
 
+  function FeedbackIcon({ className }) {
+    return (
+      <svg
+        className={className}
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        aria-hidden="true"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M8.625 12.75h6.75M8.625 9.75h6.75M5.25 4.5h13.5A2.25 2.25 0 0121 6.75v8.25a2.25 2.25 0 01-2.25 2.25H10.5L5.25 21v-3.75A2.25 2.25 0 013 15V6.75A2.25 2.25 0 015.25 4.5z"
+        />
+      </svg>
+    );
+  }
+
   function LauncherCard({ title, description, icon, onClick, disabled, badge }) {
     const iconClass = disabled ? "h-6 w-6 text-slate-400" : "h-6 w-6 text-[#093064]";
     return (
@@ -174,6 +193,7 @@
     UploadIcon,
     ArchiveIcon,
     SwatchIcon,
+    FeedbackIcon,
     LauncherCard,
     SurfacePanel,
     StatusChip

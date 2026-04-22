@@ -193,7 +193,9 @@
         : "No line items captured yet.";
     const decisionsText =
       pendingDecisionCount > 0
-        ? `${pendingDecisionCount} decision${pendingDecisionCount > 1 ? "s" : ""} need your call.`
+        ? `${pendingDecisionCount} decision${pendingDecisionCount > 1 ? "s" : ""} ${
+            pendingDecisionCount > 1 ? "need" : "needs"
+          } your call.`
         : qualityBlockerCount > 0
           ? `No decisions pending. ${qualityBlockerCount} review item${
               qualityBlockerCount > 1 ? "s" : ""

@@ -68,7 +68,7 @@
   const { DEFAULT_ACCENT_COLOR, normalizeAccentColor, buildAccentPalette } = brandThemeUtils;
   const { STYLE_PRESETS, SPACING_DENSITY_PRESETS } = styleCatalogUtils;
   const { getBusinessProfile, applyBusinessProfileToDraft } = businessProfileUtils;
-  const { rememberClientDetails } = clientMemoryUtils;
+  const { rememberClientDetails, getClientDefaultNotes, getClientMemory } = clientMemoryUtils;
   const { getLineItemLibrary, rememberLineItems } = lineItemLibraryUtils;
   const { readLogoFileForStorage } = logoImageUtils;
   const manualDraftStorageUtils = window.InvoiceManualDraftStorage;
@@ -93,6 +93,32 @@
   }
   const { readBillingNoticeFromUrl } = billingActions;
 
+  const PAYMENT_TERM_QUICK_PICKS = [
+    { id: "receipt", label: "Due on receipt", text: "Payment due on receipt.", dueInDays: 0 },
+    { id: "net-7", label: "Net 7", text: "Payment due within 7 days.", dueInDays: 7 },
+    { id: "net-14", label: "Net 14", text: "Payment due within 14 days.", dueInDays: 14 },
+    { id: "net-30", label: "Net 30", text: "Payment due within 30 days.", dueInDays: 30 }
+  ];
+  const PAYMENT_TERM_LINE_PATTERN =
+    /^(due on receipt|payment due|payment is due|please remit payment|net\s*\d+|payable within)/i;
+
+  const applyPaymentTermToNotes = (currentNotes, termText) => {
+    const existingLines = String(currentNotes ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !PAYMENT_TERM_LINE_PATTERN.test(line));
+    return [termText, ...existingLines].join("\n");
+  };
+  const addDaysToIsoDate = (dateValue, days) => {
+    const baseDate = typeof dateValue === "string" && dateValue.trim() ? new Date(`${dateValue}T00:00:00`) : new Date();
+    if (Number.isNaN(baseDate.getTime())) {
+      return "";
+    }
+    baseDate.setDate(baseDate.getDate() + Math.max(0, Number(days) || 0));
+    return baseDate.toISOString().slice(0, 10);
+  };
+
 function ManualInvoiceCanvas() {
   const navigate = useNavigate();
   const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
@@ -113,6 +139,7 @@ function ManualInvoiceCanvas() {
   const seededDraft = applyBusinessProfileToDraft(initialDraft ?? {}, initialBusinessProfile);
   const [invoiceNumber, setInvoiceNumber] = useState(() => initialDraft?.invoiceNumber ?? "INV-0001");
   const [invoiceDate, setInvoiceDate] = useState(() => initialDraft?.invoiceDate ?? "");
+  const [dueDate, setDueDate] = useState(() => initialDraft?.dueDate ?? "");
   const [fromDetails, setFromDetails] = useState(
     () => initialDraft?.fromDetails ?? seededDraft?.fromDetails ?? ""
   );
@@ -169,6 +196,7 @@ function ManualInvoiceCanvas() {
     timingSummary: ""
   });
   const [savedLineItemLibrary, setSavedLineItemLibrary] = useState(() => getLineItemLibrary());
+  const [clientMemoryList, setClientMemoryList] = useState(() => getClientMemory());
   const [showSavedLineItems, setShowSavedLineItems] = useState(false);
   const saveTimeoutRef = useRef(null);
   const clearStatusTimeoutRef = useRef(null);
@@ -208,6 +236,38 @@ function ManualInvoiceCanvas() {
   };
 
   const formatMoney = (value) => `$${value.toFixed(2)}`;
+  const getPrimaryBillToName = (value) => {
+    if (typeof value !== "string") {
+      return "";
+    }
+    return value.split("\n")[0]?.trim() ?? "";
+  };
+  const formatSavedItemUsage = (value) => {
+    const parsed = Number.parseInt(String(value ?? ""), 10);
+    if (!Number.isFinite(parsed) || parsed <= 1) {
+      return "Used before";
+    }
+    return `Used ${parsed} times`;
+  };
+  const formatRecurringCadence = (intervalDays) => {
+    const parsed = Number(intervalDays);
+    if (!Number.isFinite(parsed)) {
+      return "";
+    }
+    const rounded = Math.round(parsed);
+    if (rounded === 7) return "weekly";
+    if (rounded === 14) return "biweekly";
+    if (rounded === 30) return "monthly";
+    return `${rounded}-day`;
+  };
+  const formatClientMemoryHints = (entry) =>
+    [
+      entry?.recipientEmail ? "email" : "",
+      entry?.defaultNotes ? "note" : "",
+      entry?.recurringIntervalDays ? formatRecurringCadence(entry.recurringIntervalDays) : ""
+    ]
+      .filter(Boolean)
+      .join(", ");
 
   const getLineAmount = (item) => parseNumber(item.qty) * parseNumber(item.rate);
   const subtotal = lineItems.reduce((sum, item) => sum + getLineAmount(item), 0);
@@ -218,6 +278,7 @@ function ManualInvoiceCanvas() {
   const previewData = {
     invoiceNumber,
     invoiceDate,
+    dueDate,
     fromDetails,
     billToDetails,
     notes,
@@ -247,6 +308,23 @@ function ManualInvoiceCanvas() {
     borderColor: accent.border,
     color: accent.primary
   };
+  const primaryBillToName = getPrimaryBillToName(billToDetails);
+  const clientMemoryItems = rankedSavedLineItems.filter(({ clientMatch }) => clientMatch).slice(0, 3);
+  const clientDefaultNotes = getClientDefaultNotes(primaryBillToName);
+  const showClientDefaultNotes = Boolean(clientDefaultNotes) && !notes.trim();
+  const normalizedBillToSearch = primaryBillToName.toLocaleLowerCase();
+  const clientMemorySuggestions = clientMemoryList
+    .filter((entry) => {
+      if (!entry?.details || !entry?.name) {
+        return false;
+      }
+      if (!normalizedBillToSearch) {
+        return true;
+      }
+      return entry.name.toLocaleLowerCase().includes(normalizedBillToSearch);
+    })
+    .filter((entry) => entry.details !== billToDetails.trim())
+    .slice(0, 4);
 
   const handleLineItemChange = (id, field, value) => {
     setLineItems((prev) =>
@@ -347,6 +425,14 @@ function ManualInvoiceCanvas() {
       return prev.map((item, index) => (index === emptyIndex ? nextLineItem : item));
     });
     setTimedDraftStatus(`Inserted saved item: ${entry.description}`);
+    void apiFetch("/api/telemetry/revenue-signals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "service_memory_reused",
+        source: "manual_saved_item_reuse"
+      })
+    }).catch(() => {});
   };
 
   const handleApplySuggestedRate = (lineId, suggestion) => {
@@ -359,6 +445,45 @@ function ManualInvoiceCanvas() {
     setTimedDraftStatus(
       `Applied suggested rate $${suggestion.rate.toFixed(2)}/hr (${matchLabel}${confidenceLabel})`
     );
+  };
+  const handleApplyClientDefaultNotes = () => {
+    if (!clientDefaultNotes) {
+      return;
+    }
+    setNotes(clientDefaultNotes);
+    setTimedDraftStatus("Applied prior client note");
+    void apiFetch("/api/telemetry/revenue-signals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "client_memory_reused",
+        source: "manual_client_note_reuse"
+      })
+    }).catch(() => {});
+  };
+  const handleApplyPaymentTerm = (term) => {
+    if (!term?.text) {
+      return;
+    }
+    setNotes((current) => applyPaymentTermToNotes(current, term.text));
+    setDueDate(addDaysToIsoDate(invoiceDate, term.dueInDays));
+    setNotesVisible(true);
+    setTimedDraftStatus(`${term.label} terms applied`);
+  };
+  const handleApplyClientMemory = (entry) => {
+    if (!entry?.details) {
+      return;
+    }
+    setBillToDetails(entry.details);
+    setTimedDraftStatus(`Applied client details for ${entry.name || "saved client"}`);
+    void apiFetch("/api/telemetry/revenue-signals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "client_memory_reused",
+        source: "manual_client_details_reuse"
+      })
+    }).catch(() => {});
   };
 
   const handleLogoChange = async (event) => {
@@ -403,6 +528,7 @@ function ManualInvoiceCanvas() {
     const invoice = {
       invoiceNumber: invoiceNumber?.trim() || undefined,
       issueDate: invoiceDate || undefined,
+      dueDate: dueDate || undefined,
       customerName: billToDetails?.trim() || undefined,
       currency: "USD",
       lineItems: itemsWithDescriptions.map((item) => ({
@@ -431,6 +557,7 @@ function ManualInvoiceCanvas() {
     const invoice = {
       invoiceNumber: invoiceNumber?.trim() || undefined,
       issueDate: invoiceDate || undefined,
+      dueDate: dueDate || undefined,
       customerName: billToDetails?.trim() || undefined,
       currency: "USD",
       lineItems: itemsWithDescriptions.map((item) => ({
@@ -482,6 +609,9 @@ function ManualInvoiceCanvas() {
     if (updatedInvoice.issueDate !== undefined) {
       setInvoiceDate(updatedInvoice.issueDate ?? "");
     }
+    if (updatedInvoice.dueDate !== undefined) {
+      setDueDate(updatedInvoice.dueDate ?? "");
+    }
     if (updatedInvoice.customerName !== undefined) {
       setBillToDetails(updatedInvoice.customerName ?? "");
     }
@@ -528,6 +658,7 @@ function ManualInvoiceCanvas() {
     const payload = {
       invoiceNumber,
       invoiceDate,
+      dueDate,
       fromDetails,
       billToDetails,
       notes,
@@ -582,6 +713,7 @@ function ManualInvoiceCanvas() {
   }, [
     invoiceNumber,
     invoiceDate,
+    dueDate,
     fromDetails,
     billToDetails,
     notes,
@@ -657,6 +789,7 @@ function ManualInvoiceCanvas() {
     customerName: billToDetails?.trim() || undefined,
     invoiceNumber: invoiceNumber?.trim() || undefined,
     issueDate: invoiceDate || undefined,
+    dueDate: dueDate || undefined,
     servicePeriodStart: undefined,
     servicePeriodEnd: undefined,
     workSessions: [],
@@ -723,7 +856,11 @@ function ManualInvoiceCanvas() {
         setSavedInvoiceId(nextId);
       }
       setSavedInvoiceStatus(payload?.invoice?.status ?? "draft");
-      rememberClientDetails(billToDetails);
+      setClientMemoryList(
+        rememberClientDetails(billToDetails, {
+          defaultNotes: notes
+        })
+      );
       setSavedLineItemLibrary(
         rememberLineItems(editableResult.invoice.lineItems, {
           clientName: billToDetails
@@ -1008,7 +1145,7 @@ function ManualInvoiceCanvas() {
           </button>
           <button
             type="button"
-            className="text-xs font-medium text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
+            className="inline-flex min-h-10 items-center justify-center rounded-full px-3 text-xs font-semibold text-slate-500 underline-offset-2 transition hover:bg-white/70 hover:text-slate-700 hover:underline"
             onClick={() => navigate("/")}
           >
             {authSession?.email ? `Account: ${authSession.email}` : "Account: local mode"}
@@ -1049,7 +1186,7 @@ function ManualInvoiceCanvas() {
                   <button
                     key={action.id}
                     type="button"
-                    className="rounded-full border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+                    className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                     style={accentGhostButtonStyle}
                     onClick={() => submitBillieWorkspaceInstruction(action.instruction)}
                     disabled={assistantWorkspaceRuntime.loading || assistantWorkspaceRuntime.hasPendingEdit}
@@ -1215,6 +1352,16 @@ function ManualInvoiceCanvas() {
                       onChange={(event) => setInvoiceDate(event.target.value)}
                     />
                   </label>
+                  <label className={`${activePreset.textClass} ${activePreset.labelClass} flex items-center gap-3`}>
+                    <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Due</span>
+                    <input
+                      type="date"
+                      aria-label="Due date"
+                      className={`min-w-[150px] ${activePreset.inputClass} ${activePreset.textClass}`}
+                      value={dueDate}
+                      onChange={(event) => setDueDate(event.target.value)}
+                    />
+                  </label>
                 </div>
               </div>
             </header>
@@ -1239,11 +1386,161 @@ function ManualInvoiceCanvas() {
                   value={billToDetails}
                   onChange={(event) => setBillToDetails(event.target.value)}
                 />
+                {clientMemorySuggestions.length > 0 ? (
+                  <div className="no-print flex flex-wrap gap-2">
+                    {clientMemorySuggestions.map((entry) => (
+                      <button
+                        key={entry.lookupKey}
+                        type="button"
+                        className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300"
+                        onClick={() => handleApplyClientMemory(entry)}
+                        aria-label={`Use saved client ${entry.name}`}
+                      >
+                        {entry.name}
+                        {formatClientMemoryHints(entry) ? ` + ${formatClientMemoryHints(entry)}` : ""}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </section>
 
+            {clientMemoryItems.length > 0 ? (
+              <section className="no-print rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3 shadow-sm">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                      Client memory
+                    </p>
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      Past work{primaryBillToName ? ` for ${primaryBillToName}` : ""}
+                    </h3>
+                    <p className="text-xs text-slate-600">
+                      Reuse prior wording and rates only when you choose. Money never changes automatically.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="self-start rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300"
+                    onClick={() => setShowSavedLineItems(true)}
+                  >
+                    Show all saved items
+                  </button>
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-3">
+                  {clientMemoryItems.map(({ entry }) => (
+                    <button
+                      key={`client-memory-${entry.lookupKey}`}
+                      type="button"
+                      className="rounded-xl border border-white/80 bg-white px-3 py-2 text-left text-sm shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-200 hover:shadow-md"
+                      onClick={() => handleInsertSavedLineItem(entry)}
+                      aria-label={`Reuse ${entry.description} from client memory`}
+                    >
+                      <span className="block font-semibold text-slate-800">{entry.description}</span>
+                      <span className="mt-1 block text-xs text-slate-500">
+                        {[
+                          entry.qty ? `Qty ${entry.qty}` : "",
+                          entry.rate ? `Rate $${entry.rate}` : "",
+                          formatSavedItemUsage(entry.usageCount)
+                        ]
+                          .filter(Boolean)
+                          .join(" / ")}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
             <section className="space-y-3">
-              <div className="overflow-x-auto">
+              <div className="space-y-3 md:hidden">
+                {lineItems.map((item, index) => {
+                  const rateSuggestion = item?.id ? lineRateSuggestionsByLineId[item.id] : null;
+                  const hasAmount = item.qty !== "" && item.rate !== "";
+                  return (
+                    <div key={`${item.id}-mobile`} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className={`${activePreset.textClass} ${activePreset.labelClass}`}>
+                          Line {index + 1}
+                        </p>
+                        <p className="text-sm font-semibold text-slate-600 tabular-nums">
+                          {hasAmount ? formatMoney(getLineAmount(item)) : "Needs value"}
+                        </p>
+                      </div>
+                      <label className="mt-3 block space-y-1">
+                        <span className={`${activePreset.textClass} ${activePreset.labelClass}`}>Description</span>
+                        <input
+                          type="text"
+                          className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
+                          placeholder="Description"
+                          value={item.description}
+                          onChange={(event) =>
+                            handleLineItemChange(item.id, "description", event.target.value)
+                          }
+                          onBlur={() => handleLineItemDescriptionBlur(item.id)}
+                        />
+                      </label>
+                      <div className="mt-3 grid grid-cols-2 gap-3">
+                        <label className="block space-y-1">
+                          <span className={`${activePreset.textClass} ${activePreset.labelClass}`}>Qty</span>
+                          <input
+                            type="number"
+                            className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
+                            placeholder="0"
+                            value={item.qty}
+                            onChange={(event) =>
+                              handleLineItemChange(item.id, "qty", event.target.value)
+                            }
+                          />
+                        </label>
+                        <label className="block space-y-1">
+                          <span className={`${activePreset.textClass} ${activePreset.labelClass}`}>Rate</span>
+                          <input
+                            type="number"
+                            className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
+                            placeholder="$0"
+                            value={item.rate}
+                            onChange={(event) =>
+                              handleLineItemChange(item.id, "rate", event.target.value)
+                            }
+                          />
+                        </label>
+                      </div>
+                      {rateSuggestion ? (
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 transition hover:border-blue-300 hover:text-blue-900"
+                            onClick={() => handleApplySuggestedRate(item.id, rateSuggestion)}
+                            aria-label={`Apply suggested rate $${rateSuggestion.rate.toFixed(2)} to line ${index + 1}`}
+                          >
+                            {`Use suggested $${rateSuggestion.rate.toFixed(2)}/hr`}
+                          </button>
+                          {rateSuggestion.confidence === "high" ? (
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+                              High confidence
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {item.description?.trim() ? (
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            className="inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold"
+                            style={accentGhostButtonStyle}
+                            onClick={() => handleBillieLineRefine(index + 1, item.description)}
+                            aria-label={`Billie polish line ${index + 1}`}
+                          >
+                            Billie polish
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="hidden overflow-x-auto md:block">
                 <table className={`min-w-full text-left ${activePreset.textClass}`}>
                   <thead className={activePreset.tableHeadClass}>
                     <tr>
@@ -1338,7 +1635,7 @@ function ManualInvoiceCanvas() {
               </div>
               <button
                 type="button"
-                className={`${activePreset.textClass} font-semibold`}
+                className={`${activePreset.textClass} inline-flex min-h-10 items-center rounded-full px-3 font-semibold transition hover:bg-slate-50`}
                 style={{ color: accent.primary }}
                 onClick={handleAddLineItem}
               >
@@ -1456,6 +1753,49 @@ function ManualInvoiceCanvas() {
                   Notes stay editable here but are hidden from the invoice preview and PDF.
                 </p>
               )}
+              {showClientDefaultNotes ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 no-print">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                        Prior note for this client
+                      </p>
+                      <p className="mt-1 line-clamp-2 text-sm text-slate-700">{clientDefaultNotes}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="min-h-10 w-full rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300 sm:w-auto"
+                      onClick={handleApplyClientDefaultNotes}
+                    >
+                      Use prior note
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              <div className="rounded-xl border border-slate-200 bg-white/70 p-3 no-print">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Quick terms
+                    </p>
+                    <p className="mt-1 hidden text-xs text-slate-500 sm:block">
+                      Adds a clear due-date line without changing invoice totals.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                    {PAYMENT_TERM_QUICK_PICKS.map((term) => (
+                      <button
+                        key={term.id}
+                        type="button"
+                        className="min-h-10 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white sm:text-xs"
+                        onClick={() => handleApplyPaymentTerm(term)}
+                      >
+                        {term.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
               <textarea
                 rows={4}
                 className={`w-full resize-none ${notesVisible ? "bg-slate-50/70" : "border-dashed bg-slate-50/40"} ${activePreset.inputClass} ${activePreset.textClass}`}

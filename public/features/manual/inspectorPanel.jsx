@@ -988,6 +988,40 @@ function InspectorPanel({
   const previewBillToDetails = previewData?.billToDetails?.trim() || "Add client details";
   const previewNotes = previewData?.notes?.trim() || "Add payment terms or a note.";
   const previewPaymentLink = previewData?.paymentLinkUrl?.trim() || "";
+  const hasClientDetails = Boolean(previewData?.billToDetails?.trim());
+  const hasBillableLineItem = parsedLineItems.some(
+    (item) => !item.placeholder && item.description?.trim() && Number.isFinite(item.amount) && item.amount > 0
+  );
+  const hasInvoiceTotal = Number.isFinite(previewTotal) && previewTotal > 0;
+  const hasPaymentTerms = Boolean(previewData?.notes?.trim() || previewPaymentLink);
+  const sendReady = hasClientDetails && hasBillableLineItem && hasInvoiceTotal;
+  const readinessItems = [
+    {
+      id: "client",
+      label: "Client",
+      ready: hasClientDetails,
+      status: hasClientDetails ? "Client added" : "Add client"
+    },
+    {
+      id: "line-items",
+      label: "Line items",
+      ready: hasBillableLineItem,
+      status: hasBillableLineItem ? "Billable item added" : "Add work, quantity, and rate"
+    },
+    {
+      id: "total",
+      label: "Total",
+      ready: hasInvoiceTotal,
+      status: hasInvoiceTotal ? `${formatPreviewMoney(previewTotal)} total` : "Add an amount"
+    },
+    {
+      id: "terms",
+      label: "Terms",
+      ready: hasPaymentTerms,
+      optional: true,
+      status: hasPaymentTerms ? "Payment info added" : "Optional but helpful"
+    }
+  ];
   const paymentStateLabel =
     invoiceStatus === "paid" ? "Paid in full" : `${formatPreviewMoney(previewTotal)} due`;
   const paymentStateClass =
@@ -1563,6 +1597,52 @@ function InspectorPanel({
           </div>
         ) : activeTab === "export" ? (
           <div className="space-y-4">
+            <div
+              className={`rounded-2xl border p-3 ${
+                sendReady
+                  ? "border-emerald-200 bg-emerald-50/70"
+                  : "border-amber-200 bg-amber-50/75"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Send-ready check</p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    {sendReady
+                      ? "Core details are set. Save or download when you are ready."
+                      : "Add the missing basics before sending this to a client."}
+                  </p>
+                </div>
+                <span
+                  className={`nb-chip normal-case tracking-normal ${
+                    sendReady ? "nb-chip--success" : "nb-chip--warning"
+                  }`}
+                >
+                  {sendReady ? "Ready to send" : "Needs review"}
+                </span>
+              </div>
+              <div className="mt-3 grid gap-2">
+                {readinessItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-white/70 bg-white/70 px-3 py-2"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className={`h-2.5 w-2.5 rounded-full ${
+                          item.ready ? "bg-emerald-500" : item.optional ? "bg-slate-300" : "bg-amber-500"
+                        }`}
+                        aria-hidden="true"
+                      />
+                      <span className="font-semibold text-slate-800">{item.label}</span>
+                    </div>
+                    <span className="min-w-0 text-right text-xs font-semibold text-slate-600">
+                      {item.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold text-slate-900">Save to library</p>

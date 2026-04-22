@@ -204,6 +204,7 @@
           : useFreshDraft
             ? today
             : issueDate || today,
+      dueDate: !useFreshDraft && typeof invoice?.dueDate === "string" ? invoice.dueDate.slice(0, 10) : "",
       fromDetails: "",
       billToDetails: invoice?.customerName ?? "",
       notes: invoice?.notes ?? "",

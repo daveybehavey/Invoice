@@ -176,6 +176,15 @@
     );
   };
 
+  const SAMPLE_JOB_NOTES = [
+    "Apr 18 - Jordan Lee, 44 Maple Ave.",
+    "Repaired leaking kitchen sink.",
+    "2.25 hours at $95/hr.",
+    "Replaced supply line $18.50 and washer kit $7.",
+    "Client asked for no tax this time.",
+    "Payment due in 14 days."
+  ].join("\n");
+
 function AIIntake() {
   const navigate = useNavigate();
   const legacyDraftStorageKey = "invoiceDraft";
@@ -329,6 +338,7 @@ function AIIntake() {
   const lastUserMessageRef = useRef("");
   const lastIntakeModeRef = useRef("full");
   const importSeedRef = useRef(false);
+  const sampleSeedRef = useRef(false);
   const hasAutoCollapsedRef = useRef(false);
   const auditRequestIdRef = useRef(0);
   const openDecisionsRef = useRef([]);
@@ -368,6 +378,24 @@ function AIIntake() {
     setMessages,
     setIsTyping
   });
+
+  useEffect(() => {
+    if (sampleSeedRef.current || typeof window === "undefined") {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("sample") !== "starter") {
+      return;
+    }
+    sampleSeedRef.current = true;
+    setInputValue(SAMPLE_JOB_NOTES);
+    setVoiceNoteNotice("Sample notes loaded. Review them, then build the invoice.");
+    params.delete("sample");
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`;
+    window.history.replaceState({}, "", nextUrl);
+  }, []);
+
   const currentReviewClientName =
     typeof finishedInvoice?.customerName === "string" ? finishedInvoice.customerName.trim() : "";
 
@@ -975,6 +1003,7 @@ function AIIntake() {
       ? "Waiting for your pricing input"
       : "Ready for notes";
   const billieWorkspaceVisible = hasReviewCard && intakePhase !== "awaiting_follow_up";
+  const showBillieComposer = (showChatInput || billieWorkspaceVisible) && intakePhase !== "awaiting_follow_up";
   const billieActionChips = billieWorkspaceVisible
     ? [
         {
@@ -1635,7 +1664,7 @@ function AIIntake() {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              className="text-sm font-semibold text-blue-800"
+              className="nb-btn-ghost"
               onClick={() => navigate("/")}
             >
               Back
@@ -1643,7 +1672,7 @@ function AIIntake() {
             {hasIntakeProgress ? (
               <button
                 type="button"
-                className="text-sm font-semibold text-slate-600 hover:text-slate-900"
+                className="inline-flex min-h-10 items-center rounded-full px-3 text-sm font-semibold text-slate-600 transition hover:bg-white/70 hover:text-slate-900"
                 onClick={handleResetIntake}
               >
                 New intake
@@ -1658,7 +1687,7 @@ function AIIntake() {
             </p>
             <button
               type="button"
-              className="mt-1 text-xs font-medium text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
+              className="mt-1 inline-flex min-h-10 items-center justify-center rounded-full px-3 text-xs font-semibold text-slate-500 underline-offset-2 transition hover:bg-white/70 hover:text-slate-700 hover:underline"
               onClick={() => navigate("/")}
             >
               {authSession?.email ? `Account: ${authSession.email}` : "Account: local mode"}
@@ -1668,7 +1697,11 @@ function AIIntake() {
       </header>
 
       <main className="flex flex-1 flex-col">
-        <div className="nb-page-shell nb-page-shell--wide flex w-full flex-1 flex-col pb-28">
+        <div
+          className={`nb-page-shell nb-page-shell--wide flex w-full flex-1 flex-col ${
+            showBillieComposer ? "nb-page-shell--with-billie-composer" : "pb-28"
+          }`}
+        >
           <div className="nb-page-grid flex-1 pt-6">
             <div className="min-w-0 space-y-6">
               {billingNotice ? (
@@ -1690,7 +1723,7 @@ function AIIntake() {
                   {isCompactViewport ? (
                     <button
                       type="button"
-                      className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
+                      className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs shadow-sm"
                       onClick={() => setWizardStepsExpanded((current) => !current)}
                       aria-expanded={wizardStepsExpanded}
                       aria-controls="intake-step-details"
@@ -1745,6 +1778,17 @@ function AIIntake() {
                     Paste them as-is: dates, hours, rates, parts, and anything still uncertain.
                   </p>
                   <div className="mt-4 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      className="nb-btn-ghost"
+                      onClick={() => {
+                        setInputValue(SAMPLE_JOB_NOTES);
+                        setVoiceNoteNotice("Sample notes loaded. Review them, then build the invoice.");
+                      }}
+                      disabled={voiceNoteBusy || isTyping}
+                    >
+                      Try sample notes
+                    </button>
                     <input
                       ref={audioUploadInputRef}
                       type="file"
@@ -1878,7 +1922,13 @@ function AIIntake() {
                 }
 
                 if (message.kind === "review" && message.payload) {
-                  const payload = message.payload;
+                  const payload = {
+                    ...message.payload,
+                    decisions: openDecisions,
+                    assumptions,
+                    unparsedLines,
+                    qualityGate: outputQuality ?? message.payload.qualityGate
+                  };
                   const decisionKeywordSets = buildDecisionKeywordSets(
                     payload.decisions ?? [],
                     extractKeywords
@@ -2143,10 +2193,10 @@ function AIIntake() {
         </aside>
       ) : null}
 
-      {(showChatInput || billieWorkspaceVisible) && intakePhase !== "awaiting_follow_up" ? (
+      {showBillieComposer ? (
         <form
           onSubmit={handleSend}
-          className="fixed bottom-0 left-0 right-0 border-t border-[rgba(9,48,100,0.08)] bg-white/84 backdrop-blur"
+          className="nb-billie-composer fixed bottom-0 left-0 right-0 border-t border-[rgba(9,48,100,0.08)] bg-white/84 backdrop-blur"
         >
           <div className="mx-auto max-w-6xl space-y-2 px-4 py-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
