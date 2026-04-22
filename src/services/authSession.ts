@@ -1,4 +1,4 @@
-import { createHmac, createHash, timingSafeEqual } from "node:crypto";
+import { createHmac, createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Request } from "express";
 
 export type InvoiceAuthSession = {
@@ -8,14 +8,29 @@ export type InvoiceAuthSession = {
 };
 
 type SessionPayload = {
+  kind: "session";
   userId: string;
   email: string;
+  exp: number;
+};
+
+type LegacySessionPayload = {
+  userId: string;
+  email: string;
+  exp: number;
+};
+
+type EmailLinkPayload = {
+  kind: "email_link";
+  email: string;
+  nonce: string;
   exp: number;
 };
 
 const AUTH_HEADER_PREFIX = "Bearer ";
 const DEFAULT_SESSION_SECRET = "local-invoice-session-secret";
 const defaultTtlHours = Number.parseInt(process.env.INVOICE_SESSION_TTL_HOURS ?? "720", 10);
+const defaultEmailLinkTtlMinutes = Number.parseInt(process.env.INVOICE_EMAIL_LINK_TTL_MINUTES ?? "15", 10);
 const INSECURE_SESSION_SECRETS = new Set([
   "",
   DEFAULT_SESSION_SECRET,
@@ -30,6 +45,7 @@ export function createAuthSessionForEmail(rawEmail: string): { token: string; se
   const ttlHours = Number.isFinite(defaultTtlHours) && defaultTtlHours > 0 ? defaultTtlHours : 720;
   const expiresAtMs = Date.now() + ttlHours * 60 * 60 * 1000;
   const payload: SessionPayload = {
+    kind: "session",
     userId,
     email: normalizedEmail,
     exp: Math.floor(expiresAtMs / 1000)
@@ -42,6 +58,32 @@ export function createAuthSessionForEmail(rawEmail: string): { token: string; se
       email: normalizedEmail,
       expiresAt: new Date(expiresAtMs).toISOString()
     }
+  };
+}
+
+export function createEmailSignInToken(
+  rawEmail: string
+): {
+  token: string;
+  email: string;
+  expiresAt: string;
+} {
+  const normalizedEmail = normalizeEmail(rawEmail);
+  const ttlMinutes =
+    Number.isFinite(defaultEmailLinkTtlMinutes) && defaultEmailLinkTtlMinutes > 0
+      ? defaultEmailLinkTtlMinutes
+      : 15;
+  const expiresAtMs = Date.now() + ttlMinutes * 60 * 1000;
+  const payload: EmailLinkPayload = {
+    kind: "email_link",
+    email: normalizedEmail,
+    nonce: randomBytes(18).toString("base64url"),
+    exp: Math.floor(expiresAtMs / 1000)
+  };
+  return {
+    token: signPayload(payload),
+    email: normalizedEmail,
+    expiresAt: new Date(expiresAtMs).toISOString()
   };
 }
 
@@ -73,20 +115,12 @@ export function getAuthTokenFromRequest(req: Request): string | null {
 }
 
 export function verifySessionToken(token: string): InvoiceAuthSession | null {
-  const [encodedPayload, providedSignature] = token.split(".");
-  if (!encodedPayload || !providedSignature) {
+  const payload = readSignedPayload(token);
+  if (!payload) {
     return null;
   }
 
-  const expectedSignature = signEncodedPayload(encodedPayload);
-  if (!safeEqual(expectedSignature, providedSignature)) {
-    return null;
-  }
-
-  let payload: SessionPayload;
-  try {
-    payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as SessionPayload;
-  } catch {
+  if ("kind" in payload && payload.kind !== "session") {
     return null;
   }
 
@@ -111,7 +145,31 @@ export function verifySessionToken(token: string): InvoiceAuthSession | null {
   };
 }
 
-function signPayload(payload: SessionPayload): string {
+export function verifyEmailSignInToken(token: string): {
+  email: string;
+  expiresAt: string;
+} | null {
+  const payload = readSignedPayload(token);
+  if (!payload || !("kind" in payload) || payload.kind !== "email_link") {
+    return null;
+  }
+  if (!payload.email || !payload.nonce || !payload.exp) {
+    return null;
+  }
+  if (payload.exp * 1000 <= Date.now()) {
+    return null;
+  }
+  const normalizedEmail = normalizeEmail(payload.email);
+  if (!normalizedEmail || !payload.nonce.trim()) {
+    return null;
+  }
+  return {
+    email: normalizedEmail,
+    expiresAt: new Date(payload.exp * 1000).toISOString()
+  };
+}
+
+function signPayload(payload: SessionPayload | EmailLinkPayload): string {
   const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   const signature = signEncodedPayload(encodedPayload);
   return `${encodedPayload}.${signature}`;
@@ -140,6 +198,27 @@ export function getSessionSecret(): string {
 
 function normalizeEmail(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function readSignedPayload(token: string): SessionPayload | LegacySessionPayload | EmailLinkPayload | null {
+  const [encodedPayload, providedSignature] = token.split(".");
+  if (!encodedPayload || !providedSignature) {
+    return null;
+  }
+
+  const expectedSignature = signEncodedPayload(encodedPayload);
+  if (!safeEqual(expectedSignature, providedSignature)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as
+      | SessionPayload
+      | LegacySessionPayload
+      | EmailLinkPayload;
+  } catch {
+    return null;
+  }
 }
 
 function createStableUserId(normalizedEmail: string): string {

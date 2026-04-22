@@ -765,6 +765,7 @@ async function parseMessyInputToStructuredInvoice(sourceText: string): Promise<S
     "  \"customerName\": \"optional string\",",
     "  \"invoiceNumber\": \"optional string\",",
     "  \"issueDate\": \"optional string\",",
+    "  \"dueDate\": \"optional string\",",
     "  \"servicePeriodStart\": \"optional string\",",
     "  \"servicePeriodEnd\": \"optional string\",",
     "  \"workSessions\": [",
@@ -1115,6 +1116,7 @@ async function generateFinishedInvoice(structuredInvoice: StructuredInvoice): Pr
   const invoice: FinishedInvoice = {
     invoiceNumber: structuredInvoice.invoiceNumber ?? generateInvoiceNumber(),
     issueDate: structuredInvoice.issueDate,
+    dueDate: structuredInvoice.dueDate,
     servicePeriodStart: structuredInvoice.servicePeriodStart,
     servicePeriodEnd: structuredInvoice.servicePeriodEnd,
     customerName: structuredInvoice.customerName,

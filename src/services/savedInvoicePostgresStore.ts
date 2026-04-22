@@ -153,7 +153,11 @@ export class PostgresSavedInvoiceRepository {
         sourceType: row.source_type,
         invoiceNumber:
           row.invoice_data.finishedInvoice.invoiceNumber ?? row.invoice_data.structuredInvoice.invoiceNumber,
+        customerName:
+          row.invoice_data.finishedInvoice.customerName ?? row.invoice_data.structuredInvoice.customerName,
         total: row.invoice_data.finishedInvoice.total,
+        balanceDue: row.invoice_data.finishedInvoice.balanceDue,
+        dueDate: row.invoice_data.finishedInvoice.dueDate ?? row.invoice_data.structuredInvoice.dueDate,
         paymentLinkUrl: row.invoice_data.finishedInvoice.paymentLinkUrl
       })
     );
@@ -297,12 +301,15 @@ export class PostgresSavedInvoiceRepository {
   ): Promise<SavedInvoice> {
     await this.ensureReady();
     const now = new Date().toISOString();
+    const existing = await this.getSavedInvoiceById(invoiceId, ownerId);
+    const invoiceData = applyStatusToInvoiceData(existing, status);
 
     const result = await this.query<SavedInvoiceRow>(
       `
         update saved_invoices
         set status = $3,
             updated_at = $4,
+            invoice_data = $5,
             previous_status = case
               when $3 = 'deleted' then
                 case
@@ -327,7 +334,7 @@ export class PostgresSavedInvoiceRepository {
           source_type,
           invoice_data
       `,
-      [invoiceId, ownerId, status, now]
+      [invoiceId, ownerId, status, now, invoiceData]
     );
 
     const row = result.rows[0];
@@ -460,6 +467,26 @@ function parseSavedInvoiceRow(row: SavedInvoiceRow): SavedInvoice {
     sourceType: row.source_type,
     invoiceData: row.invoice_data
   });
+}
+
+function applyStatusToInvoiceData(
+  existing: SavedInvoice,
+  status: SavedInvoiceStatus
+): SavedInvoice["invoiceData"] {
+  const finishedInvoice = { ...existing.invoiceData.finishedInvoice };
+  if (status === "paid") {
+    finishedInvoice.balanceDue = 0;
+  } else if (existing.status === "paid") {
+    const balanceDue = Number(finishedInvoice.balanceDue);
+    const total = Number(finishedInvoice.total);
+    if (Number.isFinite(total) && (!Number.isFinite(balanceDue) || balanceDue <= 0)) {
+      finishedInvoice.balanceDue = total;
+    }
+  }
+  return {
+    ...existing.invoiceData,
+    finishedInvoice
+  };
 }
 
 function toIsoString(value: string | Date): string {

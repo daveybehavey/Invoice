@@ -61,7 +61,9 @@ import {
   recordInvoiceDeliverySend
 } from "./services/invoiceDeliveryStore.js";
 import {
+  getInvoiceEmailCapabilities,
   getInvoiceEmailDiagnostics,
+  sendAuthSignInEmail,
   sendInvoiceEmail,
   sendLaunchTestEmail
 } from "./services/invoiceEmailDelivery.js";
@@ -84,10 +86,17 @@ import {
 } from "./services/uploadTextExtractor.js";
 import {
   createAuthSessionForEmail,
+  createEmailSignInToken,
   getAuthSessionFromRequest,
-  isInvoiceSessionSecretConfigured
+  verifyEmailSignInToken
 } from "./services/authSession.js";
 import { buildFreePlanLimitMessage, getAccountPlanSummary } from "./services/accountPlanPolicy.js";
+import { getInvoiceAuthPolicy } from "./services/invoiceAuthPolicy.js";
+import {
+  getRevenueSignalsSnapshot,
+  RevenueSignalNameSchema,
+  trackRevenueSignal
+} from "./services/revenueSignalsStore.js";
 
 const app = express();
 assertSavedInvoicePersistencePolicy();
@@ -136,13 +145,16 @@ app.use(express.static(publicDir));
 
 const spaRoutes = [
   "/",
+  "/auth/verify",
   "/ai-intake",
   "/manual",
   "/import",
   "/diagnostics",
   "/settings/business",
+  "/settings/memory",
   "/privacy",
   "/support",
+  "/feedback",
   "/data-deletion",
   "/delete-account"
 ];
@@ -195,6 +207,11 @@ app.post("/api/billing/checkout-session", async (req: Request, res: Response, ne
       successPath: parsedRequest.successPath,
       cancelPath: parsedRequest.cancelPath
     });
+    await trackRevenueSignalSafely({
+      event: "checkout_started",
+      ownerId,
+      source: "billing_checkout"
+    });
     res.json(checkoutSession);
   } catch (error) {
     next(error);
@@ -234,7 +251,59 @@ app.post("/api/auth/session", async (req: Request, res: Response, next: NextFunc
         )
       })
       .parse(req.body);
-    const created = createAuthSessionForEmail(parsed.email);
+    const requested = createEmailSignInToken(parsed.email);
+    const signInUrl = `${resolvePublicBaseUrl(req)}/auth/verify?token=${encodeURIComponent(requested.token)}`;
+    const delivery = await sendAuthSignInEmail({
+      recipientEmail: parsed.email,
+      signInUrl,
+      expiresAt: requested.expiresAt
+    });
+
+    if (delivery.mode === "record_only") {
+      if ((process.env.NODE_ENV ?? "development").trim() === "production") {
+        throw new HttpStatusError(
+          503,
+          "Email sign-in is unavailable right now. Configure a working email provider before enabling account sign-in."
+        );
+      }
+      res.json({
+        emailSent: false,
+        expiresAt: requested.expiresAt,
+        previewUrl: signInUrl,
+        warning: delivery.warning ?? "Email provider is not configured; using preview mode."
+      });
+      return;
+    }
+
+    res.json({
+      emailSent: true,
+      expiresAt: requested.expiresAt
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/auth/session/verify", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = z
+      .object({
+        token: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim() : value),
+          z.string().min(1)
+        )
+      })
+      .parse(req.body);
+    const verified = verifyEmailSignInToken(parsed.token);
+    if (!verified?.email) {
+      throw new HttpStatusError(400, "This sign-in link is invalid or expired.");
+    }
+    const created = createAuthSessionForEmail(verified.email);
+    await trackRevenueSignalSafely({
+      event: "account_signed_in",
+      ownerId: created.session.userId,
+      source: "auth_verify"
+    });
     res.json(created);
   } catch (error) {
     next(error);
@@ -274,6 +343,7 @@ app.get("/api/system/persistence", async (_req: Request, res: Response, next: Ne
       warning: runtimePolicy.warning ?? null,
       authRequired: authPolicy.requireAuth,
       authSessionSecretConfigured: authPolicy.sessionSecretConfigured,
+      authEmailProviderConfigured: authPolicy.emailProviderConfigured,
       authPolicyReady: authPolicy.productionReady,
       authWarning: authPolicy.warning ?? null,
       defaultOwnerId
@@ -304,6 +374,7 @@ app.get("/api/system/persistence/migration", async (_req: Request, res: Response
       warning: runtimePolicy.warning ?? null,
       authRequired: authPolicy.requireAuth,
       authSessionSecretConfigured: authPolicy.sessionSecretConfigured,
+      authEmailProviderConfigured: authPolicy.emailProviderConfigured,
       authPolicyReady: authPolicy.productionReady,
       authWarning: authPolicy.warning ?? null,
       migrationRequired: migrationPolicy.requireMigrationComplete,
@@ -536,6 +607,34 @@ app.get("/api/telemetry/intake-trends", async (_req: Request, res: Response, nex
   }
 });
 
+app.get("/api/telemetry/revenue-signals", async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const snapshot = await getRevenueSignalsSnapshot();
+    res.json(snapshot);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/telemetry/revenue-signals", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = z
+      .object({
+        event: RevenueSignalNameSchema,
+        source: z.string().trim().min(1).max(80).optional()
+      })
+      .parse(req.body ?? {});
+    await trackRevenueSignalSafely({
+      event: parsedRequest.event,
+      ownerId: getRequestOwnerId(req),
+      source: parsedRequest.source ?? "client"
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post(
   "/api/invoices/from-input",
   importUpload.single("invoiceFile"),
@@ -553,6 +652,13 @@ app.post(
         lastUserMessage,
         mode
       });
+      if ("invoice" in result && result.invoice) {
+        await trackRevenueSignalSafely({
+          event: "invoice_generated",
+          ownerId: getRequestOwnerId(req),
+          source: "from_input"
+        });
+      }
 
       if (result.kind === "labor_pricing_follow_up") {
         res.json({
@@ -852,6 +958,21 @@ app.post("/api/invoices/save", async (req: Request, res: Response, next: NextFun
       sourceType: parsedRequest.sourceType,
       invoiceData: parsedRequest.invoiceData
     });
+    if (!parsedRequest.invoiceId) {
+      await trackRevenueSignalSafely({
+        event: "invoice_saved",
+        ownerId,
+        source: "invoice_save"
+      });
+      const savedInvoiceCount = (await savedInvoiceRepository.listSavedInvoiceMetadata(false, ownerId)).length;
+      if (savedInvoiceCount === 2) {
+        await trackRevenueSignalSafely({
+          event: "second_invoice_saved",
+          ownerId,
+          source: "invoice_save"
+        });
+      }
+    }
 
     res.json({ invoice: savedInvoice });
   } catch (error) {
@@ -958,6 +1079,11 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
       invoiceWithPaymentLink.status === "sent"
         ? invoiceWithPaymentLink
         : await savedInvoiceRepository.updateSavedInvoiceStatus(invoiceId, "sent", ownerId);
+    await trackRevenueSignalSafely({
+      event: "invoice_sent",
+      ownerId,
+      source: "invoice_send"
+    });
     res.json({
       invoice,
       delivery,
@@ -998,6 +1124,11 @@ app.post("/api/invoices/:id/payment-link", async (req: Request, res: Response, n
           invoice: savedInvoice,
           baseUrl: resolvePublicBaseUrl(req)
         });
+    await trackRevenueSignalSafely({
+      event: "payment_link_created",
+      ownerId,
+      source: "payment_link"
+    });
     res.json({
       invoice,
       paymentLinkUrl: invoice.invoiceData.finishedInvoice.paymentLinkUrl ?? ""
@@ -1032,6 +1163,11 @@ app.post("/api/invoices/:id/send-reminder", async (req: Request, res: Response, 
       invoiceId,
       repository: savedInvoiceRepository,
       baseUrl: resolvePublicBaseUrl(req)
+    });
+    await trackRevenueSignalSafely({
+      event: "reminder_sent",
+      ownerId,
+      source: "send_reminder"
     });
     res.json({
       reminder: {
@@ -1181,6 +1317,20 @@ if (process.env.NODE_ENV !== "test") {
   });
 }
 
+async function trackRevenueSignalSafely(input: {
+  event: z.infer<typeof RevenueSignalNameSchema>;
+  ownerId: string;
+  source: string;
+}): Promise<void> {
+  try {
+    await trackRevenueSignal(input);
+  } catch (error) {
+    // Revenue telemetry should never block invoice work.
+    // eslint-disable-next-line no-console
+    console.error("Failed to track revenue signal", error);
+  }
+}
+
 function asOptionalString(value: unknown): string | undefined {
   if (Array.isArray(value)) {
     const first = value[0];
@@ -1293,28 +1443,6 @@ function getRequestOwnerId(req: Request): string {
   return fromHeader ?? fromQuery ?? defaultOwnerId;
 }
 
-function getInvoiceAuthPolicy(): {
-  nodeEnv: string;
-  requireAuth: boolean;
-  sessionSecretConfigured: boolean;
-  productionReady: boolean;
-  warning?: string;
-} {
-  const nodeEnv = (process.env.NODE_ENV ?? "development").trim() || "development";
-  const requireAuth = resolveInvoiceRequireAuth(process.env.INVOICE_REQUIRE_AUTH, nodeEnv);
-  const sessionSecretConfigured = isInvoiceSessionSecretConfigured();
-  const productionReady = !requireAuth || sessionSecretConfigured;
-  return {
-    nodeEnv,
-    requireAuth,
-    sessionSecretConfigured,
-    productionReady,
-    warning: productionReady
-      ? undefined
-      : "Authentication is required, but INVOICE_SESSION_SECRET is missing or using an insecure default."
-  };
-}
-
 function assertInvoiceAuthSessionPolicy(): void {
   const policy = getInvoiceAuthPolicy();
   if (policy.productionReady) {
@@ -1323,8 +1451,9 @@ function assertInvoiceAuthSessionPolicy(): void {
   throw new Error(
     [
       "Invoice auth policy is not production-ready.",
-      `NODE_ENV=${policy.nodeEnv} requires authentication but INVOICE_SESSION_SECRET is not safely configured.`,
-      "Set INVOICE_SESSION_SECRET to a strong non-default value, or override INVOICE_REQUIRE_AUTH=false for local-only mode."
+      `NODE_ENV=${policy.nodeEnv} requires authentication but auth prerequisites are incomplete.`,
+      policy.warning ?? "A verified email sign-in provider is required in production.",
+      "Set INVOICE_SESSION_SECRET to a strong non-default value, configure email delivery, or override INVOICE_REQUIRE_AUTH=false for local-only mode."
     ].join(" ")
   );
 }
@@ -1369,14 +1498,6 @@ async function getSavedInvoiceMigrationPolicy(knownInvoiceCount?: number): Promi
       ? undefined
       : "Migration completeness is required, but legacy file-store invoices are still present."
   };
-}
-
-function resolveInvoiceRequireAuth(value: string | undefined, nodeEnv: string): boolean {
-  const parsed = parseBooleanEnv(value);
-  if (parsed !== undefined) {
-    return parsed;
-  }
-  return nodeEnv.toLowerCase() === "production";
 }
 
 function resolveLaunchRequireLiveBilling(value: string | undefined, nodeEnv: string | undefined): boolean {

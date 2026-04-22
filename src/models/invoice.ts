@@ -84,6 +84,7 @@ export const StructuredInvoiceSchema = z.object({
   customerName: OptionalString,
   invoiceNumber: OptionalString,
   issueDate: OptionalString,
+  dueDate: OptionalString,
   servicePeriodStart: OptionalString,
   servicePeriodEnd: OptionalString,
   workSessions: z.array(WorkSessionSchema).default([]),
@@ -124,6 +125,7 @@ export const InvoiceAuditSchema = z.object({
 export const FinishedInvoiceSchema = z.object({
   invoiceNumber: OptionalString,
   issueDate: OptionalString,
+  dueDate: OptionalString,
   servicePeriodStart: OptionalString,
   servicePeriodEnd: OptionalString,
   customerName: OptionalString,
@@ -269,7 +271,10 @@ export const InvoiceListItemSchema = z.object({
   status: SavedInvoiceStatusSchema,
   sourceType: SavedInvoiceSourceTypeSchema,
   invoiceNumber: OptionalString,
+  customerName: OptionalString,
   total: OptionalNumber,
+  balanceDue: OptionalNumber,
+  dueDate: OptionalString,
   paymentLinkUrl: OptionalUrl
 });
 

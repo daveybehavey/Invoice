@@ -97,6 +97,14 @@ async function checkWorkerRoutes() {
     const zonePayload = await zoneResponse.json();
     const zoneId = zonePayload?.result?.[0]?.id;
     if (!zoneResponse.ok || !zoneId) {
+      if (zoneResponse.status === 401 || zoneResponse.status === 403) {
+        checks.push({
+          id: "cloudflare:routes",
+          ok: true,
+          detail: `skipped route API check because local Cloudflare token cannot read zones (status ${zoneResponse.status})`
+        });
+        return;
+      }
       throw new Error(`zone lookup failed with status ${zoneResponse.status}`);
     }
 

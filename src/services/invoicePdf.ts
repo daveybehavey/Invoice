@@ -69,6 +69,7 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
   renderHeader(state, {
     fromLines,
     issueDate: input.invoice.issueDate?.trim() || "Not set",
+    dueDate: input.invoice.dueDate?.trim() || "",
     logo,
     styleScale,
     headerLayout: input.headerLayout
@@ -101,17 +102,18 @@ function renderHeader(
   options: {
     fromLines: string[];
     issueDate: string;
+    dueDate: string;
     logo: PDFImage | null;
     styleScale: number;
     headerLayout?: "split" | "centered";
   }
 ): void {
-  const { fromLines, issueDate, logo, styleScale, headerLayout } = options;
+  const { fromLines, issueDate, dueDate, logo, styleScale, headerLayout } = options;
   if (headerLayout === "centered") {
-    renderCenteredHeader(state, { fromLines, issueDate, logo, styleScale });
+    renderCenteredHeader(state, { fromLines, issueDate, dueDate, logo, styleScale });
     return;
   }
-  const { fromLines: splitFromLines, issueDate: splitIssueDate, logo: splitLogo } = options;
+  const { fromLines: splitFromLines, issueDate: splitIssueDate, dueDate: splitDueDate, logo: splitLogo } = options;
   const { page, regularFont, boldFont, accent } = state;
   const spacingScale = state.spacingScale;
   let leftCursor = PAGE_TOP;
@@ -169,7 +171,8 @@ function renderHeader(
   });
 
   const metaBoxWidth = 216;
-  const metaBoxHeight = 56;
+  const hasDueDate = Boolean(splitDueDate);
+  const metaBoxHeight = hasDueDate ? 78 : 56;
   const metaBoxX = PAGE_WIDTH - PAGE_MARGIN_X - metaBoxWidth;
   const metaBoxY = PAGE_TOP - titleSize - 72 * spacingScale;
 
@@ -200,18 +203,35 @@ function renderHeader(
 
   page.drawText("Date", {
     x: metaBoxX + 12,
-    y: metaBoxY + 14,
+    y: metaBoxY + (hasDueDate ? 34 : 14),
     size: 9,
     font: boldFont,
     color: SLATE_500
   });
   page.drawText(splitIssueDate, {
     x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(splitIssueDate, 10.5),
-    y: metaBoxY + 13,
+    y: metaBoxY + (hasDueDate ? 33 : 13),
     size: 10.5,
     font: regularFont,
     color: SLATE_900
   });
+
+  if (hasDueDate) {
+    page.drawText("Due", {
+      x: metaBoxX + 12,
+      y: metaBoxY + 12,
+      size: 9,
+      font: boldFont,
+      color: SLATE_500
+    });
+    page.drawText(splitDueDate, {
+      x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(splitDueDate, 10.5),
+      y: metaBoxY + 11,
+      size: 10.5,
+      font: regularFont,
+      color: SLATE_900
+    });
+  }
 
   const dividerY = Math.min(leftCursor - 10 * spacingScale, metaBoxY - 14 * spacingScale);
   page.drawLine({
@@ -229,11 +249,12 @@ function renderCenteredHeader(
   options: {
     fromLines: string[];
     issueDate: string;
+    dueDate: string;
     logo: PDFImage | null;
     styleScale: number;
   }
 ): void {
-  const { fromLines, issueDate, logo, styleScale } = options;
+  const { fromLines, issueDate, dueDate, logo, styleScale } = options;
   const { page, regularFont, boldFont, accent } = state;
   const spacingScale = state.spacingScale;
   let cursorY = PAGE_TOP;
@@ -291,7 +312,8 @@ function renderCenteredHeader(
   cursorY -= titleSize + 22 * spacingScale;
 
   const metaBoxWidth = 220;
-  const metaBoxHeight = 56;
+  const hasDueDate = Boolean(dueDate);
+  const metaBoxHeight = hasDueDate ? 78 : 56;
   const metaBoxX = (PAGE_WIDTH - metaBoxWidth) / 2;
   const metaBoxY = cursorY - metaBoxHeight;
 
@@ -322,18 +344,35 @@ function renderCenteredHeader(
 
   page.drawText("Date", {
     x: metaBoxX + 12,
-    y: metaBoxY + 14,
+    y: metaBoxY + (hasDueDate ? 34 : 14),
     size: 9,
     font: boldFont,
     color: SLATE_500
   });
   page.drawText(issueDate, {
     x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(issueDate, 10.5),
-    y: metaBoxY + 13,
+    y: metaBoxY + (hasDueDate ? 33 : 13),
     size: 10.5,
     font: regularFont,
     color: SLATE_900
   });
+
+  if (hasDueDate) {
+    page.drawText("Due", {
+      x: metaBoxX + 12,
+      y: metaBoxY + 12,
+      size: 9,
+      font: boldFont,
+      color: SLATE_500
+    });
+    page.drawText(dueDate, {
+      x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(dueDate, 10.5),
+      y: metaBoxY + 11,
+      size: 10.5,
+      font: regularFont,
+      color: SLATE_900
+    });
+  }
 
   const dividerY = metaBoxY - 14 * spacingScale;
   page.drawLine({

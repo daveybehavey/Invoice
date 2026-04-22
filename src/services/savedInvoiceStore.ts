@@ -115,7 +115,11 @@ export async function listSavedInvoiceMetadata(
         sourceType: invoice.sourceType,
         invoiceNumber:
           invoice.invoiceData.finishedInvoice.invoiceNumber ?? invoice.invoiceData.structuredInvoice.invoiceNumber,
+        customerName:
+          invoice.invoiceData.finishedInvoice.customerName ?? invoice.invoiceData.structuredInvoice.customerName,
         total: invoice.invoiceData.finishedInvoice.total,
+        balanceDue: invoice.invoiceData.finishedInvoice.balanceDue,
+        dueDate: invoice.invoiceData.finishedInvoice.dueDate ?? invoice.invoiceData.structuredInvoice.dueDate,
         paymentLinkUrl: invoice.invoiceData.finishedInvoice.paymentLinkUrl
       })
     )
@@ -216,6 +220,7 @@ export async function updateSavedInvoiceStatus(
     const now = new Date().toISOString();
     const updatedInvoice = SavedInvoiceSchema.parse({
       ...existing,
+      invoiceData: applyStatusToInvoiceData(existing, status),
       status,
       updatedAt: now,
       previousStatus:
@@ -231,6 +236,26 @@ export async function updateSavedInvoiceStatus(
     await writeCollection(collection);
     return updatedInvoice;
   });
+}
+
+function applyStatusToInvoiceData(
+  existing: SavedInvoice,
+  status: SavedInvoiceStatus
+): SavedInvoice["invoiceData"] {
+  const finishedInvoice = { ...existing.invoiceData.finishedInvoice };
+  if (status === "paid") {
+    finishedInvoice.balanceDue = 0;
+  } else if (existing.status === "paid") {
+    const balanceDue = Number(finishedInvoice.balanceDue);
+    const total = Number(finishedInvoice.total);
+    if (Number.isFinite(total) && (!Number.isFinite(balanceDue) || balanceDue <= 0)) {
+      finishedInvoice.balanceDue = total;
+    }
+  }
+  return {
+    ...existing.invoiceData,
+    finishedInvoice
+  };
 }
 
 export async function restoreSavedInvoice(

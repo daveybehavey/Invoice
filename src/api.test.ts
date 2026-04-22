@@ -29,6 +29,10 @@ process.env.INVOICE_DELIVERY_STORE_FILE = path.join(
   os.tmpdir(),
   `invoice-delivery-store-${randomUUID()}.json`
 );
+process.env.REVENUE_SIGNALS_STORE_FILE = path.join(
+  os.tmpdir(),
+  `invoice-revenue-signals-${randomUUID()}.json`
+);
 
 const [
   { app },
@@ -66,7 +70,29 @@ const invoiceDeliveryStoreFilePath = process.env.INVOICE_DELIVERY_STORE_FILE;
 if (!invoiceDeliveryStoreFilePath) {
   throw new Error("INVOICE_DELIVERY_STORE_FILE is required for tests.");
 }
+const revenueSignalsStoreFilePath = process.env.REVENUE_SIGNALS_STORE_FILE;
+if (!revenueSignalsStoreFilePath) {
+  throw new Error("REVENUE_SIGNALS_STORE_FILE is required for tests.");
+}
 const nativeFetch = globalThis.fetch;
+
+function extractTokenFromPreviewUrl(previewUrl: string): string {
+  const parsed = new URL(previewUrl);
+  const token = parsed.searchParams.get("token");
+  assert.equal(typeof token, "string");
+  assert.ok(token);
+  return token;
+}
+
+async function signInForTests(email: string) {
+  const linkResponse = await request(app).post("/api/auth/session").send({ email });
+  assert.equal(linkResponse.status, 200);
+  assert.equal(typeof linkResponse.body.previewUrl, "string");
+  const linkToken = extractTokenFromPreviewUrl(linkResponse.body.previewUrl as string);
+  const verifyResponse = await request(app).post("/api/auth/session/verify").send({ token: linkToken });
+  assert.equal(verifyResponse.status, 200);
+  return verifyResponse;
+}
 
 beforeEach(async () => {
   resetInvoiceEmailVerificationCacheForTests();
@@ -82,6 +108,8 @@ beforeEach(async () => {
   await fs.rm(stripeEntitlementsStoreFilePath, { force: true });
   await fs.mkdir(path.dirname(invoiceDeliveryStoreFilePath), { recursive: true });
   await fs.rm(invoiceDeliveryStoreFilePath, { force: true });
+  await fs.mkdir(path.dirname(revenueSignalsStoreFilePath), { recursive: true });
+  await fs.rm(revenueSignalsStoreFilePath, { force: true });
   delete process.env.OCR_METRICS_EXPORT_PROVIDER;
   delete process.env.OCR_METRICS_EXPORT_URL;
   delete process.env.OCR_METRICS_GA4_MEASUREMENT_ID;
@@ -130,6 +158,7 @@ after(async () => {
   await fs.rm(flowFrictionHistoryFilePath, { force: true });
   await fs.rm(stripeEntitlementsStoreFilePath, { force: true });
   await fs.rm(invoiceDeliveryStoreFilePath, { force: true });
+  await fs.rm(revenueSignalsStoreFilePath, { force: true });
 });
 
 test("asks one labor pricing follow-up and does not finalize with $0 labor", async () => {
@@ -547,6 +576,104 @@ test("OCR telemetry endpoint records confidence metrics from extract-notes", asy
   );
 });
 
+test("revenue signal telemetry tracks activation and repeat-use milestones", async () => {
+  const ownerId = "revenue-signal-owner";
+  useMockResponses([structuredWithLaborPricing()]);
+
+  const generated = await request(app)
+    .post("/api/invoices/from-input")
+    .set("x-invoice-user-id", ownerId)
+    .send({ messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7" });
+  assert.equal(generated.status, 200);
+  assert.equal(generated.body.needsFollowUp, false);
+
+  const invoiceData = {
+    structuredInvoice: generated.body.structuredInvoice,
+    finishedInvoice: generated.body.invoice
+  };
+
+  const firstSave = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData
+    });
+  assert.equal(firstSave.status, 200);
+
+  const secondSave = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        ...invoiceData,
+        finishedInvoice: {
+          ...invoiceData.finishedInvoice,
+          invoiceNumber: "INV-101"
+        }
+      }
+    });
+  assert.equal(secondSave.status, 200);
+
+  const repeatSignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "invoice_again_started",
+      source: "test"
+    });
+  assert.equal(repeatSignal.status, 200);
+
+  const serviceMemorySignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "service_memory_reused",
+      source: "test"
+    });
+  assert.equal(serviceMemorySignal.status, 200);
+
+  const clientMemorySignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "client_memory_reused",
+      source: "test"
+    });
+  assert.equal(clientMemorySignal.status, 200);
+
+  const recurringSignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "recurring_schedule_set",
+      source: "test"
+    });
+  assert.equal(recurringSignal.status, 200);
+
+  const snapshot = await request(app).get("/api/telemetry/revenue-signals");
+  assert.equal(snapshot.status, 200);
+  assert.equal(snapshot.body.byEvent.invoice_generated, 1);
+  assert.equal(snapshot.body.byEvent.invoice_saved, 2);
+  assert.equal(snapshot.body.byEvent.second_invoice_saved, 1);
+  assert.equal(snapshot.body.byEvent.invoice_again_started, 1);
+  assert.equal(snapshot.body.byEvent.service_memory_reused, 1);
+  assert.equal(snapshot.body.byEvent.client_memory_reused, 1);
+  assert.equal(snapshot.body.byEvent.recurring_schedule_set, 1);
+  assert.equal(snapshot.body.summary.ownerCount, 1);
+  assert.equal(snapshot.body.summary.activatedOwners, 1);
+  assert.equal(snapshot.body.summary.secondInvoiceOwners, 1);
+  assert.equal(snapshot.body.summary.repeatInvoiceOwners, 1);
+  assert.equal(snapshot.body.summary.serviceMemoryOwners, 1);
+  assert.equal(snapshot.body.summary.clientMemoryOwners, 1);
+  assert.equal(snapshot.body.summary.recurringScheduleOwners, 1);
+  assert.ok(Array.isArray(snapshot.body.recentEvents));
+  assert.ok(snapshot.body.recentEvents.every((event: { ownerKey?: string }) => event.ownerKey !== ownerId));
+});
+
 test("system persistence endpoint reports active invoice backend", async () => {
   const response = await request(app).get("/api/system/persistence");
   assert.equal(response.status, 200);
@@ -660,16 +787,18 @@ test("invoice library enforces auth when INVOICE_REQUIRE_AUTH is true", async ()
 test("invoice library allows authenticated requests when auth is required", async () => {
   process.env.INVOICE_REQUIRE_AUTH = "true";
   try {
-    const signInResponse = await request(app).post("/api/auth/session").send({ email: "owner@test.dev" });
-    assert.equal(signInResponse.status, 200);
+    const signInResponse = await signInForTests("owner@test.dev");
     const token = signInResponse.body.token;
     assert.equal(typeof token, "string");
     assert.ok(token.length > 0);
 
     useMockResponses([structuredWithLaborPricing()]);
-    const generated = await request(app).post("/api/invoices/from-input").send({
-      messyInput: "Jan 10 repaired sink leak 2h @ 95/hr and pipe tape $7"
-    });
+    const generated = await request(app)
+      .post("/api/invoices/from-input")
+      .set("authorization", `Bearer ${token}`)
+      .send({
+        messyInput: "Jan 10 repaired sink leak 2h @ 95/hr and pipe tape $7"
+      });
     assert.equal(generated.status, 200);
 
     const saveResponse = await request(app)
@@ -2204,6 +2333,114 @@ test("save remains explicit-only", async () => {
   assert.equal(listAfterSave.body.invoices.length, 1);
 });
 
+test("saved invoice metadata includes structured due date", async () => {
+  const ownerId = "due-date-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Due Date Client",
+          invoiceNumber: "INV-DUE-1",
+          issueDate: "2026-04-01",
+          dueDate: "2026-04-15",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DUE-1",
+          issueDate: "2026-04-01",
+          dueDate: "2026-04-15",
+          customerName: "Due Date Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-due-1",
+              type: "labor",
+              description: "Due date baseline",
+              quantity: 1,
+              unitPrice: 100,
+              amount: 100
+            }
+          ],
+          subtotal: 100,
+          total: 100,
+          balanceDue: 100
+        }
+      }
+    });
+
+  assert.equal(saveResponse.status, 200);
+  assert.equal(saveResponse.body.invoice.invoiceData.finishedInvoice.dueDate, "2026-04-15");
+
+  const listResponse = await request(app).get("/api/invoices").set("x-invoice-user-id", ownerId);
+  assert.equal(listResponse.status, 200);
+  assert.equal(listResponse.body.invoices[0].dueDate, "2026-04-15");
+  assert.equal(listResponse.body.invoices[0].balanceDue, 100);
+});
+
+test("status endpoint clears and restores balance when toggling paid state", async () => {
+  const ownerId = "status-balance-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Status Balance Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-STATUS-BALANCE-1",
+          issueDate: "2026-04-01",
+          customerName: "Status Balance Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-status-balance-1",
+              type: "labor",
+              description: "Status balance baseline",
+              quantity: 1,
+              unitPrice: 150,
+              amount: 150
+            }
+          ],
+          subtotal: 150,
+          total: 150,
+          balanceDue: 150
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const paidResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "paid" });
+  assert.equal(paidResponse.status, 200);
+  assert.equal(paidResponse.body.invoice.status, "paid");
+  assert.equal(paidResponse.body.invoice.invoiceData.finishedInvoice.balanceDue, 0);
+
+  const listPaidResponse = await request(app).get("/api/invoices").set("x-invoice-user-id", ownerId);
+  assert.equal(listPaidResponse.status, 200);
+  assert.equal(listPaidResponse.body.invoices[0].balanceDue, 0);
+
+  const sentAgainResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "sent" });
+  assert.equal(sentAgainResponse.status, 200);
+  assert.equal(sentAgainResponse.body.invoice.status, "sent");
+  assert.equal(sentAgainResponse.body.invoice.invoiceData.finishedInvoice.balanceDue, 150);
+});
+
 test("send endpoint records delivery and marks invoice as sent", async () => {
   const ownerId = "delivery-owner";
   const saveResponse = await request(app)
@@ -3083,12 +3320,14 @@ test("reminder run endpoint previews and sends due reminders with overrides", as
       invoiceData: {
         structuredInvoice: {
           customerName: "Reminder Run Client",
+          dueDate: "2026-03-20",
           workSessions: [],
           materials: []
         },
         finishedInvoice: {
           invoiceNumber: "INV-REMINDER-RUN-1",
           issueDate: "2026-03-11",
+          dueDate: "2026-03-20",
           customerName: "Reminder Run Client",
           currency: "USD",
           lineItems: [
@@ -3126,18 +3365,21 @@ test("reminder run endpoint previews and sends due reminders with overrides", as
     .set("x-invoice-user-id", ownerId)
     .send({
       dryRun: true,
-      dueAfterDays: 14
+      dueAfterDays: 120
     });
   assert.equal(dryRunResponse.status, 200);
   assert.equal(dryRunResponse.body.dryRun, true);
   assert.equal(dryRunResponse.body.dueCount, 1);
   assert.equal(dryRunResponse.body.due?.[0]?.invoiceId, invoiceId);
+  assert.equal(dryRunResponse.body.due?.[0]?.reason, "past_due");
+  assert.equal(dryRunResponse.body.due?.[0]?.dueDate, "2026-03-20");
+  assert.equal(dryRunResponse.body.due?.[0]?.nextReminderAt, "2026-03-20T00:00:00.000Z");
 
   const runResponse = await request(app)
     .post("/api/invoices/reminders/run")
     .set("x-invoice-user-id", ownerId)
     .send({
-      dueAfterDays: 14
+      dueAfterDays: 120
     });
   assert.equal(runResponse.status, 200);
   assert.equal(runResponse.body.dueCount, 1);
@@ -3150,6 +3392,69 @@ test("reminder run endpoint previews and sends due reminders with overrides", as
     .set("x-invoice-user-id", ownerId);
   assert.equal(getResponse.status, 200);
   assert.equal(getResponse.body.invoice?.delivery?.sendCount, 2);
+});
+
+test("reminder run endpoint skips invoices with no open balance", async () => {
+  const ownerId = "delivery-reminder-zero-balance-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Zero Balance Reminder Client",
+          dueDate: "2026-03-20",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REMINDER-ZERO-1",
+          issueDate: "2026-03-11",
+          dueDate: "2026-03-20",
+          customerName: "Zero Balance Reminder Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-reminder-zero-1",
+              type: "labor",
+              description: "Zero balance reminder baseline",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          subtotal: 120,
+          total: 120,
+          balanceDue: 0
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "zero-balance-reminder@example.com" });
+  assert.equal(sendResponse.status, 200);
+
+  await mutateDeliveryStoreEntry(invoiceId, (entry) => ({
+    ...entry,
+    sentAt: "2026-01-01T00:00:00.000Z"
+  }));
+
+  const dryRunResponse = await request(app)
+    .post("/api/invoices/reminders/run")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      dryRun: true,
+      dueAfterDays: 120
+    });
+  assert.equal(dryRunResponse.status, 200);
+  assert.equal(dryRunResponse.body.dueCount, 0);
+  assert.deepEqual(dryRunResponse.body.due, []);
 });
 
 test("delivery diagnostics endpoint scopes reminder preview by request owner", async () => {
@@ -3227,8 +3532,7 @@ test("stripe webhook checkout event grants pro access for matching signed-in use
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
 
   const email = "stripe-pro@test.dev";
-  const signInResponse = await request(app).post("/api/auth/session").send({ email });
-  assert.equal(signInResponse.status, 200);
+  const signInResponse = await signInForTests(email);
   const token = signInResponse.body.token as string;
   const session = signInResponse.body.session as { userId: string; email: string };
 
@@ -3486,8 +3790,7 @@ test("pro allowlist bypasses free monthly save limit", async () => {
   process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "1";
   process.env.INVOICE_PRO_EMAILS = "pro@test.dev";
 
-  const signInResponse = await request(app).post("/api/auth/session").send({ email: "pro@test.dev" });
-  assert.equal(signInResponse.status, 200);
+  const signInResponse = await signInForTests("pro@test.dev");
   const token = signInResponse.body.token as string;
   assert.ok(token);
 
@@ -3731,19 +4034,53 @@ test("recent client context returns the latest matching invoices only", async ()
   assert.equal(response.body.matches[1].invoiceNumber, "INV-1001");
 });
 
-test("auth session endpoint returns token + normalized user session", async () => {
+test("auth session endpoint returns preview link in test mode and verify endpoint returns normalized user session", async () => {
   const response = await request(app).post("/api/auth/session").send({ email: "  TEST@Example.com  " });
 
   assert.equal(response.status, 200);
-  assert.equal(typeof response.body.token, "string");
-  assert.equal(response.body.session.email, "test@example.com");
-  assert.match(response.body.session.userId, /^usr_[a-f0-9]{24}$/);
-  assert.equal(typeof response.body.session.expiresAt, "string");
+  assert.equal(response.body.emailSent, false);
+  assert.equal(typeof response.body.previewUrl, "string");
+  assert.equal(typeof response.body.expiresAt, "string");
+
+  const token = extractTokenFromPreviewUrl(response.body.previewUrl as string);
+  const verifyResponse = await request(app).post("/api/auth/session/verify").send({ token });
+
+  assert.equal(verifyResponse.status, 200);
+  assert.equal(typeof verifyResponse.body.token, "string");
+  assert.equal(verifyResponse.body.session.email, "test@example.com");
+  assert.match(verifyResponse.body.session.userId, /^usr_[a-f0-9]{24}$/);
+  assert.equal(typeof verifyResponse.body.session.expiresAt, "string");
+});
+
+test("auth session request sends a sign-in email when a provider is configured", async () => {
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_auth";
+  process.env.INVOICE_FROM_EMAIL = "NoteBill <login@notebill.app>";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+
+  const fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = async (input, init) => {
+    fetchCalls.push({ url: String(input), init });
+    return new Response(JSON.stringify({ id: "email_auth_123" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
+
+  const response = await request(app).post("/api/auth/session").send({ email: "owner@test.dev" });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.emailSent, true);
+  assert.equal(response.body.previewUrl, undefined);
+  assert.equal(fetchCalls[0]?.url, "https://api.resend.com/emails");
+  const payload = JSON.parse(String(fetchCalls[0]?.init?.body ?? "{}"));
+  assert.equal(payload.subject, "Sign in to NoteBill");
+  assert.equal(payload.to[0], "owner@test.dev");
+  assert.match(String(payload.html || ""), /auth\/verify\?token=/);
 });
 
 test("authenticated owner id takes precedence over spoofed owner header", async () => {
-  const sessionResponse = await request(app).post("/api/auth/session").send({ email: "alice@example.com" });
-  assert.equal(sessionResponse.status, 200);
+  const sessionResponse = await signInForTests("alice@example.com");
   const aliceToken = sessionResponse.body.token as string;
 
   useMockResponses([structuredWithLaborPricing()]);

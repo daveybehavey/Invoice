@@ -2,14 +2,12 @@
 import "dotenv/config";
 import process from "node:process";
 import { evaluateSavedInvoicePersistencePolicy } from "../src/services/savedInvoiceRepository.js";
-import { isInvoiceSessionSecretConfigured } from "../src/services/authSession.js";
 import { getSavedInvoiceStoreSummary } from "../src/services/savedInvoiceStore.js";
+import { getInvoiceAuthPolicy } from "../src/services/invoiceAuthPolicy.js";
 
 async function main() {
   const persistence = evaluateSavedInvoicePersistencePolicy();
-  const authRequired = resolveInvoiceRequireAuth(process.env.INVOICE_REQUIRE_AUTH, persistence.nodeEnv);
-  const authSecretConfigured = isInvoiceSessionSecretConfigured();
-  const authReady = !authRequired || authSecretConfigured;
+  const authPolicy = getInvoiceAuthPolicy({ nodeEnv: persistence.nodeEnv });
   const fileStore = await getSavedInvoiceStoreSummary();
   const requireMigrationComplete = resolveInvoiceRequireMigrationComplete(
     process.env.INVOICE_STORE_REQUIRE_MIGRATION_COMPLETE,
@@ -23,14 +21,12 @@ async function main() {
   const report = {
     persistence,
     auth: {
-      nodeEnv: persistence.nodeEnv,
-      requireAuth: authRequired,
-      sessionSecretConfigured: authSecretConfigured,
-      productionReady: authReady,
-      warning:
-        authReady
-          ? null
-          : "Authentication is required, but INVOICE_SESSION_SECRET is missing or using an insecure default."
+      nodeEnv: authPolicy.nodeEnv,
+      requireAuth: authPolicy.requireAuth,
+      sessionSecretConfigured: authPolicy.sessionSecretConfigured,
+      emailProviderConfigured: authPolicy.emailProviderConfigured,
+      productionReady: authPolicy.productionReady,
+      warning: authPolicy.warning ?? null
     },
     migration: {
       requireMigrationComplete,
@@ -49,17 +45,9 @@ async function main() {
 
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 
-  if (!persistence.productionReady || !authReady || !migrationReady) {
+  if (!persistence.productionReady || !authPolicy.productionReady || !migrationReady) {
     process.exitCode = 1;
   }
-}
-
-function resolveInvoiceRequireAuth(value: string | undefined, nodeEnv: string): boolean {
-  const parsed = parseBooleanEnv(value);
-  if (parsed !== undefined) {
-    return parsed;
-  }
-  return nodeEnv.toLowerCase() === "production";
 }
 
 function parseBooleanEnv(value: string | undefined): boolean | undefined {

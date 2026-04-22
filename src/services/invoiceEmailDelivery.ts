@@ -45,6 +45,19 @@ type SendInvoiceEmailInput = {
   messageType?: "invoice" | "reminder";
 };
 
+type SendAuthSignInEmailInput = {
+  recipientEmail: string;
+  signInUrl: string;
+  expiresAt: string;
+};
+
+type TransactionalEmailInput = {
+  recipientEmail: string;
+  subject: string;
+  textBody: string;
+  htmlBody: string;
+};
+
 const RESEND_API_URL = "https://api.resend.com/emails";
 const RESEND_DOMAINS_API_URL = "https://api.resend.com/domains";
 const SMTP2GO_API_URL = "https://api.smtp2go.com/v3/email/send";
@@ -112,6 +125,34 @@ export async function getInvoiceEmailDiagnostics(): Promise<InvoiceEmailDiagnost
 }
 
 export async function sendInvoiceEmail(input: SendInvoiceEmailInput): Promise<InvoiceEmailSendResult> {
+  return sendTransactionalEmail({
+    recipientEmail: input.recipientEmail,
+    subject: buildInvoiceEmailSubject(input),
+    textBody: buildInvoiceEmailText(input),
+    htmlBody: buildInvoiceEmailHtml(input)
+  });
+}
+
+export async function sendAuthSignInEmail(
+  input: SendAuthSignInEmailInput
+): Promise<InvoiceEmailSendResult & { recipientEmail: string }> {
+  const recipientEmail = input.recipientEmail.trim().toLowerCase();
+  if (!isValidEmailAddress(recipientEmail)) {
+    throw new Error("Sign-in recipient email is invalid.");
+  }
+  const result = await sendTransactionalEmail({
+    recipientEmail,
+    subject: "Sign in to NoteBill",
+    textBody: buildAuthSignInEmailText({ ...input, recipientEmail }),
+    htmlBody: buildAuthSignInEmailHtml({ ...input, recipientEmail })
+  });
+  return {
+    ...result,
+    recipientEmail
+  };
+}
+
+async function sendTransactionalEmail(input: TransactionalEmailInput): Promise<InvoiceEmailSendResult> {
   const capabilities = getInvoiceEmailCapabilities();
   if (!capabilities.configured || capabilities.provider === "none") {
     return {
@@ -133,7 +174,7 @@ export async function sendInvoiceEmail(input: SendInvoiceEmailInput): Promise<In
   };
 }
 
-async function sendViaSmtp2go(input: SendInvoiceEmailInput, fromEmail: string): Promise<InvoiceEmailSendResult> {
+async function sendViaSmtp2go(input: TransactionalEmailInput, fromEmail: string): Promise<InvoiceEmailSendResult> {
   const apiKey = getOptionalEnv(process.env.SMTP2GO_API_KEY);
   if (!apiKey) {
     return {
@@ -213,7 +254,7 @@ export async function sendLaunchTestEmail(
   };
 }
 
-async function sendViaResend(input: SendInvoiceEmailInput, fromEmail: string): Promise<InvoiceEmailSendResult> {
+async function sendViaResend(input: TransactionalEmailInput, fromEmail: string): Promise<InvoiceEmailSendResult> {
   const apiKey = getOptionalEnv(process.env.RESEND_API_KEY);
   if (!apiKey) {
     return {
@@ -380,21 +421,18 @@ async function getInvoiceEmailVerification(
   }
 }
 
-function buildResendPayload(input: SendInvoiceEmailInput, fromEmail: string): Record<string, unknown> {
-  const subject = buildInvoiceEmailSubject(input);
-  const text = buildInvoiceEmailText(input);
-  const html = buildInvoiceEmailHtml(input);
+function buildResendPayload(input: TransactionalEmailInput, fromEmail: string): Record<string, unknown> {
   return {
     from: fromEmail,
     to: [input.recipientEmail],
-    subject,
-    text,
-    html
+    subject: input.subject,
+    text: input.textBody,
+    html: input.htmlBody
   };
 }
 
 function buildSmtp2goPayload(
-  input: SendInvoiceEmailInput,
+  input: TransactionalEmailInput,
   fromEmail: string,
   apiKey: string
 ): Record<string, unknown> {
@@ -402,9 +440,9 @@ function buildSmtp2goPayload(
     api_key: apiKey,
     sender: fromEmail,
     to: [input.recipientEmail],
-    subject: buildInvoiceEmailSubject(input),
-    text_body: buildInvoiceEmailText(input),
-    html_body: buildInvoiceEmailHtml(input)
+    subject: input.subject,
+    text_body: input.textBody,
+    html_body: input.htmlBody
   };
 }
 
@@ -422,6 +460,7 @@ function buildInvoiceEmailText(input: SendInvoiceEmailInput): string {
   const invoice = input.invoice;
   const invoiceNumber = toOptionalTrimmedString(invoice.invoiceNumber) ?? input.invoiceId;
   const issueDate = toOptionalTrimmedString(invoice.issueDate);
+  const dueDate = toOptionalTrimmedString(invoice.dueDate);
   const customerName = toOptionalTrimmedString(invoice.customerName) ?? "there";
   const total = formatCurrency(invoice.total, invoice.currency);
   const paymentLine =
@@ -444,6 +483,7 @@ function buildInvoiceEmailText(input: SendInvoiceEmailInput): string {
     linePreview,
     "",
     `Total due: ${total}`,
+    dueDate ? `Due date: ${dueDate}` : "",
     paymentLine,
     "",
     "Sent with NoteBill."
@@ -456,6 +496,7 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
   const invoice = input.invoice;
   const invoiceNumber = escapeHtml(toOptionalTrimmedString(invoice.invoiceNumber) ?? input.invoiceId);
   const issueDate = escapeHtml(toOptionalTrimmedString(invoice.issueDate) ?? "N/A");
+  const dueDate = toOptionalTrimmedString(invoice.dueDate);
   const customerName = escapeHtml(toOptionalTrimmedString(invoice.customerName) ?? "Client");
   const total = escapeHtml(formatCurrency(invoice.total, invoice.currency));
   const paymentLink =
@@ -492,6 +533,11 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
               <td>
                 <h1 style="margin:0;font-size:20px;color:#093064;">Invoice ${invoiceNumber}</h1>
                 <p style="margin:6px 0 0 0;font-size:14px;color:#475569;">Issue date: ${issueDate}</p>
+                ${
+                  dueDate
+                    ? `<p style="margin:6px 0 0 0;font-size:14px;color:#475569;">Due date: ${escapeHtml(dueDate)}</p>`
+                    : ""
+                }
                 <p style="margin:12px 0 0 0;font-size:14px;color:#334155;">${introLine}</p>
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:14px;">
                   ${lineRows}
@@ -500,6 +546,64 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
                 ${paymentBlock}
                 <p style="margin:18px 0 0 0;font-size:12px;color:#64748b;">Sent with NoteBill.</p>
                 <img src="${escapeAttribute(input.openTrackingPixelUrl)}" alt="" width="1" height="1" style="display:block;border:0;outline:none;" />
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+function buildAuthSignInEmailText(input: SendAuthSignInEmailInput & { recipientEmail: string }): string {
+  const expiresAt = formatEmailTimestamp(input.expiresAt);
+  return [
+    "Use the link below to sign in to NoteBill:",
+    "",
+    input.signInUrl,
+    "",
+    expiresAt ? `This sign-in link expires ${expiresAt}.` : "This sign-in link expires soon.",
+    "If you did not request this email, you can ignore it."
+  ].join("\n");
+}
+
+function buildAuthSignInEmailHtml(input: SendAuthSignInEmailInput & { recipientEmail: string }): string {
+  const expiresAt = formatEmailTimestamp(input.expiresAt);
+  const expiresLine = expiresAt
+    ? `This sign-in link expires ${escapeHtml(expiresAt)}.`
+    : "This sign-in link expires soon.";
+  return `<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:24px;">
+            <tr>
+              <td>
+                <h1 style="margin:0;font-size:22px;color:#093064;">Sign in to NoteBill</h1>
+                <p style="margin:12px 0 0 0;font-size:14px;line-height:1.6;color:#334155;">
+                  Click the secure link below to finish signing in.
+                </p>
+                <p style="margin:20px 0 0 0;">
+                  <a
+                    href="${escapeAttribute(input.signInUrl)}"
+                    style="display:inline-block;border-radius:999px;background:#093064;color:#ffffff;text-decoration:none;padding:12px 18px;font-size:14px;font-weight:700;"
+                  >
+                    Sign in to NoteBill
+                  </a>
+                </p>
+                <p style="margin:16px 0 0 0;font-size:13px;line-height:1.6;color:#475569;">
+                  ${expiresLine}
+                </p>
+                <p style="margin:12px 0 0 0;font-size:13px;line-height:1.6;color:#64748b;">
+                  If you did not request this email, you can safely ignore it.
+                </p>
+                <p style="margin:20px 0 0 0;font-size:12px;line-height:1.6;color:#94a3b8;word-break:break-all;">
+                  Or copy and paste this link into your browser:<br />
+                  <a href="${escapeAttribute(input.signInUrl)}" style="color:#0b63ce;">${escapeHtml(input.signInUrl)}</a>
+                </p>
               </td>
             </tr>
           </table>
@@ -645,4 +749,19 @@ function escapeHtml(value: string): string {
 
 function escapeAttribute(value: string): string {
   return escapeHtml(value);
+}
+
+function formatEmailTimestamp(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  return parsed.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short"
+  });
 }

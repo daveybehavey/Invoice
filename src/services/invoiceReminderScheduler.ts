@@ -20,6 +20,9 @@ export type ReminderCandidate = {
   recipientEmail: string;
   lastSentAt: string;
   sendCount: number;
+  dueDate?: string;
+  nextReminderAt: string;
+  reason: ReminderCandidateReason;
 };
 
 export type ReminderRunResult = {
@@ -48,6 +51,18 @@ type ReminderContext = {
   settings?: Partial<InvoiceReminderSettings>;
   now?: Date;
 };
+
+export type ReminderCandidateReason = "past_due" | "follow_up_window" | "cooldown";
+
+export type ReminderTiming = {
+  dueDate?: string;
+  nextReminderAt: string;
+  nextReminderAtMs: number;
+  reason: ReminderCandidateReason;
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export function resolveInvoiceReminderSettings(
   overrides?: Partial<InvoiceReminderSettings>
@@ -93,6 +108,9 @@ export async function listDueInvoiceReminderCandidates(
   });
   const due = sentInvoices
     .map((invoice) => {
+      if (getInvoiceOpenBalance(invoice) <= 0) {
+        return null;
+      }
       const delivery = deliveryByInvoice[invoice.invoiceId];
       const recipientEmail = delivery?.recipientEmail;
       const sendCount = delivery?.sendCount ?? 0;
@@ -100,30 +118,95 @@ export async function listDueInvoiceReminderCandidates(
       if (!recipientEmail || !lastSentAt) {
         return null;
       }
-      const dueWindowDays = sendCount <= 1 ? settings.dueAfterDays : settings.cooldownDays;
-      const dueMs = dueWindowDays * 24 * 60 * 60 * 1000;
-      const lastSentMs = Date.parse(lastSentAt);
-      if (!Number.isFinite(lastSentMs)) {
+      const timing = resolveInvoiceReminderTiming({
+        dueDate: invoice.dueDate,
+        lastSentAt,
+        sendCount,
+        settings
+      });
+      if (!timing) {
         return null;
       }
-      if (nowMs - lastSentMs < dueMs) {
+      if (nowMs < timing.nextReminderAtMs) {
         return null;
       }
-      return {
+      const candidate: ReminderCandidate = {
         invoiceId: invoice.invoiceId,
         invoiceNumber: invoice.invoiceNumber ?? "Draft invoice",
         recipientEmail,
         lastSentAt,
-        sendCount
-      } satisfies ReminderCandidate;
+        sendCount,
+        nextReminderAt: timing.nextReminderAt,
+        reason: timing.reason
+      };
+      if (timing.dueDate) {
+        candidate.dueDate = timing.dueDate;
+      }
+      return candidate;
     })
     .filter((candidate): candidate is ReminderCandidate => Boolean(candidate))
-    .sort((left, right) => Date.parse(left.lastSentAt) - Date.parse(right.lastSentAt))
+    .sort((left, right) => {
+      const nextReminderDelta = Date.parse(left.nextReminderAt) - Date.parse(right.nextReminderAt);
+      if (nextReminderDelta !== 0) {
+        return nextReminderDelta;
+      }
+      return Date.parse(left.lastSentAt) - Date.parse(right.lastSentAt);
+    })
     .slice(0, settings.maxPerRun);
   return {
     settings,
     scannedCount: sentInvoices.length,
     due
+  };
+}
+
+function getInvoiceOpenBalance(invoice: { balanceDue?: number | null; total?: number | null }): number {
+  const amount = Number(invoice.balanceDue ?? invoice.total);
+  if (!Number.isFinite(amount)) {
+    return 0;
+  }
+  return Math.max(amount, 0);
+}
+
+export function resolveInvoiceReminderTiming(input: {
+  dueDate?: string | null;
+  lastSentAt: string;
+  sendCount: number;
+  settings: InvoiceReminderSettings;
+}): ReminderTiming | null {
+  const lastSentMs = Date.parse(input.lastSentAt);
+  if (!Number.isFinite(lastSentMs)) {
+    return null;
+  }
+  const normalizedDueDate = normalizeInvoiceDueDate(input.dueDate);
+  const normalizedSendCount = Number.isFinite(input.sendCount)
+    ? Math.max(0, Math.round(input.sendCount))
+    : 0;
+  if (normalizedSendCount <= 1) {
+    const dueDateMs = normalizedDueDate ? Date.parse(`${normalizedDueDate}T00:00:00.000Z`) : NaN;
+    if (Number.isFinite(dueDateMs) && dueDateMs > lastSentMs) {
+      return {
+        dueDate: normalizedDueDate,
+        nextReminderAt: new Date(dueDateMs).toISOString(),
+        nextReminderAtMs: dueDateMs,
+        reason: "past_due"
+      };
+    }
+    const nextReminderAtMs = lastSentMs + input.settings.dueAfterDays * DAY_MS;
+    return {
+      dueDate: normalizedDueDate,
+      nextReminderAt: new Date(nextReminderAtMs).toISOString(),
+      nextReminderAtMs,
+      reason: "follow_up_window"
+    };
+  }
+
+  const nextReminderAtMs = lastSentMs + input.settings.cooldownDays * DAY_MS;
+  return {
+    dueDate: normalizedDueDate,
+    nextReminderAt: new Date(nextReminderAtMs).toISOString(),
+    nextReminderAtMs,
+    reason: "cooldown"
   };
 }
 
@@ -266,6 +349,19 @@ async function getInvoiceDeliverySummaryForInvoice(input: {
     throw new Error("Delivery summary missing after reminder send.");
   }
   return summary;
+}
+
+function normalizeInvoiceDueDate(value?: string | null): string | undefined {
+  const candidate = typeof value === "string" ? value.trim() : "";
+  if (!candidate) {
+    return undefined;
+  }
+  const dateOnly = candidate.match(/^(\d{4}-\d{2}-\d{2})/u)?.[1];
+  if (!dateOnly || !DATE_ONLY_PATTERN.test(dateOnly)) {
+    return undefined;
+  }
+  const parsed = Date.parse(`${dateOnly}T00:00:00.000Z`);
+  return Number.isFinite(parsed) ? dateOnly : undefined;
 }
 
 function normalizePositiveInteger(
