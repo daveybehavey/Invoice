@@ -39,6 +39,7 @@
     "@capacitor/android": "^8.2.0",
     "@capacitor/core": "^8.2.0",
     "@capacitor/ios": "^8.2.0",
+    "@remix-run/router": "^1.23.2",
     "abort-controller": "^3.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
@@ -48,6 +49,10 @@
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",
     "pg": "^8.18.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router": "^6.30.3",
+    "react-router-dom": "^6.30.3",
     "stripe": "^20.4.1",
     "ts-interface-checker": "^0.1.13",
     "zod": "^3.24.1"

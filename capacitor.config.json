@@ -1,5 +1,5 @@
 {
-  "appId": "com.notebill.app",
+  "appId": "app.notebill.app",
   "appName": "NoteBill",
   "webDir": "public",
   "bundledWebRuntime": false,

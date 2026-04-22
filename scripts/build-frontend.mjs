@@ -10,6 +10,16 @@ const tailwindInput = path.join(publicDir, "styles", "app.css");
 const tailwindConfig = path.join(rootDir, "tailwind.config.cjs");
 const tailwindOutput = path.join(distDir, "app.css");
 const tailwindCli = path.join(rootDir, "node_modules", "tailwindcss", "lib", "cli.js");
+const vendorFiles = [
+  ["node_modules/react/umd/react.production.min.js", "react.production.min.js"],
+  ["node_modules/react-dom/umd/react-dom.production.min.js", "react-dom.production.min.js"],
+  ["node_modules/@remix-run/router/dist/router.umd.min.js", "router.umd.min.js"],
+  ["node_modules/react-router/dist/umd/react-router.production.min.js", "react-router.production.min.js"],
+  [
+    "node_modules/react-router-dom/dist/umd/react-router-dom.production.min.js",
+    "react-router-dom.production.min.js"
+  ]
+];
 
 async function main() {
   await fs.mkdir(distDir, { recursive: true });
@@ -40,6 +50,7 @@ async function main() {
   );
 
   await runTailwindBuild();
+  await copyVendorAssets();
 }
 
 async function collectFiles(directory, extension) {
@@ -94,6 +105,18 @@ async function runTailwindBuild() {
       reject(new Error(`tailwind build failed with exit code ${code}`));
     });
   });
+}
+
+async function copyVendorAssets() {
+  const vendorDir = path.join(distDir, "vendor");
+  await fs.mkdir(vendorDir, { recursive: true });
+  await Promise.all(
+    vendorFiles.map(async ([sourceRelativePath, destinationFileName]) => {
+      const source = path.join(rootDir, sourceRelativePath);
+      const destination = path.join(vendorDir, destinationFileName);
+      await fs.copyFile(source, destination);
+    })
+  );
 }
 
 main().catch((error) => {

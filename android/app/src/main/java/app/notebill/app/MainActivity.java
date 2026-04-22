@@ -1,4 +1,4 @@
-package com.notebill.app;
+package app.notebill.app;
 
 import com.getcapacitor.BridgeActivity;
 
