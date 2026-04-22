@@ -1,22 +1,47 @@
 # Smoke Pass Checklist
 
-## Flow
-- Sign in with email + password (confirm password field visible).
-- Intake notes via "Paste notes" default path.
-- Resolve decisions flow (review panel, quick fixes, decisions panel).
-- Generate invoice → open manual view.
-- Save to library and reopen; confirm invoice list entry + status.
-- Send invoice (description, template, send confirmation).
-- Trigger payment link/send SMS (if available) and follow the link to confirm it hits the hosted payment page.
-- Use reminders (send reminder, verify card updates status).
-- Use payment link or mark paid to check status transitions and notification copy.
+Use this before giving a build to testers and again after any Play Console review change.
 
-## Friction buckets (capture in notes)
-1. **Activation** – anything that prevents a quick path from idle to \"draft ready\" (e.g., onboarding copy, confusing buttons, shipping lag).
-2. **Trust** – weird tone, unclear totals, missing validation, ambiguous statuses.
-3. **Billie** – assistant panel experience, living workspace, suggestion clarity, highlight timing.
-4. **Payment** – upgrade/paying steps, unpaid/paid states, payment link visibility, reminder clarity.
+For a copy-paste tester handoff, use `docs/tester-packet.md`.
 
-## Notes
-- Record time-to-ready for each stage and any weird behaviors (UI flashes, blank loaders).
-- Capture screenshots for particularly stubborn states (decision panel, payment status, reminders).
+## Core Flow
+- Install the current Play/internal test build.
+- Open the app from a fresh install.
+- Optional: sign in with email-link auth. Enter an email inbox you control, open the secure link, and return to the app. There is no password.
+- Start from the default notes/intake path.
+- Paste messy job notes and generate a draft.
+- Resolve any follow-up questions or billing decisions.
+- Review the generated invoice and confirm line items, totals, tax, and client details.
+- Edit one line item description and one line item amount.
+- Open Export and confirm the send-ready check says whether client, line items, total, and payment terms look ready.
+- Save to the library.
+- Reopen the saved invoice and confirm status, totals, and details persisted.
+- Export/download the PDF.
+- Open Feedback from the launcher footer and from Manage, then confirm device details can be copied or auto-attached to the feedback email.
+- Optional: send the invoice by email if delivery is configured.
+- Optional: create/open a hosted payment link if Stripe payments are configured.
+- Optional: mark sent, mark paid, and run reminder controls to confirm status copy is clear.
+
+## Reviewer Access Check
+- Confirm the app is usable without special credentials.
+- Confirm optional sign-in explains email-link behavior clearly.
+- Confirm no blocked screen requires a password, 2FA code, QR code, membership, location gate, or biometric login.
+
+## Friction Buckets
+- Activation: anything that slows the path from open app to draft ready.
+- Trust: unclear totals, weird wording, missing validation, confusing paid/unpaid status.
+- Billie: assistant status, suggestion clarity, refine speed, and whether users understand numbers are protected.
+- Payment: payment-link visibility, paid/unpaid state clarity, reminder copy, and upgrade/paywall confusion.
+
+## Notes To Capture
+- Time to first draft.
+- Time to send-ready invoice.
+- Any UI flashes, blank loaders, or stuck states.
+- Any moment where the tester asks, "What do I do now?"
+- Screenshots for confusing review, payment, sign-in, or reminder states.
+
+## Pass Bar
+- A tester can create, save, reopen, and export a PDF invoice without help.
+- Money-changing decisions are explicit and understandable.
+- Optional auth does not block review or basic app use.
+- No console-visible blocker prevents testing the core app.
