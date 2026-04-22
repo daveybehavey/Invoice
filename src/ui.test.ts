@@ -124,6 +124,14 @@ test("public policy pages render from their routes", async () => {
     assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Support");
     assert.equal(await page.getByText("Support email: support@notebill.app", { exact: true }).isVisible(), true);
 
+    await page.goto(`${baseUrl}/feedback`);
+    await page.waitForSelector("h1");
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Feedback");
+    const feedbackLink = page.getByRole("link", { name: "Email feedback" });
+    assert.equal(await feedbackLink.isVisible(), true);
+    assert.match(decodeURIComponent((await feedbackLink.getAttribute("href")) ?? ""), /NoteBill feedback details/);
+    assert.equal(await page.getByText("Two-minute tester script", { exact: true }).isVisible(), true);
+
     await page.goto(`${baseUrl}/data-deletion`);
     await page.waitForSelector("h1");
     assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Account and Data Deletion");
@@ -132,6 +140,66 @@ test("public policy pages render from their routes", async () => {
     await page.goto(`${baseUrl}/delete-account`);
     await page.waitForSelector("h1");
     assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Account and Data Deletion");
+  } finally {
+    await context.close();
+  }
+});
+
+test("feedback page exposes device details for tester reports", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${baseUrl}/feedback?token=secret-test-value#debug`);
+    const deviceDetails = await page.locator("pre").textContent();
+    assert.match(deviceDetails ?? "", /NoteBill feedback details/);
+    assert.match(deviceDetails ?? "", /Viewport:/);
+    assert.match(deviceDetails ?? "", /User agent:/);
+    assert.doesNotMatch(deviceDetails ?? "", /secret-test-value/);
+
+    await page.getByRole("button", { name: "Copy device details" }).click();
+
+    await page.locator('[role="status"]').waitFor();
+    assert.match(
+      (await page.locator('[role="status"]').textContent()) ?? "",
+      /Device details copied\.|Copy failed\.|Copy is unavailable here\./
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher manage tools include a tester feedback shortcut", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Show manage tools" }).click();
+    await page.locator("#launcher-manage-options").getByRole("button", { name: /Feedback/ }).click();
+    await page.waitForSelector("h1");
+
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Feedback");
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher footer exposes feedback and support", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Feedback" }).waitFor({ state: "visible" });
+    assert.equal(
+      await page.getByRole("link", { name: "Support" }).getAttribute("href"),
+      "mailto:support@notebill.app"
+    );
+
+    await page.getByRole("button", { name: "Feedback" }).click();
+    await page.waitForSelector("h1");
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Feedback");
   } finally {
     await context.close();
   }
@@ -222,6 +290,63 @@ test("decision undo toast does not block billie chips on mobile", async () => {
   }
 });
 
+test("mobile generate CTA stays clear of Billie composer footer", async () => {
+  useMockResponses([structuredDecisionDraft(), decisionAudit()]);
+
+  const context = await browser.newContext({
+    viewport: { width: 360, height: 640 },
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 3
+  });
+  const page = await context.newPage();
+  try {
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 30 fixed faucet 2h at $80/hr. Cabinet door adjustment maybe charge.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+
+    await page.getByRole("button", { name: "Skip" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Skip" }).click();
+
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.evaluate(() => {
+      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
+    });
+
+    const geometry = await page.evaluate(() => {
+      const generateButton = Array.from(document.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Generate Invoice"
+      );
+      const composer = document.querySelector(".nb-billie-composer");
+      if (!generateButton || !composer) {
+        return null;
+      }
+      const buttonRect = generateButton.getBoundingClientRect();
+      const composerRect = composer.getBoundingClientRect();
+      const centerX = Math.max(0, Math.min(window.innerWidth - 1, buttonRect.left + buttonRect.width / 2));
+      const centerY = Math.max(0, Math.min(window.innerHeight - 1, buttonRect.top + buttonRect.height / 2));
+      const topElement = document.elementFromPoint(centerX, centerY);
+      return {
+        buttonBottom: buttonRect.bottom,
+        composerTop: composerRect.top,
+        topText: topElement?.textContent?.trim() ?? "",
+        viewportHeight: window.innerHeight
+      };
+    });
+
+    assert.ok(geometry, "Expected Generate Invoice button and Billie composer to be present.");
+    assert.ok(
+      geometry.buttonBottom <= geometry.composerTop - 8,
+      `Generate Invoice button overlaps footer: ${JSON.stringify(geometry)}`
+    );
+    assert.match(geometry.topText, /Generate Invoice/);
+  } finally {
+    await context.close();
+  }
+});
+
 test("mobile intake steps start compact and can expand on demand", async () => {
   const context = await browser.newContext({
     viewport: { width: 375, height: 667 },
@@ -238,6 +363,112 @@ test("mobile intake steps start compact and can expand on demand", async () => {
     await page.getByRole("button", { name: "Show steps" }).click();
     await page.locator("#intake-step-details").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Hide steps" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher sample notes open intake with a realistic starter draft", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page
+      .getByText("First invoice? Tap Try sample notes for a 30-second walkthrough.")
+      .waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Try sample notes" }).click();
+
+    const notes = page.getByPlaceholder(/Example: Jan 10 fixed sink/i);
+    await notes.waitFor({ state: "visible" });
+    await expectValueContains(notes, "Repaired leaking kitchen sink");
+    await page
+      .getByText("Sample notes loaded. Review them, then build the invoice.")
+      .waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("core mobile routes do not create horizontal page overflow", async () => {
+  const context = await browser.newContext({
+    viewport: { width: 360, height: 640 },
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 3
+  });
+  const page = await context.newPage();
+  const routes = ["/", "/ai-intake", "/manual", "/import", "/invoices", "/privacy", "/support", "/feedback"];
+
+  try {
+    for (const route of routes) {
+      await page.goto(`${baseUrl}${route}`, { waitUntil: "networkidle" });
+      await page.locator("#root").waitFor({ state: "visible" });
+
+      const overflow = await page.evaluate(() => ({
+        innerWidth: window.innerWidth,
+        documentScrollWidth: document.documentElement.scrollWidth,
+        bodyScrollWidth: document.body.scrollWidth
+      }));
+
+      assert.ok(
+        overflow.documentScrollWidth <= overflow.innerWidth + 1,
+        `${route} creates horizontal document overflow: ${JSON.stringify(overflow)}`
+      );
+      assert.ok(
+        overflow.bodyScrollWidth <= overflow.innerWidth + 1,
+        `${route} creates horizontal body overflow: ${JSON.stringify(overflow)}`
+      );
+    }
+  } finally {
+    await context.close();
+  }
+});
+
+test("core mobile app routes keep controls thumb friendly", async () => {
+  const context = await browser.newContext({
+    viewport: { width: 360, height: 640 },
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 3
+  });
+  const page = await context.newPage();
+  const routes = ["/", "/ai-intake", "/manual", "/import", "/invoices"];
+
+  try {
+    for (const route of routes) {
+      await page.goto(`${baseUrl}${route}`, { waitUntil: "networkidle" });
+      await page.locator("#root").waitFor({ state: "visible" });
+
+      const crampedTargets = await page.evaluate(() =>
+        Array.from(document.querySelectorAll("button, a"))
+          .map((element) => {
+            const rect = element.getBoundingClientRect();
+            const styles = window.getComputedStyle(element);
+            const text = (element.textContent || element.getAttribute("aria-label") || "")
+              .replace(/\s+/g, " ")
+              .trim();
+            return {
+              text,
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+              visible:
+                rect.width > 0 &&
+                rect.height > 0 &&
+                styles.display !== "none" &&
+                styles.visibility !== "hidden"
+            };
+          })
+          .filter(
+            (target) =>
+              target.visible &&
+              target.text.length > 0 &&
+              target.width < 120 &&
+              target.height < 34
+          )
+      );
+
+      assert.deepEqual(crampedTargets, [], `${route} has cramped controls`);
+    }
   } finally {
     await context.close();
   }
@@ -1029,14 +1260,208 @@ test("manual editor polishes line item wording on blur", async () => {
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    const description = page.getByPlaceholder("Description").first();
+    const description = page.locator('input[placeholder="Description"]:visible').first();
     await description.fill("fixed sink");
     await description.press("Tab");
 
     await page.waitForFunction(() => {
-      const input = document.querySelector('input[placeholder="Description"]');
-      return input instanceof HTMLInputElement && input.value === "Sink repair";
+      const inputs = Array.from(document.querySelectorAll('input[placeholder="Description"]'));
+      return inputs.some((input) => {
+        if (!(input instanceof HTMLInputElement)) {
+          return false;
+        }
+        const rect = input.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && input.value === "Sink repair";
+      });
     });
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor uses touch-friendly line item cards on narrow phones", async () => {
+  const context = await browser.newContext({
+    viewport: { width: 360, height: 640 },
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 3
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const descriptionInput = page.locator('input[placeholder="Description"]:visible').first();
+    const qtyInput = page.locator('input[placeholder="0"]:visible').first();
+    const rateInput = page.locator('input[placeholder="$0"]:visible').first();
+
+    await descriptionInput.waitFor({ state: "visible" });
+    await page.getByText("Line 1").waitFor({ state: "visible" });
+
+    const [descriptionBox, qtyBox, rateBox] = await Promise.all([
+      descriptionInput.boundingBox(),
+      qtyInput.boundingBox(),
+      rateInput.boundingBox()
+    ]);
+
+    assert.ok(
+      descriptionBox && descriptionBox.width >= 220,
+      `Description input is cramped: ${JSON.stringify(descriptionBox)}`
+    );
+    assert.ok(qtyBox && qtyBox.width >= 120, `Quantity input is cramped: ${JSON.stringify(qtyBox)}`);
+    assert.ok(rateBox && rateBox.width >= 120, `Rate input is cramped: ${JSON.stringify(rateBox)}`);
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor surfaces repeat-client memory without changing money until reuse", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-client-memory-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          description: "Quarterly drain maintenance",
+          qty: "2",
+          rate: "120",
+          clientName: "Casey Client",
+          usageCount: 4,
+          updatedAt: "2026-04-01T12:00:00.000Z"
+        },
+        {
+          description: "Generic faucet repair",
+          qty: "1",
+          rate: "95",
+          clientName: "Other Client",
+          usageCount: 8,
+          updatedAt: "2026-04-02T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Casey Client\n123 Main St");
+
+    await page.getByText("Past work for Casey Client").waitFor({ state: "visible" });
+    await page.getByText("Money never changes automatically.").waitFor({ state: "visible" });
+    await page.getByText("Quarterly drain maintenance").waitFor({ state: "visible" });
+    await page.getByText("Rate $120 / Used 4 times").waitFor({ state: "visible" });
+    await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "");
+    await expectValueEquals(page.locator('input[placeholder="0"]:visible').first(), "");
+    await expectValueEquals(page.locator('input[placeholder="$0"]:visible').first(), "");
+
+    await page
+      .getByRole("button", { name: "Reuse Quarterly drain maintenance from client memory" })
+      .click();
+
+    await expectValueEquals(
+      page.locator('input[placeholder="Description"]:visible').first(),
+      "Quarterly drain maintenance"
+    );
+    await expectValueEquals(page.locator('input[placeholder="0"]:visible').first(), "2");
+    await expectValueEquals(page.locator('input[placeholder="$0"]:visible').first(), "120");
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor offers prior client notes without auto-filling them", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-client-note-memory-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          name: "Note Memory Client",
+          details: "Note Memory Client",
+          defaultNotes: "Payment due on receipt. Thanks for trusting us with the work.",
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Note Memory Client");
+
+    await page.getByText("Prior note for this client").waitFor({ state: "visible" });
+    await page
+      .getByText("Payment due on receipt. Thanks for trusting us with the work.")
+      .waitFor({ state: "visible" });
+    await expectValueEquals(page.getByPlaceholder("Thank you for your business"), "");
+
+    await page.getByRole("button", { name: "Use prior note" }).click();
+    await expectValueEquals(
+      page.getByPlaceholder("Thank you for your business"),
+      "Payment due on receipt. Thanks for trusting us with the work."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor applies quick payment terms without duplicating old terms", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const notesInput = page.getByPlaceholder("Thank you for your business");
+    await page.locator('input[type="date"]').nth(0).fill("2026-04-01");
+    await notesInput.fill("Warranty covers workmanship for 30 days.");
+
+    await page.getByRole("button", { name: "Net 14" }).click();
+    await expectValueEquals(
+      notesInput,
+      "Payment due within 14 days.\nWarranty covers workmanship for 30 days."
+    );
+    await expectValueEquals(page.getByLabel("Due date"), "2026-04-15");
+
+    await page.getByRole("button", { name: "Net 30" }).click();
+    await expectValueEquals(
+      notesInput,
+      "Payment due within 30 days.\nWarranty covers workmanship for 30 days."
+    );
+    await expectValueEquals(page.getByLabel("Due date"), "2026-05-01");
+    await page.getByText("Net 30 terms applied").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor inserts saved client details from known-client memory", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-known-client-memory-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          name: "Known Client",
+          details: "Known Client\n42 Service Road",
+          recipientEmail: "ap@known-client.example",
+          defaultNotes: "Payment due on receipt.",
+          recurringIntervalDays: 14,
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByText("Known Client + email, note, biweekly").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Use saved client Known Client" }).click();
+    await expectValueEquals(page.getByPlaceholder("Client Name"), "Known Client\n42 Service Road");
   } finally {
     await context.close();
   }
@@ -1104,7 +1529,7 @@ test("manual billie applies style commands locally without calling the AI edit r
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
 
     const composer = page
@@ -1157,7 +1582,7 @@ test("manual billie applies explicit tax commands locally without calling the AI
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
 
     const composer = page
@@ -1203,9 +1628,9 @@ test("manual billie applies explicit discount commands locally and supports undo
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Faucet repair");
-    await page.getByPlaceholder("0").first().fill("1");
-    await page.getByPlaceholder("$0").first().fill("100");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
+    await page.locator('input[placeholder="0"]:visible').first().fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("100");
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
 
     const composer = page
@@ -1375,7 +1800,7 @@ test("manual billie applies explicit payment link commands locally and supports 
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
 
     const composer = page
@@ -1465,7 +1890,7 @@ test("manual billie quick actions trigger safe wording rewrites without using th
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("fixed sink");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("fixed sink");
     await page.getByPlaceholder("Thank you for your business").fill("Leave check at the front desk.");
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
 
@@ -1475,16 +1900,16 @@ test("manual billie quick actions trigger safe wording rewrites without using th
       .getByText("Descriptions updated. Numbers unchanged.")
       .first()
       .waitFor({ state: "visible" });
-    await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
+    await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "Kitchen faucet repair service");
     await page.getByRole("button", { name: "Undo last Billie change" }).click();
     await page.getByText("Undid last Billie change.").first().waitFor({ state: "visible" });
-    await expectValueEquals(page.getByPlaceholder("Description").first(), "Sink repair");
+    await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "Sink repair");
     await page.getByRole("button", { name: "Stronger wording" }).click();
     await page
       .getByText("Descriptions updated. Numbers unchanged.")
       .first()
       .waitFor({ state: "visible" });
-    await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
+    await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "Kitchen faucet repair service");
     assert.equal(rewordDescriptionsRequestCount, 2);
     assert.equal(editRequestCount, 0);
   } finally {
@@ -1529,14 +1954,14 @@ test("manual billie workspace quick actions can refine descriptions without open
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("fixed sink");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("fixed sink");
 
     const workspace = page.locator('[data-testid="manual-billie-workspace"]');
     await workspace.waitFor({ state: "visible" });
     await workspace.getByRole("button", { name: "Formal descriptions" }).click();
 
     await workspace.getByText("Descriptions updated. Numbers unchanged.").waitFor({ state: "visible" });
-    await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
+    await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "Kitchen faucet repair service");
     assert.equal(rewordDescriptionsRequestCount, 1);
     assert.equal(editRequestCount, 0);
   } finally {
@@ -1581,7 +2006,7 @@ test("manual billie workspace freeform composer submits safe instructions and cl
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("fixed roof leak");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("fixed roof leak");
 
     const workspace = page.locator('[data-testid="manual-billie-workspace"]');
     const composer = workspace.getByPlaceholder(/Ask Billie to refine wording/i);
@@ -1589,7 +2014,7 @@ test("manual billie workspace freeform composer submits safe instructions and cl
     await workspace.getByRole("button", { name: "Ask Billie" }).click();
 
     await workspace.getByText("Descriptions updated. Numbers unchanged.").waitFor({ state: "visible" });
-    await expectValueEquals(page.getByPlaceholder("Description").first(), "Roof leak repair service");
+    await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "Roof leak repair service");
     await expectValueEquals(composer, "");
     assert.equal(rewordDescriptionsRequestCount, 1);
     assert.equal(editRequestCount, 0);
@@ -1659,13 +2084,13 @@ test("manual billie quick line action rewrites only one line via reword-line", a
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("fixed sink");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("fixed sink");
     await page.getByPlaceholder("Thank you for your business").fill("Thanks.");
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
 
     await page.getByRole("button", { name: "Refine line 1" }).click();
     await page.getByText("Line 1 updated. Numbers unchanged.").waitFor({ state: "visible" });
-    await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
+    await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "Kitchen faucet repair service");
 
     assert.equal(rewordLineCount, 1);
     assert.equal(rewordFullCount, 0);
@@ -1734,7 +2159,7 @@ test("manual billie routes description wording requests through safe rewording",
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("fixed sink");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("fixed sink");
     await page.getByPlaceholder("Thank you for your business").fill("Leave check at the front desk.");
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
 
@@ -1754,7 +2179,7 @@ test("manual billie routes description wording requests through safe rewording",
       }).count(),
       0
     );
-    await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
+    await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "Kitchen faucet repair service");
     await expectValueEquals(
       page.getByPlaceholder("Thank you for your business"),
       "Leave check at the front desk."
@@ -1818,7 +2243,7 @@ test("manual billie routes notes wording requests through safe notes rewording",
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
     await page.getByPlaceholder("Thank you for your business").fill("Pay in 14 days.");
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
 
@@ -1836,7 +2261,7 @@ test("manual billie routes notes wording requests through safe notes rewording",
       page.getByPlaceholder("Thank you for your business"),
       "Payment due within 14 days of receipt."
     );
-    await expectValueEquals(page.getByPlaceholder("Description").first(), "Faucet repair");
+    await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "Faucet repair");
     assert.equal(rewordNotesRequestCount, 1);
     assert.equal(editRequestCount, 0);
   } finally {
@@ -1903,7 +2328,7 @@ test("manual billie can combine safe description wording and style changes in on
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("fixed sink");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("fixed sink");
     await page.getByPlaceholder("Thank you for your business").fill("Leave check at the front desk.");
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
 
@@ -1918,7 +2343,7 @@ test("manual billie can combine safe description wording and style changes in on
       .getByText("Descriptions updated. Numbers unchanged.")
       .first()
       .waitFor({ state: "visible" });
-    await expectValueEquals(page.getByPlaceholder("Description").first(), "Kitchen faucet repair service");
+    await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "Kitchen faucet repair service");
     await page.getByRole("button", { name: "Style" }).first().click();
     await page.getByText("#093064").first().waitFor({ state: "visible" });
     assert.equal(rewordDescriptionsRequestCount, 1);
@@ -1980,7 +2405,7 @@ test("manual billie can combine safe notes wording and spacing changes in one in
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
     await page.getByPlaceholder("Thank you for your business").fill("Pay in 14 days.");
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
 
@@ -2111,7 +2536,7 @@ test("manual billie can switch header layout locally and export preserves the se
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
     await page.locator("[data-header-layout='split']").first().waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
 
@@ -2172,7 +2597,7 @@ test("manual billie can change spacing density locally and export preserves the 
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
     await page.locator("[data-spacing-density='balanced']").first().waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
 
@@ -2235,7 +2660,7 @@ test("manual billie can hide and show notes locally and export preserves visibil
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Faucet repair");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
     await page.getByPlaceholder("Thank you for your business").fill("Payment due in 14 days.");
     await page.locator("[data-notes-visible='true']").first().waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Edit with Billie" }).first().click();
@@ -2324,6 +2749,68 @@ test("ai intake applies business identity defaults when generating draft", async
     const fromInput = page.getByPlaceholder("Your Name / Company");
     await fromInput.waitFor({ state: "visible" });
     await expectValueContains(fromInput, "Acme Plumbing");
+  } finally {
+    await context.close();
+  }
+});
+
+test("client memory settings lets users inspect and clear remembered clients", async () => {
+  const ownerId = "ui-memory-settings-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          name: "Trust Client",
+          details: "Trust Client\n7 Trust Lane",
+          recipientEmail: "billing@trust-client.example",
+          defaultNotes: "Payment due on receipt.",
+          recurringIntervalDays: 14,
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        },
+        {
+          name: "Keep Client",
+          details: "Keep Client",
+          updatedAt: "2026-04-19T12:00:00.000Z"
+        }
+      ])
+    );
+  }, ownerId);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Show manage tools" }).click();
+    await page.getByRole("button", { name: "Memory" }).click();
+    await page.waitForURL(/\/settings\/memory$/, { timeout: 10000 });
+    await page.getByRole("heading", { name: "Review remembered clients" }).waitFor({ state: "visible" });
+    await page.getByText("Trust Client", { exact: true }).first().waitFor({ state: "visible" });
+    await page.getByText("Show saved details").first().click();
+    await page.getByText("billing@trust-client.example").waitFor({ state: "visible" });
+    await page.getByText("Payment due on receipt.").waitFor({ state: "visible" });
+    await page.getByText("Biweekly", { exact: true }).first().waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Delete remembered client Trust Client" }).click();
+    await page.getByText("Trust Client removed from memory.").waitFor({ state: "visible" });
+
+    const afterDelete = await page.evaluate((storageOwnerId) => {
+      const raw = window.localStorage.getItem(`invoiceClientMemory::owner:${storageOwnerId}`);
+      return raw ? JSON.parse(raw) : [];
+    }, ownerId);
+    assert.equal(afterDelete.some((entry: { name?: string }) => entry.name === "Trust Client"), false);
+    assert.equal(afterDelete.some((entry: { name?: string }) => entry.name === "Keep Client"), true);
+
+    await page.getByRole("button", { name: "Clear all remembered clients" }).click();
+    await page.getByRole("button", { name: "Confirm clear all" }).click();
+    await page.getByText("No remembered clients yet.").waitFor({ state: "visible" });
+
+    const afterClear = await page.evaluate((storageOwnerId) => {
+      const raw = window.localStorage.getItem(`invoiceClientMemory::owner:${storageOwnerId}`);
+      return raw ? JSON.parse(raw) : [];
+    }, ownerId);
+    assert.deepEqual(afterClear, []);
   } finally {
     await context.close();
   }
@@ -2463,6 +2950,68 @@ test("launcher shows free-plan usage when monthly save limit is reached", async 
     const upgradeLink = page.getByRole("link", { name: "Upgrade" });
     await upgradeLink.waitFor({ state: "visible" });
     assert.equal(await upgradeLink.getAttribute("href"), "https://notebill.app/upgrade");
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher plan usage meter keeps remaining text inside on narrow phones", async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "25";
+
+  const context = await browser.newContext({
+    viewport: { width: 320, height: 640 },
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 3
+  });
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-plan-visual-owner");
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByText("25 saves remaining").waitFor({ state: "visible" });
+
+    const usageBounds = await page.locator(".nb-usage-meter").first().evaluate((meter) => {
+      const remaining = meter.querySelector(".nb-usage-meter__remaining");
+      const label = meter.querySelector(".nb-usage-meter__label");
+      if (!remaining || !label) {
+        return null;
+      }
+      const meterRect = meter.getBoundingClientRect();
+      const remainingRect = remaining.getBoundingClientRect();
+      const labelRect = label.getBoundingClientRect();
+      return {
+        meterLeft: meterRect.left,
+        meterRight: meterRect.right,
+        meterWidth: meterRect.width,
+        meterBottom: meterRect.bottom,
+        labelRight: labelRect.right,
+        remainingLeft: remainingRect.left,
+        remainingRight: remainingRect.right,
+        remainingBottom: remainingRect.bottom
+      };
+    });
+
+    assert.ok(usageBounds, "Expected launcher usage meter to render.");
+    assert.ok(
+      usageBounds.meterWidth >= 220,
+      `Usage meter is too cramped on narrow phones: ${JSON.stringify(usageBounds)}`
+    );
+    assert.ok(
+      usageBounds.remainingRight <= usageBounds.meterRight + 0.5,
+      `Remaining label overflows meter horizontally: ${JSON.stringify(usageBounds)}`
+    );
+    assert.ok(
+      usageBounds.remainingBottom <= usageBounds.meterBottom + 0.5,
+      `Remaining label overflows meter vertically: ${JSON.stringify(usageBounds)}`
+    );
+    assert.ok(
+      usageBounds.labelRight <= usageBounds.meterRight + 0.5,
+      `Progress label overflows meter horizontally: ${JSON.stringify(usageBounds)}`
+    );
   } finally {
     await context.close();
   }
@@ -2679,6 +3228,173 @@ test("launcher shows draft recovery inbox for saved draft invoices", async () =>
   }
 });
 
+test("launcher shows invoice command center for drafts and follow-ups", async () => {
+  const ownerId = "ui-operations-queue-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveInvoice = async (invoiceNumber: string, total: number) =>
+    context.request.post(`${baseUrl}/api/invoices/save`, {
+      headers: {
+        "x-invoice-user-id": ownerId
+      },
+      data: {
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: {
+            customerName: "Operations Client",
+            workSessions: [],
+            materials: []
+          },
+          finishedInvoice: {
+            invoiceNumber,
+            issueDate: "2026-03-12",
+            customerName: "Operations Client",
+            currency: "USD",
+            lineItems: [
+              {
+                id: `${invoiceNumber}-line`,
+                type: "labor",
+                description: "Operations queue work",
+                quantity: 1,
+                unitPrice: total,
+                amount: total
+              }
+            ],
+            subtotal: total,
+            total,
+            balanceDue: total
+          }
+        }
+      }
+    });
+
+  const draftResponse = await saveInvoice("INV-OPS-DRAFT", 125);
+  assert.equal(draftResponse.status(), 200);
+  const draftPayload = await draftResponse.json();
+  await mutateStoredInvoice(draftPayload?.invoice?.invoiceId, {
+    updatedAt: "2026-04-18T12:00:00.000Z"
+  });
+
+  const sentResponse = await saveInvoice("INV-OPS-SENT", 210);
+  assert.equal(sentResponse.status(), 200);
+  const sentPayload = await sentResponse.json();
+  const sendResponse = await context.request.post(
+    `${baseUrl}/api/invoices/${sentPayload?.invoice?.invoiceId}/send`,
+    {
+      headers: {
+        "x-invoice-user-id": ownerId
+      },
+      data: {
+        recipientEmail: "ops-reminder@example.com"
+      }
+    }
+  );
+  assert.equal(sendResponse.status(), 200);
+  await mutateStoredInvoice(sentPayload?.invoice?.invoiceId, {
+    status: "sent",
+    updatedAt: "2026-01-15T12:00:00.000Z"
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+    await queue.getByText("Today's queue").waitFor({ state: "visible" });
+    await queue.getByText("1 invoice may need follow-up.").waitFor({ state: "visible" });
+    await queue.getByText("Resume latest draft").waitFor({ state: "visible" });
+    await queue.getByText("Follow up sent invoice").waitFor({ state: "visible" });
+    await queue.getByText("$210.00 still open.").waitFor({ state: "visible" });
+    await queue.getByText("Last sent to ops-reminder@example.com.").waitFor({ state: "visible" });
+    await queue.getByRole("button", { name: "Mark INV-OPS-SENT paid" }).waitFor({ state: "visible" });
+    await queue.getByRole("button", { name: "Send reminder for INV-OPS-SENT" }).click();
+    await page.getByText("delivery is tracked without sending").waitFor({ state: "visible" });
+    await queue.getByText("$210.00", { exact: true }).waitFor({ state: "visible" });
+
+    await queue.getByRole("button", { name: "Resume INV-OPS-DRAFT" }).click();
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+    assert.equal(await page.getByLabel("Invoice #").inputValue(), "INV-OPS-DRAFT");
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher starts a fresh repeat invoice from paid work", async () => {
+  const ownerId = "ui-repeat-launcher-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Repeat Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-OPS-PAID",
+          issueDate: "2026-03-12",
+          customerName: "Repeat Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "repeat-line-1",
+              type: "labor",
+              description: "Monthly maintenance visit",
+              quantity: 2,
+              unitPrice: 85,
+              amount: 170
+            }
+          ],
+          notes: "Use the north service gate.",
+          subtotal: 170,
+          total: 170,
+          balanceDue: 170
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const savePayload = await saveResponse.json();
+  await mutateStoredInvoice(savePayload?.invoice?.invoiceId, {
+    status: "paid",
+    updatedAt: "2026-04-18T12:00:00.000Z"
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+    await queue.getByText("Invoice a repeat client").waitFor({ state: "visible" });
+    await queue.getByText("Start a fresh editable draft from INV-OPS-PAID for Repeat Client.").waitFor({
+      state: "visible"
+    });
+    await queue.getByRole("button", { name: "Invoice again from INV-OPS-PAID" }).click();
+
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Repeat Client");
+    await expectValueContains(
+      page.locator('input[placeholder="Description"]:visible').first(),
+      "Monthly maintenance visit"
+    );
+    await expectValueContains(page.getByPlaceholder("Thank you for your business"), "Use the north service gate.");
+    assert.notEqual(await page.getByLabel("Invoice #").inputValue(), "INV-OPS-PAID");
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher shows pre-limit warning when one free save remains", async () => {
   process.env.INVOICE_DEFAULT_PLAN = "free";
   process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "2";
@@ -2809,6 +3525,21 @@ test("invoice library shows billing completion notice and clears billing query p
       timeoutMs: 2000,
       message: "Billing query param should be removed after library notice renders."
     });
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library empty state offers sample notes", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("No saved invoices yet").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Try sample notes" }).click();
+    await page
+      .getByText("Sample notes loaded. Review them, then build the invoice.")
+      .waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -3162,6 +3893,83 @@ test("invoice library supports recurring monthly reminders with pause", async ()
   }
 });
 
+test("invoice library suggests remembered recurring cadence for repeat clients", async () => {
+  const ownerId = "ui-recurring-memory-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveInvoice = async (invoiceNumber: string) =>
+    context.request.post(`${baseUrl}/api/invoices/save`, {
+      headers: {
+        "x-invoice-user-id": ownerId
+      },
+      data: {
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: {
+            customerName: "Recurring Memory Client",
+            workSessions: [],
+            materials: []
+          },
+          finishedInvoice: {
+            invoiceNumber,
+            issueDate: "2026-03-01",
+            customerName: "Recurring Memory Client",
+            currency: "USD",
+            lineItems: [
+              {
+                id: `${invoiceNumber}-line`,
+                type: "labor",
+                description: "Recurring memory baseline",
+                quantity: 1,
+                unitPrice: 125,
+                amount: 125
+              }
+            ],
+            subtotal: 125,
+            total: 125,
+            balanceDue: 125
+          }
+        }
+      }
+    });
+
+  const firstResponse = await saveInvoice("INV-RECUR-MEMORY-A");
+  assert.equal(firstResponse.status(), 200);
+  const secondResponse = await saveInvoice("INV-RECUR-MEMORY-B");
+  assert.equal(secondResponse.status(), 200);
+  const secondPayload = await secondResponse.json();
+  const secondInvoiceId = secondPayload?.invoice?.invoiceId as string;
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page
+      .getByRole("button", { name: "Set monthly recurring for INV-RECUR-MEMORY-A" })
+      .click();
+    await page.locator('select[aria-label="Recurring cadence for INV-RECUR-MEMORY-A"]').selectOption("7");
+    await page
+      .getByRole("button", { name: "Use weekly cadence for INV-RECUR-MEMORY-B" })
+      .waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Use weekly cadence for INV-RECUR-MEMORY-B" }).click();
+
+    const storedInterval = await page.evaluate(
+      ({ storageOwnerId, invoiceId }) => {
+        const raw = window.localStorage.getItem(`invoiceRecurringSchedules::owner:${storageOwnerId}`);
+        const parsed = raw ? JSON.parse(raw) : {};
+        return parsed?.entries?.[invoiceId]?.intervalDays ?? null;
+      },
+      { storageOwnerId: ownerId, invoiceId: secondInvoiceId }
+    );
+    assert.equal(storedInterval, 7);
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library recurring reminder opens invoice-again for the next due invoice", async () => {
   const ownerId = "ui-recurring-open-owner";
   const context = await browser.newContext();
@@ -3396,8 +4204,80 @@ test("invoice library send action records delivery and supports mark opened", as
     await page.getByPlaceholder("client@example.com").fill("client@example.com");
     await page.getByRole("button", { name: "Send now" }).click();
     await page.getByText(/(Sent to|Prepared for) client@example.com/i).waitFor({ state: "visible" });
+    const rememberedEmail = await page.evaluate((storageOwnerId) => {
+      const raw = window.localStorage.getItem(`invoiceClientMemory::owner:${storageOwnerId}`);
+      const entries = raw ? JSON.parse(raw) : [];
+      return entries.find((entry: { name?: string }) => entry.name === "Send Client")?.recipientEmail ?? "";
+    }, ownerId);
+    assert.equal(rememberedEmail, "client@example.com");
     await page.getByRole("button", { name: "Mark opened INV-SEND-1" }).click();
     await page.getByText("Marked as opened.").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library prefills send recipient from client memory", async () => {
+  const ownerId = "ui-send-memory-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          name: "Memory Send Client",
+          details: "Memory Send Client",
+          recipientEmail: "billing@memory-client.example",
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+  }, ownerId);
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Memory Send Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-SEND-MEMORY",
+          issueDate: "2026-04-20",
+          customerName: "Memory Send Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-send-memory",
+              type: "labor",
+              description: "Memory send baseline",
+              quantity: 1,
+              unitPrice: 145,
+              amount: 145
+            }
+          ],
+          subtotal: 145,
+          total: 145,
+          balanceDue: 145
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Send invoice INV-SEND-MEMORY" }).click();
+    await page.getByText("Filled from client memory.").waitFor({ state: "visible" });
+    await expectValueEquals(page.getByPlaceholder("client@example.com"), "billing@memory-client.example");
   } finally {
     await context.close();
   }
@@ -3466,11 +4346,11 @@ test("invoice library invoice again opens a fresh draft with today's date and a 
     await page.getByRole("button", { name: "Invoice again" }).first().click();
 
     await page.waitForURL(/\/manual$/, { timeout: 15000 });
-    await page.getByPlaceholder("Description").first().waitFor({ state: "visible" });
+    await page.locator('input[placeholder="Description"]:visible').first().waitFor({ state: "visible" });
     await expectValueContains(page.getByPlaceholder("Client Name"), "Mike Johnson");
-    assert.equal(await page.getByLabel("Date").inputValue(), today);
+    assert.equal(await page.getByLabel("Date", { exact: true }).inputValue(), today);
     assert.notEqual(await page.getByLabel("Invoice #").inputValue(), "INV-1001");
-    await expectValueContains(page.getByPlaceholder("Description").first(), "Faucet repair");
+    await expectValueContains(page.locator('input[placeholder="Description"]:visible').first(), "Faucet repair");
   } finally {
     await context.close();
   }
@@ -3528,11 +4408,23 @@ test("invoice library supports sent and paid status actions", async () => {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     await page.getByText("INV-STATUS-1").waitFor({ state: "visible" });
     const card = page.locator("div").filter({ hasText: "INV-STATUS-1" }).first();
+    await card.getByText("Draft invoice", { exact: true }).waitFor({ state: "visible" });
+    await card.getByText("$220.00 draft total", { exact: true }).waitFor({ state: "visible" });
+    await card.getByText("Next: Open to finish, then send or export.").waitFor({ state: "visible" });
+
     await card.getByRole("button", { name: "Mark sent" }).click();
     await card.locator("span.rounded-full", { hasText: "sent" }).waitFor({ state: "visible" });
+    await card.getByText("Sent invoice", { exact: true }).waitFor({ state: "visible" });
+    await card.getByText("$220.00 open", { exact: true }).waitFor({ state: "visible" });
+    await card
+      .getByText("Next: Marked sent. Add a recipient if you want reminders or tracked delivery.")
+      .waitFor({ state: "visible" });
 
     await card.getByRole("button", { name: "Mark paid" }).click();
     await card.locator("span.rounded-full", { hasText: "paid" }).waitFor({ state: "visible" });
+    await card.getByText("Paid invoice", { exact: true }).waitFor({ state: "visible" });
+    await card.getByText("Paid in full").waitFor({ state: "visible" });
+    await card.getByText("Next: Paid. Use Invoice again for repeat work.").waitFor({ state: "visible" });
 
     const listResponse = await context.request.get(`${baseUrl}/api/invoices`, {
       headers: {
@@ -3546,6 +4438,7 @@ test("invoice library supports sent and paid status actions", async () => {
     );
     assert.ok(savedInvoice);
     assert.equal(savedInvoice.status, "paid");
+    assert.equal(savedInvoice.balanceDue, 0);
   } finally {
     await context.close();
   }
@@ -3693,7 +4586,7 @@ test("saving a client remembers bill-to details and autofills later matching dra
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("faucet repair");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("faucet repair");
     await page.getByPlaceholder("Client Name").fill("Mike Johnson\n1423 Pine St");
     await page.getByRole("button", { name: "Export" }).last().click();
     await page.getByText("Save to library").waitFor({ state: "visible" });
@@ -3784,9 +4677,9 @@ test("saving an invoice remembers line items and allows one-tap reinsertion late
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Faucet repair");
-    await page.getByPlaceholder("0").first().fill("1");
-    await page.getByPlaceholder("$0").first().fill("90");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
+    await page.locator('input[placeholder="0"]:visible').first().fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("90");
     await page.getByRole("button", { name: "Export" }).last().click();
     await page.getByText("Save to library").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Save invoice" }).click();
@@ -3797,13 +4690,13 @@ test("saving an invoice remembers line items and allows one-tap reinsertion late
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByRole("button", { name: /Saved items/i }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: /Saved items/i }).click();
+    await page.getByRole("button", { name: "Saved items (1)" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Saved items (1)" }).click();
     await page.getByRole("button", { name: "Insert saved item Faucet repair" }).click();
 
-    await expectValueContains(page.getByPlaceholder("Description").first(), "Faucet repair");
-    assert.equal(await page.getByPlaceholder("0").first().inputValue(), "1");
-    assert.equal(await page.getByPlaceholder("$0").first().inputValue(), "90");
+    await expectValueContains(page.locator('input[placeholder="Description"]:visible').first(), "Faucet repair");
+    assert.equal(await page.locator('input[placeholder="0"]:visible').first().inputValue(), "1");
+    assert.equal(await page.locator('input[placeholder="$0"]:visible').first().inputValue(), "90");
   } finally {
     await context.close();
   }
@@ -3838,8 +4731,8 @@ test("manual saved items prioritize same-client matches in suggestions", async (
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
     await page.getByPlaceholder("Client Name").fill("Mike Johnson");
-    await page.getByPlaceholder("Description").first().fill("Leak inspection");
-    await page.getByRole("button", { name: /Saved items/i }).click();
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Leak inspection");
+    await page.getByRole("button", { name: "Saved items (2)" }).click();
 
     const firstSavedItem = page.locator('button[aria-label^="Insert saved item"]').first();
     await firstSavedItem.getByText("Rate $155").waitFor({ state: "visible" });
@@ -3878,17 +4771,39 @@ test("manual line items offer one-tap suggested rate from saved client history",
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
     await page.getByPlaceholder("Client Name").fill("Mike Johnson");
-    await page.getByPlaceholder("Description").first().fill("Leak inspection of roof flashing");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Leak inspection of roof flashing");
 
     await page
       .getByRole("button", { name: /Apply suggested rate \$155\.00 to line 1/i })
       .waitFor({ state: "visible" });
     await page.getByRole("button", { name: /Apply suggested rate \$155\.00 to line 1/i }).click();
 
-    assert.equal(await page.getByPlaceholder("$0").first().inputValue(), "155");
+    assert.equal(await page.locator('input[placeholder="$0"]:visible').first().inputValue(), "155");
     await page.getByText(/Applied suggested rate \$155\.00\/hr \(client match/i).waitFor({
       state: "visible"
     });
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor export summarizes send readiness", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Riley Homeowner");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
+    await page.locator('input[placeholder="0"]:visible').first().fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("90");
+    await page.getByRole("button", { name: "Export" }).last().click();
+
+    await page.getByText("Send-ready check").waitFor({ state: "visible" });
+    await page.getByText("Ready to send").waitFor({ state: "visible" });
+    await page.getByText("Client added").waitFor({ state: "visible" });
+    await page.getByText("Billable item added").waitFor({ state: "visible" });
+    await page.getByText("$90.00 total").waitFor({ state: "visible" });
+    await page.getByText("Optional but helpful").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -3900,7 +4815,7 @@ test("manual editor save shows sign-in guidance when auth is required", async ()
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("sink repair");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("sink repair");
     await page.getByRole("button", { name: "Export" }).last().click();
     await page.getByText("Save to library").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Save invoice" }).click();
@@ -4023,9 +4938,9 @@ test("manual editor save shows free-plan limit message from API", async () => {
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Second invoice");
-    await page.getByPlaceholder("0").first().fill("1");
-    await page.getByPlaceholder("$0").first().fill("120");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Second invoice");
+    await page.locator('input[placeholder="0"]:visible').first().fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("120");
     await page.getByRole("button", { name: "Export" }).last().click();
     await page.getByText("Free plan · 1/1 saved this month (limit reached)").waitFor({ state: "visible" });
     await page.getByText("Save limit reached. Update existing invoices or upgrade to save more.").waitFor({
@@ -4066,9 +4981,9 @@ test("manual export panel can mark a saved invoice as sent then paid", async () 
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Roof leak repair");
-    await page.getByPlaceholder("0").first().fill("1");
-    await page.getByPlaceholder("$0").first().fill("180");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Roof leak repair");
+    await page.locator('input[placeholder="0"]:visible').first().fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("180");
 
     await page.getByRole("button", { name: "Export" }).last().click();
     await page.getByText("Save to library").waitFor({ state: "visible" });
@@ -4114,9 +5029,9 @@ test("manual export panel can create a hosted payment link for a saved invoice",
     });
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("Description").first().fill("Skylight repair");
-    await page.getByPlaceholder("0").first().fill("1");
-    await page.getByPlaceholder("$0").first().fill("260");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Skylight repair");
+    await page.locator('input[placeholder="0"]:visible').first().fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("260");
 
     await page.getByRole("button", { name: "Export" }).last().click();
     await page.getByText("Save to library").waitFor({ state: "visible" });
@@ -4158,6 +5073,8 @@ test("diagnostics route shows launch, billing, delivery, and telemetry panels", 
     await page.goto(`${baseUrl}/diagnostics`, { waitUntil: "networkidle" });
     await page.getByRole("heading", { name: "Intake telemetry" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "System health snapshot" }).waitFor({ state: "visible" });
+    await page.getByRole("heading", { name: "Revenue signals" }).waitFor({ state: "visible" });
+    await page.getByText("Paid-plan readiness").waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "OCR confidence" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Trend baseline" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Flow friction checks" }).waitFor({ state: "visible" });

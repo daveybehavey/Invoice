@@ -22,6 +22,68 @@
     );
   }
 
+  function buildPaidPlanReadiness(summary) {
+    const ownerCount = Number(summary?.ownerCount ?? 0);
+    const activatedOwners = Number(summary?.activatedOwners ?? 0);
+    const secondInvoiceOwners = Number(summary?.secondInvoiceOwners ?? 0);
+    const sentInvoiceOwners = Number(summary?.sentInvoiceOwners ?? 0);
+    const reminderOwners = Number(summary?.reminderOwners ?? 0);
+    const paymentLinkOwners = Number(summary?.paymentLinkOwners ?? 0);
+    const checkoutOwners = Number(summary?.checkoutOwners ?? 0);
+
+    const activationRate = ownerCount > 0 ? activatedOwners / ownerCount : 0;
+    const repeatRate = activatedOwners > 0 ? secondInvoiceOwners / activatedOwners : 0;
+    const reminderRate = sentInvoiceOwners > 0 ? reminderOwners / sentInvoiceOwners : 0;
+    const paymentLinkRate = sentInvoiceOwners > 0 ? paymentLinkOwners / sentInvoiceOwners : 0;
+
+    if (ownerCount < 10) {
+      return {
+        stage: "Collect baseline",
+        tone: "amber",
+        recommendation:
+          "Not enough usage yet for monetization calls. Keep collecting tester behavior and fix top friction first."
+      };
+    }
+    if (activationRate < 0.55) {
+      return {
+        stage: "Activation focus",
+        tone: "amber",
+        recommendation:
+          "Delay paywall work. Improve first-run clarity until more users reach a first saved invoice."
+      };
+    }
+    if (repeatRate < 0.35) {
+      return {
+        stage: "Retention focus",
+        tone: "amber",
+        recommendation:
+          "Focus on second-invoice behavior first. Improve repeat-client and reopen flows before pricing experiments."
+      };
+    }
+    if (reminderRate < 0.3 || paymentLinkRate < 0.25) {
+      return {
+        stage: "Collections loop focus",
+        tone: "green",
+        recommendation:
+          "Core creation/retention is healthy. Next value unlock is reminders and payment-link adoption."
+      };
+    }
+    if (checkoutOwners < Math.max(3, Math.floor(ownerCount * 0.05))) {
+      return {
+        stage: "Soft paywall ready",
+        tone: "green",
+        recommendation:
+          "Run a small paid-plan prompt test at a value moment (after second saved invoice or active follow-up usage)."
+      };
+    }
+    return {
+      stage: "Monetization signal live",
+      tone: "green",
+      recommendation:
+        "Users are showing paid intent. Continue fair paid-boundary tests and monitor conversion quality."
+    };
+  }
+
   function IntakeDiagnostics() {
     const navigate = useNavigate();
     const [loading, setLoading] = useState(true);
@@ -30,6 +92,7 @@
     const [ocrSnapshot, setOcrSnapshot] = useState(null);
     const [frictionSnapshot, setFrictionSnapshot] = useState(null);
     const [trendSnapshot, setTrendSnapshot] = useState(null);
+    const [revenueSnapshot, setRevenueSnapshot] = useState(null);
     const [systemInfo, setSystemInfo] = useState(null);
     const [migrationInfo, setMigrationInfo] = useState(null);
     const [billingInfo, setBillingInfo] = useState(null);
@@ -54,6 +117,7 @@
           ocrResponse,
           frictionResponse,
           trendResponse,
+          revenueResponse,
           systemResponse,
           migrationResponse,
           billingResponse,
@@ -64,6 +128,7 @@
           apiFetch("/api/telemetry/ocr-confidence"),
           apiFetch("/api/telemetry/flow-friction"),
           apiFetch("/api/telemetry/intake-trends"),
+          apiFetch("/api/telemetry/revenue-signals"),
           apiFetch("/api/system/persistence"),
           apiFetch("/api/system/persistence/migration"),
           apiFetch("/api/system/billing"),
@@ -74,6 +139,7 @@
           ocrPayload,
           frictionPayload,
           trendPayload,
+          revenuePayload,
           systemPayload,
           migrationPayload,
           billingPayload,
@@ -84,6 +150,7 @@
           ocrResponse.json(),
           frictionResponse.json(),
           trendResponse.json(),
+          revenueResponse.json(),
           systemResponse.json(),
           migrationResponse.json(),
           billingResponse.json(),
@@ -98,6 +165,9 @@
         }
         if (!trendResponse.ok) {
           throw new Error(trendPayload?.error || "Failed to load intake trends.");
+        }
+        if (!revenueResponse.ok) {
+          throw new Error(revenuePayload?.error || "Failed to load revenue signals.");
         }
         if (!systemResponse.ok) {
           throw new Error(systemPayload?.error || "Failed to load system persistence info.");
@@ -117,6 +187,7 @@
         setOcrSnapshot(ocrPayload);
         setFrictionSnapshot(frictionPayload);
         setTrendSnapshot(trendPayload);
+        setRevenueSnapshot(revenuePayload);
         setSystemInfo(systemPayload);
         setMigrationInfo(migrationPayload);
         setBillingInfo(billingPayload);
@@ -299,6 +370,27 @@
       failedRate: 0,
       issueRuns: 0
     };
+    const revenueSummary = revenueSnapshot?.summary ?? {
+      ownerCount: 0,
+      activatedOwners: 0,
+      secondInvoiceOwners: 0,
+      sentInvoiceOwners: 0,
+      reminderOwners: 0,
+      paymentLinkOwners: 0,
+      repeatInvoiceOwners: 0,
+      serviceMemoryOwners: 0,
+      clientMemoryOwners: 0,
+      recurringScheduleOwners: 0,
+      checkoutOwners: 0
+    };
+    const revenueEventRows = Object.entries(revenueSnapshot?.byEvent ?? {}).sort(
+      (left, right) => Number(right[1]) - Number(left[1])
+    );
+    const revenueActivationRate =
+      revenueSummary.ownerCount > 0
+        ? `${((revenueSummary.activatedOwners / revenueSummary.ownerCount) * 100).toFixed(0)}%`
+        : "0%";
+    const paidPlanReadiness = buildPaidPlanReadiness(revenueSummary);
     const persistenceReady = Boolean(systemInfo?.productionReady);
     const billingReady = Boolean(
       billingInfo?.capabilities?.checkoutAvailable &&
@@ -419,6 +511,67 @@
                 Legacy migration backlog detected. Complete migration before strict production cutover.
               </p>
             ) : null}
+          </section>
+
+          <section className="nb-surface mt-4 rounded-[28px] p-5">
+            <h2 className="text-lg font-semibold text-slate-900">Revenue signals</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Privacy-conscious activation and retention counters. No invoice text, customer names, or emails are stored here.
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+              <StatusPill label="Signal owners" value={String(revenueSummary.ownerCount)} />
+              <StatusPill label="Activation rate" value={revenueActivationRate} tone="green" />
+              <StatusPill label="Second invoice owners" value={String(revenueSummary.secondInvoiceOwners)} />
+              <StatusPill label="Repeat invoice owners" value={String(revenueSummary.repeatInvoiceOwners)} />
+              <StatusPill label="Sent invoice owners" value={String(revenueSummary.sentInvoiceOwners)} />
+              <StatusPill label="Reminder owners" value={String(revenueSummary.reminderOwners)} />
+              <StatusPill label="Payment link owners" value={String(revenueSummary.paymentLinkOwners)} />
+              <StatusPill label="Service memory owners" value={String(revenueSummary.serviceMemoryOwners)} />
+              <StatusPill label="Client memory owners" value={String(revenueSummary.clientMemoryOwners)} />
+              <StatusPill label="Recurring owners" value={String(revenueSummary.recurringScheduleOwners)} />
+              <StatusPill label="Checkout starts" value={String(revenueSummary.checkoutOwners)} />
+            </div>
+            <p className="mt-3 text-xs text-slate-500">
+              Total events: {revenueSnapshot?.totalEvents ?? 0}
+              {" | "}
+              Updated: {revenueSnapshot?.updatedAt || "n/a"}
+            </p>
+            <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Paid-plan readiness
+                </p>
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                    paidPlanReadiness.tone === "green"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-amber-200 bg-amber-50 text-amber-700"
+                  }`}
+                >
+                  {paidPlanReadiness.stage}
+                </span>
+              </div>
+              <p className="mt-2 text-sm text-slate-700">{paidPlanReadiness.recommendation}</p>
+            </div>
+            {revenueEventRows.length > 0 ? (
+              <div className="mt-3 rounded-xl border border-slate-200">
+                <div className="border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Event counts
+                </div>
+                <div className="divide-y divide-slate-100">
+                  {revenueEventRows.map(([eventName, count]) => (
+                    <div key={eventName} className="flex items-center justify-between px-3 py-2 text-sm">
+                      <span className="font-medium text-slate-700">{eventName}</span>
+                      <span className="text-slate-500">{String(count)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                No revenue signals yet. They will appear after users build, save, send, follow up, or start repeat invoices.
+              </p>
+            )}
           </section>
 
           <section className="nb-surface mt-4 rounded-[28px] p-5">

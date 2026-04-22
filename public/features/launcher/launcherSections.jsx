@@ -34,7 +34,7 @@ function LauncherAccountStrip({
         ? "nb-usage-meter--warning"
         : "";
   return (
-    <div className="nb-surface nb-surface--muted mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[24px] px-4 py-3">
+    <div className="nb-surface nb-surface--muted mt-5 flex flex-col gap-3 rounded-[24px] px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
       <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold text-slate-700">
           {authSession?.email ? `Signed in as ${authSession.email}` : "Not signed in (local mode)"}
@@ -61,7 +61,7 @@ function LauncherAccountStrip({
           </div>
         ) : null}
       </div>
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
         {hasPlanActions ? (
           <button
             type="button"
@@ -94,7 +94,7 @@ function LauncherAccountStrip({
         )}
       </div>
       {showPlanActions ? (
-        <div id="launcher-plan-actions" className="mt-1 flex w-full flex-wrap items-center justify-end gap-2">
+        <div id="launcher-plan-actions" className="mt-1 flex w-full flex-wrap items-center gap-2 sm:justify-end">
           {showUpgradeAction ? (
             useStripeUpgradeAction ? (
               <button
@@ -140,6 +140,158 @@ function LauncherAccountStrip({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function LauncherOperationsQueueSection({
+  summary,
+  loading,
+  busyInvoiceId,
+  busyActionId,
+  onResumeDraft,
+  onSendReminder,
+  onMarkPaid,
+  onInvoiceAgain,
+  onOpenLibrary,
+  onStartInvoice
+}) {
+  const hasInvoices = Boolean(summary?.hasInvoices);
+  if (!hasInvoices && !loading) {
+    return null;
+  }
+  const actionToneClass = {
+    draft: "border-blue-200 bg-blue-50 text-blue-950",
+    "follow-up": "border-amber-200 bg-amber-50 text-amber-950",
+    sent: "border-sky-200 bg-sky-50 text-sky-950",
+    repeat: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-950",
+    payment: "border-emerald-200 bg-emerald-50 text-emerald-950"
+  };
+  const stats = [
+    { label: "Drafts", value: summary?.draftCount ?? 0 },
+    { label: "Sent", value: summary?.sentCount ?? 0 },
+    { label: "Open", value: summary?.openBalanceLabel ?? "$0.00" },
+    { label: "Paid", value: summary?.paidCount ?? 0 }
+  ];
+  const actions = Array.isArray(summary?.actions) ? summary.actions : [];
+
+  return (
+    <section className="nb-surface nb-surface--elevated mt-6 rounded-[30px] p-5 md:p-6">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="max-w-2xl">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Today&apos;s queue</p>
+          <h2 className="mt-2 text-2xl text-slate-900 md:text-3xl" style={{ fontFamily: "'Fraunces', serif" }}>
+            Invoice command center
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {loading
+              ? "Checking saved invoices..."
+              : summary?.headline || "See what needs action before starting new work."}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[420px]">
+          {stats.map((stat) => (
+            <div key={stat.label} className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-3 text-center">
+              <p className="text-lg font-semibold text-[#093064]">{stat.value}</p>
+              <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                {stat.label}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+      {actions.length > 0 ? (
+        <div className="mt-5 grid gap-3 md:grid-cols-3">
+          {actions.map((action) => {
+            const toneClass = actionToneClass[action.tone] ?? "border-slate-200 bg-slate-50 text-slate-900";
+            const isBusy = Boolean(
+              (action.invoiceId && busyInvoiceId === action.invoiceId) ||
+                (action.busyId && busyActionId === action.busyId)
+            );
+            const isSecondaryBusy = Boolean(
+              action.secondaryBusyId && busyActionId === action.secondaryBusyId
+            );
+            const isActionBusy = isBusy || isSecondaryBusy;
+            return (
+              <div key={action.id} className={`rounded-[24px] border p-4 ${toneClass}`}>
+                <p className="text-sm font-semibold">{action.title}</p>
+                <p className="mt-2 min-h-[44px] text-sm leading-6 opacity-80">{action.detail}</p>
+                {action.action === "open-link" && action.href ? (
+                  <a
+                    href={action.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="nb-btn-primary mt-3 inline-flex rounded-full px-3 py-1.5 text-sm"
+                  >
+                    {action.cta}
+                  </a>
+                ) : action.action === "resume-draft" ? (
+                  <button
+                    type="button"
+                    className="nb-btn-primary mt-3 rounded-full px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label={action.ariaLabel || action.cta}
+                    onClick={() => onResumeDraft(action.invoiceId)}
+                    disabled={isActionBusy}
+                  >
+                    {isBusy ? "Opening..." : action.cta}
+                  </button>
+                ) : action.action === "send-reminder" ? (
+                  <button
+                    type="button"
+                    className="nb-btn-primary mt-3 rounded-full px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label={action.ariaLabel || action.cta}
+                    onClick={() => onSendReminder?.(action.invoiceId)}
+                    disabled={isActionBusy}
+                  >
+                    {isBusy ? "Sending..." : action.cta}
+                  </button>
+                ) : action.action === "invoice-again" ? (
+                  <button
+                    type="button"
+                    className="nb-btn-primary mt-3 rounded-full px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label={action.ariaLabel || action.cta}
+                    onClick={() => onInvoiceAgain?.(action.invoiceId)}
+                    disabled={isActionBusy}
+                  >
+                    {isBusy ? "Opening..." : action.cta}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-sm"
+                    onClick={onOpenLibrary}
+                  >
+                    {action.cta}
+                  </button>
+                )}
+                {action.secondaryAction === "mark-paid" ? (
+                  <button
+                    type="button"
+                    className="nb-btn-secondary ml-2 mt-3 rounded-full px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label={action.secondaryAriaLabel || action.secondaryCta}
+                    onClick={() => onMarkPaid?.(action.invoiceId)}
+                    disabled={isActionBusy}
+                  >
+                    {isSecondaryBusy ? "Saving..." : action.secondaryCta}
+                  </button>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : hasInvoices ? (
+        <div className="nb-subcard mt-5 flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">All caught up</p>
+            <p className="mt-1 text-sm text-slate-600">
+              No open follow-ups or drafts need attention right now.
+            </p>
+          </div>
+          <button type="button" className="nb-btn-primary rounded-full px-4 py-2" onClick={onStartInvoice}>
+            Start next invoice
+          </button>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -194,8 +346,10 @@ function LauncherDraftRecoverySection({ drafts, loading, busyInvoiceId, onResume
 
 function LauncherStartSection({
   primaryOption,
+  hasSavedHistory,
   hasResumeDraft,
   onResumeDraft,
+  onTrySampleNotes,
   showAlternateStarts,
   onToggleAlternateStarts
 }) {
@@ -268,6 +422,13 @@ function LauncherStartSection({
             ) : null}
             <button
               type="button"
+              className="nb-btn-secondary rounded-full px-3 py-1.5"
+              onClick={onTrySampleNotes}
+            >
+              Try sample notes
+            </button>
+            <button
+              type="button"
               className="nb-btn-ghost rounded-full px-3 py-1.5 text-sm"
               onClick={onToggleAlternateStarts}
               aria-expanded={showAlternateStarts}
@@ -276,6 +437,13 @@ function LauncherStartSection({
               {showAlternateStarts ? "Hide other starts" : "Need a different start?"}
             </button>
           </div>
+          {!hasSavedHistory ? (
+            <div className="mt-3 rounded-2xl border border-[#6993d2]/25 bg-[#f6f9ff] px-3 py-2">
+              <p className="text-xs font-semibold text-[#093064]">
+                First invoice? Tap <span className="font-bold">Try sample notes</span> for a 30-second walkthrough.
+              </p>
+            </div>
+          ) : null}
           <p className="mt-3 text-xs leading-5 text-slate-500">
             Start here unless you already have a file or need full manual control.
           </p>
@@ -373,6 +541,8 @@ function LauncherAuthModal({
   authBusy,
   authEmail,
   authEmailError,
+  authNotice,
+  authPreviewUrl,
   onChangeEmail,
   onCancel,
   onSubmit
@@ -387,7 +557,7 @@ function LauncherAuthModal({
           Sign in
         </h2>
         <p className="mt-1 text-sm text-slate-600">
-          Enter your email to keep invoices scoped to your account.
+          Enter your email and we&apos;ll send a secure sign-in link.
         </p>
         <label className="mt-4 block text-sm font-semibold text-slate-700" htmlFor="launcher-auth-email">
           Email
@@ -409,6 +579,15 @@ function LauncherAuthModal({
           }}
         />
         {authEmailError ? <p className="mt-2 text-sm text-rose-600">{authEmailError}</p> : null}
+        {authNotice ? <p className="mt-2 text-sm text-sky-700">{authNotice}</p> : null}
+        {authPreviewUrl ? (
+          <a
+            href={authPreviewUrl}
+            className="mt-2 inline-flex text-sm font-semibold text-[#093064] underline underline-offset-2"
+          >
+            Open preview sign-in link
+          </a>
+        ) : null}
         <div className="mt-4 flex items-center justify-end gap-2">
           <button
             type="button"
@@ -424,7 +603,7 @@ function LauncherAuthModal({
             onClick={onSubmit}
             disabled={authBusy}
           >
-            {authBusy ? "Signing in..." : "Sign in"}
+            {authBusy ? "Sending link..." : "Email sign-in link"}
           </button>
         </div>
       </div>
@@ -434,6 +613,7 @@ function LauncherAuthModal({
 
 window.InvoiceLauncherSections = {
   AccountStrip: LauncherAccountStrip,
+  OperationsQueueSection: LauncherOperationsQueueSection,
   DraftRecoverySection: LauncherDraftRecoverySection,
   StartSection: LauncherStartSection,
   AlternateStartsSection: LauncherAlternateStartsSection,

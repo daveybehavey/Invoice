@@ -1,4 +1,4 @@
-const { BrowserRouter, Routes, Route, useNavigate } = ReactRouterDOM;
+const { BrowserRouter, Routes, Route, useNavigate, useSearchParams } = ReactRouterDOM;
 const { useEffect, useState } = React;
 
 const uiPrimitives = window.InvoiceUIPrimitives;
@@ -6,7 +6,7 @@ if (!uiPrimitives) {
   throw new Error("Missing /ui/primitives.jsx load. Ensure it is loaded before /launcher.jsx.");
 }
 
-const { SparklesIcon, PencilIcon, UploadIcon, ArchiveIcon, SwatchIcon } = uiPrimitives;
+const { SparklesIcon, PencilIcon, UploadIcon, ArchiveIcon, SwatchIcon, FeedbackIcon } = uiPrimitives;
 
 const intakeFeatureUtils = window.InvoiceIntakeFeature;
 if (!intakeFeatureUtils) {
@@ -51,7 +51,7 @@ if (!businessIdentityFeatureUtils) {
   );
 }
 
-const { BusinessIdentitySettings } = businessIdentityFeatureUtils;
+const { BusinessIdentitySettings, ClientMemorySettings } = businessIdentityFeatureUtils;
 
 const manualCanvasUtils = window.InvoiceManualCanvas;
 if (!manualCanvasUtils) {
@@ -87,7 +87,8 @@ if (!requestIdentity) {
   throw new Error("Missing /utils/requestIdentity.js load. Ensure it is loaded before /launcher.jsx.");
 }
 
-const { apiFetch, getAuthSession, refreshSession, signInWithEmail, signOut } = requestIdentity;
+const { apiFetch, getAuthSession, refreshSession, requestSignInLink, completeEmailLinkSignIn, signOut } =
+  requestIdentity;
 
 const launcherSectionUtils = window.InvoiceLauncherSections;
 if (!launcherSectionUtils) {
@@ -96,8 +97,15 @@ if (!launcherSectionUtils) {
   );
 }
 
-const { AccountStrip, DraftRecoverySection, StartSection, AlternateStartsSection, ManageSection, AuthModal } =
-  launcherSectionUtils;
+const {
+  AccountStrip,
+  OperationsQueueSection,
+  DraftRecoverySection,
+  StartSection,
+  AlternateStartsSection,
+  ManageSection,
+  AuthModal
+} = launcherSectionUtils;
 const launcherHelperUtils = window.InvoiceLauncherHelpers;
 if (!launcherHelperUtils) {
   throw new Error(
@@ -136,15 +144,200 @@ function deriveTaxRate(invoice) {
   return ((taxAmount / subtotal) * 100).toFixed(2);
 }
 
+function parseDisplayTimestamp(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    const [year, month, day] = text.split("-").map(Number);
+    return new Date(year, month - 1, day).getTime();
+  }
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function getInvoiceDueDateValue(invoice) {
+  return invoice?.dueDate ?? invoice?.invoiceData?.finishedInvoice?.dueDate ?? "";
+}
+
+function getInvoiceOpenBalance(invoice) {
+  const amount = Number(
+    invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? invoice?.total
+  );
+  return Number.isFinite(amount) ? Math.max(amount, 0) : 0;
+}
+
 function formatUpdatedLabel(value) {
   if (!value) {
     return "";
   }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
+  const parsed = parseDisplayTimestamp(value);
+  if (!Number.isFinite(parsed)) {
     return "";
   }
-  return parsed.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+  const date = new Date(parsed);
+  return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
+
+function toTimestamp(value) {
+  if (!value) {
+    return 0;
+  }
+  const parsed = parseDisplayTimestamp(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatMoneyLabel(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return "$0.00";
+  }
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD"
+  }).format(amount);
+}
+
+function pluralize(count, singular, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function buildLauncherOperationsSummary(invoices, nowMs = Date.now()) {
+  const activeInvoices = Array.isArray(invoices)
+    ? invoices.filter((invoice) => invoice && invoice.status !== "deleted")
+    : [];
+  const byUpdatedDesc = (a, b) => toTimestamp(b.updatedAt) - toTimestamp(a.updatedAt);
+  const drafts = activeInvoices.filter((invoice) => invoice.status === "draft").sort(byUpdatedDesc);
+  const sent = activeInvoices.filter((invoice) => invoice.status === "sent").sort(byUpdatedDesc);
+  const unpaidSent = sent.filter((invoice) => getInvoiceOpenBalance(invoice) > 0);
+  const paid = activeInvoices.filter((invoice) => invoice.status === "paid").sort(byUpdatedDesc);
+  const staleSent = unpaidSent
+    .map((invoice) => {
+      const dueDateValue = getInvoiceDueDateValue(invoice);
+      const dueDateMs = toTimestamp(dueDateValue);
+      const daysSinceUpdate = Math.max(0, Math.floor((nowMs - toTimestamp(invoice.updatedAt)) / 86400000));
+      const isPastDue = dueDateMs > 0 && dueDateMs <= nowMs;
+      return {
+        invoice,
+        daysSinceUpdate,
+        dueDateValue,
+        dueDateMs,
+        isPastDue
+      };
+    })
+    .filter((entry) => entry.isPastDue || entry.daysSinceUpdate >= 14)
+    .sort((a, b) => {
+      if (a.isPastDue !== b.isPastDue) {
+        return a.isPastDue ? -1 : 1;
+      }
+      if (a.isPastDue && b.isPastDue) {
+        return a.dueDateMs - b.dueDateMs;
+      }
+      return b.daysSinceUpdate - a.daysSinceUpdate;
+    });
+  const paymentLinkInvoice = unpaidSent.find((invoice) => invoice.paymentLinkUrl);
+  const repeatCandidate = paid[0];
+  const openBalance = unpaidSent.reduce((sum, invoice) => sum + getInvoiceOpenBalance(invoice), 0);
+  const actions = [];
+  const latestDraft = drafts[0];
+  if (latestDraft) {
+    actions.push({
+      id: `resume:${latestDraft.invoiceId}`,
+      tone: "draft",
+      title: "Resume latest draft",
+      detail: `${latestDraft.invoiceNumber || "Draft invoice"} was updated ${
+        formatUpdatedLabel(latestDraft.updatedAt) || "recently"
+      }.`,
+      cta: "Resume draft",
+      ariaLabel: `Resume ${latestDraft.invoiceNumber || "draft invoice"}`,
+      action: "resume-draft",
+      invoiceId: latestDraft.invoiceId
+    });
+  }
+  if (staleSent[0]) {
+    const { invoice, daysSinceUpdate, dueDateValue, isPastDue } = staleSent[0];
+    const reminderRecipient = invoice.delivery?.recipientEmail ?? "";
+    const canSendReminder = reminderRecipient.trim().length > 0;
+    const dueDateLabel = formatUpdatedLabel(dueDateValue);
+    const openBalanceLabel = formatMoneyLabel(getInvoiceOpenBalance(invoice));
+    const followUpDetail =
+      isPastDue && dueDateLabel
+        ? `${invoice.invoiceNumber || "Sent invoice"} was due ${dueDateLabel}.`
+        : `${invoice.invoiceNumber || "Sent invoice"} has been open for ${daysSinceUpdate} days.`;
+    actions.push({
+      id: `follow-up:${invoice.invoiceId}`,
+      tone: "follow-up",
+      title: "Follow up sent invoice",
+      detail: `${followUpDetail} ${openBalanceLabel} still open.${
+        canSendReminder ? ` Last sent to ${reminderRecipient}.` : ""
+      }`,
+      cta: canSendReminder ? "Send reminder" : "Review follow-ups",
+      ariaLabel: canSendReminder
+        ? `Send reminder for ${invoice.invoiceNumber || "sent invoice"}`
+        : undefined,
+      action: canSendReminder ? "send-reminder" : "open-library",
+      busyId: canSendReminder ? `reminder:${invoice.invoiceId}` : undefined,
+      secondaryCta: "Mark paid",
+      secondaryAction: "mark-paid",
+      secondaryAriaLabel: `Mark ${invoice.invoiceNumber || "sent invoice"} paid`,
+      secondaryBusyId: `mark-paid:${invoice.invoiceId}`,
+      invoiceId: invoice.invoiceId
+    });
+  } else if (unpaidSent.length > 0) {
+    actions.push({
+      id: "sent:review",
+      tone: "sent",
+      title: "Track sent invoices",
+      detail: `${pluralize(unpaidSent.length, "sent invoice")} still ${
+        unpaidSent.length === 1 ? "needs" : "need"
+      } payment tracking. ${formatMoneyLabel(openBalance)} still open.`,
+      cta: "Open sent work",
+      action: "open-library"
+    });
+  }
+  if (repeatCandidate) {
+    actions.push({
+      id: `invoice-again:${repeatCandidate.invoiceId}`,
+      tone: "repeat",
+      title: "Invoice a repeat client",
+      detail: `Start a fresh editable draft from ${
+        repeatCandidate.invoiceNumber || "a paid invoice"
+      }${repeatCandidate.customerName ? ` for ${repeatCandidate.customerName}` : ""}.`,
+      cta: "Invoice again",
+      ariaLabel: `Invoice again from ${repeatCandidate.invoiceNumber || "paid invoice"}`,
+      action: "invoice-again",
+      busyId: `invoice-again:${repeatCandidate.invoiceId}`,
+      invoiceId: repeatCandidate.invoiceId
+    });
+  }
+  if (paymentLinkInvoice?.paymentLinkUrl) {
+    actions.push({
+      id: `pay-link:${paymentLinkInvoice.invoiceId}`,
+      tone: "payment",
+      title: "Payment link ready",
+      detail: `${paymentLinkInvoice.invoiceNumber || "Invoice"} has an online payment link.`,
+      cta: "Open pay link",
+      href: paymentLinkInvoice.paymentLinkUrl,
+      action: "open-link"
+    });
+  }
+  return {
+    hasInvoices: activeInvoices.length > 0,
+    invoiceCount: activeInvoices.length,
+    draftCount: drafts.length,
+    sentCount: sent.length,
+    paidCount: paid.length,
+    staleSentCount: staleSent.length,
+    openBalance,
+    openBalanceLabel: formatMoneyLabel(openBalance),
+    headline:
+      staleSent.length > 0
+        ? `${pluralize(staleSent.length, "invoice")} may need follow-up.`
+        : unpaidSent.length > 0
+          ? `${formatMoneyLabel(openBalance)} open across ${pluralize(unpaidSent.length, "sent invoice")}.`
+          : drafts.length > 0
+            ? `${pluralize(drafts.length, "draft")} waiting to finish.`
+            : "All caught up.",
+    actions: actions.slice(0, 3)
+  };
 }
 
 function Launcher() {
@@ -153,6 +346,8 @@ function Launcher() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
   const [authEmailError, setAuthEmailError] = useState("");
+  const [authNotice, setAuthNotice] = useState("");
+  const [authPreviewUrl, setAuthPreviewUrl] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
   const [accountPlan, setAccountPlan] = useState(null);
@@ -245,10 +440,17 @@ function Launcher() {
     setAuthBusy(true);
     setAuthError("");
     setAuthEmailError("");
+    setAuthNotice("");
+    setAuthPreviewUrl("");
     try {
-      const session = await signInWithEmail(normalizedEmail);
-      setAuthSession(session);
-      setAuthModalOpen(false);
+      const payload = await requestSignInLink(normalizedEmail);
+      const notice = payload?.emailSent
+        ? `Check ${normalizedEmail} for your secure sign-in link.`
+        : payload?.previewUrl
+          ? "Email delivery is not configured here, so a preview sign-in link is available below."
+          : "If the address is valid, a sign-in link is on the way.";
+      setAuthNotice(notice);
+      setAuthPreviewUrl(typeof payload?.previewUrl === "string" ? payload.previewUrl : "");
       setAuthEmail("");
     } catch (error) {
       const message = error?.message || "Sign in failed.";
@@ -262,6 +464,8 @@ function Launcher() {
   const openSignInModal = () => {
     setAuthError("");
     setAuthEmailError("");
+    setAuthNotice("");
+    setAuthPreviewUrl("");
     setAuthEmail(authSession?.email ?? "");
     setAuthModalOpen(true);
   };
@@ -286,7 +490,8 @@ function Launcher() {
       upload: <UploadIcon />,
       pencil: <PencilIcon />,
       archive: <ArchiveIcon />,
-      swatch: <SwatchIcon />
+      swatch: <SwatchIcon />,
+      feedback: <FeedbackIcon />
     }
   });
   const primaryOption = options.find((option) => option.key === "ai") ?? options[0];
@@ -294,7 +499,11 @@ function Launcher() {
     (option) => option.key === "import" || option.key === "manual"
   );
   const manageOptions = options.filter(
-    (option) => option.key === "library" || option.key === "identity"
+    (option) =>
+      option.key === "library" ||
+      option.key === "identity" ||
+      option.key === "memory" ||
+      option.key === "feedback"
   );
   const planSummary = formatPlanSummary(accountPlan);
   const planUsage = getPlanUsageModel(accountPlan);
@@ -324,7 +533,14 @@ function Launcher() {
   const [billingError, setBillingError] = useState("");
   const [draftRecoveryItems, setDraftRecoveryItems] = useState([]);
   const [draftRecoveryLoading, setDraftRecoveryLoading] = useState(false);
+  const [operationsSummary, setOperationsSummary] = useState(() =>
+    buildLauncherOperationsSummary([])
+  );
   const [resumeDraftBusyId, setResumeDraftBusyId] = useState("");
+  const [operationsBusyActionId, setOperationsBusyActionId] = useState("");
+  const [operationsNotice, setOperationsNotice] = useState("");
+  const [operationsError, setOperationsError] = useState("");
+  const [savedWorkRefreshToken, setSavedWorkRefreshToken] = useState(0);
 
   const handleUpgradeAction = async () => {
     setBillingBusy(true);
@@ -372,28 +588,30 @@ function Launcher() {
         }
         if (!response.ok) {
           setDraftRecoveryItems([]);
+          setOperationsSummary(buildLauncherOperationsSummary([]));
           return;
         }
         const payload = await response.json();
         if (!active) {
           return;
         }
-        const drafts = Array.isArray(payload?.invoices)
-          ? payload.invoices
+        const invoices = Array.isArray(payload?.invoices) ? payload.invoices : [];
+        const drafts = invoices
               .filter((invoice) => invoice?.status === "draft")
               .slice(0, 3)
               .map((invoice) => ({
                 invoiceId: invoice.invoiceId,
                 invoiceNumber: invoice.invoiceNumber || "Draft invoice",
                 updatedLabel: formatUpdatedLabel(invoice.updatedAt)
-              }))
-          : [];
+              }));
         setDraftRecoveryItems(drafts);
+        setOperationsSummary(buildLauncherOperationsSummary(invoices));
       } catch (_error) {
         if (!active) {
           return;
         }
         setDraftRecoveryItems([]);
+        setOperationsSummary(buildLauncherOperationsSummary([]));
       } finally {
         if (active) {
           setDraftRecoveryLoading(false);
@@ -409,7 +627,7 @@ function Launcher() {
       active = false;
       window.removeEventListener("focus", handleFocus);
     };
-  }, [authSession?.userId]);
+  }, [authSession?.userId, savedWorkRefreshToken]);
 
   const handleResumeSavedDraft = async (invoiceId) => {
     if (!invoiceId || resumeDraftBusyId) {
@@ -439,6 +657,112 @@ function Launcher() {
       setAuthError(error?.message || "Failed to open draft.");
     } finally {
       setResumeDraftBusyId("");
+    }
+  };
+
+  const handleLauncherSendReminder = async (invoiceId) => {
+    if (!invoiceId || operationsBusyActionId) {
+      return;
+    }
+    const busyId = `reminder:${invoiceId}`;
+    setOperationsBusyActionId(busyId);
+    setOperationsNotice("");
+    setOperationsError("");
+    try {
+      const response = await apiFetch(`/api/invoices/${invoiceId}/send-reminder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to send reminder.");
+      }
+      const recipient =
+        payload?.reminder?.recipientEmail ?? payload?.delivery?.recipientEmail ?? "the saved recipient";
+      setOperationsNotice(
+        payload?.mode === "provider"
+          ? `Reminder emailed to ${recipient}.`
+          : payload?.warning || `Reminder recorded for ${recipient}.`
+      );
+      setSavedWorkRefreshToken((current) => current + 1);
+    } catch (error) {
+      setOperationsError(error?.message || "Failed to send reminder.");
+    } finally {
+      setOperationsBusyActionId("");
+    }
+  };
+
+  const handleLauncherMarkPaid = async (invoiceId) => {
+    if (!invoiceId || operationsBusyActionId) {
+      return;
+    }
+    const busyId = `mark-paid:${invoiceId}`;
+    setOperationsBusyActionId(busyId);
+    setOperationsNotice("");
+    setOperationsError("");
+    try {
+      const response = await apiFetch(`/api/invoices/${invoiceId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "paid" })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to mark invoice paid.");
+      }
+      const invoiceNumber =
+        payload?.invoice?.invoiceData?.finishedInvoice?.invoiceNumber ||
+        payload?.invoice?.invoiceNumber ||
+        "Invoice";
+      setOperationsNotice(`${invoiceNumber} marked paid.`);
+      setSavedWorkRefreshToken((current) => current + 1);
+    } catch (error) {
+      setOperationsError(error?.message || "Failed to mark invoice paid.");
+    } finally {
+      setOperationsBusyActionId("");
+    }
+  };
+
+  const handleLauncherInvoiceAgain = async (invoiceId) => {
+    if (!invoiceId || operationsBusyActionId) {
+      return;
+    }
+    const busyId = `invoice-again:${invoiceId}`;
+    setOperationsBusyActionId(busyId);
+    setOperationsNotice("");
+    setOperationsError("");
+    try {
+      const response = await apiFetch(`/api/invoices/${invoiceId}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Failed to start repeat invoice.");
+      }
+      const savedInvoice = payload?.invoice;
+      const finishedInvoice = savedInvoice?.invoiceData?.finishedInvoice;
+      if (!finishedInvoice) {
+        throw new Error("Saved invoice is incomplete.");
+      }
+      const draft = buildDraftFromFinishedInvoice(finishedInvoice, {
+        taxRate: deriveTaxRate(finishedInvoice),
+        freshDraft: true,
+        savedInvoiceId: "",
+        savedInvoiceStatus: ""
+      });
+      window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+      await apiFetch("/api/telemetry/revenue-signals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: "invoice_again_started",
+          source: "launcher_command_center"
+        })
+      }).catch(() => {});
+      navigate("/manual");
+    } catch (error) {
+      setOperationsError(error?.message || "Failed to start repeat invoice.");
+    } finally {
+      setOperationsBusyActionId("");
     }
   };
 
@@ -494,9 +818,9 @@ function Launcher() {
               <AccountStrip
                 authSession={authSession}
                 authBusy={authBusy}
-          planSummary={planSummary}
-          planUsage={planUsage}
-          planAtLimit={planAtLimit}
+                planSummary={planSummary}
+                planUsage={planUsage}
+                planAtLimit={planAtLimit}
                 planWarning={planWarning}
                 hasPlanActions={hasPlanActions}
                 showPlanActions={showPlanActions}
@@ -552,8 +876,11 @@ function Launcher() {
                     "The invoice stays visible while you work, so changes never feel hidden."
                   ].map((item) => (
                     <div key={item} className="flex items-start gap-3 rounded-2xl bg-white/8 px-3 py-3">
-                      <span className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#acd0f4] text-xs font-bold text-[#093064]">
-                        ✓
+                      <span
+                        className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#acd0f4]"
+                        aria-hidden="true"
+                      >
+                        <span className="h-2 w-2 rounded-full bg-[#093064]" />
                       </span>
                       <p className="text-sm leading-6 text-slate-100">{item}</p>
                     </div>
@@ -572,12 +899,28 @@ function Launcher() {
         </section>
 
         <div className="mt-7 space-y-5 md:mt-8">
+          <OperationsQueueSection
+            summary={operationsSummary}
+            loading={draftRecoveryLoading}
+            busyInvoiceId={resumeDraftBusyId}
+            busyActionId={operationsBusyActionId}
+            onResumeDraft={handleResumeSavedDraft}
+            onSendReminder={handleLauncherSendReminder}
+            onMarkPaid={handleLauncherMarkPaid}
+            onInvoiceAgain={handleLauncherInvoiceAgain}
+            onOpenLibrary={() => navigate("/invoices")}
+            onStartInvoice={() => navigate("/ai-intake")}
+          />
+          {operationsNotice ? <p className="nb-banner nb-banner--success">{operationsNotice}</p> : null}
+          {operationsError ? <p className="nb-banner nb-banner--warning">{operationsError}</p> : null}
           <StartSection
-          primaryOption={primaryOption}
-          hasResumeDraft={hasResumeDraft}
-          onResumeDraft={() => navigate("/manual")}
-          showAlternateStarts={showAlternateStarts}
-          onToggleAlternateStarts={() => setShowAlternateStarts((current) => !current)}
+            primaryOption={primaryOption}
+            hasSavedHistory={operationsSummary?.hasInvoices}
+            hasResumeDraft={hasResumeDraft}
+            onResumeDraft={() => navigate("/manual")}
+            onTrySampleNotes={() => navigate("/ai-intake?sample=starter")}
+            showAlternateStarts={showAlternateStarts}
+            onToggleAlternateStarts={() => setShowAlternateStarts((current) => !current)}
           />
           <DraftRecoverySection
             drafts={draftRecoveryItems}
@@ -598,28 +941,109 @@ function Launcher() {
             manageOptions={manageOptions}
           />
         </div>
-        {showDiagnosticsLink ? (
+        <div className="mt-6 flex flex-wrap items-center gap-4">
           <button
             type="button"
-            className="mt-6 text-sm font-semibold text-slate-500 underline-offset-2 hover:text-slate-700 hover:underline"
-            onClick={() => navigate("/diagnostics")}
+            className="inline-flex min-h-10 items-center rounded-full px-3 text-sm font-semibold text-slate-500 underline-offset-2 hover:bg-slate-100 hover:text-slate-700 hover:underline"
+            onClick={() => navigate("/feedback")}
           >
-            Internal diagnostics
+            Feedback
           </button>
-        ) : null}
+          <a
+            href={`mailto:${SUPPORT_EMAIL}`}
+            className="inline-flex min-h-10 items-center rounded-full px-3 text-sm font-semibold text-slate-500 underline-offset-2 hover:bg-slate-100 hover:text-slate-700 hover:underline"
+          >
+            Support
+          </a>
+          {showDiagnosticsLink ? (
+            <button
+              type="button"
+              className="inline-flex min-h-10 items-center rounded-full px-3 text-sm font-semibold text-slate-500 underline-offset-2 hover:bg-slate-100 hover:text-slate-700 hover:underline"
+              onClick={() => navigate("/diagnostics")}
+            >
+              Internal diagnostics
+            </button>
+          ) : null}
+        </div>
       </main>
       <AuthModal
         open={authModalOpen}
         authBusy={authBusy}
         authEmail={authEmail}
         authEmailError={authEmailError}
+        authNotice={authNotice}
+        authPreviewUrl={authPreviewUrl}
         onChangeEmail={(event) => {
           setAuthEmail(event.target.value);
           setAuthEmailError("");
+          setAuthNotice("");
+          setAuthPreviewUrl("");
         }}
         onCancel={() => setAuthModalOpen(false)}
         onSubmit={handleSignIn}
       />
+    </div>
+  );
+}
+
+function EmailLinkVerificationPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [status, setStatus] = useState("verifying");
+  const [message, setMessage] = useState("Verifying your sign-in link...");
+
+  useEffect(() => {
+    let active = true;
+    const linkToken = searchParams.get("token")?.trim();
+    if (!linkToken) {
+      setStatus("error");
+      setMessage("This sign-in link is missing a token.");
+      return undefined;
+    }
+
+    completeEmailLinkSignIn(linkToken)
+      .then(() => {
+        if (!active) {
+          return;
+        }
+        setStatus("success");
+        setMessage("Signed in. Taking you back to NoteBill...");
+        window.setTimeout(() => {
+          if (active) {
+            navigate("/", { replace: true });
+          }
+        }, 1200);
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+        setStatus("error");
+        setMessage(error?.message || "This sign-in link is invalid or expired.");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [navigate, searchParams]);
+
+  const toneClass =
+    status === "success" ? "text-emerald-700" : status === "error" ? "text-rose-600" : "text-slate-600";
+
+  return (
+    <div className="nb-page nb-page--quiet">
+      <main className="nb-page-shell nb-page-shell--medium max-w-xl py-10">
+        <div className="nb-surface nb-surface--elevated">
+          <p className="nb-kicker">Account verification</p>
+          <h1 className="nb-section-title mt-3">Email sign-in</h1>
+          <p className={`mt-3 text-sm leading-7 ${toneClass}`}>{message}</p>
+          {status === "error" ? (
+            <button type="button" className="nb-btn-primary mt-5" onClick={() => navigate("/", { replace: true })}>
+              Return to launcher
+            </button>
+          ) : null}
+        </div>
+      </main>
     </div>
   );
 }
@@ -645,14 +1069,67 @@ function Placeholder({ title, description }) {
   );
 }
 
-const PUBLIC_INFO_LAST_UPDATED = "2026-04-14";
+const PUBLIC_INFO_LAST_UPDATED = "2026-04-21";
 const SUPPORT_EMAIL = "support@notebill.app";
 const CONTACT_EMAIL = "contact@notebill.app";
 const INFO_EMAIL = "info@notebill.app";
 const DIRECT_CONTACT_EMAIL = "david@notebill.app";
 const NOTE_BILL_SITE_URL = "https://notebill.app";
+const FEEDBACK_EMAIL_SUBJECT = "NoteBill tester feedback";
+const FEEDBACK_EMAIL_BODY = [
+  "What I was trying to do:",
+  "",
+  "What happened:",
+  "",
+  "What I expected:",
+  "",
+  "Device model and Android version:",
+  "",
+  "Screenshot or invoice ID, if relevant:"
+].join("\n");
 
-function PublicInfoPage({ kicker, title, intro, sections, footerNote, actions }) {
+function buildFeedbackMailto(deviceDetails = "") {
+  const details = typeof deviceDetails === "string" && deviceDetails.trim() ? deviceDetails.trim() : "";
+  const body = details
+    ? `${FEEDBACK_EMAIL_BODY}\n\n---\n${details}`
+    : FEEDBACK_EMAIL_BODY;
+  return `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(FEEDBACK_EMAIL_SUBJECT)}&body=${encodeURIComponent(body)}`;
+}
+
+function buildFeedbackDeviceDetails() {
+  const userAgent = navigator.userAgent || "Unknown user agent";
+  const safePageUrl = `${window.location.origin}${window.location.pathname}`;
+  const viewport = `${window.innerWidth}x${window.innerHeight}`;
+  const screenSize = window.screen ? `${window.screen.width}x${window.screen.height}` : "Unknown";
+  const pixelRatio = window.devicePixelRatio ? String(window.devicePixelRatio) : "Unknown";
+  const connection = navigator.connection?.effectiveType
+    ? `${navigator.connection.effectiveType} connection`
+    : "Connection unknown";
+
+  return [
+    "NoteBill feedback details",
+    `Generated: ${new Date().toISOString()}`,
+    `Page: ${safePageUrl}`,
+    `Viewport: ${viewport}`,
+    `Screen: ${screenSize}`,
+    `Pixel ratio: ${pixelRatio}`,
+    `Network: ${connection}`,
+    `User agent: ${userAgent}`
+  ].join("\n");
+}
+
+function withTimeout(promise, timeoutMs) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error("Timed out")), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    window.clearTimeout(timeoutId);
+  });
+}
+
+function PublicInfoPage({ kicker, title, intro, sections, footerNote, actions, children }) {
   const pageActions = actions ?? [
     { href: "/", label: "Open NoteBill", tone: "primary" },
     { href: "/support", label: "Support", tone: "ghost" }
@@ -679,6 +1156,8 @@ function PublicInfoPage({ kicker, title, intro, sections, footerNote, actions })
               ))}
             </div>
           </div>
+
+          {children ? <div className="mt-6">{children}</div> : null}
 
           <div className="mt-6 space-y-4">
             {sections.map((section) => (
@@ -848,6 +1327,104 @@ function SupportPage() {
   );
 }
 
+function FeedbackPage() {
+  const [deviceDetails] = useState(() => buildFeedbackDeviceDetails());
+  const [copyStatus, setCopyStatus] = useState("");
+
+  const handleCopyDeviceDetails = async () => {
+    if (!navigator.clipboard?.writeText) {
+      setCopyStatus("Copy is unavailable here. Long-press the details below and copy them.");
+      return;
+    }
+
+    try {
+      await withTimeout(navigator.clipboard.writeText(deviceDetails), 1500);
+      setCopyStatus("Device details copied.");
+    } catch {
+      setCopyStatus("Copy failed. Long-press the details below and copy them.");
+    }
+  };
+
+  return (
+    <PublicInfoPage
+      kicker="Tester feedback"
+      title="NoteBill Feedback"
+      intro="If something feels confusing, broken, cramped, slow, or just a little weird on your phone, send it here. Small papercuts count because they are exactly what make an invoice app feel hard or easy."
+      footerNote={`Last updated: ${PUBLIC_INFO_LAST_UPDATED}. Feedback goes to ${SUPPORT_EMAIL}.`}
+      actions={[
+        { href: buildFeedbackMailto(deviceDetails), label: "Email feedback", tone: "primary" },
+        { href: "/", label: "Open NoteBill", tone: "ghost" },
+        { href: "/support", label: "Support", tone: "ghost" }
+      ]}
+      sections={[
+        {
+          title: "Fastest useful report",
+          items: [
+            "What you were trying to do.",
+            "What happened instead.",
+            "What you expected to happen.",
+            "Your phone model and Android version, if you know them.",
+            "A screenshot, screen recording, or invoice ID if the issue is visual or tied to saved work.",
+            `If the email button does not open, send the same details to ${SUPPORT_EMAIL}.`
+          ],
+          paragraphs: []
+        },
+        {
+          title: "What we especially want to catch",
+          items: [
+            "Anything that blocks sign-in, invoice generation, saving, exporting, or sending.",
+            "Visual bugs like clipped buttons, overlapping text, tiny tap targets, or screens that feel crowded.",
+            "Invoice math issues, confusing wording, or anything that makes you hesitate before sending.",
+            "Moments where Billie does not understand normal job notes or makes the invoice harder to finish."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "Two-minute tester script",
+          items: [
+            "Start from notes or sample notes and build an invoice.",
+            "Check the client, line items, total, tax, and due date.",
+            "Save the invoice, reopen it from the library, then export the PDF.",
+            "If you sign in, confirm the email-link flow feels understandable and not spooky.",
+            "Tell us the first place you felt unsure, even if you eventually figured it out."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "Tiny notes are welcome",
+          paragraphs: [
+            "You do not need to write a perfect bug report. Even a short note like \"the Generate button was cut off on my Galaxy\" is useful enough to improve the next build."
+          ],
+          items: []
+        }
+      ]}
+    >
+      <section className="nb-subcard border-[#6993d2]/30 bg-[#f6f9ff]">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Copy device details</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-700">
+              If a screen looks cramped or a button is cut off, paste these details into your feedback so we
+              can reproduce it faster.
+            </p>
+          </div>
+          <button type="button" className="nb-btn-secondary shrink-0" onClick={handleCopyDeviceDetails}>
+            Copy device details
+          </button>
+        </div>
+        {copyStatus ? (
+          <p className="mt-3 text-sm font-semibold text-slate-700" role="status">
+            {copyStatus}
+          </p>
+        ) : null}
+        <pre className="mt-4 max-h-36 overflow-auto whitespace-pre-wrap break-words rounded-2xl border border-slate-200 bg-white/85 p-4 font-mono text-[11px] leading-5 text-slate-600">
+          {deviceDetails}
+        </pre>
+      </section>
+    </PublicInfoPage>
+  );
+}
+
 function DataDeletionPage() {
   return (
     <PublicInfoPage
@@ -916,14 +1493,17 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Launcher />} />
+        <Route path="/auth/verify" element={<EmailLinkVerificationPage />} />
         <Route path="/ai-intake" element={<AIIntake />} />
         <Route path="/invoices" element={<InvoiceLibrary />} />
         <Route path="/manual" element={<ManualInvoiceCanvas />} />
         <Route path="/import" element={<ImportInvoice />} />
         <Route path="/diagnostics" element={<IntakeDiagnostics />} />
         <Route path="/settings/business" element={<BusinessIdentitySettings />} />
+        <Route path="/settings/memory" element={<ClientMemorySettings />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/support" element={<SupportPage />} />
+        <Route path="/feedback" element={<FeedbackPage />} />
         <Route path="/data-deletion" element={<DataDeletionPage />} />
         <Route path="/delete-account" element={<DataDeletionPage />} />
         <Route
