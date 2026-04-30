@@ -6,8 +6,12 @@ This checklist is for shipping `NoteBill` to the Google Play Store from a Window
 
 - Confirm latest signed bundle exists:
   - `android/app/build/outputs/bundle/release/app-release.aab`
+- If uploading an older named bundle, use the exact archived file:
+  - `android/app/build/outputs/bundle/release/app-release-1.0.13.aab`
 - Confirm package/application id is correct:
   - `app.notebill.app`
+- Confirm the Android `versionCode` is higher than any bundle already uploaded to Play Console.
+  - Play treats `versionCode`, not `versionName` or file name, as the update sequence.
 - Confirm app name is correct:
   - `NoteBill`
 
@@ -22,7 +26,7 @@ This checklist is for shipping `NoteBill` to the Google Play Store from a Window
 ## Build steps on Windows
 
 ```powershell
-cd C:\Users\david\StudioProjects\Invoice
+cd C:\Users\david\OneDrive\Desktop\Invoice
 npx cap sync android
 cd android
 $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"

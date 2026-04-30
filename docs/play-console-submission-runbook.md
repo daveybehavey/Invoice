@@ -15,7 +15,10 @@ Use this while filling out Play Console so nothing gets skipped.
 - Confirm package name matches the Android app:
   - `app.notebill.app`
 - Upload the signed release bundle:
-  - `C:\Users\david\StudioProjects\Invoice\android\app\build\outputs\bundle\release\app-release.aab`
+  - Current latest bundle: `C:\Users\david\OneDrive\Desktop\Invoice\android\app\build\outputs\bundle\release\app-release.aab`
+  - Named archived bundles live in the same folder, for example `app-release-1.0.13.aab`.
+- For every Play Console update, confirm the bundle's Android `versionCode` is higher than any bundle already uploaded to Play.
+- Do not rely on the file name alone. Play decides whether a bundle is an update from the package name plus `versionCode`.
 
 ## 3. Store listing
 
