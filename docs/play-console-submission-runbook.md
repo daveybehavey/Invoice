@@ -20,6 +20,17 @@ Use this while filling out Play Console so nothing gets skipped.
 - For every Play Console update, confirm the bundle's Android `versionCode` is higher than any bundle already uploaded to Play.
 - Do not rely on the file name alone. Play decides whether a bundle is an update from the package name plus `versionCode`.
 
+Verified local bundle inventory:
+
+| Bundle file | Package | Version name | Version code |
+| --- | --- | --- | ---: |
+| `app-release-1.0.13.aab` | `app.notebill.app` | `1.0.13` | 14 |
+| `app-release-1.0.14.aab` | `app.notebill.app` | `1.0.14` | 15 |
+| `app-release-1.0.15.aab` | `app.notebill.app` | `1.0.15` | 16 |
+| `app-release.aab` | `app.notebill.app` | `1.0.15` | 16 |
+
+If Play Console has already accepted version code 14, do not upload `app-release-1.0.13.aab` again. Use the next unused higher version code instead.
+
 ## 3. Store listing
 
 Prepare and enter:
