@@ -22,6 +22,12 @@
       "Missing /utils/clientMemory.js load. Ensure it is loaded before /features/settings/businessIdentity.jsx."
     );
   }
+  const lineItemLibraryUtils = window.InvoiceLineItemLibrary;
+  if (!lineItemLibraryUtils) {
+    throw new Error(
+      "Missing /utils/lineItemLibrary.js load. Ensure it is loaded before /features/settings/businessIdentity.jsx."
+    );
+  }
 
   const brandThemeUtils = window.InvoiceBrandTheme;
   if (!brandThemeUtils) {
@@ -47,6 +53,7 @@
   const { getBusinessProfile, saveBusinessProfile, clearBusinessProfile, normalizeBusinessProfile } =
     businessProfileUtils;
   const { getClientMemory, deleteClientMemoryEntry, clearClientMemory } = clientMemoryUtils;
+  const { getLineItemLibrary, saveLineItemLibrary } = lineItemLibraryUtils;
   const { DEFAULT_ACCENT_COLOR, normalizeAccentColor, buildAccentPalette } = brandThemeUtils;
   const { STYLE_OPTIONS, STYLE_PRESETS } = styleCatalogUtils;
   const { readLogoFileForStorage } = logoImageUtils;
@@ -89,6 +96,28 @@
       withEmail: entries.filter((entry) => entry.recipientEmail).length,
       withNotes: entries.filter((entry) => entry.defaultNotes).length,
       withCadence: entries.filter((entry) => entry.recurringIntervalDays).length
+    };
+  };
+
+  const formatServiceMoney = (value) => {
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount === 0) {
+      return "";
+    }
+    return new Intl.NumberFormat([], {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 2
+    }).format(amount);
+  };
+
+  const buildServiceStats = (entries) => {
+    const items = Array.isArray(entries) ? entries : [];
+    return {
+      total: items.length,
+      withRate: items.filter((entry) => Number(entry?.rate) > 0).length,
+      withQty: items.filter((entry) => Number(entry?.qty) > 0).length,
+      withClient: items.filter((entry) => Boolean(entry?.clientName)).length
     };
   };
 
@@ -405,10 +434,12 @@
           <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_320px]">
             <section className="nb-surface nb-surface--elevated rounded-[26px] p-4 md:rounded-[30px] md:p-6">
               <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">Memory controls</p>
-              <h1 className="nb-section-title mt-2 text-2xl md:text-3xl">Review remembered clients</h1>
+              <h1 className="nb-section-title mt-2 text-2xl md:text-3xl">
+                Review and clear repeat-client memory
+              </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
                 NoteBill can remember repeat-client details to save typing. You can review or clear that memory
-                anytime. It never silently changes invoice totals.
+                anytime. It never silently changes invoice totals or auto-applies hidden changes.
               </p>
               <p className="mt-2 text-xs text-slate-500">
                 Account: {authSession?.email ? authSession.email : "local mode"}
@@ -418,7 +449,7 @@
             <aside className="nb-surface nb-surface--muted rounded-[26px] p-4 md:rounded-[30px] md:p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Trust note</p>
               <p className="mt-3 text-sm leading-6 text-slate-700">
-                Remembered notes are only added when you choose them. Billie still follows the rule: money changes
+                Memory stays visible and removable. Billie can suggest repeat details, but money changes still
                 require explicit user action.
               </p>
             </aside>
@@ -470,7 +501,7 @@
                 <p className="text-sm font-semibold text-slate-900">No remembered clients yet.</p>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
                   NoteBill will start building memory as you save invoices, reuse client details, or send to a
-                  client email.
+                  client email. It only remembers what you already chose to reuse.
                 </p>
               </div>
             ) : (
@@ -478,8 +509,8 @@
                 {clientMemory.map((entry) => {
                   const cadenceLabel = formatRecurringCadence(entry.recurringIntervalDays);
                   const tags = [
-                    entry.recipientEmail ? "Send email" : "",
-                    entry.defaultNotes ? "Prior note" : "",
+                    entry.recipientEmail ? "Saved email" : "",
+                    entry.defaultNotes ? "Saved note" : "",
                     cadenceLabel ? cadenceLabel : ""
                   ].filter(Boolean);
                   return (
@@ -528,7 +559,7 @@
                             {entry.recipientEmail ? (
                               <div className="rounded-2xl border border-slate-100 bg-white/80 p-3">
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                                  Send email
+                                  Saved email
                                 </p>
                                 <p className="mt-2 break-all text-sm font-semibold text-slate-700">
                                   {entry.recipientEmail}
@@ -538,7 +569,7 @@
                             {entry.defaultNotes ? (
                               <div className="rounded-2xl border border-slate-100 bg-white/80 p-3">
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                                  Prior note
+                                  Saved note
                                 </p>
                                 <p className="mt-2 text-sm leading-6 text-slate-700">{entry.defaultNotes}</p>
                               </div>
@@ -565,5 +596,213 @@
     );
   }
 
-  window.InvoiceBusinessIdentityFeature = { BusinessIdentitySettings, ClientMemorySettings };
+  function ServiceCatalogSettings() {
+    const navigate = useNavigate();
+    const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
+    const [serviceCatalog, setServiceCatalog] = useState(() => getLineItemLibrary());
+    const [status, setStatus] = useState("");
+    const [clearArmed, setClearArmed] = useState(false);
+
+    useEffect(() => {
+      let active = true;
+      requestIdentity
+        .refreshSession()
+        .then((session) => {
+          if (active) {
+            setAuthSession(session);
+          }
+        })
+        .catch(() => {
+          if (active) {
+            setAuthSession(null);
+          }
+        });
+      return () => {
+        active = false;
+      };
+    }, []);
+
+    const stats = useMemo(() => buildServiceStats(serviceCatalog), [serviceCatalog]);
+
+    const handleDeleteService = (entry) => {
+      setServiceCatalog((current) => {
+        const next = current.filter((candidate) => candidate.lookupKey !== entry.lookupKey);
+        saveLineItemLibrary(next);
+        return next;
+      });
+      setStatus(`Removed ${entry.description} from service catalog.`);
+      setClearArmed(false);
+    };
+
+    const handleClearAll = () => {
+      if (!clearArmed) {
+        setClearArmed(true);
+        setStatus("Tap confirm to clear all saved services on this device.");
+        return;
+      }
+      setServiceCatalog(saveLineItemLibrary([]));
+      setStatus("Service catalog cleared.");
+      setClearArmed(false);
+    };
+
+    return (
+      <div className="nb-page nb-page--quiet min-h-screen">
+        <main className="nb-page-shell nb-page-shell--medium max-w-5xl py-6 md:py-10">
+          <button
+            type="button"
+            className="nb-btn-ghost"
+            onClick={() => navigate("/manual")}
+          >
+            Back to invoice editor
+          </button>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_320px]">
+            <section className="nb-surface nb-surface--elevated rounded-[26px] p-4 md:rounded-[30px] md:p-6">
+              <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">Saved services</p>
+              <h1 className="nb-section-title mt-2 text-2xl md:text-3xl">
+                Review and reuse your service catalog
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                NoteBill saves line-item descriptions, quantities, rates, and client context you already chose to
+                reuse. You can review or clear those saved services anytime.
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                Account: {authSession?.email ? authSession.email : "local mode"}
+              </p>
+            </section>
+
+            <aside className="nb-surface nb-surface--muted rounded-[26px] p-4 md:rounded-[30px] md:p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Trust note</p>
+              <p className="mt-3 text-sm leading-6 text-slate-700">
+                Saved services are visible and removable. They can speed up repeat work, but they never change
+                totals automatically.
+              </p>
+            </aside>
+          </div>
+
+          <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              ["Services", stats.total],
+              ["With rates", stats.withRate],
+              ["With qty", stats.withQty],
+              ["With client", stats.withClient]
+            ].map(([label, value]) => (
+              <div key={label} className="nb-subcard bg-white/85 p-3 text-center md:p-4">
+                <p className="text-xl font-semibold text-[#093064] md:text-2xl">{value}</p>
+                <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  {label}
+                </p>
+              </div>
+            ))}
+          </section>
+
+          <section className="nb-surface mt-5 rounded-[26px] p-4 md:rounded-[30px] md:p-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">Saved service items</h2>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Clear anything stale, private, or no longer useful.
+                </p>
+              </div>
+              {serviceCatalog.length > 0 ? (
+                <button
+                  type="button"
+                  className={`min-h-11 w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto ${
+                    clearArmed
+                      ? "bg-rose-600 text-white"
+                      : "border border-rose-200 bg-white text-rose-700"
+                  }`}
+                  onClick={handleClearAll}
+                >
+                  {clearArmed ? "Confirm clear all" : "Clear all saved services"}
+                </button>
+              ) : null}
+            </div>
+
+            {status ? <p className="mt-3 text-sm font-semibold text-[#093064]">{status}</p> : null}
+
+            {serviceCatalog.length === 0 ? (
+              <div className="nb-subcard mt-5 bg-slate-50/90 p-4 md:p-5">
+                <p className="text-sm font-semibold text-slate-900">No saved services yet.</p>
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  NoteBill will start building a service catalog as you save line items from invoices.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-5 grid gap-3">
+                {serviceCatalog.map((entry) => {
+                  const tags = [
+                    entry.clientName ? entry.clientName : "",
+                    entry.qty ? `Qty ${entry.qty}` : "",
+                    entry.rate ? `Rate ${formatServiceMoney(entry.rate)}` : ""
+                  ].filter(Boolean);
+                  return (
+                    <article key={entry.lookupKey} className="nb-subcard bg-white/90 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-base font-semibold text-slate-900">{entry.description}</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {entry.updatedAt ? `Saved ${formatMemoryDate(entry.updatedAt)}` : "Saved recently"}
+                          </p>
+                          {tags.length > 0 ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {tags.map((tag) => (
+                                <span
+                                  key={tag}
+                                  className="rounded-full bg-[#edf5ff] px-2.5 py-1 text-xs font-semibold text-[#093064]"
+                                >
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          className="min-h-10 w-full rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 sm:w-auto"
+                          onClick={() => handleDeleteService(entry)}
+                          aria-label={`Delete saved service ${entry.description}`}
+                        >
+                          Delete
+                        </button>
+                      </div>
+
+                      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                        <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                            Usage
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-slate-700">
+                            {Number(entry.usageCount) > 1 ? `${entry.usageCount} uses` : "1 use"}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                            Quantity
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-slate-700">
+                            {entry.qty || "Not set"}
+                          </p>
+                        </div>
+                        <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                            Rate
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-slate-700">
+                            {entry.rate ? formatServiceMoney(entry.rate) : "Not set"}
+                          </p>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        </main>
+      </div>
+    );
+  }
+
+  window.InvoiceBusinessIdentityFeature = { BusinessIdentitySettings, ClientMemorySettings, ServiceCatalogSettings };
 })();

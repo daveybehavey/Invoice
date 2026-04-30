@@ -48,6 +48,22 @@
     return "";
   };
 
+  const getPlanValuePitch = (plan) => {
+    if (!plan || typeof plan !== "object") {
+      return "";
+    }
+    if (plan.plan === "pro") {
+      return "";
+    }
+    const remaining = Number.isFinite(plan?.usage?.invoicesRemaining)
+      ? Number(plan.usage.invoicesRemaining)
+      : null;
+    if (remaining === null || remaining > 1) {
+      return "";
+    }
+    return "Pro keeps sends, reminders, hosted payment links, and saved client memory in one place.";
+  };
+
   const getPlanUsageModel = (plan) => {
     if (!plan || typeof plan !== "object") {
       return null;
@@ -102,6 +118,7 @@
     getPlanUpgradeUrl,
     getPlanBillingPortalUrl,
     getPlanPrelimitWarning,
+    getPlanValuePitch,
     getPlanUsageModel
   };
 })();

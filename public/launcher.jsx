@@ -6,7 +6,15 @@ if (!uiPrimitives) {
   throw new Error("Missing /ui/primitives.jsx load. Ensure it is loaded before /launcher.jsx.");
 }
 
-const { SparklesIcon, PencilIcon, UploadIcon, ArchiveIcon, SwatchIcon, FeedbackIcon } = uiPrimitives;
+const {
+  SparklesIcon,
+  PencilIcon,
+  UploadIcon,
+  ArchiveIcon,
+  SwatchIcon,
+  FeedbackIcon,
+  NotebookIcon
+} = uiPrimitives;
 
 const intakeFeatureUtils = window.InvoiceIntakeFeature;
 if (!intakeFeatureUtils) {
@@ -51,7 +59,7 @@ if (!businessIdentityFeatureUtils) {
   );
 }
 
-const { BusinessIdentitySettings, ClientMemorySettings } = businessIdentityFeatureUtils;
+const { BusinessIdentitySettings, ClientMemorySettings, ServiceCatalogSettings } = businessIdentityFeatureUtils;
 
 const manualCanvasUtils = window.InvoiceManualCanvas;
 if (!manualCanvasUtils) {
@@ -72,6 +80,7 @@ const {
   getPlanUpgradeUrl,
   getPlanBillingPortalUrl,
   getPlanPrelimitWarning,
+  getPlanValuePitch,
   getPlanUsageModel
 } =
   accountPlanUtils;
@@ -121,6 +130,18 @@ const {
   buildPlanActionState,
   hasResumeDraftForKey
 } = launcherHelperUtils;
+const scratchpadUtils = window.InvoiceScratchpadPage;
+if (!scratchpadUtils) {
+  throw new Error(
+    "Missing /features/scratchpad/dailyScratchpad.jsx load. Ensure it is loaded before /launcher.jsx."
+  );
+}
+const { DailyScratchpadPage } = scratchpadUtils;
+const portalFeatureUtils = window.InvoicePortalFeature;
+if (!portalFeatureUtils) {
+  throw new Error("Missing /features/portal/clientPortal.jsx load. Ensure it is loaded before /launcher.jsx.");
+}
+const { ClientPortalPage } = portalFeatureUtils;
 const intakeReadinessUtils = window.InvoiceIntakeReadiness;
 if (!intakeReadinessUtils) {
   throw new Error("Missing /features/intake/readiness.js load. Ensure it is loaded before /launcher.jsx.");
@@ -265,8 +286,8 @@ function buildLauncherOperationsSummary(invoices, nowMs = Date.now()) {
     actions.push({
       id: `follow-up:${invoice.invoiceId}`,
       tone: "follow-up",
-      title: "Follow up sent invoice",
-      detail: `${followUpDetail} ${openBalanceLabel} still open.${
+      title: "Follow up on sent invoice",
+      detail: `${followUpDetail} Open balance: ${openBalanceLabel}.${
         canSendReminder ? ` Last sent to ${reminderRecipient}.` : ""
       }`,
       cta: canSendReminder ? "Send reminder" : "Review follow-ups",
@@ -288,7 +309,7 @@ function buildLauncherOperationsSummary(invoices, nowMs = Date.now()) {
       title: "Track sent invoices",
       detail: `${pluralize(unpaidSent.length, "sent invoice")} still ${
         unpaidSent.length === 1 ? "needs" : "need"
-      } payment tracking. ${formatMoneyLabel(openBalance)} still open.`,
+      } payment tracking. Open balance: ${formatMoneyLabel(openBalance)}.`,
       cta: "Open sent work",
       action: "open-library"
     });
@@ -312,13 +333,20 @@ function buildLauncherOperationsSummary(invoices, nowMs = Date.now()) {
     actions.push({
       id: `pay-link:${paymentLinkInvoice.invoiceId}`,
       tone: "payment",
-      title: "Payment link ready",
-      detail: `${paymentLinkInvoice.invoiceNumber || "Invoice"} has an online payment link.`,
-      cta: "Open pay link",
+      title: "Hosted payment link ready",
+      detail: `${paymentLinkInvoice.invoiceNumber || "Invoice"} has a hosted payment link.`,
+      cta: "Open hosted payment link",
       href: paymentLinkInvoice.paymentLinkUrl,
       action: "open-link"
     });
   }
+  const actionRank = {
+    "follow-up": 0,
+    draft: 1,
+    payment: 2,
+    repeat: 3,
+    sent: 4
+  };
   return {
     hasInvoices: activeInvoices.length > 0,
     invoiceCount: activeInvoices.length,
@@ -330,13 +358,15 @@ function buildLauncherOperationsSummary(invoices, nowMs = Date.now()) {
     openBalanceLabel: formatMoneyLabel(openBalance),
     headline:
       staleSent.length > 0
-        ? `${pluralize(staleSent.length, "invoice")} may need follow-up.`
+        ? `${staleSent.length === 1 ? "1 invoice needs" : `${staleSent.length} invoices need`} follow-up.`
         : unpaidSent.length > 0
           ? `${formatMoneyLabel(openBalance)} open across ${pluralize(unpaidSent.length, "sent invoice")}.`
           : drafts.length > 0
             ? `${pluralize(drafts.length, "draft")} waiting to finish.`
             : "All caught up.",
-    actions: actions.slice(0, 3)
+    actions: actions
+      .sort((left, right) => (actionRank[left.tone] ?? 99) - (actionRank[right.tone] ?? 99))
+      .slice(0, 3)
   };
 }
 
@@ -487,6 +517,7 @@ function Launcher() {
     navigate,
     icons: {
       sparkles: <SparklesIcon />,
+      notebook: <NotebookIcon />,
       upload: <UploadIcon />,
       pencil: <PencilIcon />,
       archive: <ArchiveIcon />,
@@ -494,21 +525,11 @@ function Launcher() {
       feedback: <FeedbackIcon />
     }
   });
-  const primaryOption = options.find((option) => option.key === "ai") ?? options[0];
-  const quickStartOptions = options.filter(
-    (option) => option.key === "import" || option.key === "manual"
-  );
-  const manageOptions = options.filter(
-    (option) =>
-      option.key === "library" ||
-      option.key === "identity" ||
-      option.key === "memory" ||
-      option.key === "feedback"
-  );
   const planSummary = formatPlanSummary(accountPlan);
   const planUsage = getPlanUsageModel(accountPlan);
   const planAtLimit = Boolean(accountPlan?.upgradeRequired);
   const planWarning = getPlanPrelimitWarning(accountPlan);
+  const planPitch = getPlanValuePitch(accountPlan);
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
   const billingPortalUrl = getPlanBillingPortalUrl(accountPlan);
   const {
@@ -541,6 +562,81 @@ function Launcher() {
   const [operationsNotice, setOperationsNotice] = useState("");
   const [operationsError, setOperationsError] = useState("");
   const [savedWorkRefreshToken, setSavedWorkRefreshToken] = useState(0);
+  const primaryOption = (() => {
+    const primaryAction = Array.isArray(operationsSummary?.actions) ? operationsSummary.actions[0] : null;
+    if (primaryAction) {
+      if (primaryAction.action === "resume-draft") {
+        return {
+          key: "resume-draft",
+          title: primaryAction.title || "Resume latest draft",
+          description: primaryAction.detail || "Pick up where you left off.",
+          icon: <NotebookIcon />,
+          onClick: () => handleResumeSavedDraft(primaryAction.invoiceId),
+          disabled: Boolean(resumeDraftBusyId && resumeDraftBusyId === primaryAction.invoiceId),
+          badge: "Next up"
+        };
+      }
+      if (primaryAction.action === "send-reminder") {
+        return {
+          key: "send-reminder",
+          title: primaryAction.title || "Follow up on sent invoice",
+          description: primaryAction.detail || "Send a reminder for an open invoice.",
+          icon: <FeedbackIcon />,
+          onClick: () => handleLauncherSendReminder(primaryAction.invoiceId),
+          disabled:
+            Boolean(operationsBusyActionId) || Boolean(primaryAction.busyId && operationsBusyActionId === primaryAction.busyId),
+          badge: "Next up"
+        };
+      }
+      if (primaryAction.action === "invoice-again") {
+        return {
+          key: "invoice-again",
+          title: primaryAction.title || "Invoice a repeat client",
+          description: primaryAction.detail || "Start a fresh draft from a paid invoice.",
+          icon: <SparklesIcon />,
+          onClick: () => handleLauncherInvoiceAgain(primaryAction.invoiceId),
+          disabled: Boolean(operationsBusyActionId && primaryAction.busyId && operationsBusyActionId === primaryAction.busyId),
+          badge: "Next up"
+        };
+      }
+      if (primaryAction.action === "open-link" && primaryAction.href) {
+        return {
+          key: "payment-link",
+          title: primaryAction.title || "Hosted payment link ready",
+          description: primaryAction.detail || "Open the payment link when you're ready.",
+          icon: <UploadIcon />,
+          onClick: () => window.open(primaryAction.href, "_blank", "noreferrer"),
+          disabled: false,
+          badge: "Next up"
+        };
+      }
+      return {
+        key: "open-library",
+        title: primaryAction.title || "Review sent invoices",
+        description: primaryAction.detail || "Open the library for the next step.",
+        icon: <ArchiveIcon />,
+        onClick: () => navigate("/invoices"),
+        disabled: false,
+        badge: "Next up"
+      };
+    }
+    return operationsSummary?.hasInvoices
+      ? options.find((option) => option.key === "ai") ?? options[0]
+      : options.find((option) => option.key === "scratchpad") ??
+        options.find((option) => option.key === "ai") ??
+        options[0];
+  })();
+  const quickStartOptions = options.filter(
+    (option) => option.key === "scratchpad" || option.key === "import" || option.key === "manual"
+  );
+  const manageOptions = options.filter(
+    (option) =>
+      option.key === "library" ||
+      option.key === "identity" ||
+      option.key === "memory" ||
+      option.key === "services" ||
+      option.key === "feedback"
+  );
 
   const handleUpgradeAction = async () => {
     setBillingBusy(true);
@@ -822,6 +918,7 @@ function Launcher() {
                 planUsage={planUsage}
                 planAtLimit={planAtLimit}
                 planWarning={planWarning}
+                planPitch={planPitch}
                 hasPlanActions={hasPlanActions}
                 showPlanActions={showPlanActions}
                 onTogglePlanActions={() => setShowPlanActions((current) => !current)}
@@ -919,6 +1016,7 @@ function Launcher() {
             hasResumeDraft={hasResumeDraft}
             onResumeDraft={() => navigate("/manual")}
             onTrySampleNotes={() => navigate("/ai-intake?sample=starter")}
+            onOpenScratchpad={() => navigate("/scratchpad")}
             showAlternateStarts={showAlternateStarts}
             onToggleAlternateStarts={() => setShowAlternateStarts((current) => !current)}
           />
@@ -1493,6 +1591,8 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Launcher />} />
+        <Route path="/scratchpad" element={<DailyScratchpadPage />} />
+        <Route path="/portal/:invoiceId/:token" element={<ClientPortalPage />} />
         <Route path="/auth/verify" element={<EmailLinkVerificationPage />} />
         <Route path="/ai-intake" element={<AIIntake />} />
         <Route path="/invoices" element={<InvoiceLibrary />} />
@@ -1501,6 +1601,7 @@ function App() {
         <Route path="/diagnostics" element={<IntakeDiagnostics />} />
         <Route path="/settings/business" element={<BusinessIdentitySettings />} />
         <Route path="/settings/memory" element={<ClientMemorySettings />} />
+        <Route path="/settings/services" element={<ServiceCatalogSettings />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/support" element={<SupportPage />} />
         <Route path="/feedback" element={<FeedbackPage />} />

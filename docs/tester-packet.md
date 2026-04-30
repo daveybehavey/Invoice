@@ -9,7 +9,7 @@ Track incoming feedback in `docs/tester-feedback-log.md`.
 ```text
 Hey, can you help me test NoteBill?
 
-It turns rough job notes into a professional invoice. The test should take about 10 minutes.
+It turns rough job notes into a clean, professional invoice. The test should take about 10 minutes.
 
 Please try this:
 1. Install NoteBill from the test link.
@@ -21,7 +21,7 @@ Please try this:
 7. Reopen it from Invoice Library.
 8. Export the PDF.
 
-Then send me anything confusing, broken, slow, or ugly. Screenshots help a lot.
+Then send me anything confusing, broken, slow, or visually off. Screenshots help a lot.
 You can use the in-app Feedback page, or email support@notebill.app directly.
 
 Important for Google Play: please stay opted in to the test for the full testing period.
@@ -31,9 +31,17 @@ Important for Google Play: please stay opted in to the test for the full testing
 
 Ask the tester to do these in order:
 
-1. Open NoteBill from a fresh install.
-2. Tap the main notes/intake path.
-3. Use the sample notes or paste this:
+### Workblock 1: Install and open
+
+1. Install NoteBill from the Play test link.
+2. Open NoteBill from a fresh install.
+3. Confirm the first screen makes it clear how to start.
+4. Optional: try sign-in with an email link if you want to test account behavior.
+
+### Workblock 2: Create the first invoice
+
+1. Tap the main notes/intake path.
+2. Use the sample notes or paste this:
 
 ```text
 Mike Johnson, 1423 Pine St.
@@ -43,16 +51,30 @@ Used new supply line $18 and cartridge $32.
 Please make it due in 14 days.
 ```
 
-4. Generate the invoice draft.
-5. Check whether client, line items, totals, and due date look right.
-6. Edit one line description.
-7. Edit one amount or quantity and confirm totals update.
-8. Save the invoice.
-9. Reopen it from Invoice Library.
-10. Export/download the PDF.
-11. Optional: try sign-in with an email link.
-12. Optional: mark sent, mark paid, or send a reminder if those controls are available.
-13. Open Manage -> Feedback and send one short note about anything confusing, broken, slow, or ugly.
+3. Generate the invoice draft.
+4. Check whether client, line items, totals, and due date look right.
+5. Edit one line description.
+6. Edit one amount or quantity and confirm totals update.
+
+### Workblock 3: Save, reopen, export
+
+1. Save the invoice.
+2. Reopen it from Invoice Library.
+3. Export/download the PDF.
+4. Confirm the PDF looks like something a business could send.
+
+### Workblock 4: Optional operations
+
+1. Mark the invoice sent.
+2. Mark it paid.
+3. Try a reminder or copy the reminder note if those controls are available.
+4. Tell me whether the paid/unpaid and reminder wording feels clear.
+
+### Workblock 5: Send feedback
+
+1. Open Manage -> Feedback.
+2. Tap Copy device details if anything looked broken, cut off, or hard to tap.
+3. Send one short note about anything confusing, broken, slow, or visually off.
 
 ## Feedback Questions
 
@@ -93,3 +115,10 @@ Please make it due in 14 days.
 - Optional sign-in does not block the main flow.
 - No mobile layout issue hides a primary button.
 - Tester can explain what NoteBill is for after using it once.
+
+## Quick Triage Rules
+
+- Fix blockers before inviting more testers.
+- Fix major trust issues before asking for paid-plan feedback.
+- Batch minor wording or spacing notes unless they hide a primary action.
+- Save nice-to-have ideas for the V2 backlog unless several testers ask for the same thing.

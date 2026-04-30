@@ -26,10 +26,15 @@ export const RevenueSignalNameSchema = z.enum([
   "payment_link_created",
   "invoice_again_started",
   "service_memory_reused",
+  "service_memory_saved",
   "client_memory_reused",
   "recurring_schedule_set",
   "checkout_started",
-  "account_signed_in"
+  "account_signed_in",
+  "scratchpad_note_saved",
+  "scratchpad_voice_note_transcribed",
+  "scratchpad_note_used_in_invoice",
+  "billie_workspace_instruction_submitted"
 ]);
 
 const RevenueSignalEventSchema = z.object({
@@ -50,10 +55,15 @@ const OwnerSignalStatsSchema = z.object({
   paymentLinkCreated: z.number().int().nonnegative().default(0),
   invoiceAgainStarted: z.number().int().nonnegative().default(0),
   serviceMemoryReused: z.number().int().nonnegative().default(0),
+  serviceMemorySaved: z.number().int().nonnegative().default(0),
   clientMemoryReused: z.number().int().nonnegative().default(0),
   recurringScheduleSet: z.number().int().nonnegative().default(0),
   checkoutStarted: z.number().int().nonnegative().default(0),
-  accountSignedIn: z.number().int().nonnegative().default(0)
+  accountSignedIn: z.number().int().nonnegative().default(0),
+  scratchpadNoteSaved: z.number().int().nonnegative().default(0),
+  scratchpadVoiceNoteTranscribed: z.number().int().nonnegative().default(0),
+  scratchpadNoteUsedInInvoice: z.number().int().nonnegative().default(0),
+  billieWorkspaceInstructionSubmitted: z.number().int().nonnegative().default(0)
 });
 
 const RevenueSignalsSnapshotSchema = z.object({
@@ -124,9 +134,14 @@ export async function getRevenueSignalsSnapshot(): Promise<
       paymentLinkOwners: number;
       repeatInvoiceOwners: number;
       serviceMemoryOwners: number;
+      serviceMemorySavedOwners: number;
       clientMemoryOwners: number;
       recurringScheduleOwners: number;
       checkoutOwners: number;
+      scratchpadOwners: number;
+      scratchpadVoiceOwners: number;
+      scratchpadInvoiceOwners: number;
+      billieWorkspaceOwners: number;
     };
   }
 > {
@@ -147,9 +162,14 @@ export async function getRevenueSignalsSnapshot(): Promise<
       paymentLinkOwners: owners.filter((owner) => owner.paymentLinkCreated > 0).length,
       repeatInvoiceOwners: owners.filter((owner) => owner.invoiceAgainStarted > 0).length,
       serviceMemoryOwners: owners.filter((owner) => owner.serviceMemoryReused > 0).length,
+      serviceMemorySavedOwners: owners.filter((owner) => owner.serviceMemorySaved > 0).length,
       clientMemoryOwners: owners.filter((owner) => owner.clientMemoryReused > 0).length,
       recurringScheduleOwners: owners.filter((owner) => owner.recurringScheduleSet > 0).length,
-      checkoutOwners: owners.filter((owner) => owner.checkoutStarted > 0).length
+      checkoutOwners: owners.filter((owner) => owner.checkoutStarted > 0).length,
+      scratchpadOwners: owners.filter((owner) => owner.scratchpadNoteSaved > 0).length,
+      scratchpadVoiceOwners: owners.filter((owner) => owner.scratchpadVoiceNoteTranscribed > 0).length,
+      scratchpadInvoiceOwners: owners.filter((owner) => owner.scratchpadNoteUsedInInvoice > 0).length,
+      billieWorkspaceOwners: owners.filter((owner) => owner.billieWorkspaceInstructionSubmitted > 0).length
     }
   };
 }
@@ -171,6 +191,8 @@ function applyOwnerEvent(ownerStats: z.infer<typeof OwnerSignalStatsSchema>, eve
     ownerStats.invoiceAgainStarted += 1;
   } else if (event === "service_memory_reused") {
     ownerStats.serviceMemoryReused += 1;
+  } else if (event === "service_memory_saved") {
+    ownerStats.serviceMemorySaved += 1;
   } else if (event === "client_memory_reused") {
     ownerStats.clientMemoryReused += 1;
   } else if (event === "recurring_schedule_set") {
@@ -179,6 +201,14 @@ function applyOwnerEvent(ownerStats: z.infer<typeof OwnerSignalStatsSchema>, eve
     ownerStats.checkoutStarted += 1;
   } else if (event === "account_signed_in") {
     ownerStats.accountSignedIn += 1;
+  } else if (event === "scratchpad_note_saved") {
+    ownerStats.scratchpadNoteSaved += 1;
+  } else if (event === "scratchpad_voice_note_transcribed") {
+    ownerStats.scratchpadVoiceNoteTranscribed += 1;
+  } else if (event === "scratchpad_note_used_in_invoice") {
+    ownerStats.scratchpadNoteUsedInInvoice += 1;
+  } else if (event === "billie_workspace_instruction_submitted") {
+    ownerStats.billieWorkspaceInstructionSubmitted += 1;
   }
 }
 
@@ -214,7 +244,21 @@ async function writeSnapshot(snapshot: RevenueSignalsSnapshot): Promise<void> {
   await ensureStoreExists();
   const tempPath = `${storeFilePath}.tmp`;
   await fs.writeFile(tempPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
-  await fs.rename(tempPath, storeFilePath);
+  try {
+    await fs.rename(tempPath, storeFilePath);
+  } catch (error) {
+    const errorCode = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+    if (errorCode === "EPERM" || errorCode === "EACCES" || errorCode === "EBUSY") {
+      await fs.writeFile(storeFilePath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+      try {
+        await fs.unlink(tempPath);
+      } catch {
+        // Best-effort cleanup only.
+      }
+      return;
+    }
+    throw error;
+  }
 }
 
 async function mutateSnapshot(mutator: (snapshot: RevenueSignalsSnapshot) => void | Promise<void>): Promise<void> {

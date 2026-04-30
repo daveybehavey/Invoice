@@ -40,6 +40,8 @@
       return {
         stage: "Collect baseline",
         tone: "amber",
+        focus: "Activation",
+        nextTest: "Keep collecting tester behavior and fix the biggest first-run friction.",
         recommendation:
           "Not enough usage yet for monetization calls. Keep collecting tester behavior and fix top friction first."
       };
@@ -48,6 +50,8 @@
       return {
         stage: "Activation focus",
         tone: "amber",
+        focus: "First invoice",
+        nextTest: "Make the first saved invoice easier to reach from launch and sample notes.",
         recommendation:
           "Delay paywall work. Improve first-run clarity until more users reach a first saved invoice."
       };
@@ -56,6 +60,8 @@
       return {
         stage: "Retention focus",
         tone: "amber",
+        focus: "Second invoice",
+        nextTest: "Improve repeat-client and reopen flows before pricing experiments.",
         recommendation:
           "Focus on second-invoice behavior first. Improve repeat-client and reopen flows before pricing experiments."
       };
@@ -64,6 +70,8 @@
       return {
         stage: "Collections loop focus",
         tone: "green",
+        focus: "Follow-up loop",
+        nextTest: "Test whether reminders and payment links reduce follow-up work on real invoices.",
         recommendation:
           "Core creation/retention is healthy. Next value unlock is reminders and payment-link adoption."
       };
@@ -72,6 +80,8 @@
       return {
         stage: "Soft paywall ready",
         tone: "green",
+        focus: "Paid moment",
+        nextTest: "Run a small paid-plan prompt test at a value moment after second saved invoice or follow-up use.",
         recommendation:
           "Run a small paid-plan prompt test at a value moment (after second saved invoice or active follow-up usage)."
       };
@@ -79,8 +89,56 @@
     return {
       stage: "Monetization signal live",
       tone: "green",
+      focus: "Paid boundary",
+      nextTest: "Continue fair paid-boundary tests and watch whether conversion quality stays healthy.",
       recommendation:
         "Users are showing paid intent. Continue fair paid-boundary tests and monitor conversion quality."
+    };
+  }
+
+  function buildFeatureAdoptionFocus(summary) {
+    const scratchpadOwners = Number(summary?.scratchpadOwners ?? 0);
+    const serviceMemorySavedOwners = Number(summary?.serviceMemorySavedOwners ?? 0);
+    const billieWorkspaceOwners = Number(summary?.billieWorkspaceOwners ?? 0);
+    const scratchpadVoiceOwners = Number(summary?.scratchpadVoiceOwners ?? 0);
+
+    if (scratchpadOwners === 0) {
+      return {
+        stage: "Grow capture",
+        tone: "amber",
+        focus: "Scratchpad",
+        nextTest: "Make quick capture the default first move for new users.",
+        recommendation:
+          "Push the scratchpad harder before layering on more automation. Fast note capture is the cleanest on-ramp."
+      };
+    }
+    if (serviceMemorySavedOwners === 0) {
+      return {
+        stage: "Grow reuse",
+        tone: "amber",
+        focus: "Service memory",
+        nextTest: "Have users save one service from the draft after completing their first invoice.",
+        recommendation:
+          "The next multiplier is repeatable services. Save a line item once, then reuse it on the next job."
+      };
+    }
+    if (billieWorkspaceOwners === 0) {
+      return {
+        stage: "Grow polish",
+        tone: "green",
+        focus: "Billie workspace",
+        nextTest: "Ask Billie to refine wording on one invoice and measure whether users come back to it.",
+        recommendation:
+          "Wording polish is the easiest high-trust assistant step. It should feel helpful without changing totals."
+      };
+    }
+    return {
+      stage: "Feature loop live",
+      tone: "green",
+      focus: "Automation",
+      nextTest: "Layer in more follow-up automation and watch whether users save time on repeat work.",
+      recommendation:
+        `Core future features are getting used. Scratchpad, service memory, and Billie all have signals${scratchpadVoiceOwners > 0 ? " including voice capture." : "."}`
     };
   }
 
@@ -381,7 +439,12 @@
       serviceMemoryOwners: 0,
       clientMemoryOwners: 0,
       recurringScheduleOwners: 0,
-      checkoutOwners: 0
+      checkoutOwners: 0,
+      serviceMemorySavedOwners: 0,
+      scratchpadOwners: 0,
+      scratchpadVoiceOwners: 0,
+      scratchpadInvoiceOwners: 0,
+      billieWorkspaceOwners: 0
     };
     const revenueEventRows = Object.entries(revenueSnapshot?.byEvent ?? {}).sort(
       (left, right) => Number(right[1]) - Number(left[1])
@@ -391,6 +454,7 @@
         ? `${((revenueSummary.activatedOwners / revenueSummary.ownerCount) * 100).toFixed(0)}%`
         : "0%";
     const paidPlanReadiness = buildPaidPlanReadiness(revenueSummary);
+    const featureAdoptionFocus = buildFeatureAdoptionFocus(revenueSummary);
     const persistenceReady = Boolean(systemInfo?.productionReady);
     const billingReady = Boolean(
       billingInfo?.capabilities?.checkoutAvailable &&
@@ -527,9 +591,14 @@
               <StatusPill label="Reminder owners" value={String(revenueSummary.reminderOwners)} />
               <StatusPill label="Payment link owners" value={String(revenueSummary.paymentLinkOwners)} />
               <StatusPill label="Service memory owners" value={String(revenueSummary.serviceMemoryOwners)} />
+              <StatusPill label="Saved services" value={String(revenueSummary.serviceMemorySavedOwners)} />
               <StatusPill label="Client memory owners" value={String(revenueSummary.clientMemoryOwners)} />
               <StatusPill label="Recurring owners" value={String(revenueSummary.recurringScheduleOwners)} />
               <StatusPill label="Checkout starts" value={String(revenueSummary.checkoutOwners)} />
+              <StatusPill label="Scratchpad saves" value={String(revenueSummary.scratchpadOwners)} />
+              <StatusPill label="Voice captures" value={String(revenueSummary.scratchpadVoiceOwners)} />
+              <StatusPill label="Scratchpad invoices" value={String(revenueSummary.scratchpadInvoiceOwners)} />
+              <StatusPill label="Billie workspace" value={String(revenueSummary.billieWorkspaceOwners)} />
             </div>
             <p className="mt-3 text-xs text-slate-500">
               Total events: {revenueSnapshot?.totalEvents ?? 0}
@@ -551,6 +620,16 @@
                   {paidPlanReadiness.stage}
                 </span>
               </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Focus</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-800">{paidPlanReadiness.focus}</p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Next test</p>
+                  <p className="mt-1 text-sm text-slate-700">{paidPlanReadiness.nextTest}</p>
+                </div>
+              </div>
               <p className="mt-2 text-sm text-slate-700">{paidPlanReadiness.recommendation}</p>
             </div>
             {revenueEventRows.length > 0 ? (
@@ -569,9 +648,44 @@
               </div>
             ) : (
               <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                No revenue signals yet. They will appear after users build, save, send, follow up, or start repeat invoices.
+                No revenue signals yet. They will appear after users build, save, send, follow up, start repeat invoices, use the scratchpad, save services, or refine with Billie.
               </p>
             )}
+          </section>
+
+          <section className="nb-surface mt-4 rounded-[28px] p-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-semibold text-slate-900">Feature adoption</h2>
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                  featureAdoptionFocus.tone === "green"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-amber-200 bg-amber-50 text-amber-700"
+                }`}
+              >
+                {featureAdoptionFocus.stage}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              This helps us see which future bets are actually getting used, not just shipped.
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+              <StatusPill label="Scratchpad owners" value={String(revenueSummary.scratchpadOwners)} />
+              <StatusPill label="Voice owners" value={String(revenueSummary.scratchpadVoiceOwners)} />
+              <StatusPill label="Service savers" value={String(revenueSummary.serviceMemorySavedOwners)} />
+              <StatusPill label="Billie owners" value={String(revenueSummary.billieWorkspaceOwners)} />
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Focus</p>
+                <p className="mt-1 text-sm font-semibold text-slate-800">{featureAdoptionFocus.focus}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Next test</p>
+                <p className="mt-1 text-sm text-slate-700">{featureAdoptionFocus.nextTest}</p>
+              </div>
+            </div>
+            <p className="mt-2 text-sm text-slate-700">{featureAdoptionFocus.recommendation}</p>
           </section>
 
           <section className="nb-surface mt-4 rounded-[28px] p-5">

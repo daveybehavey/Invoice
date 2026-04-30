@@ -103,6 +103,7 @@ function ImportInvoice() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [notes, setNotes] = useState("");
   const [reviewedText, setReviewedText] = useState("");
+  const [lineItemPreview, setLineItemPreview] = useState(null);
   const [ocrWarnings, setOcrWarnings] = useState([]);
   const [ocrConfidence, setOcrConfidence] = useState(null);
   const [ocrConfidenceReasons, setOcrConfidenceReasons] = useState([]);
@@ -112,6 +113,7 @@ function ImportInvoice() {
   const [billingBusy, setBillingBusy] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isPreviewingLineItems, setIsPreviewingLineItems] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [accountPlan, setAccountPlan] = useState(null);
   const fileInputRef = useRef(null);
@@ -144,6 +146,101 @@ function ImportInvoice() {
       : planUsage?.statusTone === "warning"
         ? "nb-usage-meter--warning"
         : "";
+
+  const formatPreviewMoney = (value) => {
+    if (!Number.isFinite(value)) {
+      return "";
+    }
+    return `$${Number(value).toFixed(2).replace(/\.00$/, "")}`;
+  };
+
+  const buildLineItemPreview = (payload) => {
+    const invoice = payload?.invoice;
+    if (Array.isArray(invoice?.lineItems) && invoice.lineItems.length > 0) {
+      const items = invoice.lineItems.map((lineItem, index) => ({
+        id: lineItem?.id ?? `preview-${index}`,
+        label:
+          typeof lineItem?.description === "string" && lineItem.description.trim().length > 0
+            ? lineItem.description
+            : `Line item ${index + 1}`,
+        kind:
+          lineItem?.type === "labor"
+            ? "Work"
+            : lineItem?.type === "material"
+              ? "Material"
+              : "Item",
+        meta: [
+          Number.isFinite(lineItem?.quantity) ? `${lineItem.quantity}` : "",
+          Number.isFinite(lineItem?.unitPrice) ? `${formatPreviewMoney(lineItem.unitPrice)}/unit` : "",
+          Number.isFinite(lineItem?.amount) ? formatPreviewMoney(lineItem.amount) : ""
+        ]
+          .filter(Boolean)
+          .join(" • ")
+      }));
+      return {
+        payload,
+        title: "Likely line items",
+        itemCount: items.length,
+        items: items.slice(0, 5),
+        hasMore: items.length > 5,
+        followUpMessage: ""
+      };
+    }
+
+    const structuredInvoice = payload?.structuredInvoice ?? {};
+    const items = [];
+    (Array.isArray(structuredInvoice.workSessions) ? structuredInvoice.workSessions : []).forEach(
+      (session) => {
+        const sessionDate = typeof session?.date === "string" ? session.date.trim() : "";
+        (Array.isArray(session?.tasks) ? session.tasks : []).forEach((task, index) => {
+          items.push({
+            id: `${sessionDate || "session"}-${index}`,
+            label:
+              typeof task?.description === "string" && task.description.trim().length > 0
+                ? task.description
+                : "Work item",
+            kind: "Work",
+            meta: [
+              sessionDate,
+              Number.isFinite(task?.hours) ? `${task.hours}h` : "",
+              Number.isFinite(task?.rate) ? `${formatPreviewMoney(task.rate)}/hr` : "",
+              Number.isFinite(task?.amount) ? formatPreviewMoney(task.amount) : ""
+            ]
+              .filter(Boolean)
+              .join(" • ")
+          });
+        });
+      }
+    );
+    (Array.isArray(structuredInvoice.materials) ? structuredInvoice.materials : []).forEach(
+      (material, index) => {
+        items.push({
+          id: `material-${index}`,
+          label:
+            typeof material?.description === "string" && material.description.trim().length > 0
+              ? material.description
+              : "Material",
+          kind: "Material",
+          meta: [
+            Number.isFinite(material?.quantity) ? `${material.quantity}` : "",
+            Number.isFinite(material?.unitCost) ? `${formatPreviewMoney(material.unitCost)}/unit` : "",
+            Number.isFinite(material?.amount) ? formatPreviewMoney(material.amount) : ""
+          ]
+            .filter(Boolean)
+            .join(" • ")
+        });
+      }
+    );
+
+    return {
+      payload,
+      title: "Likely line items",
+      itemCount: items.length,
+      items: items.slice(0, 5),
+      hasMore: items.length > 5,
+      followUpMessage: typeof payload?.followUp?.message === "string" ? payload.followUp.message : ""
+    };
+  };
 
   useEffect(() => {
     const notice = readBillingNoticeFromUrl();
@@ -254,6 +351,7 @@ function ImportInvoice() {
     }
     setError("");
     setReviewedText("");
+    setLineItemPreview(null);
     setOcrWarnings([]);
     setOcrConfidence(null);
     setOcrConfidenceReasons([]);
@@ -269,6 +367,7 @@ function ImportInvoice() {
   const clearFile = () => {
     setSelectedFile(null);
     setReviewedText("");
+    setLineItemPreview(null);
     setOcrWarnings([]);
     setOcrConfidence(null);
     setOcrConfidenceReasons([]);
@@ -286,6 +385,7 @@ function ImportInvoice() {
   };
 
   const handleParsedIntakePayload = (payload, options = {}) => {
+    const openBillieCleanup = Boolean(options.openBillieCleanup);
     const nextOpenDecisions = Array.isArray(payload?.openDecisions) ? payload.openDecisions : [];
     const qualityBlockerCount = Number.isFinite(payload?.qualityGate?.blockerCount)
       ? Math.max(0, Math.floor(payload.qualityGate.blockerCount))
@@ -318,7 +418,7 @@ function ImportInvoice() {
       buildDraftFromFinishedInvoice(payload.invoice, { taxRate: "0" })
     );
     window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
-    navigate("/manual");
+    navigate(openBillieCleanup ? "/manual?tab=assistant&source=import" : "/manual");
   };
 
   const handleExtractText = async () => {
@@ -359,6 +459,7 @@ function ImportInvoice() {
         ? payload.confidenceReasons.filter((reason) => typeof reason === "string" && reason.trim().length > 0)
         : [];
       setReviewedText(extractedText);
+      setLineItemPreview(null);
       setOcrWarnings(Array.isArray(payload?.warnings) ? payload.warnings : []);
       setOcrConfidence(nextConfidence);
       setOcrConfidenceReasons(nextConfidenceReasons);
@@ -409,6 +510,7 @@ function ImportInvoice() {
         throw new Error("No readable text found in the document.");
       }
       setReviewedText(extractedText);
+      setLineItemPreview(null);
     } catch (uploadError) {
       console.error("Document text preview failed", uploadError);
       setError(uploadError?.message || "Could not preview extracted text.");
@@ -417,7 +519,7 @@ function ImportInvoice() {
     }
   };
 
-  const handleBuildFromReviewedText = async () => {
+  const handleBuildFromReviewedText = async ({ openBillieCleanup = false } = {}) => {
     if (!selectedFile) {
       setError("Upload a file first.");
       return;
@@ -435,6 +537,17 @@ function ImportInvoice() {
     setError("");
     try {
       const trimmedNotes = notes.trim();
+      const previewPayload = lineItemPreview?.payload ?? null;
+      if (previewPayload?.invoice) {
+        const seedSourceText = [extractedText, trimmedNotes].filter(Boolean).join("\n\n").trim();
+        handleParsedIntakePayload(previewPayload, {
+          fileName: selectedFile.name,
+          notes: trimmedNotes,
+          sourceText: seedSourceText,
+          openBillieCleanup
+        });
+        return;
+      }
       const response = await apiFetch("/api/invoices/from-input", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -451,13 +564,54 @@ function ImportInvoice() {
       handleParsedIntakePayload(payload, {
         fileName: selectedFile.name,
         notes: trimmedNotes,
-        sourceText: seedSourceText
+        sourceText: seedSourceText,
+        openBillieCleanup
       });
     } catch (uploadError) {
       console.error("Build from reviewed text failed", uploadError);
       setError(uploadError?.message || "Build draft failed. Try again.");
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const handlePreviewLineItems = async () => {
+    if (!selectedFile) {
+      setError("Upload a file first.");
+      return;
+    }
+    const extractedText = reviewedText.trim();
+    if (!extractedText) {
+      setError("Review the extracted text before previewing line items.");
+      return;
+    }
+    if (isImageFile(selectedFile) && ocrConfidence === "low" && !lowConfidenceConfirmed) {
+      setError("Confirm low-confidence OCR text before previewing line items.");
+      return;
+    }
+    setIsPreviewingLineItems(true);
+    setError("");
+    try {
+      const trimmedNotes = notes.trim();
+      const response = await apiFetch("/api/invoices/from-input", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          uploadedInvoiceText: extractedText,
+          messyInput: trimmedNotes || undefined,
+          mode: "fast"
+        })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || "Could not preview line items.");
+      }
+      setLineItemPreview(buildLineItemPreview(payload));
+    } catch (previewError) {
+      console.error("Line item preview failed", previewError);
+      setError(previewError?.message || "Could not preview line items.");
+    } finally {
+      setIsPreviewingLineItems(false);
     }
   };
 
@@ -516,15 +670,16 @@ function ImportInvoice() {
         </button>
         <div className="mt-4 space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">
-            Import invoice
+            Legacy import
           </p>
           <p className="nb-assistant-chip nb-assistant-chip--ready inline-flex text-xs normal-case tracking-normal">
             <span className="nb-assistant-chip__dot" aria-hidden="true" />
-            Billie ready
+            Billie review ready
           </p>
-          <h1 className="nb-section-title text-2xl">Upload invoice files or photo notes</h1>
+          <h1 className="nb-section-title text-2xl">Upload old invoice files or photo notes</h1>
           <p className="text-sm text-slate-600">
-            PDF/text files can build directly or preview extracted text first. Photo notes require text review before parsing.
+            Older PDFs, CSVs, text files, and photo notes can be imported directly or previewed first.
+            Imported content stays editable so Billie can help polish the draft later.
           </p>
         </div>
         {planSummary ? (
@@ -708,7 +863,10 @@ function ImportInvoice() {
                   className="nb-textarea w-full resize-none border-amber-200 bg-white px-4 py-3"
                   placeholder="Review and edit extracted text if needed."
                   value={reviewedText}
-                  onChange={(event) => setReviewedText(event.target.value)}
+                  onChange={(event) => {
+                    setReviewedText(event.target.value);
+                    setLineItemPreview(null);
+                  }}
                   disabled={isExtracting}
                 />
               ) : (
@@ -716,6 +874,71 @@ function ImportInvoice() {
                   Click Extract text, then review before building the draft.
                 </p>
               )}
+              {hasReviewedText ? (
+                <div className="nb-subcard border-amber-200 bg-white px-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                        Photo to line items
+                      </p>
+                      <p className="text-xs text-amber-800">
+                        Billie can preview likely line items before you build the draft.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800 hover:border-amber-300 disabled:cursor-not-allowed disabled:text-amber-400"
+                      onClick={handlePreviewLineItems}
+                      disabled={isPreviewingLineItems || isExtracting || isUploading}
+                    >
+                      {isPreviewingLineItems
+                        ? "Previewing..."
+                        : lineItemPreview
+                          ? "Re-preview line items"
+                          : "Preview line items"}
+                    </button>
+                  </div>
+                  {lineItemPreview?.title ? (
+                    <div className="mt-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2 text-xs text-amber-800">
+                        <span>{lineItemPreview.title}</span>
+                        <span>
+                          {lineItemPreview.itemCount} item
+                          {lineItemPreview.itemCount === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {lineItemPreview.items.map((item) => (
+                          <div
+                            key={item.id}
+                            className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-sm font-semibold text-amber-950">{item.label}</p>
+                              <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                                {item.kind}
+                              </span>
+                            </div>
+                            {item.meta ? (
+                              <p className="mt-1 text-xs text-amber-800">{item.meta}</p>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                      {lineItemPreview.hasMore ? (
+                        <p className="text-xs text-amber-800">
+                          Showing the first 5 likely items. Build the draft to review everything in the editor.
+                        </p>
+                      ) : null}
+                      {lineItemPreview.followUpMessage ? (
+                        <p className="text-xs font-medium text-amber-900">
+                          {lineItemPreview.followUpMessage}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {requiresLowConfidenceConfirm ? (
                 <label className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
                   <input
@@ -768,7 +991,10 @@ function ImportInvoice() {
                   className="w-full resize-none rounded-xl border border-sky-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
                   placeholder="Review and edit extracted text if needed."
                   value={reviewedText}
-                  onChange={(event) => setReviewedText(event.target.value)}
+                  onChange={(event) => {
+                    setReviewedText(event.target.value);
+                    setLineItemPreview(null);
+                  }}
                   disabled={isExtracting || isUploading}
                 />
               ) : (
@@ -799,7 +1025,10 @@ function ImportInvoice() {
               className="mt-3 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
               placeholder="Example: This invoice includes a revised hourly rate."
               value={notes}
-              onChange={(event) => setNotes(event.target.value)}
+              onChange={(event) => {
+                setNotes(event.target.value);
+                setLineItemPreview(null);
+              }}
             />
           </div>
 
@@ -811,20 +1040,36 @@ function ImportInvoice() {
 
           <div className="flex flex-wrap items-center gap-3">
             {selectedFile && hasReviewedText ? (
-              <button
-                type="button"
-                className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-800 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-blue-300"
-                onClick={handleBuildFromReviewedText}
-                disabled={
-                  !selectedFile ||
-                  !hasReviewedText ||
-                  isUploading ||
-                  isExtracting ||
-                  (isImageFile(selectedFile) && ocrConfidence === "low" && !lowConfidenceConfirmed)
-                }
-              >
-                {isUploading ? "Building draft..." : "Build draft from reviewed text"}
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-800 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-blue-300"
+                  onClick={handleBuildFromReviewedText}
+                  disabled={
+                    !selectedFile ||
+                    !hasReviewedText ||
+                    isUploading ||
+                    isExtracting ||
+                    (isImageFile(selectedFile) && ocrConfidence === "low" && !lowConfidenceConfirmed)
+                  }
+                >
+                  {isUploading ? "Building draft..." : "Build draft from reviewed text"}
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex h-11 items-center justify-center rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-900 shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:border-blue-100 disabled:text-blue-300"
+                  onClick={() => handleBuildFromReviewedText({ openBillieCleanup: true })}
+                  disabled={
+                    !selectedFile ||
+                    !hasReviewedText ||
+                    isUploading ||
+                    isExtracting ||
+                    (isImageFile(selectedFile) && ocrConfidence === "low" && !lowConfidenceConfirmed)
+                  }
+                >
+                  Open Billie review
+                </button>
+              </>
             ) : (
               <button
                 type="button"

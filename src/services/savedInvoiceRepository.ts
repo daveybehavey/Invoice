@@ -8,6 +8,7 @@ import {
   deleteSavedInvoice,
   duplicateSavedInvoice,
   getSavedInvoiceById,
+  getSavedInvoiceByPortalToken,
   listRecentClientContext,
   listSavedInvoiceMetadata,
   restoreSavedInvoice,
@@ -46,6 +47,7 @@ export interface SavedInvoiceRepository {
     ownerId: string
   ): Promise<RecentClientContextItem[]>;
   getSavedInvoiceById(invoiceId: string, ownerId: string): Promise<SavedInvoice>;
+  getSavedInvoiceByPortalToken(invoiceId: string, portalAccessToken: string): Promise<SavedInvoice | null>;
   duplicateSavedInvoice(invoiceId: string, ownerId: string): Promise<SavedInvoice>;
   updateSavedInvoiceStatus(
     invoiceId: string,
@@ -86,6 +88,13 @@ class FileSavedInvoiceRepository implements SavedInvoiceRepository {
 
   async getSavedInvoiceById(invoiceId: string, ownerId: string): Promise<SavedInvoice> {
     return getSavedInvoiceById(invoiceId, ownerId);
+  }
+
+  async getSavedInvoiceByPortalToken(
+    invoiceId: string,
+    portalAccessToken: string
+  ): Promise<SavedInvoice | null> {
+    return getSavedInvoiceByPortalToken(invoiceId, portalAccessToken);
   }
 
   async duplicateSavedInvoice(invoiceId: string, ownerId: string): Promise<SavedInvoice> {

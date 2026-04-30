@@ -1023,7 +1023,7 @@ function InspectorPanel({
     }
   ];
   const paymentStateLabel =
-    invoiceStatus === "paid" ? "Paid in full" : `${formatPreviewMoney(previewTotal)} due`;
+    invoiceStatus === "paid" ? "Paid in full" : `Open balance: ${formatPreviewMoney(previewTotal)}`;
   const paymentStateClass =
     invoiceStatus === "paid"
       ? "nb-chip nb-chip--success normal-case tracking-normal"
@@ -1767,7 +1767,7 @@ function InspectorPanel({
                   <p className="text-sm font-semibold text-slate-900">Invoice status</p>
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <span className={`${invoiceStatusStyles[invoiceStatus] ?? invoiceStatusStyles.draft}`}>
-                      Current: {invoiceStatus || "draft"}
+                      Status: {invoiceStatus || "draft"}
                     </span>
                     <span className={paymentStateClass}>
                       {paymentStateLabel}
@@ -1836,8 +1836,8 @@ function InspectorPanel({
                     {paymentLinkBusy
                       ? "Creating link..."
                       : previewPaymentLink
-                        ? "Refresh payment link"
-                        : "Create payment link"}
+                      ? "Refresh hosted payment link"
+                      : "Create hosted payment link"}
                   </button>
                   {previewPaymentLink ? (
                     <a
@@ -1846,7 +1846,7 @@ function InspectorPanel({
                       rel="noreferrer"
                       className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
                     >
-                      Open payment link
+                      Open hosted payment link
                     </a>
                   ) : null}
                 </div>

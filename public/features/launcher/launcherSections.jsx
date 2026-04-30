@@ -12,6 +12,7 @@ function LauncherAccountStrip({
   planUsage,
   planAtLimit,
   planWarning,
+  planPitch,
   hasPlanActions,
   showPlanActions,
   onTogglePlanActions,
@@ -45,6 +46,7 @@ function LauncherAccountStrip({
         {planWarning && !planAtLimit ? (
           <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
         ) : null}
+        {planPitch ? <p className="mt-1 text-xs text-slate-500">{planPitch}</p> : null}
         {planUsage?.finite ? (
           <div className={`nb-usage-meter mt-2 ${usageToneClass}`}>
             <div className="nb-usage-meter__row">
@@ -201,8 +203,9 @@ function LauncherOperationsQueueSection({
       </div>
       {actions.length > 0 ? (
         <div className="mt-5 grid gap-3 md:grid-cols-3">
-          {actions.map((action) => {
+          {actions.map((action, index) => {
             const toneClass = actionToneClass[action.tone] ?? "border-slate-200 bg-slate-50 text-slate-900";
+            const isPrimary = index === 0;
             const isBusy = Boolean(
               (action.invoiceId && busyInvoiceId === action.invoiceId) ||
                 (action.busyId && busyActionId === action.busyId)
@@ -212,7 +215,17 @@ function LauncherOperationsQueueSection({
             );
             const isActionBusy = isBusy || isSecondaryBusy;
             return (
-              <div key={action.id} className={`rounded-[24px] border p-4 ${toneClass}`}>
+              <div
+                key={action.id}
+                className={`rounded-[24px] border p-4 ${toneClass} ${
+                  isPrimary ? "ring-2 ring-[#093064]/10 md:col-span-2" : ""
+                }`}
+              >
+                {isPrimary ? (
+                  <p className="mb-2 inline-flex rounded-full bg-white/70 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#093064]">
+                    Next up
+                  </p>
+                ) : null}
                 <p className="text-sm font-semibold">{action.title}</p>
                 <p className="mt-2 min-h-[44px] text-sm leading-6 opacity-80">{action.detail}</p>
                 {action.action === "open-link" && action.href ? (
@@ -350,6 +363,7 @@ function LauncherStartSection({
   hasResumeDraft,
   onResumeDraft,
   onTrySampleNotes,
+  onOpenScratchpad,
   showAlternateStarts,
   onToggleAlternateStarts
 }) {
@@ -369,10 +383,10 @@ function LauncherStartSection({
             Billie ready
           </p>
           <h2 className="mt-2 text-[1.75rem] text-slate-900 md:text-4xl" style={{ fontFamily: "'Fraunces', serif" }}>
-            Start with notes. Billie prepares the draft.
+            Paste rough notes. Billie prepares the draft.
           </h2>
           <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 md:mt-3 md:text-base">
-            This is the default path for most jobs. Paste what happened, approve money decisions, then send.
+            This is the fastest path for most jobs. Paste what happened, approve money decisions, then send.
           </p>
           <div className="mt-4 grid gap-2 sm:grid-cols-3 md:mt-5 md:gap-3">
             {[
@@ -429,6 +443,13 @@ function LauncherStartSection({
             </button>
             <button
               type="button"
+              className="nb-btn-secondary rounded-full px-3 py-1.5"
+              onClick={onOpenScratchpad}
+            >
+              Open scratchpad
+            </button>
+            <button
+              type="button"
               className="nb-btn-ghost rounded-full px-3 py-1.5 text-sm"
               onClick={onToggleAlternateStarts}
               aria-expanded={showAlternateStarts}
@@ -440,12 +461,13 @@ function LauncherStartSection({
           {!hasSavedHistory ? (
             <div className="mt-3 rounded-2xl border border-[#6993d2]/25 bg-[#f6f9ff] px-3 py-2">
               <p className="text-xs font-semibold text-[#093064]">
-                First invoice? Tap <span className="font-bold">Try sample notes</span> for a 30-second walkthrough.
+                First invoice? Tap <span className="font-bold">Try sample notes</span> for a quick walkthrough,
+                or use <span className="font-bold">Open scratchpad</span> to collect notes during the day.
               </p>
             </div>
           ) : null}
           <p className="mt-3 text-xs leading-5 text-slate-500">
-            Start here unless you already have a file or need full manual control.
+            Start here unless you already have a file or want a blank invoice from scratch.
           </p>
         </div>
       </div>
@@ -485,7 +507,7 @@ function LauncherAlternateStartsSection({ showAlternateStarts, quickStartOptions
         ))}
       </div>
       <p className="mt-3 text-xs text-slate-500">
-        Use these when you already have a file or want full manual control.
+        Use these when you already have a file or want a blank invoice from scratch.
       </p>
     </section>
   );
@@ -497,7 +519,7 @@ function LauncherManageSection({ showManageOptions, onToggleManageOptions, manag
       <div className="flex items-center justify-between gap-2">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Manage</p>
-          <p className="mt-1 text-sm text-slate-600">Library, branding, and the tools you use less often.</p>
+          <p className="mt-1 text-sm text-slate-600">Library, branding, and memory tools you use less often.</p>
         </div>
         <button
           type="button"

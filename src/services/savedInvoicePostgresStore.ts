@@ -239,6 +239,39 @@ export class PostgresSavedInvoiceRepository {
     return parseSavedInvoiceRow(row);
   }
 
+  async getSavedInvoiceByPortalToken(
+    invoiceId: string,
+    portalAccessToken: string
+  ): Promise<SavedInvoice | null> {
+    await this.ensureReady();
+    const normalizedToken = portalAccessToken.trim();
+    if (!normalizedToken) {
+      return null;
+    }
+    const result = await this.query<SavedInvoiceRow>(
+      `
+        select
+          invoice_id,
+          owner_id,
+          created_at,
+          updated_at,
+          status,
+          previous_status,
+          deleted_at,
+          source_type,
+          invoice_data
+        from saved_invoices
+        where invoice_id = $1
+          and status <> 'deleted'
+          and coalesce(invoice_data->'finishedInvoice'->>'portalAccessToken', '') = $2
+        limit 1
+      `,
+      [invoiceId, normalizedToken]
+    );
+    const row = result.rows[0];
+    return row ? parseSavedInvoiceRow(row) : null;
+  }
+
   async duplicateSavedInvoice(invoiceId: string, ownerId: string): Promise<SavedInvoice> {
     await this.ensureReady();
     const existing = await this.getSavedInvoiceById(invoiceId, ownerId);

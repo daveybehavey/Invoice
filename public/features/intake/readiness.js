@@ -209,6 +209,7 @@
       billToDetails: invoice?.customerName ?? "",
       notes: invoice?.notes ?? "",
       paymentLinkUrl: invoice?.paymentLinkUrl ?? "",
+      portalAccessToken: invoice?.portalAccessToken ?? "",
       taxRate: options.taxRate ?? "0",
       lineItems: lineItems.length
         ? lineItems

@@ -133,6 +133,7 @@ export const FinishedInvoiceSchema = z.object({
   lineItems: z.array(InvoiceLineItemSchema).min(1),
   notes: OptionalString,
   paymentLinkUrl: OptionalUrl,
+  portalAccessToken: OptionalString,
   discountAmount: OptionalNumber,
   discountReason: OptionalString,
   subtotal: OptionalNumber,

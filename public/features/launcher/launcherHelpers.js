@@ -15,15 +15,23 @@
     {
       key: "ai",
       title: "Start with Billie",
-      description: "Paste the rough job notes and let Billie build the first draft.",
+      description: "Paste rough job notes. Billie builds a draft you review before anything changes.",
       icon: icons.sparkles,
       onClick: () => navigate("/ai-intake"),
       disabled: false
     },
     {
+      key: "scratchpad",
+      title: "Daily scratchpad",
+      description: "Capture work during the day, then turn those notes into an invoice.",
+      icon: icons.notebook,
+      onClick: () => navigate("/scratchpad"),
+      disabled: false
+    },
+    {
       key: "import",
-      title: "Import a Draft",
-      description: "Bring in a PDF, image, or text invoice and keep editing.",
+      title: "Legacy import",
+      description: "Bring in old PDFs, images, text files, or spreadsheets and keep editing.",
       icon: icons.upload,
       onClick: () => navigate("/import"),
       disabled: false
@@ -39,7 +47,7 @@
     {
       key: "library",
       title: "Library",
-      description: "Reopen saved invoices, drafts, and follow-up work.",
+      description: "Reopen drafts, track sent invoices, and handle follow-up work.",
       icon: icons.archive,
       onClick: () => navigate("/invoices"),
       disabled: false
@@ -58,6 +66,14 @@
       description: "Review or clear remembered clients, notes, send emails, and repeat cadences.",
       icon: icons.archive,
       onClick: () => navigate("/settings/memory"),
+      disabled: false
+    },
+    {
+      key: "services",
+      title: "Services",
+      description: "Review saved line items and clear stale service memory.",
+      icon: icons.archive,
+      onClick: () => navigate("/settings/services"),
       disabled: false
     },
     {

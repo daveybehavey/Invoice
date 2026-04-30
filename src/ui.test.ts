@@ -185,6 +185,22 @@ test("launcher manage tools include a tester feedback shortcut", async () => {
   }
 });
 
+test("launcher manage tools include a saved service catalog shortcut", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Show manage tools" }).click();
+    await page.locator("#launcher-manage-options").getByRole("button", { name: /Services/ }).click();
+    await page.waitForSelector("h1");
+
+    assert.equal((await page.locator("h1").textContent())?.trim(), "Review and reuse your service catalog");
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher footer exposes feedback and support", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -200,6 +216,53 @@ test("launcher footer exposes feedback and support", async () => {
     await page.getByRole("button", { name: "Feedback" }).click();
     await page.waitForSelector("h1");
     assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Feedback");
+  } finally {
+    await context.close();
+  }
+});
+
+test("legacy import page explains old file import and editable follow-up", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${baseUrl}/import`, { waitUntil: "networkidle" });
+    await page.waitForSelector("h1");
+
+    assert.equal((await page.locator("h1").textContent())?.trim(), "Upload old invoice files or photo notes");
+    await page.getByText("Legacy import", { exact: true }).waitFor({ state: "visible" });
+    const bodyText = (await page.locator("main").textContent()) ?? "";
+    assert.match(
+      bodyText,
+      /Older PDFs, CSVs, text files, and photo notes can be imported directly or previewed first\./i
+    );
+    assert.match(
+      bodyText,
+      /Imported content stays editable so Billie can help polish the draft later\./i
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor opens Billie edit tab when requested by query param", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${baseUrl}/manual?tab=assistant&source=import`, { waitUntil: "networkidle" });
+    const mainText = (await page.locator("main").textContent()) ?? "";
+    assert.match(mainText, /Imported draft ready for Billie review\./i);
+    const billieIntro = page
+      .getByText("Ask for changes without retyping. Billie will only adjust what you request.", {
+        exact: true
+      })
+      .first();
+    await billieIntro.waitFor({ state: "visible" });
+    assert.equal(
+      await billieIntro.isVisible(),
+      true
+    );
   } finally {
     await context.close();
   }
@@ -373,9 +436,8 @@ test("launcher sample notes open intake with a realistic starter draft", async (
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
-    await page
-      .getByText("First invoice? Tap Try sample notes for a 30-second walkthrough.")
-      .waitFor({ state: "visible" });
+    await page.getByText(/First invoice\?/i).waitFor({ state: "visible" });
+    await page.getByText(/Try sample notes.*quick walkthrough/i).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Try sample notes" }).click();
 
     const notes = page.getByPlaceholder(/Example: Jan 10 fixed sink/i);
@@ -389,6 +451,108 @@ test("launcher sample notes open intake with a realistic starter draft", async (
   }
 });
 
+test("launcher opens the daily scratchpad quick capture flow", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await openLauncher(page);
+    await page.getByRole("button", { name: "Open scratchpad" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Open scratchpad" }).click();
+    await page.getByRole("heading", { name: "Capture work fast. Invoice later." }).waitFor({
+      state: "visible"
+    });
+    await page.getByRole("button", { name: "Back to launcher" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("daily scratchpad saves a note and moves it into the manual invoice draft", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await openDailyScratchpad(page);
+    await scratchpadNoteEditor(page).fill("Installed replacement filter and checked pressure.");
+    await page.getByRole("button", { name: "Save note" }).click();
+    await page.getByText("1 saved note").waitFor({ state: "visible" });
+    await page.getByText("Installed replacement filter and checked pressure.").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Use in invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Use in invoice" }).click();
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+    await expectValueContains(
+      page.getByPlaceholder("Thank you for your business"),
+      "Installed replacement filter and checked pressure."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("daily scratchpad transcribes a voice note into the note editor", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/transcribe-audio", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          sourceType: "audio",
+          extractedText: "Installed replacement filter and checked pressure."
+        })
+      });
+    });
+
+    await openDailyScratchpad(page);
+    await page.getByRole("button", { name: "Add voice note" }).click();
+    await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+      name: "voice-note.webm",
+      mimeType: "audio/webm",
+      buffer: Buffer.from("fake-audio")
+    });
+
+    await page
+      .getByText("Added transcript from voice-note.webm. Review it, then save the note.")
+      .waitFor({ state: "visible" });
+    await expectValueContains(
+      scratchpadNoteEditor(page),
+      "Installed replacement filter and checked pressure."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("daily scratchpad tags notes and filters by tag", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await openDailyScratchpad(page);
+
+    await scratchpadNoteEditor(page).fill("Installed replacement filter and checked pressure.");
+    await page
+      .getByPlaceholder("Tags, comma separated: client, job, materials")
+      .fill("plumbing, urgent");
+    await page.getByRole("button", { name: "Save note" }).click();
+
+    await scratchpadNoteEditor(page).fill("Replaced outlet cover and verified power.");
+    await page
+      .getByPlaceholder("Tags, comma separated: client, job, materials")
+      .fill("electrical");
+    await page.getByRole("button", { name: "Save note" }).click();
+
+    await page.getByRole("button", { name: "#electrical" }).first().waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "#plumbing" }).first().waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "#plumbing" }).first().click();
+    await page.getByText("Installed replacement filter and checked pressure.").waitFor({ state: "visible" });
+    await page.getByText("Replaced outlet cover and verified power.").waitFor({ state: "hidden" });
+    await page.getByText("1 shown of 2 saved notes").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("core mobile routes do not create horizontal page overflow", async () => {
   const context = await browser.newContext({
     viewport: { width: 360, height: 640 },
@@ -397,7 +561,7 @@ test("core mobile routes do not create horizontal page overflow", async () => {
     deviceScaleFactor: 3
   });
   const page = await context.newPage();
-  const routes = ["/", "/ai-intake", "/manual", "/import", "/invoices", "/privacy", "/support", "/feedback"];
+  const routes = ["/", "/ai-intake", "/manual", "/scratchpad", "/import", "/invoices", "/privacy", "/support", "/feedback"];
 
   try {
     for (const route of routes) {
@@ -432,7 +596,7 @@ test("core mobile app routes keep controls thumb friendly", async () => {
     deviceScaleFactor: 3
   });
   const page = await context.newPage();
-  const routes = ["/", "/ai-intake", "/manual", "/import", "/invoices"];
+  const routes = ["/", "/ai-intake", "/manual", "/scratchpad", "/import", "/invoices"];
 
   try {
     for (const route of routes) {
@@ -1090,7 +1254,7 @@ test("importing image notes requires OCR review before building draft", async ()
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/import`, { waitUntil: "networkidle" });
-    await page.getByRole("heading", { name: "Upload invoice files or photo notes" }).waitFor({
+    await page.getByRole("heading", { name: "Upload old invoice files or photo notes" }).waitFor({
       state: "visible"
     });
 
@@ -1113,6 +1277,9 @@ test("importing image notes requires OCR review before building draft", async ()
     await page
       .locator('textarea[placeholder="Review and edit extracted text if needed."]')
       .waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Preview line items" }).click();
+    await page.getByText("Likely line items", { exact: true }).last().waitFor({ state: "visible" });
+    await page.getByText("Faucet repair", { exact: true }).last().waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Build draft from reviewed text" }).click();
 
     await page.waitForURL(/\/manual$/, { timeout: 10000 });
@@ -1138,9 +1305,9 @@ test("previewing document text lets the user review before building", async () =
     const reviewTextarea = page.locator('textarea[placeholder="Review and edit extracted text if needed."]');
     await reviewTextarea.waitFor({ state: "visible" });
     await expectValueContains(reviewTextarea, "Jan 30 faucet repair");
-    await page.getByRole("button", { name: "Build draft from reviewed text" }).click();
+    await page.getByRole("button", { name: "Open Billie review" }).click();
 
-    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+    await page.waitForURL(/\/manual\?tab=assistant&source=import$/, { timeout: 10000 });
   } finally {
     await context.close();
   }
@@ -1279,6 +1446,44 @@ test("manual editor polishes line item wording on blur", async () => {
   }
 });
 
+test("manual editor time capture adds a billable line item", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    let now = 1_700_000_000_000;
+    (window as Window & { __setNow?: (value: number) => void }).__setNow = (value: number) => {
+      now = value;
+    };
+    Date.now = () => now;
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByLabel("Time note").fill("Site visit");
+    await page.getByLabel("Time rate").fill("95");
+    await page.getByRole("button", { name: "Start timer" }).click();
+    await page.evaluate(() => {
+      const api = window as Window & { __setNow?: (value: number) => void };
+      api.__setNow?.(Date.now() + 90 * 60 * 1000);
+    });
+    await page.getByRole("button", { name: "Stop & add line item" }).click();
+
+    const firstDescription = page.locator('tbody tr').first().getByPlaceholder("Description");
+    await expectValueEquals(firstDescription, "Site visit");
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll('tbody tr input[placeholder="0"]')).some(
+        (input) => input instanceof HTMLInputElement && input.value === "1.5"
+      )
+    );
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll('tbody tr input[placeholder="$0"]')).some(
+        (input) => input instanceof HTMLInputElement && input.value === "95"
+      )
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor uses touch-friendly line item cards on narrow phones", async () => {
   const context = await browser.newContext({
     viewport: { width: 360, height: 640 },
@@ -1290,7 +1495,7 @@ test("manual editor uses touch-friendly line item cards on narrow phones", async
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
     const descriptionInput = page.locator('input[placeholder="Description"]:visible').first();
-    const qtyInput = page.locator('input[placeholder="0"]:visible').first();
+    const qtyInput = page.locator('input[placeholder="0"]:visible').nth(1);
     const rateInput = page.locator('input[placeholder="$0"]:visible').first();
 
     await descriptionInput.waitFor({ state: "visible" });
@@ -1350,20 +1555,21 @@ test("manual editor surfaces repeat-client memory without changing money until r
     await page.getByText("Money never changes automatically.").waitFor({ state: "visible" });
     await page.getByText("Quarterly drain maintenance").waitFor({ state: "visible" });
     await page.getByText("Rate $120 / Used 4 times").waitFor({ state: "visible" });
-    await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "");
-    await expectValueEquals(page.locator('input[placeholder="0"]:visible').first(), "");
-    await expectValueEquals(page.locator('input[placeholder="$0"]:visible').first(), "");
+    const firstRow = page.locator("tbody tr").first();
+    await expectValueEquals(firstRow.getByPlaceholder("Description", { exact: true }), "");
+    await expectValueEquals(firstRow.getByPlaceholder("0", { exact: true }), "");
+    await expectValueEquals(firstRow.getByPlaceholder("$0", { exact: true }), "");
 
     await page
       .getByRole("button", { name: "Reuse Quarterly drain maintenance from client memory" })
       .click();
 
     await expectValueEquals(
-      page.locator('input[placeholder="Description"]:visible').first(),
+      firstRow.getByPlaceholder("Description", { exact: true }),
       "Quarterly drain maintenance"
     );
-    await expectValueEquals(page.locator('input[placeholder="0"]:visible').first(), "2");
-    await expectValueEquals(page.locator('input[placeholder="$0"]:visible').first(), "120");
+    await expectValueEquals(firstRow.getByPlaceholder("0", { exact: true }), "2");
+    await expectValueEquals(firstRow.getByPlaceholder("$0", { exact: true }), "120");
   } finally {
     await context.close();
   }
@@ -1436,6 +1642,162 @@ test("manual editor applies quick payment terms without duplicating old terms", 
   }
 });
 
+test("manual editor transcribes a voice note into invoice notes", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/transcribe-audio", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          sourceType: "audio",
+          extractedText: "Installed replacement filter and checked pressure."
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Add voice note" }).click();
+    await page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
+      name: "voice-note.webm",
+      mimeType: "audio/webm",
+      buffer: Buffer.from("fake-audio")
+    });
+
+    await page
+      .getByText("Added transcript from voice-note.webm. Review it, then save the invoice.")
+      .waitFor({ state: "visible" });
+    await expectValueContains(
+      page.getByPlaceholder("Thank you for your business"),
+      "Installed replacement filter and checked pressure."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor captures a receipt photo into invoice notes", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/extract-notes", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          sourceType: "image",
+          extractedText: "Staples receipt total $42.18 for printer paper."
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Add receipt" }).click();
+    await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
+      name: "receipt.jpg",
+      mimeType: "image/jpeg",
+      buffer: Buffer.from("fake-image")
+    });
+
+    await page
+      .getByText("Added receipt from receipt.jpg. Review it, then save the invoice.")
+      .waitFor({ state: "visible" });
+    await expectValueContains(
+      page.getByPlaceholder("Thank you for your business"),
+      "Staples receipt total $42.18 for printer paper."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor applies deposit and milestone note templates without duplicating old schedule text", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const notesInput = page.getByPlaceholder("Thank you for your business");
+    await notesInput.fill("Project kickoff scheduled.");
+
+    await page.getByRole("button", { name: "50% deposit" }).click();
+    await expectValueEquals(
+      notesInput,
+      "Deposit: 50% due before work begins.\nBalance due on completion.\nProject kickoff scheduled."
+    );
+    await page.getByText("50% deposit applied").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Milestone plan" }).click();
+    await expectValueEquals(
+      notesInput,
+      "Payment schedule:\n- Milestone 1 due to begin\n- Milestone 2 due at midpoint\n- Balance due on completion.\nProject kickoff scheduled."
+    );
+    await page.getByText("Milestone plan applied").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor applies retainer note templates without duplicating old schedule text", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const notesInput = page.getByPlaceholder("Thank you for your business");
+    await notesInput.fill("Callouts billed separately.");
+
+    await page.getByRole("button", { name: "Monthly retainer" }).click();
+    await expectValueEquals(
+      notesInput,
+      "Retainer: Monthly service plan billed on the first business day of each month.\nCallouts billed separately."
+    );
+    await page.getByText("Monthly retainer applied").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "On-call support" }).click();
+    await expectValueEquals(
+      notesInput,
+      "Retainer: On-call support plan billed as a recurring monthly service.\nCallouts billed separately."
+    );
+    await page.getByText("On-call support applied").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor applies trade templates without duplicating old template text", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const notesInput = page.getByPlaceholder("Thank you for your business");
+    await notesInput.fill("Customer supplied materials excluded.");
+
+    await page.getByRole("button", { name: "Plumbing" }).click();
+    await expectValueEquals(
+      notesInput,
+      "Trade template: Plumbing\nPlumbing scope: inspection, repair, fixture replacement, cleanup.\nCustomer supplied materials excluded."
+    );
+    await expectValueEquals(
+      page.locator('input[placeholder="Description"]:visible').first(),
+      "Plumbing service"
+    );
+    await page.getByText("Plumbing template applied").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Cleaning" }).click();
+    await expectValueEquals(
+      notesInput,
+      "Trade template: Cleaning\nCleaning scope: rooms, surfaces, supplies, and final cleanup.\nCustomer supplied materials excluded."
+    );
+    await expectValueEquals(
+      page.locator('input[placeholder="Description"]:visible').first(),
+      "Plumbing service"
+    );
+    await page.getByText("Cleaning template applied").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor inserts saved client details from known-client memory", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {
@@ -1459,9 +1821,56 @@ test("manual editor inserts saved client details from known-client memory", asyn
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByText("Known Client + email, note, biweekly").waitFor({ state: "visible" });
+    await page.getByText("Repeat client matches").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Use saved client Known Client" }).waitFor({
+      state: "visible"
+    });
     await page.getByRole("button", { name: "Use saved client Known Client" }).click();
     await expectValueEquals(page.getByPlaceholder("Client Name"), "Known Client\n42 Service Road");
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor ranks exact repeat-client matches ahead of looser suggestions", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-ranked-client-memory-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          name: "Known Client West",
+          details: "Known Client West\n72 Harbor Road",
+          recipientEmail: "west@example.com",
+          defaultNotes: "Thanks for your continued business.",
+          updatedAt: "2026-04-21T12:00:00.000Z"
+        },
+        {
+          name: "Known Client",
+          details: "Known Client\n42 Service Road",
+          recipientEmail: "ap@known-client.example",
+          defaultNotes: "Payment due on receipt.",
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Known Client");
+
+    await page.getByText("Repeat client matches").waitFor({ state: "visible" });
+    const suggestionButtons = page.getByRole("button", { name: /Use saved client / });
+    await assert.equal(await suggestionButtons.count(), 2);
+    await assert.equal(await suggestionButtons.first().getAttribute("aria-label"), "Use saved client Known Client");
+    await assert.equal(
+      await suggestionButtons.nth(1).getAttribute("aria-label"),
+      "Use saved client Known Client West"
+    );
   } finally {
     await context.close();
   }
@@ -1492,7 +1901,7 @@ test("manual editor quick clean descriptions polishes existing draft line items"
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByRole("button", { name: "Tone" }).first().click();
+    await page.getByRole("button", { name: "Tone" }).last().click();
     await page.getByRole("button", { name: "Quick clean descriptions" }).click();
 
     await page.waitForFunction(() => {
@@ -1629,9 +2038,9 @@ test("manual billie applies explicit discount commands locally and supports undo
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
     await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
-    await page.locator('input[placeholder="0"]:visible').first().fill("1");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
     await page.locator('input[placeholder="$0"]:visible').first().fill("100");
-    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+    await page.getByRole("button", { name: "Edit with Billie" }).last().click();
 
     const composer = page
       .getByPlaceholder("Example: Use the bold template with a navy accent.")
@@ -1639,7 +2048,6 @@ test("manual billie applies explicit discount commands locally and supports undo
     await composer.fill("Apply a $25 discount.");
     await page.getByRole("button", { name: "Draft edit" }).click();
 
-    await page.getByText("Applied discount → $25.00.").waitFor({ state: "visible" });
     await expectValueEquals(page.getByLabel("Discount amount"), "25");
     await page.getByText("$75.00").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Undo last Billie change" }).click();
@@ -2018,6 +2426,27 @@ test("manual billie workspace freeform composer submits safe instructions and cl
     await expectValueEquals(composer, "");
     assert.equal(rewordDescriptionsRequestCount, 1);
     assert.equal(editRequestCount, 0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual billie workspace keeps composer text after a refresh", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.locator('input[placeholder="Description"]:visible').first().fill("fixed roof leak");
+
+    const workspace = page.locator('[data-testid="manual-billie-workspace"]');
+    const composer = workspace.getByPlaceholder(/Ask Billie to refine wording/i);
+    await composer.fill("Make the descriptions more formal.");
+
+    await page.reload({ waitUntil: "networkidle" });
+
+    const refreshedWorkspace = page.locator('[data-testid="manual-billie-workspace"]');
+    const refreshedComposer = refreshedWorkspace.getByPlaceholder(/Ask Billie to refine wording/i);
+    await expectValueEquals(refreshedComposer, "Make the descriptions more formal.");
   } finally {
     await context.close();
   }
@@ -2781,11 +3210,9 @@ test("client memory settings lets users inspect and clear remembered clients", a
 
   const page = await context.newPage();
   try {
-    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
-    await page.getByRole("button", { name: "Show manage tools" }).click();
-    await page.getByRole("button", { name: "Memory" }).click();
+    await page.goto(`${baseUrl}/settings/memory`, { waitUntil: "networkidle" });
     await page.waitForURL(/\/settings\/memory$/, { timeout: 10000 });
-    await page.getByRole("heading", { name: "Review remembered clients" }).waitFor({ state: "visible" });
+    await page.getByRole("heading", { name: "Review and clear repeat-client memory" }).waitFor({ state: "visible" });
     await page.getByText("Trust Client", { exact: true }).first().waitFor({ state: "visible" });
     await page.getByText("Show saved details").first().click();
     await page.getByText("billing@trust-client.example").waitFor({ state: "visible" });
@@ -3304,10 +3731,11 @@ test("launcher shows invoice command center for drafts and follow-ups", async ()
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     const queue = page.locator("section").filter({ hasText: "Invoice command center" });
     await queue.getByText("Today's queue").waitFor({ state: "visible" });
-    await queue.getByText("1 invoice may need follow-up.").waitFor({ state: "visible" });
+    await queue.getByText("1 invoice needs follow-up.").waitFor({ state: "visible" });
+    await queue.getByText("Next up").waitFor({ state: "visible" });
     await queue.getByText("Resume latest draft").waitFor({ state: "visible" });
-    await queue.getByText("Follow up sent invoice").waitFor({ state: "visible" });
-    await queue.getByText("$210.00 still open.").waitFor({ state: "visible" });
+    await queue.getByText("Follow up on sent invoice").waitFor({ state: "visible" });
+    await queue.getByText("Open balance: $210.00.").waitFor({ state: "visible" });
     await queue.getByText("Last sent to ops-reminder@example.com.").waitFor({ state: "visible" });
     await queue.getByRole("button", { name: "Mark INV-OPS-SENT paid" }).waitFor({ state: "visible" });
     await queue.getByRole("button", { name: "Send reminder for INV-OPS-SENT" }).click();
@@ -3453,6 +3881,63 @@ test("launcher shows pre-limit warning when one free save remains", async () => 
   }
 });
 
+test("launcher shows a pro value pitch when one free save remains", async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "2";
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-plan-pitch-owner");
+  });
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-plan-pitch-owner"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Plan Pitch Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PLAN-PITCH-1",
+          issueDate: "2026-03-10",
+          customerName: "Plan Pitch Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Plan pitch baseline",
+              quantity: 1,
+              unitPrice: 95,
+              amount: 95
+            }
+          ],
+          subtotal: 95,
+          total: 95,
+          balanceDue: 95
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page
+      .getByText("Pro keeps sends, reminders, hosted payment links, and saved client memory in one place.")
+      .waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library shows free-plan limit banner when monthly cap is reached", async () => {
   process.env.INVOICE_DEFAULT_PLAN = "free";
   process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "1";
@@ -3535,8 +4020,11 @@ test("invoice library empty state offers sample notes", async () => {
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    await page.getByText("No saved invoices yet").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Try sample notes" }).click();
+    await page.getByText("No invoices saved yet").waitFor({ state: "visible" });
+    await page.getByText("Saved drafts, sent invoices, and paid work will show up here.").waitFor({
+      state: "visible"
+    });
+    await page.getByRole("button", { name: "Try sample job" }).click();
     await page
       .getByText("Sample notes loaded. Review them, then build the invoice.")
       .waitFor({ state: "visible" });
@@ -3648,11 +4136,11 @@ test("invoice library surfaces follow-up reminders for stale sent invoices", asy
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    await page.getByText("Follow-up reminders").waitFor({ state: "visible" });
-    await page.getByText("1 sent invoice may need follow-up.").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Invoice again oldest" }).waitFor({ state: "visible" });
+    await page.getByText("Follow-up queue").waitFor({ state: "visible" });
+    await page.getByText("1 sent invoice is waiting on follow-up.").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Open repeat invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Show sent invoices" }).click();
-    await page.getByText("INV-SENT-1").waitFor({ state: "visible" });
+    await page.getByText("INV-SENT-1", { exact: true }).waitFor({ state: "visible" });
     assert.equal(await page.getByText("INV-DRAFT-1").count(), 0);
   } finally {
     await context.close();
@@ -3710,14 +4198,248 @@ test("invoice library follow-up reminder supports snooze and persists it", async
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    await page.getByText("Follow-up reminders").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Snooze 7 days" }).waitFor({ state: "visible" });
+    await page.getByText("Follow-up queue").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Snooze for 7 days" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Dismiss" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Snooze 7 days" }).click();
-    await page.getByText("Follow-up reminders").waitFor({ state: "hidden" });
+    await page.getByRole("button", { name: "Snooze for 7 days" }).click();
+    await page.getByText("Follow-up queue").waitFor({ state: "hidden" });
 
     await page.reload({ waitUntil: "networkidle" });
-    assert.equal(await page.getByText("Follow-up reminders").count(), 0);
+    assert.equal(await page.getByText("Follow-up queue").count(), 0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library follow-up reminder can copy a suggested reminder note", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-reminder-copy-owner");
+  });
+
+  const sentSeedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-reminder-copy-owner"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Reminder Copy Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-COPY-1",
+          issueDate: "2026-02-01",
+          customerName: "Reminder Copy Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-copy-1",
+              type: "labor",
+              description: "Copy reminder baseline",
+              quantity: 1,
+              unitPrice: 125,
+              amount: 125
+            }
+          ],
+          subtotal: 125,
+          total: 125,
+          balanceDue: 125
+        }
+      }
+    }
+  });
+  assert.equal(sentSeedResponse.status(), 200);
+  const sentSeedPayload = await sentSeedResponse.json();
+  const invoiceId = sentSeedPayload?.invoice?.invoiceId as string;
+  await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": "ui-reminder-copy-owner"
+    },
+    data: {
+      recipientEmail: "reminder.copy@example.com"
+    }
+  });
+  await mutateStoredInvoice(invoiceId, {
+    status: "sent",
+    updatedAt: "2026-01-15T00:00:00.000Z"
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("Follow-up queue").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Copy reminder note" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Copy reminder note" }).click();
+    await page
+      .locator("p.rounded-xl.border.border-blue-100")
+      .getByText("A quick follow-up on INV-COPY-1", { exact: false })
+      .waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library can enable and test browser reminder notifications", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const notifications: Array<{ title: string; options?: NotificationOptions }> = [];
+    function NotificationMock(this: unknown, title: string, options?: NotificationOptions) {
+      notifications.push({ title, options });
+    }
+    const notificationApi = NotificationMock as unknown as typeof Notification & {
+      permission: NotificationPermission;
+      requestPermission: () => Promise<NotificationPermission>;
+    };
+    notificationApi.permission = "default";
+    notificationApi.requestPermission = async () => {
+      notificationApi.permission = "granted";
+      return "granted";
+    };
+    Object.defineProperty(window, "Notification", {
+      value: notificationApi,
+      configurable: true,
+      writable: true
+    });
+    (window as Window & { __notebillNotifications?: Array<{ title: string; options?: NotificationOptions }> }).__notebillNotifications =
+      notifications;
+    window.localStorage.setItem("invoiceOwnerId", "ui-reminder-notify-owner");
+  });
+
+  const sentSeedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-reminder-notify-owner"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Reminder Notify Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-NOTIFY-1",
+          issueDate: "2026-02-01",
+          customerName: "Reminder Notify Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-rem-notify-1",
+              type: "labor",
+              description: "Reminder notify baseline",
+              quantity: 1,
+              unitPrice: 125,
+              amount: 125
+            }
+          ],
+          subtotal: 125,
+          total: 125,
+          balanceDue: 125
+        }
+      }
+    }
+  });
+  assert.equal(sentSeedResponse.status(), 200);
+  const sentSeedPayload = await sentSeedResponse.json();
+  await mutateStoredInvoice(sentSeedPayload?.invoice?.invoiceId, {
+    status: "sent",
+    updatedAt: "2026-01-15T00:00:00.000Z"
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Enable browser reminders" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Enable browser reminders" }).click();
+    await page.getByText("Reminder alerts enabled.").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Test reminder alert" }).click();
+    await page
+      .getByText("Sending reminder test...")
+      .waitFor({ state: "visible" });
+    const notificationEnabled = await page.evaluate(
+      () => window.localStorage.getItem("invoiceReminderNotificationSettings")
+    );
+    assert.equal(notificationEnabled, JSON.stringify({ enabled: true }));
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library reminder presets update automation timing", async () => {
+  const ownerId = "ui-reminder-preset-owner";
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-reminder-preset-owner");
+  });
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Reminder Preset Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REM-PRESET-1",
+          issueDate: "2026-02-01",
+          dueDate: "2026-02-15",
+          customerName: "Reminder Preset Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-rem-preset-1",
+              type: "labor",
+              description: "Reminder preset baseline",
+              quantity: 1,
+              unitPrice: 110,
+              amount: 110
+            }
+          ],
+          subtotal: 110,
+          total: 110,
+          balanceDue: 110
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const seedId = seedPayload?.invoice?.invoiceId;
+  assert.equal(typeof seedId, "string");
+  await context.request.post(`${baseUrl}/api/invoices/${seedId}/status`, {
+    headers: {
+      "x-invoice-user-id": ownerId,
+      "Content-Type": "application/json"
+    },
+    data: { status: "sent" }
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "domcontentloaded" });
+    await page.getByText("Reminder automation", { exact: true }).waitFor({ state: "visible" });
+    await page.locator('button[title="Follow sooner with more volume."]').click();
+
+    const settings = await page.evaluate(() => {
+      const key = Object.keys(window.localStorage).find((entry) =>
+        entry.startsWith("invoiceReminderAutomationSettings::")
+      );
+      return key ? JSON.parse(window.localStorage.getItem(key) ?? "null") : null;
+    });
+    assert.equal(settings?.dueAfterDays, 7);
+    assert.equal(settings?.cooldownDays, 3);
+    assert.equal(settings?.maxPerRun, 20);
   } finally {
     await context.close();
   }
@@ -3872,7 +4594,7 @@ test("invoice library supports recurring monthly reminders with pause", async ()
     await setRecurringButton.waitFor({ state: "visible" });
     await setRecurringButton.click();
 
-    await page.getByText("Recurring reminders").waitFor({ state: "visible" });
+    await page.getByText("Repeat work").waitFor({ state: "visible" });
     await page.getByText(/Next recurring invoice is due/i).waitFor({ state: "visible" });
     await page.getByText("Recurring monthly").waitFor({ state: "visible" });
     await page
@@ -3884,7 +4606,7 @@ test("invoice library supports recurring monthly reminders with pause", async ()
       .waitFor({ state: "visible" });
 
     await page.getByRole("button", { name: "Pause recurring for INV-RECUR-1" }).click();
-    await page.getByText("Recurring reminders").waitFor({ state: "hidden" });
+    await page.getByText("Repeat work").waitFor({ state: "hidden" });
     await page
       .getByRole("button", { name: "Set monthly recurring for INV-RECUR-1" })
       .waitFor({ state: "visible" });
@@ -4038,9 +4760,9 @@ test("invoice library recurring reminder opens invoice-again for the next due in
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    await page.getByText("Recurring reminders").waitFor({ state: "visible" });
-    await page.getByText("1 recurring invoice is due.").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Invoice again next due" }).click();
+    await page.getByText("Repeat work").waitFor({ state: "visible" });
+    await page.getByText("1 recurring invoice is ready.").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Open repeat invoice" }).click();
     await page.waitForURL(/\/manual$/, { timeout: 15000 });
     await expectValueContains(page.getByPlaceholder("Client Name"), "Recurring Open Client");
   } finally {
@@ -4409,22 +5131,22 @@ test("invoice library supports sent and paid status actions", async () => {
     await page.getByText("INV-STATUS-1").waitFor({ state: "visible" });
     const card = page.locator("div").filter({ hasText: "INV-STATUS-1" }).first();
     await card.getByText("Draft invoice", { exact: true }).waitFor({ state: "visible" });
-    await card.getByText("$220.00 draft total", { exact: true }).waitFor({ state: "visible" });
-    await card.getByText("Next: Open to finish, then send or export.").waitFor({ state: "visible" });
+    await card.getByText("Draft total: $220.00", { exact: true }).waitFor({ state: "visible" });
+    await card.getByText("Next: Open the draft, finish the details, then send or export.").waitFor({ state: "visible" });
 
     await card.getByRole("button", { name: "Mark sent" }).click();
     await card.locator("span.rounded-full", { hasText: "sent" }).waitFor({ state: "visible" });
     await card.getByText("Sent invoice", { exact: true }).waitFor({ state: "visible" });
-    await card.getByText("$220.00 open", { exact: true }).waitFor({ state: "visible" });
+    await card.getByText("Open balance: $220.00", { exact: true }).waitFor({ state: "visible" });
     await card
-      .getByText("Next: Marked sent. Add a recipient if you want reminders or tracked delivery.")
+      .getByText("Next: Sent. Add a recipient to track delivery or reminders.")
       .waitFor({ state: "visible" });
 
     await card.getByRole("button", { name: "Mark paid" }).click();
     await card.locator("span.rounded-full", { hasText: "paid" }).waitFor({ state: "visible" });
     await card.getByText("Paid invoice", { exact: true }).waitFor({ state: "visible" });
     await card.getByText("Paid in full").waitFor({ state: "visible" });
-    await card.getByText("Next: Paid. Use Invoice again for repeat work.").waitFor({ state: "visible" });
+    await card.getByText("Next: Paid. Use Invoice again for similar work.").waitFor({ state: "visible" });
 
     const listResponse = await context.request.get(`${baseUrl}/api/invoices`, {
       headers: {
@@ -4570,7 +5292,7 @@ test("invoice library shows open pay link action when payment link exists", asyn
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     await page.getByText("INV-PAY-LINK-1").waitFor({ state: "visible" });
-    await page.getByRole("link", { name: "Open pay link" }).waitFor({ state: "visible" });
+    await page.getByRole("link", { name: "Open hosted payment link" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -4678,7 +5400,7 @@ test("saving an invoice remembers line items and allows one-tap reinsertion late
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
     await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
-    await page.locator('input[placeholder="0"]:visible').first().fill("1");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
     await page.locator('input[placeholder="$0"]:visible').first().fill("90");
     await page.getByRole("button", { name: "Export" }).last().click();
     await page.getByText("Save to library").waitFor({ state: "visible" });
@@ -4697,6 +5419,60 @@ test("saving an invoice remembers line items and allows one-tap reinsertion late
     await expectValueContains(page.locator('input[placeholder="Description"]:visible').first(), "Faucet repair");
     assert.equal(await page.locator('input[placeholder="0"]:visible').first().inputValue(), "1");
     assert.equal(await page.locator('input[placeholder="$0"]:visible').first().inputValue(), "90");
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual line items can be saved directly into service memory", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-direct-service-memory-owner");
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Boiler tune-up");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("145");
+    const saveServiceButton = page.getByRole("button", { name: "Save current service" });
+    await saveServiceButton.waitFor({ state: "visible" });
+    await saveServiceButton.click();
+    await page.getByRole("button", { name: "Saved items (1)" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Saved items (1)" }).click();
+    await page.getByRole("button", { name: "Insert saved item Boiler tune-up" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("service catalog settings shows saved services and supports deletion", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-service-catalog-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          description: "Boiler tune-up",
+          qty: "1",
+          rate: "145",
+          clientName: "River House",
+          usageCount: 2,
+          updatedAt: "2026-04-18T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/settings/services`, { waitUntil: "networkidle" });
+    await page.getByText("Review and reuse your service catalog").waitFor({ state: "visible" });
+    await page.getByText("Boiler tune-up").waitFor({ state: "visible" });
+    await page.getByText("River House").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Delete saved service Boiler tune-up" }).click();
+    await page.getByText("No saved services yet.").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -4794,7 +5570,7 @@ test("manual editor export summarizes send readiness", async () => {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
     await page.getByPlaceholder("Client Name").fill("Riley Homeowner");
     await page.locator('input[placeholder="Description"]:visible').first().fill("Faucet repair");
-    await page.locator('input[placeholder="0"]:visible').first().fill("1");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
     await page.locator('input[placeholder="$0"]:visible').first().fill("90");
     await page.getByRole("button", { name: "Export" }).last().click();
 
@@ -4939,7 +5715,7 @@ test("manual editor save shows free-plan limit message from API", async () => {
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
     await page.locator('input[placeholder="Description"]:visible').first().fill("Second invoice");
-    await page.locator('input[placeholder="0"]:visible').first().fill("1");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
     await page.locator('input[placeholder="$0"]:visible').first().fill("120");
     await page.getByRole("button", { name: "Export" }).last().click();
     await page.getByText("Free plan · 1/1 saved this month (limit reached)").waitFor({ state: "visible" });
@@ -4982,7 +5758,7 @@ test("manual export panel can mark a saved invoice as sent then paid", async () 
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
     await page.locator('input[placeholder="Description"]:visible').first().fill("Roof leak repair");
-    await page.locator('input[placeholder="0"]:visible').first().fill("1");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
     await page.locator('input[placeholder="$0"]:visible').first().fill("180");
 
     await page.getByRole("button", { name: "Export" }).last().click();
@@ -4991,10 +5767,10 @@ test("manual export panel can mark a saved invoice as sent then paid", async () 
     await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
 
     await page.getByRole("button", { name: "Mark sent" }).click();
-    await page.getByText("Current: sent").waitFor({ state: "visible" });
+    await page.getByText("Status: sent").waitFor({ state: "visible" });
 
     await page.getByRole("button", { name: "Mark paid" }).click();
-    await page.getByText("Current: paid").waitFor({ state: "visible" });
+    await page.getByText("Status: paid").waitFor({ state: "visible" });
 
     const listResponse = await context.request.get(`${baseUrl}/api/invoices`, {
       headers: {
@@ -5030,7 +5806,7 @@ test("manual export panel can create a hosted payment link for a saved invoice",
 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
     await page.locator('input[placeholder="Description"]:visible').first().fill("Skylight repair");
-    await page.locator('input[placeholder="0"]:visible').first().fill("1");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
     await page.locator('input[placeholder="$0"]:visible').first().fill("260");
 
     await page.getByRole("button", { name: "Export" }).last().click();
@@ -5038,12 +5814,58 @@ test("manual export panel can create a hosted payment link for a saved invoice",
     await page.getByRole("button", { name: "Save invoice" }).click();
     await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
 
-    await page.getByRole("button", { name: "Create payment link" }).click();
+    await page.getByRole("button", { name: "Create hosted payment link" }).click();
     await expectValueEquals(
       page.locator("#payment-link-url"),
       "https://pay.stripe.test/plink_manual_123"
     );
-    await page.getByRole("link", { name: "Open payment link" }).first().waitFor({ state: "visible" });
+    await page.getByRole("link", { name: "Open hosted payment link" }).first().waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual export panel can create a client portal link for a saved invoice", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-manual-client-portal-owner");
+  });
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/*/client-portal-link", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          clientPortalUrl: "https://app.notebill.app/portal/123e4567-e89b-12d3-a456-426614174000/token123",
+          invoice: {
+            invoiceData: {
+              finishedInvoice: {
+                portalAccessToken: "token123"
+              }
+            }
+          }
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Window repair");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("175");
+
+    await page.getByRole("button", { name: "Export" }).last().click();
+    await page.getByText("Save to library").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Save invoice" }).click();
+    await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Create client portal" }).click();
+    await page.getByRole("link", { name: "Open client portal" }).first().waitFor({ state: "visible" });
+    const portalHref = await page.getByRole("link", { name: "Open client portal" }).first().getAttribute("href");
+    assert.match(
+      portalHref ?? "",
+      /^https?:\/\/[^/]+\/portal\/[0-9a-f-]{36}\/token123$/
+    );
   } finally {
     await context.close();
   }
@@ -5074,7 +5896,10 @@ test("diagnostics route shows launch, billing, delivery, and telemetry panels", 
     await page.getByRole("heading", { name: "Intake telemetry" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "System health snapshot" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Revenue signals" }).waitFor({ state: "visible" });
+    await page.getByRole("heading", { name: "Feature adoption" }).waitFor({ state: "visible" });
     await page.getByText("Paid-plan readiness").waitFor({ state: "visible" });
+    await page.getByText("Service savers", { exact: true }).waitFor({ state: "visible" });
+    await page.getByText("Scratchpad owners", { exact: true }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "OCR confidence" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Trend baseline" }).waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Flow friction checks" }).waitFor({ state: "visible" });
@@ -5320,6 +6145,33 @@ async function mutateStoredInvoice(
     };
   });
   await fs.writeFile(invoiceStoreFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+}
+
+async function openDailyScratchpad(page: Page) {
+  await page.goto(`${baseUrl}/scratchpad`, { waitUntil: "domcontentloaded" });
+  const heading = page.getByRole("heading", { name: "Capture work fast. Invoice later." });
+  try {
+    await heading.waitFor({ state: "visible", timeout: 10000 });
+  } catch {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await heading.waitFor({ state: "visible", timeout: 10000 });
+  }
+  await scratchpadNoteEditor(page).waitFor({ state: "visible" });
+}
+
+async function openLauncher(page: Page) {
+  await page.goto(`${baseUrl}/`, { waitUntil: "domcontentloaded" });
+  const scratchpadButton = page.getByRole("button", { name: "Open scratchpad" });
+  try {
+    await scratchpadButton.waitFor({ state: "visible", timeout: 10000 });
+  } catch {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await scratchpadButton.waitFor({ state: "visible", timeout: 10000 });
+  }
+}
+
+function scratchpadNoteEditor(page: Page) {
+  return page.locator("#scratchpad-note");
 }
 
 async function expectValueContains(

@@ -174,6 +174,24 @@ export async function getSavedInvoiceById(
   return invoice;
 }
 
+export async function getSavedInvoiceByPortalToken(
+  invoiceId: string,
+  portalAccessToken: string
+): Promise<SavedInvoice | null> {
+  const normalizedToken = portalAccessToken.trim();
+  if (!normalizedToken) {
+    return null;
+  }
+  const collection = await readCollection();
+  const invoice = collection.invoices.find(
+    (item) =>
+      item.invoiceId === invoiceId &&
+      item.status !== "deleted" &&
+      item.invoiceData.finishedInvoice.portalAccessToken === normalizedToken
+  );
+  return invoice ?? null;
+}
+
 export async function duplicateSavedInvoice(
   invoiceId: string,
   ownerId = "local-default"

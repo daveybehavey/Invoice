@@ -1,6 +1,6 @@
 # NoteBill V2 Roadmap
 
-Updated: April 21, 2026
+Updated: April 27, 2026
 Status: planning draft. Do not let this expand the current Google Play review scope.
 
 Related strategy: see `docs/revenue-roadmap.md` for the larger path from tester-ready product to paid indie business.
@@ -17,7 +17,19 @@ The business bet is that users will pay when this loop saves repeated admin time
 ## Current Baseline
 - Web production is hosted on Cloudflare Workers.
 - Android package is prepared for Google Play as `app.notebill.app`.
-- Core flow supports messy notes, editing, saving, reopening, PDF export, optional email-link sign-in, optional send, optional hosted payment links, and status/reminder controls.
+- Core flow supports messy notes, editing, saving, reopening, PDF export, optional email-link sign-in, optional send, optional hosted payment links, a tokenized customer portal view, and status/reminder controls.
+- Photo notes can preview likely line items before parsing, which makes the import flow feel closer to a real capture tool.
+- Manual editing includes a simple start/stop time capture card that can turn billable time into a line item.
+- Manual editing also includes quick deposits and milestone note templates for bigger jobs.
+- Manual editing also includes lightweight subscription/retainer note templates for recurring service plans.
+- Manual editing also includes lightweight templates by trade for common service starting points.
+- Manual editing also includes voice-note transcription, receipt/expense capture, and export/share packs for faster mobile capture and sharing.
+- The import screen explicitly supports legacy files and keeps imported text editable for Billie-assisted cleanup later.
+- Invoice Library includes a browser-notification foundation for reminder alerts and test reminders.
+- Invoice Library includes reminder automation presets for gentler, standard, and firmer follow-up timing.
+- Invoice Library follow-up reminders include a copyable reminder note preview for quick outreach.
+- Invoice Library reminder test alerts now use reminder-style preview text instead of a generic ping.
+- Payment and reminder status language has been tightened so the follow-up surface reads more professionally.
 - Tests are deterministic and cover money guardrails, auth policy, persistence, delivery, billing, PDF export, and UI flows.
 
 ## V1.1: Review And Tester Hardening
@@ -140,11 +152,39 @@ First slices:
 - Show "last time you billed..." context in review and manual edit.
 - Make recurring/repeat invoices feel deliberate and easy to adjust.
 - Keep memory controls easy to find so repeat-work speed does not feel spooky.
+- Expose a user-visible saved service catalog so users can review, delete, and reuse remembered line items.
 
 Success signal:
 - Repeat invoices take less time than first invoices.
 - Users trust suggestions because money changes are explicit.
 - Client/service memory becomes a reason to keep using NoteBill instead of a generic invoice app.
+
+## Master Future Backlog
+Sorted from highest expected value to larger or riskier bets.
+
+### High Value
+- Daily scratchpad / running notes so people can capture work quickly during the day and invoice later without retyping.
+- Billie Workspace as a persistent co-pilot surface for drafting, revising, and moving work forward.
+- Smarter recurring work and repeat-client memory so the app feels more useful every time someone comes back.
+- Better onboarding from rough notes to first sent invoice.
+- Workflow automations for send, follow-up, repeat invoice, and payment tracking.
+- Analytics and diagnostics so we can see where users stall and what improves activation and retention.
+
+### Medium Value
+- Push notifications and richer reminder delivery.
+- Legacy import for old invoices, PDFs, and maybe spreadsheets.
+- AI-assisted edits on imported or pasted invoices.
+- Native mobile hardening and more device-specific polish.
+- Multi-currency / tax rules for broader use cases.
+- Smart follow-up suggestions that recommend when to resend, nudge, or convert a paid job into repeat work.
+
+### Later
+- Offline-first sync with conflict handling.
+- Team or multi-user support.
+- Help center and support docs.
+- Larger automation rules and batch actions.
+- More advanced automation layers beyond the current command-center flow.
+- Push beyond solo workflows only after the core loop is clearly winning.
 
 ## Technical Hygiene Track
 This track can run between product releases as long as tests stay green.

@@ -119,6 +119,30 @@ Do not claim:
 - Fix any policy, target SDK, or App Content blockers before production rollout
 - Add concise release notes for the first release
 
+### Copy-paste release notes
+
+Use this for the first Android closed test release:
+
+```text
+NoteBill is ready for its first Android test build.
+
+This version focuses on fast invoice creation from rough notes, manual review and editing, saved drafts, PDF export, scratchpad capture, repeat-client memory, and feedback tools.
+
+Please report anything confusing, broken, slow, or visually off.
+```
+
+### Copy-paste app access note
+
+Use this for the App access / reviewer instructions field:
+
+```text
+NoteBill does not require a password to review the core workflow. The app opens to the main invoice path, and optional sign-in uses an email link only.
+
+Reviewers can use the sample notes or the scratchpad immediately after launch. No special credentials, QR codes, memberships, or 2-step codes are required for the main flow.
+
+If you need help or device-specific access notes, contact support@notebill.app.
+```
+
 ## 10. Final pre-submit check
 
 - Privacy policy URL is public and accurate

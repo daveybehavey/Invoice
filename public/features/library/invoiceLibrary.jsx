@@ -64,12 +64,39 @@
   const followUpReminderStorageKey = "invoiceFollowUpReminder";
   const recurringScheduleStorageKey = "invoiceRecurringSchedules";
   const reminderAutomationSettingsStorageKey = "invoiceReminderAutomationSettings";
+  const reminderNotificationSettingsStorageKey = "invoiceReminderNotificationSettings";
   const recurringIntervalOptions = [7, 14, 30];
   const recurringIntervalLabels = {
     7: "weekly",
     14: "biweekly",
     30: "monthly"
   };
+  const reminderAutomationPresets = [
+    {
+      id: "gentle",
+      label: "Gentle",
+      description: "Wait longer, fewer pings.",
+      dueAfterDays: 21,
+      cooldownDays: 10,
+      maxPerRun: 5
+    },
+    {
+      id: "standard",
+      label: "Standard",
+      description: "Balanced follow-up timing.",
+      dueAfterDays: 14,
+      cooldownDays: 7,
+      maxPerRun: 10
+    },
+    {
+      id: "firm",
+      label: "Firm",
+      description: "Follow sooner with more volume.",
+      dueAfterDays: 7,
+      cooldownDays: 3,
+      maxPerRun: 20
+    }
+  ];
   const recurringDayMs = 24 * 60 * 60 * 1000;
 
   const normalizeRecurringInterval = (value) => {
@@ -233,6 +260,25 @@
     }
   };
 
+  const readReminderNotificationSettings = (storageKey) => {
+    if (typeof window === "undefined") {
+      return { enabled: false };
+    }
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) {
+        return { enabled: false };
+      }
+      const parsed = JSON.parse(raw);
+      return { enabled: Boolean(parsed?.enabled) };
+    } catch (_error) {
+      return { enabled: false };
+    }
+  };
+
+  const canUseBrowserNotifications = () =>
+    typeof window !== "undefined" && "Notification" in window && typeof window.Notification === "function";
+
   const normalizeReminderSetting = (value, fallback, min, max) => {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) {
@@ -291,8 +337,14 @@ function InvoiceLibrary() {
   const [reminderAutomationSettings, setReminderAutomationSettings] = useState(() =>
     readReminderAutomationSettings(reminderAutomationStorageKey)
   );
+  const [reminderNotificationSettings, setReminderNotificationSettings] = useState(() =>
+    readReminderNotificationSettings(reminderNotificationSettingsStorageKey)
+  );
   const [reminderAutomationBusy, setReminderAutomationBusy] = useState(false);
   const [reminderAutomationNotice, setReminderAutomationNotice] = useState("");
+  const [reminderNotificationBusy, setReminderNotificationBusy] = useState(false);
+  const [reminderNotificationNotice, setReminderNotificationNotice] = useState("");
+  const [followUpNoteNotice, setFollowUpNoteNotice] = useState("");
   const undoTimeoutRef = useRef(null);
   const requiresSignIn = (authRequiredByPolicy || authRequiredError) && !authSession?.userId;
 
@@ -410,6 +462,46 @@ function InvoiceLibrary() {
     if (typeof window !== "undefined") {
       window.localStorage.setItem(reminderAutomationStorageKey, JSON.stringify(normalized));
     }
+  };
+
+  const persistReminderNotificationSettings = (nextSettings) => {
+    const normalized = { enabled: Boolean(nextSettings?.enabled) };
+    setReminderNotificationSettings(normalized);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(reminderNotificationSettingsStorageKey, JSON.stringify(normalized));
+    }
+  };
+
+  const requestReminderNotificationPermission = async () => {
+    if (!canUseBrowserNotifications()) {
+      throw new Error("Browser notifications are not available in this browser.");
+    }
+    const permission = window.Notification.permission;
+    if (permission === "granted") {
+      return "granted";
+    }
+    if (permission === "denied") {
+      throw new Error("Browser notifications are blocked in this browser.");
+    }
+    const nextPermission = await window.Notification.requestPermission();
+    if (nextPermission !== "granted") {
+      throw new Error("Notification permission was not granted.");
+    }
+    return nextPermission;
+  };
+
+  const showReminderNotification = async (title, body) => {
+    if (!reminderNotificationSettings.enabled || !canUseBrowserNotifications()) {
+      return false;
+    }
+    if (window.Notification.permission !== "granted") {
+      return false;
+    }
+    new window.Notification(title, {
+      body,
+      tag: "notebill-reminder"
+    });
+    return true;
   };
 
   const setRecurringSchedule = (invoiceId, intervalDays = 30, options = {}) => {
@@ -906,6 +998,12 @@ function InvoiceLibrary() {
             ? `${dueCount} reminder${dueCount === 1 ? "" : "s"} due now (from ${scannedCount} sent invoices).`
             : `No reminders due right now (scanned ${scannedCount} sent invoices).`
         );
+        if (dueCount > 0) {
+          void showReminderNotification(
+            "NoteBill reminders are due",
+            `${dueCount} reminder${dueCount === 1 ? "" : "s"} are due now. Open NoteBill to send them.`
+          ).catch(() => {});
+        }
         return;
       }
       const sentCount = Number(payload?.sentCount ?? 0);
@@ -913,6 +1011,10 @@ function InvoiceLibrary() {
         setReminderAutomationNotice(
           `Sent ${sentCount} reminder${sentCount === 1 ? "" : "s"} (from ${dueCount} due).`
         );
+        void showReminderNotification(
+          "NoteBill reminders sent",
+          `Sent ${sentCount} reminder${sentCount === 1 ? "" : "s"} from the library.`
+        ).catch(() => {});
       } else {
         setReminderAutomationNotice(
           dueCount > 0
@@ -925,6 +1027,40 @@ function InvoiceLibrary() {
       handleLibraryError(reminderRunError, dryRun ? "Failed to preview due reminders." : "Failed to run reminders.");
     } finally {
       setReminderAutomationBusy(false);
+    }
+  };
+
+  const handleEnableReminderNotifications = async () => {
+    setReminderNotificationBusy(true);
+    setError("");
+    setReminderNotificationNotice("");
+    try {
+      persistReminderNotificationSettings({ enabled: true });
+      setReminderNotificationNotice("Reminder alerts enabled.");
+    } catch (notificationError) {
+      handleLibraryError(notificationError, "Failed to enable browser reminders.");
+    } finally {
+      setReminderNotificationBusy(false);
+    }
+  };
+
+  const handleTestReminderNotification = async () => {
+    setReminderNotificationBusy(true);
+    setError("");
+    setReminderNotificationNotice("");
+    try {
+      setReminderNotificationNotice("Sending reminder test...");
+      await requestReminderNotificationPermission();
+      persistReminderNotificationSettings({ enabled: true });
+      const delivered = await showReminderNotification(
+        "NoteBill reminder test",
+        buildReminderNotificationPreview()
+      );
+      setReminderNotificationNotice(delivered ? "Test reminder sent." : "Notification permission granted.");
+    } catch (notificationError) {
+      handleLibraryError(notificationError, "Failed to send a test reminder notification.");
+    } finally {
+      setReminderNotificationBusy(false);
     }
   };
 
@@ -1155,18 +1291,18 @@ function InvoiceLibrary() {
     }
     if (status === "sent" && isPastDue) {
       return {
-        label: `${amountLabel} past due`,
+        label: `Past due: ${amountLabel}`,
         className: "nb-chip nb-chip--warning normal-case tracking-normal"
       };
     }
     if (status === "sent") {
       return {
-        label: `${amountLabel} open`,
+        label: `Open balance: ${amountLabel}`,
         className: "nb-chip nb-chip--info normal-case tracking-normal"
       };
     }
     return {
-      label: `${amountLabel} draft total`,
+      label: `Draft total: ${amountLabel}`,
       className: "nb-chip nb-chip--soft normal-case tracking-normal"
     };
   };
@@ -1175,18 +1311,18 @@ function InvoiceLibrary() {
       return "Restore to edit, export, or send again.";
     }
     if (invoice?.status === "paid") {
-      return "Paid. Use Invoice again for repeat work.";
+      return "Paid. Use Invoice again for similar work.";
     }
     if (invoice?.status === "sent" && isPastDue) {
-      return "Follow up, or mark paid if the payment already arrived.";
+      return "Past due. Follow up, or mark paid if the payment already arrived.";
     }
     if (invoice?.status === "sent" && hasDelivery) {
       return "Waiting on payment. Resend only if the client needs another copy.";
     }
     if (invoice?.status === "sent") {
-      return "Marked sent. Add a recipient if you want reminders or tracked delivery.";
+      return "Sent. Add a recipient to track delivery or reminders.";
     }
-    return "Open to finish, then send or export.";
+    return "Open the draft, finish the details, then send or export.";
   };
   const statusFilterOptions = [
     { id: "all", label: "All" },
@@ -1194,6 +1330,24 @@ function InvoiceLibrary() {
     { id: "sent", label: "Sent" },
     { id: "paid", label: "Paid" }
   ];
+  const emptyLibraryStates = {
+    all: {
+      title: "No invoices saved yet",
+      body: "Start with notes or try the sample job. Saved drafts, sent invoices, and paid work will show up here."
+    },
+    draft: {
+      title: "No draft invoices",
+      body: "Drafts appear here after you save from the editor. Start from notes when you are ready to create one."
+    },
+    sent: {
+      title: "No sent invoices",
+      body: "Invoices you mark or send as sent will appear here for follow-up and payment tracking."
+    },
+    paid: {
+      title: "No paid invoices",
+      body: "Mark a sent invoice paid when payment arrives. Paid work stays available for repeat invoices."
+    }
+  };
   const statusCounts = invoices.reduce(
     (counts, invoice) => {
       if (invoice?.status === "draft" || invoice?.status === "sent" || invoice?.status === "paid") {
@@ -1207,6 +1361,7 @@ function InvoiceLibrary() {
     showTrash || statusFilter === "all"
       ? invoices
       : invoices.filter((invoice) => invoice.status === statusFilter);
+  const emptyLibraryState = emptyLibraryStates[statusFilter] ?? emptyLibraryStates.all;
   const selectedCount = selectedIds.length;
   const visibleIds = filteredInvoices.map((invoice) => invoice.invoiceId);
   const allSelected = visibleIds.length > 0 && selectedCount === visibleIds.length;
@@ -1319,6 +1474,84 @@ function InvoiceLibrary() {
   const canQuickSendReminderOldest = Boolean(
     oldestSentReminder?.invoiceId && isValidEmail(oldestSentRecipient)
   );
+  const smartFollowUpSuggestion = oldestSentReminder
+    ? oldestSentReminder.isPastDue
+      ? "Best next step: send a reminder now."
+      : oldestSentReminder.daysSinceUpdate >= 21
+        ? "Best next step: send a short check-in, then open the repeat invoice if this becomes routine."
+        : "Best next step: review the latest reminder timing before sending again."
+    : recurringCandidateInvoice
+      ? "Best next step: open the repeat invoice for the next scheduled job."
+      : "";
+  const buildFollowUpNoteText = () => {
+    if (!oldestSentReminder) {
+      return "";
+    }
+    const greetingName = oldestSentRecipient ? oldestSentRecipient.split("@")[0] : "there";
+    const invoiceLabel = oldestSentReminder.invoiceNumber || "your invoice";
+    const dueContext =
+      oldestSentReminder.isPastDue && oldestSentReminderDueLabel
+        ? `It was due ${oldestSentReminderDueLabel}.`
+        : oldestSentReminderDueLabel
+          ? `It is due ${oldestSentReminderDueLabel}.`
+          : "I'm checking in on the latest invoice.";
+    const nextStep = oldestSentReminder.isPastDue
+      ? "If possible, please take a look and let me know if anything is blocking payment."
+      : "If you need anything from me, please let me know.";
+    return [
+      `Hi ${greetingName},`,
+      "",
+      `A quick follow-up on ${invoiceLabel}.`,
+      dueContext,
+      nextStep,
+      "",
+      "Billie from NoteBill"
+    ].join("\n");
+  };
+  const buildReminderNotificationPreview = () => {
+    if (!oldestSentReminder) {
+      return "This is a test reminder from NoteBill.";
+    }
+    const invoiceLabel = oldestSentReminder.invoiceNumber || "your invoice";
+    const dueContext =
+      oldestSentReminder.isPastDue && oldestSentReminderDueLabel
+        ? `It was due ${oldestSentReminderDueLabel}.`
+        : oldestSentReminderDueLabel
+          ? `It is due ${oldestSentReminderDueLabel}.`
+          : "It is waiting on a follow-up.";
+    return [
+      `Follow-up reminder for ${invoiceLabel}.`,
+      dueContext,
+      "Open NoteBill to review the invoice or send the reminder."
+    ].join(" ");
+  };
+  const reminderNotificationsSubtitle =
+    "Enable browser alerts to preview reminder timing and send a test reminder.";
+  const reminderNotePreviewText = (() => {
+    if (!oldestSentReminder) {
+      return "";
+    }
+    const recipientLabel = oldestSentRecipient ? oldestSentRecipient.split("@")[0] : "there";
+    const invoiceLabel = oldestSentReminder.invoiceNumber || "your invoice";
+    const dueContext =
+      oldestSentReminder.isPastDue && oldestSentReminderDueLabel
+        ? `It was due ${oldestSentReminderDueLabel}.`
+        : oldestSentReminderDueLabel
+          ? `It is due ${oldestSentReminderDueLabel}.`
+          : "I'm checking in on the latest invoice.";
+    const nextStep = oldestSentReminder.isPastDue
+      ? "If possible, please take a look and let me know if anything is blocking payment."
+      : "If you need anything from me, please let me know.";
+    return [
+      `Hi ${recipientLabel},`,
+      "",
+      `A quick follow-up on ${invoiceLabel}.`,
+      dueContext,
+      nextStep,
+      "",
+      "Billie from NoteBill"
+    ].join("\n");
+  })();
   const reminderHiddenUntilMs = Date.parse(followUpReminderState?.hiddenUntil ?? "");
   const reminderIsSnoozed =
     Number.isFinite(reminderHiddenUntilMs) && reminderHiddenUntilMs > Date.now();
@@ -1364,6 +1597,21 @@ function InvoiceLibrary() {
 
   const handleDismissFollowUpReminder = () => {
     persistFollowUpReminderState({ dismissed: true, hiddenUntil: "" });
+  };
+
+  const handleCopyFollowUpNote = async () => {
+    const followUpNoteText = buildFollowUpNoteText();
+    if (!followUpNoteText) {
+      setFollowUpNoteNotice("No follow-up note is available yet.");
+      return;
+    }
+    setFollowUpNoteNotice("");
+    try {
+      await navigator.clipboard?.writeText?.(followUpNoteText);
+      setFollowUpNoteNotice("Reminder note copied. Paste it into email or a message.");
+    } catch (copyError) {
+      setFollowUpNoteNotice(copyError?.message || "Could not copy the reminder note.");
+    }
   };
 
   const toggleSelection = (invoiceId) => {
@@ -1566,6 +1814,57 @@ function InvoiceLibrary() {
             {deliveryNotice}
           </div>
         ) : null}
+        <div className="nb-surface nb-surface--muted mt-6 rounded-[26px] px-4 py-4 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Reminder notifications
+              </p>
+              <p className="text-sm text-slate-600">
+                {reminderNotificationsSubtitle}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="rounded-xl border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleEnableReminderNotifications}
+                disabled={reminderNotificationBusy || !canUseBrowserNotifications()}
+              >
+                {reminderNotificationBusy ? "Enabling..." : "Enable browser reminders"}
+              </button>
+              <button
+                type="button"
+                className="rounded-xl border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleTestReminderNotification}
+                disabled={reminderNotificationBusy || !canUseBrowserNotifications()}
+              >
+                {reminderNotificationBusy ? "Testing..." : "Test reminder alert"}
+              </button>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <span className="rounded-full bg-blue-50 px-2 py-1 font-semibold text-blue-800">
+              {reminderNotificationSettings.enabled ? "Enabled" : "Off"}
+            </span>
+            {reminderNotificationNotice ? (
+              <span className="rounded-full bg-white px-2 py-1 font-semibold text-blue-900">
+                {reminderNotificationNotice}
+              </span>
+            ) : null}
+          </div>
+          {oldestSentReminder ? (
+            <p className="mt-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-[11px] leading-5 text-slate-600">
+              <span className="font-semibold text-slate-700">Preview:</span>{" "}
+              {reminderNotePreviewText || buildReminderNotificationPreview()}
+            </p>
+          ) : null}
+          {!canUseBrowserNotifications() ? (
+            <p className="mt-2 text-[11px] text-slate-500">
+              This browser does not support notifications.
+            </p>
+          ) : null}
+        </div>
 
         {!requiresSignIn && planLimitReached ? (
           <div className="nb-banner nb-banner--warning mt-6">
@@ -1650,11 +1949,11 @@ function InvoiceLibrary() {
         ) : null}
         {showRecurringReminder ? (
           <div className="nb-banner mt-6 border-indigo-200 bg-indigo-50 text-indigo-900">
-            <p className="text-sm font-semibold text-indigo-900">Recurring reminders</p>
+            <p className="text-sm font-semibold text-indigo-900">Repeat work</p>
             <p className="mt-1 text-sm text-indigo-900">
               {recurringDueCount > 0
                 ? recurringDueCount === 1
-                  ? "1 recurring invoice is due."
+                  ? "1 recurring invoice is ready."
                   : `${recurringDueCount} recurring invoices are due.`
                 : nextRecurringCandidate
                   ? `Next recurring invoice is due ${formatDate(nextRecurringCandidate.recurringEntry?.nextDueAt)}.`
@@ -1674,7 +1973,7 @@ function InvoiceLibrary() {
                 >
                   {actionId === nextRecurringCandidate.invoiceId
                     ? "Opening..."
-                    : "Invoice again next due"}
+                    : "Open repeat invoice"}
                 </button>
               ) : null}
               {nextRecurringCandidate ? (
@@ -1683,20 +1982,30 @@ function InvoiceLibrary() {
                 </p>
               ) : null}
             </div>
-          </div>
+            </div>
         ) : null}
         {showSentFollowUpReminder ? (
           <div className="nb-banner nb-banner--info mt-6">
-            <p className="text-sm font-semibold text-blue-900">Follow-up reminders</p>
+            <p className="text-sm font-semibold text-blue-900">Follow-up queue</p>
             <p className="mt-1 text-sm text-blue-900">
               {sentFollowUpInvoices.length === 1
                 ? oldestSentReminder?.isPastDue
                   ? "1 sent invoice is past due."
-                  : "1 sent invoice may need follow-up."
+                  : "1 sent invoice is waiting on follow-up."
                 : pastDueSentFollowUpCount > 0
-                  ? `${sentFollowUpInvoices.length} sent invoices need follow-up (${pastDueSentFollowUpCount} past due).`
-                  : `${sentFollowUpInvoices.length} sent invoices may need follow-up.`}
+                  ? `${sentFollowUpInvoices.length} sent invoices are waiting on follow-up (${pastDueSentFollowUpCount} past due).`
+                  : `${sentFollowUpInvoices.length} sent invoices are waiting on follow-up.`}
             </p>
+            {smartFollowUpSuggestion ? (
+              <p className="mt-2 rounded-xl border border-blue-200 bg-white/80 px-3 py-2 text-xs font-medium text-blue-900">
+                {smartFollowUpSuggestion}
+              </p>
+            ) : null}
+            {oldestSentReminder ? (
+              <p className="mt-2 rounded-xl border border-blue-100 bg-white/70 px-3 py-2 text-xs text-blue-900">
+                {buildFollowUpNoteText()}
+              </p>
+            ) : null}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -1717,7 +2026,7 @@ function InvoiceLibrary() {
                 >
                   {actionId === recurringCandidateInvoice.invoiceId
                     ? "Opening..."
-                    : "Invoice again oldest"}
+                    : "Open repeat invoice"}
                 </button>
               ) : null}
               {canQuickSendReminderOldest ? (
@@ -1730,12 +2039,21 @@ function InvoiceLibrary() {
                   {actionId === oldestSentReminder.invoiceId ? "Sending..." : "Send reminder"}
                 </button>
               ) : null}
+              {oldestSentReminder ? (
+                <button
+                  type="button"
+                  className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
+                  onClick={handleCopyFollowUpNote}
+                >
+                  Copy reminder note
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
                 onClick={handleSnoozeFollowUpReminder}
               >
-                Snooze 7 days
+                Snooze for 7 days
               </button>
               <button
                 type="button"
@@ -1748,9 +2066,10 @@ function InvoiceLibrary() {
                 <p className="text-xs text-blue-800">
                   {oldestSentReminder.isPastDue && oldestSentReminderDueLabel
                     ? `${oldestSentReminder.invoiceNumber || "Sent invoice"} was due ${oldestSentReminderDueLabel}.`
-                    : `Oldest sent update: ${formatDate(oldestSentReminder.updatedAt)}`}
+                    : `Last update: ${formatDate(oldestSentReminder.updatedAt)}`}
                 </p>
               ) : null}
+              {followUpNoteNotice ? <p className="text-xs font-medium text-blue-900">{followUpNoteNotice}</p> : null}
             </div>
             <div className="nb-subcard mt-3 space-y-3">
               <div>
@@ -1760,6 +2079,26 @@ function InvoiceLibrary() {
                 <p className="mt-1 text-xs text-slate-600">
                   Tune follow-up timing, then preview or run reminders without leaving the library.
                 </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {reminderAutomationPresets.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() =>
+                      persistReminderAutomationSettings({
+                        dueAfterDays: preset.dueAfterDays,
+                        cooldownDays: preset.cooldownDays,
+                        maxPerRun: preset.maxPerRun
+                      })
+                    }
+                    disabled={reminderAutomationBusy}
+                    title={preset.description}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
               </div>
               <div className="grid gap-2 sm:grid-cols-3">
                 <label className="text-xs font-medium text-slate-600">
@@ -1824,7 +2163,7 @@ function InvoiceLibrary() {
                   onClick={() => runReminderAutomation({ dryRun: true })}
                   disabled={reminderAutomationBusy}
                 >
-                  {reminderAutomationBusy ? "Working..." : "Preview due now"}
+                  {reminderAutomationBusy ? "Working..." : "Preview due reminders"}
                 </button>
                 <button
                   type="button"
@@ -1832,7 +2171,7 @@ function InvoiceLibrary() {
                   onClick={() => runReminderAutomation({ dryRun: false })}
                   disabled={reminderAutomationBusy}
                 >
-                  {reminderAutomationBusy ? "Working..." : "Run due reminders"}
+                  {reminderAutomationBusy ? "Working..." : "Run reminders now"}
                 </button>
                 {reminderAutomationNotice ? (
                   <p className="text-xs font-medium text-blue-900">{reminderAutomationNotice}</p>
@@ -1954,14 +2293,8 @@ function InvoiceLibrary() {
                 </>
               ) : (
                 <>
-                  <p className="text-sm font-semibold text-slate-900">
-                    {statusFilter === "all" ? "No saved invoices yet" : `No ${statusFilter} invoices`}
-                  </p>
-                  <p className="mt-2 text-sm text-slate-600">
-                    {statusFilter === "all"
-                      ? "Save a draft from the editor and it will show up here."
-                      : `Try another status filter or update an invoice to ${statusFilter}.`}
-                  </p>
+                  <p className="text-sm font-semibold text-slate-900">{emptyLibraryState.title}</p>
+                  <p className="mt-2 text-sm text-slate-600">{emptyLibraryState.body}</p>
                   {statusFilter === "all" ? (
                     <div className="mt-4 flex flex-wrap justify-center gap-2">
                       <button
@@ -1969,17 +2302,27 @@ function InvoiceLibrary() {
                         className="nb-btn-primary inline-flex h-10 px-4"
                         onClick={() => navigate("/ai-intake")}
                       >
-                        Create your first draft
+                        Start with notes
                       </button>
                       <button
                         type="button"
                         className="nb-btn-secondary inline-flex h-10 rounded-full px-4"
                         onClick={() => navigate("/ai-intake?sample=starter")}
                       >
-                        Try sample notes
+                        Try sample job
                       </button>
                     </div>
-                  ) : null}
+                  ) : (
+                    <div className="mt-4 flex flex-wrap justify-center gap-2">
+                      <button
+                        type="button"
+                        className="nb-btn-secondary inline-flex h-10 rounded-full px-4"
+                        onClick={() => setStatusFilter("all")}
+                      >
+                        Show all invoices
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -2180,7 +2523,7 @@ function InvoiceLibrary() {
                               rel="noreferrer"
                               className="nb-btn-primary inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm"
                             >
-                              Open pay link
+                              Open hosted payment link
                             </a>
                           ) : null}
                           {recurringEntry ? (

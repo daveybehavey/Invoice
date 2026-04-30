@@ -118,6 +118,31 @@
     );
   }
 
+  function NotebookIcon({ className }) {
+    return (
+      <svg
+        className={className}
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        aria-hidden="true"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M7.5 4.5h9A2.25 2.25 0 0118.75 6.75v10.5A2.25 2.25 0 0116.5 19.5h-9A2.25 2.25 0 015.25 17.25V6.75A2.25 2.25 0 017.5 4.5z"
+        />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5V19.5" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 8.25h6" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 11.25h4.5" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 14.25h5.25" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 7.5H6.75" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 11.25H6.75" />
+      </svg>
+    );
+  }
+
   function LauncherCard({ title, description, icon, onClick, disabled, badge }) {
     const iconClass = disabled ? "h-6 w-6 text-slate-400" : "h-6 w-6 text-[#093064]";
     return (
@@ -194,6 +219,7 @@
     ArchiveIcon,
     SwatchIcon,
     FeedbackIcon,
+    NotebookIcon,
     LauncherCard,
     SurfacePanel,
     StatusChip

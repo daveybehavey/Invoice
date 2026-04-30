@@ -636,6 +636,15 @@ test("revenue signal telemetry tracks activation and repeat-use milestones", asy
     });
   assert.equal(serviceMemorySignal.status, 200);
 
+  const serviceMemorySavedSignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "service_memory_saved",
+      source: "test"
+    });
+  assert.equal(serviceMemorySavedSignal.status, 200);
+
   const clientMemorySignal = await request(app)
     .post("/api/telemetry/revenue-signals")
     .set("x-invoice-user-id", ownerId)
@@ -654,6 +663,42 @@ test("revenue signal telemetry tracks activation and repeat-use milestones", asy
     });
   assert.equal(recurringSignal.status, 200);
 
+  const scratchpadSavedSignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "scratchpad_note_saved",
+      source: "test"
+    });
+  assert.equal(scratchpadSavedSignal.status, 200);
+
+  const scratchpadVoiceSignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "scratchpad_voice_note_transcribed",
+      source: "test"
+    });
+  assert.equal(scratchpadVoiceSignal.status, 200);
+
+  const scratchpadInvoiceSignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "scratchpad_note_used_in_invoice",
+      source: "test"
+    });
+  assert.equal(scratchpadInvoiceSignal.status, 200);
+
+  const workspaceSignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "billie_workspace_instruction_submitted",
+      source: "test"
+    });
+  assert.equal(workspaceSignal.status, 200);
+
   const snapshot = await request(app).get("/api/telemetry/revenue-signals");
   assert.equal(snapshot.status, 200);
   assert.equal(snapshot.body.byEvent.invoice_generated, 1);
@@ -661,15 +706,25 @@ test("revenue signal telemetry tracks activation and repeat-use milestones", asy
   assert.equal(snapshot.body.byEvent.second_invoice_saved, 1);
   assert.equal(snapshot.body.byEvent.invoice_again_started, 1);
   assert.equal(snapshot.body.byEvent.service_memory_reused, 1);
+  assert.equal(snapshot.body.byEvent.service_memory_saved, 1);
   assert.equal(snapshot.body.byEvent.client_memory_reused, 1);
   assert.equal(snapshot.body.byEvent.recurring_schedule_set, 1);
+  assert.equal(snapshot.body.byEvent.scratchpad_note_saved, 1);
+  assert.equal(snapshot.body.byEvent.scratchpad_voice_note_transcribed, 1);
+  assert.equal(snapshot.body.byEvent.scratchpad_note_used_in_invoice, 1);
+  assert.equal(snapshot.body.byEvent.billie_workspace_instruction_submitted, 1);
   assert.equal(snapshot.body.summary.ownerCount, 1);
   assert.equal(snapshot.body.summary.activatedOwners, 1);
   assert.equal(snapshot.body.summary.secondInvoiceOwners, 1);
   assert.equal(snapshot.body.summary.repeatInvoiceOwners, 1);
   assert.equal(snapshot.body.summary.serviceMemoryOwners, 1);
+  assert.equal(snapshot.body.summary.serviceMemorySavedOwners, 1);
   assert.equal(snapshot.body.summary.clientMemoryOwners, 1);
   assert.equal(snapshot.body.summary.recurringScheduleOwners, 1);
+  assert.equal(snapshot.body.summary.scratchpadOwners, 1);
+  assert.equal(snapshot.body.summary.scratchpadVoiceOwners, 1);
+  assert.equal(snapshot.body.summary.scratchpadInvoiceOwners, 1);
+  assert.equal(snapshot.body.summary.billieWorkspaceOwners, 1);
   assert.ok(Array.isArray(snapshot.body.recentEvents));
   assert.ok(snapshot.body.recentEvents.every((event: { ownerKey?: string }) => event.ownerKey !== ownerId));
 });
@@ -2565,6 +2620,105 @@ test("payment-link endpoint creates and persists a Stripe payment link for a sav
     getResponse.body.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl,
     "https://pay.stripe.test/plink_123"
   );
+});
+
+test("client portal endpoint creates a tokenized customer portal link and exposes invoice history", async () => {
+  const ownerId = "client-portal-owner";
+
+  const firstSaveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Portal Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PORTAL-1",
+          issueDate: "2026-03-11",
+          customerName: "Portal Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-portal-1",
+              type: "labor",
+              description: "Portal baseline",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          subtotal: 120,
+          total: 120,
+          balanceDue: 120
+        }
+      }
+    });
+  const firstInvoiceId = firstSaveResponse.body.invoice.invoiceId as string;
+
+  const secondSaveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Portal Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PORTAL-2",
+          issueDate: "2026-03-18",
+          customerName: "Portal Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-portal-2",
+              type: "labor",
+              description: "Portal follow-up",
+              quantity: 1,
+              unitPrice: 180,
+              amount: 180
+            }
+          ],
+          subtotal: 180,
+          total: 180,
+          balanceDue: 180
+        }
+      }
+    });
+  const secondInvoiceId = secondSaveResponse.body.invoice.invoiceId as string;
+
+  const portalResponse = await request(app)
+    .post(`/api/invoices/${secondInvoiceId}/client-portal-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+
+  assert.equal(portalResponse.status, 200);
+  assert.match(String(portalResponse.body.clientPortalUrl || ""), new RegExp(`/portal/${secondInvoiceId}/`));
+  assert.equal(
+    portalResponse.body.invoice?.invoiceData?.finishedInvoice?.portalAccessToken?.length > 0,
+    true
+  );
+
+  const portalUrl = new URL(portalResponse.body.clientPortalUrl as string);
+  const portalToken = portalUrl.pathname.split("/").pop() || "";
+  const publicPortalResponse = await request(app).get(
+    `/api/public/invoices/${secondInvoiceId}/portal?token=${encodeURIComponent(portalToken)}`
+  );
+
+  assert.equal(publicPortalResponse.status, 200);
+  assert.equal(publicPortalResponse.body.invoice?.invoiceId, secondInvoiceId);
+  assert.equal(publicPortalResponse.body.invoice?.ownerId, undefined);
+  assert.equal(publicPortalResponse.body.history.length, 1);
+  assert.equal(publicPortalResponse.body.history[0].invoiceId, firstInvoiceId);
+  assert.equal(publicPortalResponse.body.history[0].status, "draft");
 });
 
 test("send endpoint auto-creates a payment link before delivery when Stripe payments are configured", async () => {

@@ -21,6 +21,7 @@ import {
   SaveInvoiceRequestSchema,
   UpdateInvoiceStatusRequestSchema
 } from "./models/invoice.js";
+import type { InvoiceListItem, SavedInvoice } from "./models/invoice.js";
 import {
   applyDecisionActionToDraft,
   applyDiscountAfterFollowUp,
@@ -148,10 +149,13 @@ const spaRoutes = [
   "/auth/verify",
   "/ai-intake",
   "/manual",
+  "/scratchpad",
   "/import",
   "/diagnostics",
   "/settings/business",
   "/settings/memory",
+  "/settings/services",
+  "/portal",
   "/privacy",
   "/support",
   "/feedback",
@@ -163,6 +167,10 @@ app.get(spaRoutes, (_req: Request, res: Response) => {
 });
 
 app.get("/invoices", (_req: Request, res: Response) => {
+  res.sendFile(path.join(publicDir, "index.html"));
+});
+
+app.get("/portal/:invoiceId/:token", (_req: Request, res: Response) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
@@ -236,6 +244,45 @@ app.post("/api/billing/portal-session", async (req: Request, res: Response, next
       returnPath: parsedRequest.returnPath
     });
     res.json(portalSession);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/invoices/:id/client-portal-link", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invoiceId = z.string().uuid().parse(req.params.id);
+    const parsedRequest = z
+      .object({
+        refresh: z.boolean().optional()
+      })
+      .default({})
+      .parse(req.body ?? {});
+    const ownerId = getRequestOwnerId(req);
+    const savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
+    if (savedInvoice.status === "deleted") {
+      throw new HttpStatusError(400, "Restore this invoice before creating a portal link.");
+    }
+    const portalAccessToken =
+      parsedRequest.refresh || !savedInvoice.invoiceData.finishedInvoice.portalAccessToken
+        ? randomUUID()
+        : savedInvoice.invoiceData.finishedInvoice.portalAccessToken;
+    const invoice = await savedInvoiceRepository.saveInvoiceDocument({
+      ownerId,
+      invoiceId,
+      sourceType: savedInvoice.sourceType,
+      invoiceData: {
+        structuredInvoice: savedInvoice.invoiceData.structuredInvoice,
+        finishedInvoice: {
+          ...savedInvoice.invoiceData.finishedInvoice,
+          portalAccessToken
+        }
+      }
+    });
+    res.json({
+      invoice,
+      clientPortalUrl: `${resolvePublicBaseUrl(req)}/portal/${invoiceId}/${encodeURIComponent(portalAccessToken)}`
+    });
   } catch (error) {
     next(error);
   }
@@ -1035,6 +1082,36 @@ app.get("/api/invoices/:id", async (req: Request, res: Response, next: NextFunct
   }
 });
 
+app.get("/api/public/invoices/:id/portal", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invoiceId = z.string().uuid().parse(req.params.id);
+    const portalToken = asOptionalString(req.query.token);
+    if (!portalToken) {
+      throw new HttpStatusError(400, "Missing portal token.");
+    }
+    const invoice = await savedInvoiceRepository.getSavedInvoiceByPortalToken(invoiceId, portalToken);
+    if (!invoice) {
+      throw new HttpStatusError(404, "Portal link not found.");
+    }
+    const customerName =
+      invoice.invoiceData.finishedInvoice.customerName ?? invoice.invoiceData.structuredInvoice.customerName ?? "";
+    const history =
+      customerName.trim().length > 0
+        ? (await savedInvoiceRepository.listSavedInvoiceMetadata(false, invoice.ownerId))
+            .filter((entry) => entry.invoiceId !== invoice.invoiceId)
+            .filter((entry) => isSamePortalCustomer(entry.customerName, customerName))
+            .slice(0, 5)
+            .map(toPublicPortalHistoryItem)
+        : [];
+    res.json({
+      invoice: toPublicPortalInvoice(invoice),
+      history
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const invoiceId = z.string().uuid().parse(req.params.id);
@@ -1422,6 +1499,53 @@ function resolveDeliverySystemWarning(
     return deliveryDiagnostics.verification.warning;
   }
   return null;
+}
+
+function toPublicPortalInvoice(invoice: SavedInvoice) {
+  const finishedInvoice = invoice.invoiceData.finishedInvoice;
+  const structuredInvoice = invoice.invoiceData.structuredInvoice;
+  return {
+    invoiceId: invoice.invoiceId,
+    updatedAt: invoice.updatedAt,
+    status: invoice.status,
+    invoiceData: {
+      structuredInvoice: {
+        customerName: structuredInvoice.customerName
+      },
+      finishedInvoice: {
+        invoiceNumber: finishedInvoice.invoiceNumber,
+        issueDate: finishedInvoice.issueDate,
+        dueDate: finishedInvoice.dueDate,
+        customerName: finishedInvoice.customerName,
+        currency: finishedInvoice.currency,
+        lineItems: finishedInvoice.lineItems,
+        subtotal: finishedInvoice.subtotal,
+        total: finishedInvoice.total,
+        balanceDue: finishedInvoice.balanceDue,
+        paymentLinkUrl: finishedInvoice.paymentLinkUrl
+      }
+    }
+  };
+}
+
+function toPublicPortalHistoryItem(invoice: InvoiceListItem) {
+  return {
+    invoiceId: invoice.invoiceId,
+    invoiceNumber: invoice.invoiceNumber,
+    updatedAt: invoice.updatedAt,
+    status: invoice.status,
+    total: invoice.total,
+    balanceDue: invoice.balanceDue,
+    dueDate: invoice.dueDate
+  };
+}
+
+function isSamePortalCustomer(left: string | undefined, right: string): boolean {
+  return normalizePortalCustomerName(left) === normalizePortalCustomerName(right);
+}
+
+function normalizePortalCustomerName(value: string | undefined): string {
+  return String(value ?? "").trim().toLowerCase();
 }
 
 function asOptionalParseMode(value: unknown): "fast" | "full" | undefined {

@@ -10,7 +10,7 @@ Before submitting, replace placeholders for the privacy policy URL, support emai
 
 ## Short description
 
-Turn messy notes into professional invoices you can send with confidence.
+Turn rough job notes into polished invoices you can save, export, and send.
 
 Short-description limit reminder: 80 characters max.
 
@@ -27,6 +27,7 @@ What you can do in NoteBill:
 - Edit line items manually when you want more control
 - Save invoice drafts and reopen them later
 - Duplicate past invoices to speed up repeat work
+- Capture quick notes during the day and turn them into an invoice later
 - Export invoices to PDF
 - Track simple invoice states like draft, sent, and paid
 

@@ -1,10 +1,20 @@
 # Google Play Closed Testing Kit
 
-Last updated: 2026-04-17
+Last updated: 2026-04-27
 
 This is the practical NoteBill plan for getting through Google Play closed testing.
 
 For the short handoff to send testers, use `docs/tester-packet.md`.
+
+## Operating Blocks
+
+Use these blocks to keep the test round tidy.
+
+1. Release closeout: upload the current Android bundle, confirm Play Console has no blockers, and run `docs/smoke-pass-checklist.md`.
+2. Tester invite: send the closed-test link and `docs/tester-packet.md` to the tester list.
+3. First 48 hours: confirm testers installed, opened, and completed the core create/save/reopen/export path.
+4. Feedback triage: log issues in `docs/tester-feedback-log.md`, grouped by workblock and severity.
+5. Fix pass: fix blockers and major trust issues first; batch minor polish unless it hides a primary action.
 
 ## What Google currently requires
 

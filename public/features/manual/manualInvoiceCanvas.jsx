@@ -1,5 +1,5 @@
 (() => {
-  const { useNavigate } = ReactRouterDOM;
+  const { useNavigate, useSearchParams } = ReactRouterDOM;
   const { useEffect, useMemo, useRef, useState } = React;
   const requestIdentity = window.InvoiceRequestIdentity;
   if (!requestIdentity) {
@@ -92,6 +92,32 @@
     );
   }
   const { readBillingNoticeFromUrl } = billingActions;
+  const billieWorkspaceStorageKey = requestIdentity.getScopedStorageKey?.("billieWorkspaceInstruction") ?? "billieWorkspaceInstruction";
+  const readBillieWorkspaceInstruction = () => {
+    try {
+      const raw = window.localStorage.getItem(billieWorkspaceStorageKey);
+      return typeof raw === "string" ? raw : "";
+    } catch (_error) {
+      return "";
+    }
+  };
+  const writeBillieWorkspaceInstruction = (value) => {
+    try {
+      window.localStorage.setItem(billieWorkspaceStorageKey, value);
+    } catch (_error) {
+      // Best-effort only.
+    }
+  };
+  const trackRevenueSignal = (event, source) => {
+    void apiFetch("/api/telemetry/revenue-signals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event,
+        source
+      })
+    }).catch(() => {});
+  };
 
   const PAYMENT_TERM_QUICK_PICKS = [
     { id: "receipt", label: "Due on receipt", text: "Payment due on receipt.", dueInDays: 0 },
@@ -102,13 +128,100 @@
   const PAYMENT_TERM_LINE_PATTERN =
     /^(due on receipt|payment due|payment is due|please remit payment|net\s*\d+|payable within)/i;
 
-  const applyPaymentTermToNotes = (currentNotes, termText) => {
+  const DEPOSIT_PLAN_LINE_PATTERN =
+    /^(deposit:|payment schedule:|milestone\s*\d+|balance due|progress payment|retainer:)/i;
+  const RETAINER_PLAN_LINE_PATTERN =
+    /^(retainer:|subscription:|monthly retainer|weekly retainer|on-call support)/i;
+  const TRADE_TEMPLATE_LINE_PATTERN =
+    /^(trade template:|plumbing scope:|electrical scope:|cleaning scope:|landscaping scope:|handyman scope:)/i;
+
+  const applyStructuredNoteToNotes = (currentNotes, templateText, linePattern) => {
     const existingLines = String(currentNotes ?? "")
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean)
-      .filter((line) => !PAYMENT_TERM_LINE_PATTERN.test(line));
-    return [termText, ...existingLines].join("\n");
+      .filter((line) => !linePattern.test(line));
+    return [templateText, ...existingLines].join("\n");
+  };
+
+  const applyPaymentTermToNotes = (currentNotes, termText) => {
+    return applyStructuredNoteToNotes(currentNotes, termText, PAYMENT_TERM_LINE_PATTERN);
+  };
+
+  const DEPOSIT_PLAN_QUICK_PICKS = [
+    {
+      id: "deposit-25",
+      label: "25% deposit",
+      text: "Deposit: 25% due before work begins.\nBalance due on completion."
+    },
+    {
+      id: "deposit-50",
+      label: "50% deposit",
+      text: "Deposit: 50% due before work begins.\nBalance due on completion."
+    },
+    {
+      id: "milestone-plan",
+      label: "Milestone plan",
+      text:
+        "Payment schedule:\n- Milestone 1 due to begin\n- Milestone 2 due at midpoint\n- Balance due on completion."
+    }
+  ];
+
+  const applyDepositPlanToNotes = (currentNotes, planText) => {
+    return applyStructuredNoteToNotes(currentNotes, planText, DEPOSIT_PLAN_LINE_PATTERN);
+  };
+
+  const RETAINER_PLAN_QUICK_PICKS = [
+    {
+      id: "retainer-monthly",
+      label: "Monthly retainer",
+      text: "Retainer: Monthly service plan billed on the first business day of each month."
+    },
+    {
+      id: "retainer-weekly",
+      label: "Weekly retainer",
+      text: "Retainer: Weekly support plan billed every Monday."
+    },
+    {
+      id: "retainer-on-call",
+      label: "On-call support",
+      text: "Retainer: On-call support plan billed as a recurring monthly service."
+    }
+  ];
+
+  const applyRetainerPlanToNotes = (currentNotes, planText) => {
+    return applyStructuredNoteToNotes(currentNotes, planText, RETAINER_PLAN_LINE_PATTERN);
+  };
+
+  const TRADE_TEMPLATE_QUICK_PICKS = [
+    {
+      id: "trade-plumbing",
+      label: "Plumbing",
+      lineItem: "Plumbing service",
+      text: "Trade template: Plumbing\nPlumbing scope: inspection, repair, fixture replacement, cleanup."
+    },
+    {
+      id: "trade-electrical",
+      label: "Electrical",
+      lineItem: "Electrical service",
+      text: "Trade template: Electrical\nElectrical scope: troubleshooting, repair, installation, cleanup."
+    },
+    {
+      id: "trade-cleaning",
+      label: "Cleaning",
+      lineItem: "Cleaning service",
+      text: "Trade template: Cleaning\nCleaning scope: rooms, surfaces, supplies, and final cleanup."
+    },
+    {
+      id: "trade-landscaping",
+      label: "Landscaping",
+      lineItem: "Landscaping service",
+      text: "Trade template: Landscaping\nLandscaping scope: trim, cleanup, hauling, and site finish."
+    }
+  ];
+
+  const applyTradeTemplateToNotes = (currentNotes, templateText) => {
+    return applyStructuredNoteToNotes(currentNotes, templateText, TRADE_TEMPLATE_LINE_PATTERN);
   };
   const addDaysToIsoDate = (dateValue, days) => {
     const baseDate = typeof dateValue === "string" && dateValue.trim() ? new Date(`${dateValue}T00:00:00`) : new Date();
@@ -119,10 +232,20 @@
     return baseDate.toISOString().slice(0, 10);
   };
 
+  const formatElapsedHours = (startedAtMs, endedAtMs = Date.now()) => {
+    if (!Number.isFinite(startedAtMs) || endedAtMs <= startedAtMs) {
+      return "0";
+    }
+    const hours = Math.max(0.01, Math.round(((endedAtMs - startedAtMs) / 36e5) * 100) / 100);
+    return String(hours);
+  };
+
 function ManualInvoiceCanvas() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
   const [billingNotice, setBillingNotice] = useState(null);
+  const [importedDraftNotice, setImportedDraftNotice] = useState("");
   const legacyDraftStorageKey = "invoiceDraft";
   const draftStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? legacyDraftStorageKey;
@@ -167,7 +290,9 @@ function ManualInvoiceCanvas() {
     normalizeAccentColor(initialDraft?.accentColor ?? seededDraft?.accentColor ?? DEFAULT_ACCENT_COLOR)
   );
   const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [activeInspectorTab, setActiveInspectorTab] = useState("style");
+  const [activeInspectorTab, setActiveInspectorTab] = useState(() =>
+    searchParams.get("tab") === "assistant" ? "assistant" : "style"
+  );
   const [draftStatus, setDraftStatus] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -182,9 +307,33 @@ function ManualInvoiceCanvas() {
   const [statusUpdateError, setStatusUpdateError] = useState("");
   const [paymentLinkBusy, setPaymentLinkBusy] = useState(false);
   const [paymentLinkError, setPaymentLinkError] = useState("");
+  const [portalAccessToken, setPortalAccessToken] = useState(() => initialDraft?.portalAccessToken ?? "");
+  const [clientPortalBusy, setClientPortalBusy] = useState(false);
+  const [clientPortalError, setClientPortalError] = useState("");
   const [assistantCommandRequest, setAssistantCommandRequest] = useState(null);
-  const [billieWorkspaceInstruction, setBillieWorkspaceInstruction] = useState("");
+  const [billieWorkspaceInstruction, setBillieWorkspaceInstruction] = useState(() => readBillieWorkspaceInstruction());
   const [billieWorkspaceError, setBillieWorkspaceError] = useState("");
+  const [timeCaptureDescription, setTimeCaptureDescription] = useState(
+    () => initialDraft?.timeCapture?.description ?? ""
+  );
+  const [timeCaptureRate, setTimeCaptureRate] = useState(() => initialDraft?.timeCapture?.rate ?? "");
+  const [timeCaptureStartedAt, setTimeCaptureStartedAt] = useState(() =>
+    Number.isFinite(initialDraft?.timeCapture?.startedAt) ? initialDraft.timeCapture.startedAt : null
+  );
+  const [timeCaptureStatus, setTimeCaptureStatus] = useState(
+    () => initialDraft?.timeCapture?.status ?? ""
+  );
+  const [receiptCaptureBusy, setReceiptCaptureBusy] = useState(false);
+  const [receiptCaptureError, setReceiptCaptureError] = useState("");
+  const [receiptCaptureNotice, setReceiptCaptureNotice] = useState("");
+  const [voiceNoteBusy, setVoiceNoteBusy] = useState(false);
+  const [voiceNoteError, setVoiceNoteError] = useState("");
+  const [voiceNoteNotice, setVoiceNoteNotice] = useState("");
+  const [sharePackBusy, setSharePackBusy] = useState(false);
+  const [sharePackNotice, setSharePackNotice] = useState("");
+  const [sharePackPreview, setSharePackPreview] = useState("");
+  const receiptCaptureInputRef = useRef(null);
+  const voiceNoteInputRef = useRef(null);
   const [assistantWorkspaceRuntime, setAssistantWorkspaceRuntime] = useState({
     loading: false,
     status: "",
@@ -195,9 +344,26 @@ function ManualInvoiceCanvas() {
     changePreviewCount: 0,
     timingSummary: ""
   });
+
+  useEffect(() => {
+    if (searchParams.get("source") === "import") {
+      setImportedDraftNotice("Imported draft ready for Billie review.");
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (searchParams.get("tab") === "assistant") {
+      setActiveInspectorTab((current) => (current === "assistant" ? current : "assistant"));
+      setInspectorOpen(true);
+    }
+  }, [searchParams]);
   const [savedLineItemLibrary, setSavedLineItemLibrary] = useState(() => getLineItemLibrary());
   const [clientMemoryList, setClientMemoryList] = useState(() => getClientMemory());
   const [showSavedLineItems, setShowSavedLineItems] = useState(false);
+  const clientPortalUrl =
+    savedInvoiceId && portalAccessToken
+      ? `${window.location.origin}/portal/${savedInvoiceId}/${encodeURIComponent(portalAccessToken)}`
+      : "";
   const saveTimeoutRef = useRef(null);
   const clearStatusTimeoutRef = useRef(null);
   const draftStatusLabel = "Draft restored";
@@ -226,6 +392,10 @@ function ManualInvoiceCanvas() {
       setBillingNotice(notice);
     }
   }, []);
+
+  useEffect(() => {
+    writeBillieWorkspaceInstruction(billieWorkspaceInstruction);
+  }, [billieWorkspaceInstruction]);
 
   const activePreset = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.default;
   const activeSpacing = SPACING_DENSITY_PRESETS[spacingDensity] ?? SPACING_DENSITY_PRESETS.balanced;
@@ -268,6 +438,27 @@ function ManualInvoiceCanvas() {
     ]
       .filter(Boolean)
       .join(", ");
+  const getClientMemorySuggestionPriority = (entry, searchTerm) => {
+    if (!entry?.details || !entry?.name) {
+      return -1;
+    }
+    const needle = String(searchTerm ?? "").trim().toLowerCase();
+    const name = String(entry.name ?? "").trim().toLowerCase();
+    const details = String(entry.details ?? "").trim().toLowerCase();
+    if (!needle) {
+      return 100;
+    }
+    if (name === needle || details === needle) {
+      return 500;
+    }
+    if (name.startsWith(needle) || details.startsWith(needle)) {
+      return 400;
+    }
+    if (name.includes(needle) || details.includes(needle)) {
+      return 300;
+    }
+    return -1;
+  };
 
   const getLineAmount = (item) => parseNumber(item.qty) * parseNumber(item.rate);
   const subtotal = lineItems.reduce((sum, item) => sum + getLineAmount(item), 0);
@@ -313,17 +504,28 @@ function ManualInvoiceCanvas() {
   const clientDefaultNotes = getClientDefaultNotes(primaryBillToName);
   const showClientDefaultNotes = Boolean(clientDefaultNotes) && !notes.trim();
   const normalizedBillToSearch = primaryBillToName.toLocaleLowerCase();
+  const currentServiceMemoryCandidate = lineItems.find(
+    (item) => `${item?.description ?? ""}`.trim() && `${item?.rate ?? ""}`.trim()
+  );
+  const timerRateSuggestion =
+    timeCaptureRate.trim() ||
+    (currentServiceMemoryCandidate?.rate ? String(currentServiceMemoryCandidate.rate) : "");
+  const isTimeCaptureRunning = Number.isFinite(timeCaptureStartedAt);
+  const elapsedTimeCaptureLabel = isTimeCaptureRunning
+    ? `${formatElapsedHours(timeCaptureStartedAt)}h running`
+    : "";
   const clientMemorySuggestions = clientMemoryList
-    .filter((entry) => {
-      if (!entry?.details || !entry?.name) {
-        return false;
+    .map((entry) => ({
+      entry,
+      priority: getClientMemorySuggestionPriority(entry, normalizedBillToSearch)
+    }))
+    .filter(({ priority, entry }) => priority >= 0 && entry.details !== billToDetails.trim())
+    .sort((left, right) => {
+      if (left.priority !== right.priority) {
+        return right.priority - left.priority;
       }
-      if (!normalizedBillToSearch) {
-        return true;
-      }
-      return entry.name.toLocaleLowerCase().includes(normalizedBillToSearch);
+      return right.entry.updatedAt.localeCompare(left.entry.updatedAt);
     })
-    .filter((entry) => entry.details !== billToDetails.trim())
     .slice(0, 4);
 
   const handleLineItemChange = (id, field, value) => {
@@ -347,6 +549,169 @@ function ManualInvoiceCanvas() {
         };
       })
     );
+  };
+
+  const handleStartTimeCapture = () => {
+    if (isTimeCaptureRunning) {
+      return;
+    }
+    if (!timeCaptureRate.trim() && timerRateSuggestion) {
+      setTimeCaptureRate(timerRateSuggestion);
+    }
+    setTimeCaptureStartedAt(Date.now());
+    setTimeCaptureStatus("Timer started");
+    if (clearStatusTimeoutRef.current) {
+      window.clearTimeout(clearStatusTimeoutRef.current);
+    }
+    clearStatusTimeoutRef.current = window.setTimeout(() => {
+      setTimeCaptureStatus("");
+    }, 1800);
+  };
+
+  const handleStopTimeCapture = () => {
+    if (!isTimeCaptureRunning) {
+      return;
+    }
+    const description = timeCaptureDescription.trim() || "Billable time";
+    const qty = formatElapsedHours(timeCaptureStartedAt);
+    const nextRate = timerRateSuggestion.trim();
+    setLineItems((prev) => [
+      {
+        id: `line-${Date.now()}`,
+        description,
+        qty,
+        rate: nextRate
+      },
+      ...prev
+    ]);
+    setTimeCaptureStartedAt(null);
+    setTimedDraftStatus(`Added ${qty}h time entry`);
+  };
+
+  const handleResetTimeCapture = () => {
+    setTimeCaptureStartedAt(null);
+    setTimeCaptureDescription("");
+    setTimeCaptureRate("");
+    setTimeCaptureStatus("");
+  };
+
+  const handleReceiptCaptureUpload = async (event) => {
+    const file = event?.target?.files?.[0];
+    if (!file) {
+      return;
+    }
+    setReceiptCaptureBusy(true);
+    setReceiptCaptureError("");
+    try {
+      const formData = new FormData();
+      formData.append("invoiceFile", file);
+      const response = await apiFetch("/api/invoices/extract-notes", {
+        method: "POST",
+        body: formData
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Could not extract receipt text.");
+      }
+      const extractedText =
+        typeof payload?.extractedText === "string" ? payload.extractedText.trim() : "";
+      if (!extractedText) {
+        throw new Error("No readable receipt text found.");
+      }
+      const receiptText = `Expense receipt: ${file.name}\n${extractedText}`;
+      setNotes((current) => {
+        const existing = current.trim();
+        return existing ? `${existing}\n\n${receiptText}` : receiptText;
+      });
+      setNotesVisible(true);
+      setReceiptCaptureNotice(`Added receipt from ${file.name}. Review it, then save the invoice.`);
+    } catch (error) {
+      setReceiptCaptureError(error?.message || "Could not extract receipt text.");
+    } finally {
+      setReceiptCaptureBusy(false);
+      if (event?.target) {
+        event.target.value = "";
+      }
+    }
+  };
+
+  const handleVoiceNoteUpload = async (event) => {
+    const file = event?.target?.files?.[0];
+    if (!file) {
+      return;
+    }
+    setVoiceNoteBusy(true);
+    setVoiceNoteError("");
+    try {
+      const formData = new FormData();
+      formData.append("audioFile", file);
+      const response = await apiFetch("/api/invoices/transcribe-audio", {
+        method: "POST",
+        body: formData
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || "Could not transcribe that voice note.");
+      }
+      const transcript =
+        typeof payload?.extractedText === "string" ? payload.extractedText.trim() : "";
+      if (!transcript) {
+        throw new Error("No transcript returned for that voice note.");
+      }
+      setNotes((current) => {
+        const existing = current.trim();
+        return existing ? `${existing}\n\n${transcript}` : transcript;
+      });
+      setNotesVisible(true);
+      setVoiceNoteNotice(`Added transcript from ${file.name}. Review it, then save the invoice.`);
+      setTimedDraftStatus(`Added voice note from ${file.name}`);
+      trackRevenueSignal("manual_voice_note_transcribed", "manual_voice_upload");
+    } catch (error) {
+      setVoiceNoteError(error?.message || "Could not transcribe that voice note.");
+    } finally {
+      setVoiceNoteBusy(false);
+      if (event?.target) {
+        event.target.value = "";
+      }
+    }
+  };
+
+  const buildSharePackText = () => {
+    const editableResult = buildEditableInvoicePayload();
+    if (editableResult.error) {
+      return "";
+    }
+    const invoice = editableResult.invoice;
+    const shareLines = [
+      `Invoice ${invoice.invoiceNumber || "Draft"}`,
+      invoice.customerName ? `Client: ${invoice.customerName}` : "",
+      `Total: ${formatMoney(invoice.total ?? 0)}`,
+      invoice.dueDate ? `Due date: ${invoice.dueDate}` : "",
+      invoice.paymentLinkUrl ? `Payment link: ${invoice.paymentLinkUrl}` : "",
+      invoice.portalAccessToken ? `Client portal: ${window.location.origin}/portal/${savedInvoiceId}/${encodeURIComponent(invoice.portalAccessToken)}` : "",
+      invoice.notes ? `Notes: ${invoice.notes}` : ""
+    ].filter(Boolean);
+    return shareLines.join("\n");
+  };
+
+  const handleCopySharePack = async () => {
+    const sharePackText = buildSharePackText();
+    if (!sharePackText) {
+      setSaveError("Add a line item before copying a share pack.");
+      return;
+    }
+    setSharePackBusy(true);
+    setSharePackNotice("");
+    try {
+      setSharePackPreview(sharePackText);
+      void navigator.clipboard?.writeText?.(sharePackText).catch(() => {});
+      setSharePackNotice("Share pack copied. Paste it into email or chat.");
+      setTimedDraftStatus("Copied share pack");
+    } catch (error) {
+      setSharePackNotice(error?.message || "Could not copy the share pack.");
+    } finally {
+      setSharePackBusy(false);
+    }
   };
 
   const handleLineItemDescriptionBlur = (id) => {
@@ -435,6 +800,28 @@ function ManualInvoiceCanvas() {
     }).catch(() => {});
   };
 
+  const handleRememberCurrentLineItem = (item) => {
+    const normalizedDescription = `${item?.description ?? ""}`.trim();
+    if (!normalizedDescription) {
+      return;
+    }
+    const nextLineItemLibrary = rememberLineItems(
+      [
+        {
+          description: normalizedDescription,
+          qty: item?.qty ?? "",
+          rate: item?.rate ?? ""
+        }
+      ],
+      {
+        clientName: billToDetails
+      }
+    );
+    setSavedLineItemLibrary(nextLineItemLibrary);
+    setTimedDraftStatus(`Saved service memory for ${normalizedDescription}`);
+    trackRevenueSignal("service_memory_saved", "manual_current_line_save");
+  };
+
   const handleApplySuggestedRate = (lineId, suggestion) => {
     if (!lineId || !suggestion || !Number.isFinite(suggestion.rate)) {
       return;
@@ -469,6 +856,47 @@ function ManualInvoiceCanvas() {
     setDueDate(addDaysToIsoDate(invoiceDate, term.dueInDays));
     setNotesVisible(true);
     setTimedDraftStatus(`${term.label} terms applied`);
+  };
+  const handleApplyDepositPlan = (plan) => {
+    if (!plan?.text) {
+      return;
+    }
+    setNotes((current) => applyDepositPlanToNotes(current, plan.text));
+    setNotesVisible(true);
+    setTimedDraftStatus(`${plan.label} applied`);
+    trackRevenueSignal("deposit_plan_applied", "manual_deposit_plan_quick_pick");
+  };
+  const handleApplyRetainerPlan = (plan) => {
+    if (!plan?.text) {
+      return;
+    }
+    setNotes((current) => applyRetainerPlanToNotes(current, plan.text));
+    setNotesVisible(true);
+    setTimedDraftStatus(`${plan.label} applied`);
+    trackRevenueSignal("retainer_plan_applied", "manual_retainer_plan_quick_pick");
+  };
+  const handleApplyTradeTemplate = (template) => {
+    if (!template?.text) {
+      return;
+    }
+    setNotes((current) => applyTradeTemplateToNotes(current, template.text));
+    setLineItems((prev) => {
+      const next = prev.map((item) => ({ ...item }));
+      const emptyIndex = next.findIndex(
+        (item) => !item.description.trim() && item.qty === "" && item.rate === ""
+      );
+      if (emptyIndex === -1) {
+        return next;
+      }
+      next[emptyIndex] = {
+        ...next[emptyIndex],
+        description: template.lineItem || next[emptyIndex].description
+      };
+      return next;
+    });
+    setNotesVisible(true);
+    setTimedDraftStatus(`${template.label} template applied`);
+    trackRevenueSignal("trade_template_applied", "manual_trade_template_quick_pick");
   };
   const handleApplyClientMemory = (entry) => {
     if (!entry?.details) {
@@ -541,6 +969,7 @@ function ManualInvoiceCanvas() {
       })),
       notes: notes?.trim() || undefined,
       paymentLinkUrl: paymentLinkUrl?.trim() || undefined,
+      portalAccessToken: portalAccessToken?.trim() || undefined,
       discountAmount: effectiveDiscountAmount,
       subtotal,
       total,
@@ -570,6 +999,7 @@ function ManualInvoiceCanvas() {
       })),
       notes: notes?.trim() || undefined,
       paymentLinkUrl: paymentLinkUrl?.trim() || undefined,
+      portalAccessToken: portalAccessToken?.trim() || undefined,
       discountAmount: effectiveDiscountAmount,
       subtotal,
       total,
@@ -621,6 +1051,9 @@ function ManualInvoiceCanvas() {
     if (updatedInvoice.paymentLinkUrl !== undefined) {
       setPaymentLinkUrl(updatedInvoice.paymentLinkUrl ?? "");
     }
+    if (updatedInvoice.portalAccessToken !== undefined) {
+      setPortalAccessToken(updatedInvoice.portalAccessToken ?? "");
+    }
     if (updatedInvoice.discountAmount !== undefined) {
       setDiscountAmount(String(updatedInvoice.discountAmount ?? 0));
     }
@@ -663,6 +1096,7 @@ function ManualInvoiceCanvas() {
       billToDetails,
       notes,
       paymentLinkUrl,
+      portalAccessToken,
       taxRate,
       discountAmount,
       lineItems,
@@ -673,6 +1107,12 @@ function ManualInvoiceCanvas() {
       spacingDensity,
       stylePreset,
       accentColor,
+      timeCapture: {
+        description: timeCaptureDescription,
+        rate: timeCaptureRate,
+        startedAt: timeCaptureStartedAt,
+        status: timeCaptureStatus
+      },
       savedInvoiceId,
       savedInvoiceStatus
     };
@@ -728,6 +1168,10 @@ function ManualInvoiceCanvas() {
     spacingDensity,
     stylePreset,
     accentColor,
+    timeCaptureDescription,
+    timeCaptureRate,
+    timeCaptureStartedAt,
+    timeCaptureStatus,
     savedInvoiceId,
     savedInvoiceStatus
   ]);
@@ -856,6 +1300,7 @@ function ManualInvoiceCanvas() {
         setSavedInvoiceId(nextId);
       }
       setSavedInvoiceStatus(payload?.invoice?.status ?? "draft");
+      setPortalAccessToken(payload?.invoice?.invoiceData?.finishedInvoice?.portalAccessToken ?? portalAccessToken);
       setClientMemoryList(
         rememberClientDetails(billToDetails, {
           defaultNotes: notes
@@ -947,12 +1392,45 @@ function ManualInvoiceCanvas() {
       }
       const nextPaymentLink = payload?.paymentLinkUrl ?? payload?.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl ?? "";
       setPaymentLinkUrl(nextPaymentLink);
-      setSaveStatus(nextPaymentLink ? "Payment link ready" : "Payment link unchanged");
+      setSaveStatus(nextPaymentLink ? "Hosted payment link ready" : "Hosted payment link unchanged");
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {
       setPaymentLinkError(error?.message || "Couldn't create payment link.");
     } finally {
       setPaymentLinkBusy(false);
+    }
+  };
+
+  const handleGenerateClientPortalLink = async () => {
+    if (!savedInvoiceId) {
+      setClientPortalError("Save invoice first to create a client portal link.");
+      return;
+    }
+    setClientPortalBusy(true);
+    setClientPortalError("");
+    setSaveError("");
+    try {
+      const response = await apiFetch(`/api/invoices/${savedInvoiceId}/client-portal-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const requestError = new Error(payload?.error || "Couldn't create client portal link.");
+        requestError.status = response.status;
+        throw requestError;
+      }
+      const nextToken = payload?.invoice?.invoiceData?.finishedInvoice?.portalAccessToken ?? "";
+      if (nextToken) {
+        setPortalAccessToken(nextToken);
+      }
+      setSaveStatus(nextToken ? "Client portal ready" : "Client portal unchanged");
+      window.setTimeout(() => setSaveStatus(""), 1500);
+    } catch (error) {
+      setClientPortalError(error?.message || "Couldn't create client portal link.");
+    } finally {
+      setClientPortalBusy(false);
     }
   };
 
@@ -975,6 +1453,8 @@ function ManualInvoiceCanvas() {
     }
     setBillieWorkspaceError("");
     setBillieWorkspaceInstruction("");
+    writeBillieWorkspaceInstruction("");
+    trackRevenueSignal("billie_workspace_instruction_submitted", "workspace");
     setAssistantCommandRequest({
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       instruction: trimmedInstruction,
@@ -1130,6 +1610,11 @@ function ManualInvoiceCanvas() {
             }`}
           >
             {billingNotice.message}
+          </div>
+        ) : null}
+        {importedDraftNotice ? (
+          <div className="nb-banner nb-banner--success mb-4 text-sm font-medium md:col-span-2">
+            {importedDraftNotice}
           </div>
         ) : null}
         <div className="mb-4 flex items-center justify-between gap-3 md:col-span-2 no-print">
@@ -1387,19 +1872,36 @@ function ManualInvoiceCanvas() {
                   onChange={(event) => setBillToDetails(event.target.value)}
                 />
                 {clientMemorySuggestions.length > 0 ? (
-                  <div className="no-print flex flex-wrap gap-2">
-                    {clientMemorySuggestions.map((entry) => (
-                      <button
-                        key={entry.lookupKey}
-                        type="button"
-                        className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300"
-                        onClick={() => handleApplyClientMemory(entry)}
-                        aria-label={`Use saved client ${entry.name}`}
-                      >
-                        {entry.name}
-                        {formatClientMemoryHints(entry) ? ` + ${formatClientMemoryHints(entry)}` : ""}
-                      </button>
-                    ))}
+                  <div className="no-print rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3 shadow-sm">
+                    <div className="flex flex-col gap-1">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                        Repeat client matches
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        Tap one to paste saved client details into Bill To.
+                      </p>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {clientMemorySuggestions.map(({ entry, priority }) => {
+                        const hintLabel = formatClientMemoryHints(entry);
+                        const isBestMatch = priority >= 400;
+                        return (
+                          <button
+                            key={entry.lookupKey}
+                            type="button"
+                            className="inline-flex min-h-[48px] flex-col items-start gap-0.5 rounded-2xl border border-emerald-200 bg-white px-3 py-2 text-left text-xs font-semibold text-emerald-800 shadow-sm transition hover:border-emerald-300"
+                            onClick={() => handleApplyClientMemory(entry)}
+                            aria-label={`Use saved client ${entry.name}`}
+                          >
+                            <span className="text-sm font-semibold text-emerald-900">{entry.name}</span>
+                            <span className="text-[11px] font-medium text-emerald-700">
+                              {isBestMatch ? "Best match" : "Saved client"}
+                              {hintLabel ? ` · ${hintLabel}` : ""}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -1426,6 +1928,13 @@ function ManualInvoiceCanvas() {
                   >
                     Show all saved items
                   </button>
+                  <button
+                    type="button"
+                    className="self-start rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300"
+                    onClick={() => navigate("/settings/services")}
+                  >
+                    Open service catalog
+                  </button>
                 </div>
                 <div className="mt-3 grid gap-2 md:grid-cols-3">
                   {clientMemoryItems.map(({ entry }) => (
@@ -1451,6 +1960,197 @@ function ManualInvoiceCanvas() {
                 </div>
               </section>
             ) : null}
+
+            {currentServiceMemoryCandidate ? (
+              <section className="no-print rounded-2xl border border-emerald-200 bg-emerald-50/60 p-3 shadow-sm">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                      Service memory
+                    </p>
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      Save this service for next time
+                    </h3>
+                    <p className="text-xs text-slate-600">
+                      Keep the current line item in memory so the next similar invoice is faster to build.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="self-start rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300"
+                    onClick={() => handleRememberCurrentLineItem(currentServiceMemoryCandidate)}
+                  >
+                    Save current service
+                  </button>
+                </div>
+              </section>
+            ) : null}
+
+            <section className="no-print rounded-2xl border border-sky-200 bg-sky-50/70 p-3 shadow-sm">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                    Time capture
+                  </p>
+                  <h3 className="text-sm font-semibold text-slate-900">Turn billable time into a line item</h3>
+                  <p className="text-xs text-slate-600">
+                    Start a timer when you begin work, then stop it to add hours directly to this invoice.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="min-h-[44px] rounded-full border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-800 transition hover:border-sky-300"
+                    onClick={handleStartTimeCapture}
+                    disabled={isTimeCaptureRunning}
+                  >
+                    Start timer
+                  </button>
+                  <button
+                    type="button"
+                    className="min-h-[44px] rounded-full border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-800 transition hover:border-sky-300 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={handleStopTimeCapture}
+                    disabled={!isTimeCaptureRunning}
+                  >
+                    Stop & add line item
+                  </button>
+                  <button
+                    type="button"
+                    className="min-h-[44px] rounded-full border border-sky-200 bg-white px-3 py-2 text-xs font-semibold text-sky-800 transition hover:border-sky-300"
+                    onClick={handleResetTimeCapture}
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-sky-700">
+                    Time note
+                  </span>
+                  <input
+                    type="text"
+                    className="w-full rounded-xl border border-sky-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                    placeholder="Site visit, cleanup, repair..."
+                    value={timeCaptureDescription}
+                    onChange={(event) => setTimeCaptureDescription(event.target.value)}
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-sky-700">
+                    Time rate
+                  </span>
+                  <input
+                    type="number"
+                    className="w-full rounded-xl border border-sky-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                    placeholder={timerRateSuggestion ? String(timerRateSuggestion) : "0"}
+                    value={timeCaptureRate}
+                    onChange={(event) => setTimeCaptureRate(event.target.value)}
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-sky-800">
+                <span className="rounded-full bg-white px-2 py-1 font-semibold">
+                  {isTimeCaptureRunning ? elapsedTimeCaptureLabel || "Timer running" : "Timer idle"}
+                </span>
+                {timerRateSuggestion ? (
+                  <span className="rounded-full bg-white px-2 py-1 font-semibold">
+                    Suggested rate {`$${timerRateSuggestion}`}/hr
+                  </span>
+                ) : null}
+                {timeCaptureStatus ? (
+                  <span className="rounded-full bg-white px-2 py-1 font-semibold">{timeCaptureStatus}</span>
+                ) : null}
+              </div>
+            </section>
+
+            <section className="no-print rounded-2xl border border-amber-200 bg-amber-50/70 p-3 shadow-sm">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700">
+                    Receipt / expense capture
+                  </p>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Turn a receipt or expense photo into reviewable text
+                  </h3>
+                  <p className="text-xs text-slate-600">
+                    Upload a receipt, mileage slip, or supply photo and we&apos;ll append the extracted text into your notes before you save.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="rounded-full border border-amber-200 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:border-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => receiptCaptureInputRef.current?.click()}
+                    disabled={receiptCaptureBusy}
+                  >
+                    {receiptCaptureBusy ? "Scanning..." : "Add receipt photo"}
+                  </button>
+                  <input
+                    ref={receiptCaptureInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleReceiptCaptureUpload}
+                  />
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-800">
+                {receiptCaptureNotice ? (
+                  <span className="rounded-full bg-white px-2 py-1 font-semibold">
+                    {receiptCaptureNotice}
+                  </span>
+                ) : null}
+                {receiptCaptureError ? (
+                  <span className="rounded-full bg-white px-2 py-1 font-semibold text-red-700">
+                    {receiptCaptureError}
+                  </span>
+                ) : null}
+              </div>
+            </section>
+
+            <section className="no-print rounded-2xl border border-rose-200 bg-rose-50/70 p-3 shadow-sm">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-700">
+                    Voice notes to invoice
+                  </p>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Turn a spoken note into editable invoice text
+                  </h3>
+                  <p className="text-xs text-slate-600">
+                    Upload an audio note and we&apos;ll append the transcript into your notes before you save.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="min-h-[44px] rounded-full border border-rose-200 bg-white px-3 py-2 text-xs font-semibold text-rose-800 transition hover:border-rose-300 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => voiceNoteInputRef.current?.click()}
+                    disabled={voiceNoteBusy}
+                  >
+                    {voiceNoteBusy ? "Transcribing..." : "Add voice note"}
+                  </button>
+                  <input
+                    ref={voiceNoteInputRef}
+                    type="file"
+                    accept="audio/*"
+                    className="hidden"
+                    onChange={handleVoiceNoteUpload}
+                  />
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-rose-800">
+                {voiceNoteNotice ? (
+                  <span className="rounded-full bg-white px-2 py-1 font-semibold">{voiceNoteNotice}</span>
+                ) : null}
+                {voiceNoteError ? (
+                  <span className="rounded-full bg-white px-2 py-1 font-semibold text-red-700">
+                    {voiceNoteError}
+                  </span>
+                ) : null}
+              </div>
+            </section>
 
             <section className="space-y-3">
               <div className="space-y-3 md:hidden">
@@ -1534,6 +2234,16 @@ function ManualInvoiceCanvas() {
                           >
                             Billie polish
                           </button>
+                          {item.rate !== "" ? (
+                            <button
+                              type="button"
+                              className="inline-flex rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-800 transition hover:border-emerald-300"
+                              onClick={() => handleRememberCurrentLineItem(item)}
+                              aria-label={`Save line ${index + 1} to service memory`}
+                            >
+                              Save service
+                            </button>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -1616,6 +2326,20 @@ function ManualInvoiceCanvas() {
                                 <span className="text-[10px] font-semibold uppercase tracking-wide text-blue-700">
                                   High confidence
                                 </span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {item.description?.trim() ? (
+                            <div className="mt-1 flex flex-wrap items-center gap-2">
+                              {item.rate !== "" ? (
+                                <button
+                                  type="button"
+                                  className="inline-flex rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-800 transition hover:border-emerald-300"
+                                  onClick={() => handleRememberCurrentLineItem(item)}
+                                  aria-label={`Save line ${index + 1} to service memory`}
+                                >
+                                  Save service
+                                </button>
                               ) : null}
                             </div>
                           ) : null}
@@ -1772,6 +2496,78 @@ function ManualInvoiceCanvas() {
                   </div>
                 </div>
               ) : null}
+              <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 no-print">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                      Deposits & milestones
+                    </p>
+                    <p className="mt-1 hidden text-xs text-amber-800 sm:block">
+                      Adds a payment schedule note without changing invoice totals.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
+                    {DEPOSIT_PLAN_QUICK_PICKS.map((plan) => (
+                      <button
+                        key={plan.id}
+                        type="button"
+                        className="min-h-10 rounded-full border border-amber-200 bg-white px-3 py-2 text-sm font-semibold text-amber-800 transition hover:border-amber-300 hover:bg-amber-50 sm:text-xs"
+                        onClick={() => handleApplyDepositPlan(plan)}
+                      >
+                        {plan.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-xl border border-violet-200 bg-violet-50/70 p-3 no-print">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">
+                      Subscriptions & retainers
+                    </p>
+                    <p className="mt-1 hidden text-xs text-violet-800 sm:block">
+                      Adds a recurring service note for monthly or weekly plans.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
+                    {RETAINER_PLAN_QUICK_PICKS.map((plan) => (
+                      <button
+                        key={plan.id}
+                        type="button"
+                        className="min-h-10 rounded-full border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-800 transition hover:border-violet-300 hover:bg-violet-50 sm:text-xs"
+                        onClick={() => handleApplyRetainerPlan(plan)}
+                      >
+                        {plan.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 no-print">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                      Templates by trade
+                    </p>
+                    <p className="mt-1 hidden text-xs text-indigo-800 sm:block">
+                      Adds a trade-specific starter note and fills the first blank line item.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                    {TRADE_TEMPLATE_QUICK_PICKS.map((template) => (
+                      <button
+                        key={template.id}
+                        type="button"
+                        className="min-h-10 rounded-full border border-indigo-200 bg-white px-3 py-2 text-sm font-semibold text-indigo-800 transition hover:border-indigo-300 hover:bg-indigo-50 sm:text-xs"
+                        onClick={() => handleApplyTradeTemplate(template)}
+                      >
+                        {template.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
               <div className="rounded-xl border border-slate-200 bg-white/70 p-3 no-print">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -1815,14 +2611,14 @@ function ManualInvoiceCanvas() {
                 </label>
                 <span className="text-[11px] font-semibold text-slate-400">Optional</span>
               </div>
-              <input
-                id="payment-link-url"
-                aria-label="Payment link"
-                type="url"
-                className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
-                placeholder="https://pay.example.com/invoice/123"
-                value={paymentLinkUrl}
-                onChange={(event) => setPaymentLinkUrl(event.target.value)}
+                <input
+                  id="payment-link-url"
+                  aria-label="Hosted payment link"
+                  type="url"
+                  className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
+                  placeholder="https://pay.example.com/invoice/123"
+                  value={paymentLinkUrl}
+                  onChange={(event) => setPaymentLinkUrl(event.target.value)}
               />
               {paymentLinkUrl.trim().length > 0 ? (
                 <a
@@ -1832,9 +2628,80 @@ function ManualInvoiceCanvas() {
                   className="inline-flex text-xs font-semibold underline-offset-2 hover:underline"
                   style={{ color: accent.primary }}
                 >
-                  Open payment link
+                  Open hosted payment link
                 </a>
               ) : null}
+            </section>
+
+            <section className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <label className={`${activePreset.textClass} ${activePreset.labelClass}`}>
+                  Export / share pack
+                </label>
+                <span className="text-[11px] font-semibold text-slate-400">Optional</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="min-h-10 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{ color: accent.primary }}
+                  onClick={handleCopySharePack}
+                  disabled={sharePackBusy}
+                >
+                  {sharePackBusy ? "Copying..." : "Copy share pack"}
+                </button>
+                {sharePackNotice ? (
+                  <span className="text-xs font-semibold text-slate-500">{sharePackNotice}</span>
+                ) : null}
+              </div>
+              {sharePackPreview ? (
+                <textarea
+                  aria-label="Share pack preview"
+                  readOnly
+                  rows={4}
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-white/80 px-3 py-2 text-xs text-slate-700 shadow-sm"
+                  value={sharePackPreview}
+                />
+              ) : null}
+              <p className="text-[11px] leading-5 text-slate-500">
+                Copies a concise email-ready summary with the invoice number, client, total, due date, payment link, and portal link when available.
+              </p>
+            </section>
+
+            <section className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <label className={`${activePreset.textClass} ${activePreset.labelClass}`}>
+                  Client portal
+                </label>
+                <span className="text-[11px] font-semibold text-slate-400">Optional</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  className="min-h-10 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white"
+                  style={{ color: accent.primary }}
+                  onClick={handleGenerateClientPortalLink}
+                  disabled={clientPortalBusy || !savedInvoiceId}
+                >
+                  {clientPortalBusy ? "Creating portal..." : clientPortalUrl ? "Refresh client portal" : "Create client portal"}
+                </button>
+                {clientPortalUrl ? (
+                  <a
+                    href={clientPortalUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs font-semibold underline-offset-2 hover:underline"
+                    style={{ color: accent.primary }}
+                  >
+                    Open client portal
+                  </a>
+                ) : null}
+              </div>
+              {clientPortalError ? <p className="text-xs text-red-600">{clientPortalError}</p> : null}
+              <p className="text-[11px] leading-5 text-slate-500">
+                Share a read-only invoice portal with the customer so they can review the invoice and
+                payment details in one place.
+              </p>
             </section>
           </div>
         </div>
