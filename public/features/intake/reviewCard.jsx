@@ -38,7 +38,10 @@
     recentlyChangedDescriptions,
     billieStatus,
     recentClientContext,
+    repeatWorkSuggestions,
     submitUserMessage,
+    onApplySavedWording,
+    onApplySavedNotes,
     onBillieLineRefine,
     onBillieNotesRefine
   }) {
@@ -54,6 +57,18 @@
     const billieIsWorking = billieStatus?.kind === "working";
     const recentContextEntries = Array.isArray(recentClientContext) ? recentClientContext : [];
     const hasRecentClientContext = recentContextEntries.length > 0;
+    const matchedSavedItems = Array.isArray(repeatWorkSuggestions?.matchedSavedItems)
+      ? repeatWorkSuggestions.matchedSavedItems
+      : [];
+    const noteSuggestions = Array.isArray(repeatWorkSuggestions?.noteSuggestions)
+      ? repeatWorkSuggestions.noteSuggestions
+      : [];
+    const rateContextByLineId =
+      repeatWorkSuggestions && typeof repeatWorkSuggestions.rateContextByLineId === "object"
+        ? repeatWorkSuggestions.rateContextByLineId
+        : {};
+    const hasRepeatWorkSuggestions =
+      matchedSavedItems.length > 0 || Object.keys(rateContextByLineId).length > 0;
     const normalizedSourceTranscript =
       typeof payload?.sourceText === "string" ? payload.sourceText.replace(/\s+/g, " ").trim() : "";
     const sourcePreview = normalizedSourceTranscript
@@ -118,6 +133,13 @@
         day: "numeric",
         year: "numeric"
       });
+    };
+    const formatSavedItemUsage = (value) => {
+      const parsed = Number.parseInt(String(value ?? ""), 10);
+      if (!Number.isFinite(parsed) || parsed <= 1) {
+        return "Used before";
+      }
+      return `Used ${parsed} times`;
     };
 
     return (
@@ -387,6 +409,94 @@
                 I flag unclear money items below. You decide what to bill.
               </p>
             ) : null}
+            {showReviewSecondary && hasRepeatWorkSuggestions ? (
+              <div
+                className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-3"
+                data-testid="review-repeat-work-card"
+              >
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                    Repeat work cues
+                  </p>
+                  <p className="text-xs text-emerald-900">
+                    Saved service memory can guide wording and rates. This draft stays unchanged until
+                    you edit it.
+                  </p>
+                </div>
+                {Object.entries(rateContextByLineId).length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    {Object.entries(rateContextByLineId).map(([lineId, context]) => (
+                      <div
+                        key={`repeat-work-rate-${lineId}`}
+                        className="rounded-xl border border-white/80 bg-white px-3 py-2 text-xs text-slate-600 shadow-sm"
+                        data-testid={`review-rate-memory-${lineId}`}
+                      >
+                        {context?.currentDescription ? (
+                          <p className="font-semibold text-slate-800">
+                            Draft line: {context.currentDescription}
+                          </p>
+                        ) : null}
+                        {context?.currentRateText ? (
+                          <p className="mt-1 text-slate-500">
+                            Current draft rate: {context.currentRateText}
+                            {context?.currentQuantityText ? ` · Qty ${context.currentQuantityText}` : ""}
+                          </p>
+                        ) : null}
+                        {context?.currentLaborMetaText ? (
+                          <p className="mt-1 text-xs text-slate-500">{context.currentLaborMetaText}</p>
+                        ) : null}
+                        {context?.text ? <p className="mt-1">{context.text}</p> : null}
+                        {context?.canApplySavedWording ? (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              data-testid={`review-apply-saved-wording-${lineId}`}
+                              className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold text-emerald-800 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:text-emerald-500"
+                              onClick={() => onApplySavedWording?.(lineId, context.savedDescription)}
+                              disabled={isTyping}
+                              aria-label={`Use saved wording for ${context.currentDescription || "this line"}`}
+                            >
+                              Use saved wording for this line
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {matchedSavedItems.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {matchedSavedItems.map(({ entry, clientMatch, serviceMatchScore, usageCount }) => (
+                      <div
+                        key={`repeat-work-saved-${entry.lookupKey}`}
+                        className="rounded-xl border border-white/80 bg-white px-3 py-2 text-left text-xs shadow-sm"
+                      >
+                        <p className="font-semibold text-slate-800">{entry.description}</p>
+                        <p className="mt-1 text-slate-500">
+                          {[entry.clientName || "", formatSavedItemUsage(usageCount)].filter(Boolean).join(" · ")}
+                        </p>
+                        {entry.qty || entry.rate ? (
+                          <p className="mt-1 text-slate-500">
+                            {[entry.qty ? `Qty ${entry.qty}` : "", entry.rate ? `Rate $${entry.rate}` : ""]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </p>
+                        ) : null}
+                        {clientMatch ? (
+                          <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
+                            Saved client match
+                          </p>
+                        ) : serviceMatchScore > 0 ? (
+                          <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-blue-700">
+                            Saved service match
+                          </p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             {showReviewSecondary && hasRecentClientContext ? (
               <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -547,7 +657,7 @@
             </div>
           ) : null}
 
-          {showReviewExpandedSections && payload.notes ? (
+          {showReviewExpandedSections && (payload.notes || noteSuggestions.length > 0) ? (
             <div className="mt-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notes</p>
@@ -565,7 +675,36 @@
                   Billie
                 </button>
               </div>
-              <p className="mt-1 text-sm text-slate-700">{payload.notes}</p>
+              <p className="mt-1 text-sm text-slate-700">
+                {payload.notes || "No draft notes yet."}
+              </p>
+              {noteSuggestions.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {noteSuggestions.map((suggestion) => (
+                    <button
+                      key={suggestion.id}
+                      type="button"
+                      data-testid={`review-apply-saved-note-${suggestion.id}`}
+                      className="rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-800 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:text-emerald-500"
+                      onClick={() => onApplySavedNotes?.(suggestion.text)}
+                      disabled={isTyping}
+                      aria-label={suggestion.label}
+                    >
+                      {suggestion.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {noteSuggestions.length > 0 ? (
+                <div className="mt-2 space-y-1">
+                  {noteSuggestions.map((suggestion) => (
+                    <p key={`${suggestion.id}-source`} className="text-xs text-slate-500">
+                      <span className="font-semibold text-slate-700">{suggestion.source}:</span>{" "}
+                      {suggestion.text}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
               {activeBillieTarget?.type === "notes" ? (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {billieToneActions.map((action) => (

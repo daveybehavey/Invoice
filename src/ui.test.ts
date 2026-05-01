@@ -2369,7 +2369,19 @@ test("manual billie workspace quick actions can refine descriptions without open
     await workspace.getByRole("button", { name: "Formal descriptions" }).click();
 
     await workspace.getByText("Descriptions updated. Numbers unchanged.").waitFor({ state: "visible" });
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-testid="manual-line-item-line-1"]:not([hidden])')
+          ?.getAttribute("data-billie-highlight") === "true"
+    );
     await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "Kitchen faucet repair service");
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-testid="manual-line-item-line-1"]:not([hidden])')
+          ?.getAttribute("data-billie-highlight") === "false"
+    );
     assert.equal(rewordDescriptionsRequestCount, 1);
     assert.equal(editRequestCount, 0);
   } finally {
@@ -2686,11 +2698,23 @@ test("manual billie routes notes wording requests through safe notes rewording",
       .getByText("Notes updated. Numbers unchanged.")
       .first()
       .waitFor({ state: "visible" });
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-testid="manual-notes-section"]')
+          ?.getAttribute("data-billie-highlight") === "true"
+    );
     await expectValueEquals(
       page.getByPlaceholder("Thank you for your business"),
       "Payment due within 14 days of receipt."
     );
     await expectValueEquals(page.locator('input[placeholder="Description"]:visible').first(), "Faucet repair");
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-testid="manual-notes-section"]')
+          ?.getAttribute("data-billie-highlight") === "false"
+    );
     assert.equal(rewordNotesRequestCount, 1);
     assert.equal(editRequestCount, 0);
   } finally {
@@ -5391,6 +5415,226 @@ test("intake review surfaces recent saved jobs for the matched client", async ()
   }
 });
 
+test("review details surfaces repeat-work memory without changing parsed draft amounts", async () => {
+  useMockResponses([
+    {
+      customerName: "Mike Johnson",
+      workSessions: [
+        {
+          date: "Jan 10",
+          tasks: [{ description: "Fixed sink", hours: 1, rate: 90, amount: 90 }]
+        }
+      ],
+      materials: []
+    },
+    emptyAudit()
+  ]);
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-review-repeat-work-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          description: "Kitchen faucet repair service",
+          qty: "2",
+          rate: "145",
+          clientName: "Mike Johnson",
+          usageCount: 3,
+          updatedAt: "2026-04-18T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /show review details/i }).click();
+
+    const repeatWorkCard = page.getByTestId("review-repeat-work-card");
+    await repeatWorkCard.waitFor({ state: "visible" });
+    await repeatWorkCard.getByText("Repeat work cues").waitFor({ state: "visible" });
+    await repeatWorkCard.getByText("Current draft rate: $90.00/hr · Qty 1").waitFor({
+      state: "visible"
+    });
+    await repeatWorkCard
+      .getByText(
+        "Last time you billed Mike Johnson for Kitchen faucet repair service, the rate was $145.00/hr, qty 2."
+      )
+      .waitFor({ state: "visible" });
+    await repeatWorkCard.getByText("Saved client match").waitFor({ state: "visible" });
+    await repeatWorkCard.getByTestId("review-apply-saved-wording-line_1").click();
+    await page.locator("form.fixed").getByText("✓ Numbers unchanged").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /show review details/i }).click();
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll("p.text-sm.font-semibold.text-slate-800")).some(
+        (node) => node.textContent?.trim() === "Kitchen faucet repair service"
+      )
+    );
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll("p.text-xs.text-slate-500")).some((node) =>
+        (node.textContent ?? "").includes("1h × $90.00/hr • $90.00")
+      )
+    );
+    await page.getByRole("button", { name: "Undo last Billie change" }).click();
+    await page.locator("form.fixed").getByText("Undid last Billie change").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /show review details/i }).click();
+    await repeatWorkCard.getByTestId("review-apply-saved-wording-line_1").waitFor({
+      state: "visible"
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("review details can apply a prior client note without changing numbers", async () => {
+  useMockResponses([
+    {
+      customerName: "Note Memory Client",
+      workSessions: [
+        {
+          date: "Jan 10",
+          tasks: [{ description: "Faucet repair", hours: 1, rate: 90, amount: 90 }]
+        }
+      ],
+      materials: [],
+      notes: "Thanks."
+    },
+    emptyAudit()
+  ]);
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-review-client-note-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          name: "Note Memory Client",
+          details: "Note Memory Client",
+          defaultNotes: "Payment due on receipt. Thanks for trusting us with the work.",
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 30 fixed faucet 1h at $90/hr for Note Memory Client.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /show review details/i }).click();
+
+    await page.getByText("Saved in client memory:").waitFor({ state: "visible" });
+    await page
+      .getByText("Payment due on receipt. Thanks for trusting us with the work.")
+      .waitFor({ state: "visible" });
+    await page.getByTestId("review-apply-saved-note-client-memory-note").click();
+    await page.locator("form.fixed").getByText("✓ Numbers unchanged").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: /show review details/i }).click();
+    await page
+      .getByText("Payment due on receipt. Thanks for trusting us with the work.")
+      .waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Undo last Billie change" }).click();
+    await page.locator("form.fixed").getByText("Undid last Billie change").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /show review details/i }).click();
+    await page.getByTestId("review-apply-saved-note-client-memory-note").waitFor({
+      state: "visible"
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("review details shows saved wording actions for multiple matched lines", async () => {
+  useMockResponses([
+    {
+      customerName: "Mike Johnson",
+      workSessions: [
+        {
+          date: "Jan 10",
+          tasks: [
+            { description: "Fixed sink", hours: 1, rate: 90, amount: 90 },
+            { description: "Drain cleaning", hours: 2, rate: 110, amount: 220 }
+          ]
+        }
+      ],
+      materials: []
+    },
+    emptyAudit()
+  ]);
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-review-multi-repeat-work-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          description: "Kitchen faucet repair service",
+          qty: "2",
+          rate: "145",
+          clientName: "Mike Johnson",
+          usageCount: 3,
+          updatedAt: "2026-04-18T12:00:00.000Z"
+        },
+        {
+          description: "Main line drain cleaning service",
+          qty: "2",
+          rate: "175",
+          clientName: "Mike Johnson",
+          usageCount: 2,
+          updatedAt: "2026-04-19T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 30 fixed faucet and cleaned drain for Mike Johnson.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /show review details/i }).click();
+
+    const repeatWorkCard = page.getByTestId("review-repeat-work-card");
+    await repeatWorkCard.waitFor({ state: "visible" });
+    await repeatWorkCard
+      .getByText(
+        "Last time you billed Mike Johnson for Kitchen faucet repair service, the rate was $145.00/hr, qty 2."
+      )
+      .waitFor({ state: "visible" });
+    await repeatWorkCard
+      .getByText(
+        "Last time you billed Mike Johnson for Main line drain cleaning service, the rate was $175.00/hr, qty 2."
+      )
+      .waitFor({ state: "visible" });
+    await repeatWorkCard.getByTestId("review-apply-saved-wording-line_1").waitFor({
+      state: "visible"
+    });
+    await repeatWorkCard.getByTestId("review-apply-saved-wording-line_2").waitFor({
+      state: "visible"
+    });
+  } finally {
+    await context.close();
+  }
+});
+
 test("saving an invoice remembers line items and allows one-tap reinsertion later", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {
@@ -5508,11 +5752,16 @@ test("manual saved items prioritize same-client matches in suggestions", async (
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
     await page.getByPlaceholder("Client Name").fill("Mike Johnson");
     await page.locator('input[placeholder="Description"]:visible').first().fill("Leak inspection");
-    await page.getByRole("button", { name: "Saved items (2)" }).click();
-
-    const firstSavedItem = page.locator('button[aria-label^="Insert saved item"]').first();
-    await firstSavedItem.getByText("Rate $155").waitFor({ state: "visible" });
-    await firstSavedItem.getByText("Client match").waitFor({ state: "visible" });
+    await page.getByTestId("manual-recommended-saved-items").waitFor({ state: "visible" });
+    const recommendedSavedItem = page
+      .getByTestId("manual-recommended-saved-items")
+      .locator('button[aria-label="Insert recommended saved item Leak inspection service"]')
+      .filter({ hasText: "Mike Johnson" })
+      .first();
+    await recommendedSavedItem.waitFor({ state: "visible" });
+    await recommendedSavedItem.getByText("Mike Johnson").waitFor({ state: "visible" });
+    await recommendedSavedItem.getByText("Client match").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Saved items (2)" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -5549,6 +5798,12 @@ test("manual line items offer one-tap suggested rate from saved client history",
     await page.getByPlaceholder("Client Name").fill("Mike Johnson");
     await page.locator('input[placeholder="Description"]:visible').first().fill("Leak inspection of roof flashing");
 
+    await page
+      .locator('[data-testid="manual-rate-memory-line-1"]:visible')
+      .getByText(
+        "Last time you billed Mike Johnson for Leak inspection service, the rate was $155.00/hr, qty 1."
+      )
+      .waitFor({ state: "visible" });
     await page
       .getByRole("button", { name: /Apply suggested rate \$155\.00 to line 1/i })
       .waitFor({ state: "visible" });

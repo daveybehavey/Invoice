@@ -1,6 +1,6 @@
 (() => {
   const { useNavigate } = ReactRouterDOM;
-  const { useEffect, useRef, useState } = React;
+  const { useEffect, useMemo, useRef, useState } = React;
   const requestIdentity = window.InvoiceRequestIdentity;
   if (!requestIdentity) {
     throw new Error(
@@ -148,8 +148,13 @@
   }
 
   const { applyBusinessProfileToDraft } = businessProfileUtils;
+  const clientMemoryUtils = window.InvoiceClientMemory;
+  const getClientDefaultNotes = clientMemoryUtils?.getClientDefaultNotes;
   const lineItemLibraryUtils = window.InvoiceLineItemLibrary;
   const getLineItemLibrary = lineItemLibraryUtils?.getLineItemLibrary;
+  const smartRateSuggestionUtils = window.InvoiceManualSmartRateSuggestions;
+  const rankSavedLineItems = smartRateSuggestionUtils?.rankSavedLineItems;
+  const buildSavedRateContextsByLineId = smartRateSuggestionUtils?.buildSavedRateContextsByLineId;
 
   const aiIntakeHelperUtils = window.InvoiceAIIntakeHelpers;
   if (!aiIntakeHelperUtils) {
@@ -184,6 +189,29 @@
     "Client asked for no tax this time.",
     "Payment due in 14 days."
   ].join("\n");
+
+  const formatSavedRateContext = (suggestion) => {
+    if (!suggestion || !Number.isFinite(suggestion.rate)) {
+      return "";
+    }
+    const rateLabel = `$${suggestion.rate.toFixed(2)}/hr`;
+    const clientName =
+      typeof suggestion.clientName === "string" ? suggestion.clientName.trim() : "";
+    const serviceDescription =
+      typeof suggestion.description === "string" ? suggestion.description.trim() : "";
+    const qtyLabel =
+      suggestion.qty === null || suggestion.qty === undefined || suggestion.qty === ""
+        ? ""
+        : `, qty ${suggestion.qty}`;
+    if (suggestion.clientMatch && clientName) {
+      return serviceDescription
+        ? `Last time you billed ${clientName} for ${serviceDescription}, the rate was ${rateLabel}${qtyLabel}.`
+        : `Last time you billed ${clientName}, the rate was ${rateLabel}${qtyLabel}.`;
+    }
+    return serviceDescription
+      ? `Similar saved service ${serviceDescription} used ${rateLabel}${qtyLabel}.`
+      : `Similar saved service used ${rateLabel}${qtyLabel}.`;
+  };
 
 function AIIntake() {
   const navigate = useNavigate();
@@ -398,6 +426,131 @@ function AIIntake() {
 
   const currentReviewClientName =
     typeof finishedInvoice?.customerName === "string" ? finishedInvoice.customerName.trim() : "";
+  const savedLineItemLibrary = useMemo(
+    () => (typeof getLineItemLibrary === "function" ? getLineItemLibrary() : []),
+    [authSession?.userId, authSession?.email]
+  );
+  const reviewRepeatWorkContext = useMemo(() => {
+    const currentNotes =
+      typeof finishedInvoice?.notes === "string" ? finishedInvoice.notes.trim() : "";
+    const normalizedCurrentNotes = currentNotes.toLowerCase();
+    const noteSuggestions = [];
+    const seenNoteTexts = new Set();
+    const rememberNoteSuggestion = (suggestion) => {
+      const normalizedText =
+        typeof suggestion?.text === "string" ? suggestion.text.trim().toLowerCase() : "";
+      if (!normalizedText || normalizedText === normalizedCurrentNotes || seenNoteTexts.has(normalizedText)) {
+        return;
+      }
+      seenNoteTexts.add(normalizedText);
+      noteSuggestions.push({
+        id: suggestion.id,
+        label: suggestion.label,
+        source: suggestion.source,
+        text: suggestion.text.trim()
+      });
+    };
+    const savedClientDefaultNotes =
+      typeof getClientDefaultNotes === "function" ? getClientDefaultNotes(currentReviewClientName) : "";
+    if (savedClientDefaultNotes) {
+      rememberNoteSuggestion({
+        id: "client-memory-note",
+        label: "Use prior client note",
+        source: "Saved in client memory",
+        text: savedClientDefaultNotes
+      });
+    }
+    recentClientContext.forEach((entry, index) => {
+      const noteText = typeof entry?.notes === "string" ? entry.notes.trim() : "";
+      if (!noteText) {
+        return;
+      }
+      rememberNoteSuggestion({
+        id: entry?.invoiceId ? `recent-note-${entry.invoiceId}` : `recent-note-${index}`,
+        label: entry?.invoiceNumber ? `Use note from ${entry.invoiceNumber}` : "Use recent invoice note",
+        source: entry?.invoiceNumber ? `Recent invoice ${entry.invoiceNumber}` : "Recent invoice",
+        text: noteText
+      });
+    });
+    const reviewLineItems = Array.isArray(finishedInvoice?.lineItems)
+      ? finishedInvoice.lineItems.map((item, index) => ({
+          id: item?.id ?? `review-line-${index}`,
+          description: item?.description ?? "",
+          quantity: item?.quantity,
+          amount: item?.amount,
+          unitPrice: item?.unitPrice,
+          rate: item?.unitPrice
+        }))
+      : [];
+    if (!currentReviewClientName || reviewLineItems.length === 0 || savedLineItemLibrary.length === 0) {
+      return {
+        matchedSavedItems: [],
+        rateContextByLineId: {},
+        noteSuggestions,
+        currentNotes
+      };
+    }
+    const matchedSavedItems =
+      typeof rankSavedLineItems === "function"
+        ? rankSavedLineItems({
+            billToDetails: currentReviewClientName,
+            lineItems: reviewLineItems,
+            savedLineItemLibrary
+          })
+            .filter(({ clientMatch, serviceMatchScore }) => clientMatch || serviceMatchScore > 0)
+            .slice(0, 3)
+        : [];
+    const rawRateContexts =
+      typeof buildSavedRateContextsByLineId === "function"
+        ? buildSavedRateContextsByLineId({
+            billToDetails: currentReviewClientName,
+            lineItems: reviewLineItems,
+            savedLineItemLibrary,
+            includeRatedLines: true
+          })
+        : {};
+    const rateContextByLineId = reviewLineItems.reduce((accumulator, item) => {
+      const suggestion = rawRateContexts?.[item.id];
+      if (suggestion) {
+        const savedDescription =
+          typeof suggestion.description === "string" ? suggestion.description.trim() : "";
+        const currentDescription =
+          typeof item.description === "string" ? item.description.trim() : "";
+        accumulator[item.id] = {
+          currentDescription,
+          currentRateText: Number.isFinite(item.unitPrice) ? `${formatMoney(item.unitPrice)}/hr` : "",
+          currentQuantityText: Number.isFinite(item.quantity) ? String(item.quantity) : "",
+          currentLaborMetaText:
+            Number.isFinite(item.quantity) &&
+            Number.isFinite(item.unitPrice) &&
+            Number.isFinite(item.amount)
+              ? `${formatLaborDuration(item.quantity)} × ${formatMoney(item.unitPrice)}/hr • ${formatMoney(item.amount)}`
+              : "",
+          savedDescription,
+          canApplySavedWording:
+            Boolean(savedDescription) &&
+            savedDescription.toLowerCase() !== currentDescription.toLowerCase(),
+          text: formatSavedRateContext(suggestion),
+          suggestion
+        };
+      }
+      return accumulator;
+    }, {});
+    return {
+      matchedSavedItems,
+      rateContextByLineId,
+      noteSuggestions,
+      currentNotes
+    };
+  }, [
+    buildSavedRateContextsByLineId,
+    currentReviewClientName,
+    finishedInvoice,
+    getClientDefaultNotes,
+    recentClientContext,
+    rankSavedLineItems,
+    savedLineItemLibrary
+  ]);
 
   useEffect(() => {
     if (!currentReviewClientName) {
@@ -650,6 +803,109 @@ function AIIntake() {
       },
       { durationMs: 9000 }
     );
+  };
+
+  const handleApplySavedWording = (lineItemId, savedDescription) => {
+    const normalizedDescription =
+      typeof savedDescription === "string" ? savedDescription.trim() : "";
+    if (!finishedInvoice || !lineItemId || !normalizedDescription) {
+      return;
+    }
+    const previousInvoice = cloneJson(finishedInvoice);
+    const nextLineItems = (Array.isArray(previousInvoice.lineItems) ? previousInvoice.lineItems : []).map(
+      (lineItem) => {
+        if (lineItem?.id !== lineItemId) {
+          return lineItem;
+        }
+        return {
+          ...lineItem,
+          description: normalizedDescription
+        };
+      }
+    );
+    const targetLine = nextLineItems.find((lineItem) => lineItem?.id === lineItemId);
+    const previousLine = (Array.isArray(previousInvoice.lineItems) ? previousInvoice.lineItems : []).find(
+      (lineItem) => lineItem?.id === lineItemId
+    );
+    if (!targetLine || !previousLine) {
+      return;
+    }
+    if ((previousLine.description ?? "").trim() === normalizedDescription) {
+      showBillieStatus({ kind: "info", text: "Saved wording already matches this draft line" }, { durationMs: 4000 });
+      return;
+    }
+    const nextInvoice = {
+      ...previousInvoice,
+      lineItems: nextLineItems
+    };
+    setFinishedInvoice(nextInvoice);
+    setBillieUndoState({
+      previousInvoice,
+      changedLineItemIds: [lineItemId],
+      changedLineItemDescriptions: [normalizedDescription]
+    });
+    setBillieChangePreview(buildBillieChangePreview(previousInvoice, nextInvoice));
+    setTransientBillieHighlights({
+      changedLineItemIds: [lineItemId],
+      changedLineItemDescriptions: [normalizedDescription]
+    });
+    appendSummaryMessage(
+      buildSummaryText(
+        nextInvoice,
+        openDecisions,
+        unparsedLines.length,
+        outputQuality?.blockerCount ?? 0
+      ),
+      buildReviewPayload(
+        nextInvoice,
+        openDecisions,
+        unparsedLines,
+        lastTranscriptRef.current,
+        outputQuality ?? null,
+        structuredInvoice
+      )
+    );
+    showBillieStatus({ kind: "safe", text: "Numbers unchanged" }, { durationMs: 9000 });
+  };
+
+  const handleApplySavedNotes = (nextNotesText) => {
+    const normalizedNotes = typeof nextNotesText === "string" ? nextNotesText.trim() : "";
+    if (!finishedInvoice || !normalizedNotes) {
+      return;
+    }
+    const previousInvoice = cloneJson(finishedInvoice);
+    if ((previousInvoice.notes ?? "").trim() === normalizedNotes) {
+      showBillieStatus({ kind: "info", text: "Saved notes already match this draft" }, { durationMs: 4000 });
+      return;
+    }
+    const nextInvoice = {
+      ...previousInvoice,
+      notes: normalizedNotes
+    };
+    setFinishedInvoice(nextInvoice);
+    setBillieUndoState({
+      previousInvoice,
+      changedLineItemIds: [],
+      changedLineItemDescriptions: []
+    });
+    setBillieChangePreview(buildBillieChangePreview(previousInvoice, nextInvoice));
+    appendSummaryMessage(
+      buildSummaryText(
+        nextInvoice,
+        openDecisions,
+        unparsedLines.length,
+        outputQuality?.blockerCount ?? 0
+      ),
+      buildReviewPayload(
+        nextInvoice,
+        openDecisions,
+        unparsedLines,
+        lastTranscriptRef.current,
+        outputQuality ?? null,
+        structuredInvoice
+      )
+    );
+    showBillieStatus({ kind: "safe", text: "Numbers unchanged" }, { durationMs: 9000 });
   };
 
   const handleUndoBilliePatch = () => {
@@ -1247,7 +1503,7 @@ function AIIntake() {
       structuredInvoice?.customerName ??
       followUp?.customerName ??
       "",
-    lineItemLibrary: typeof getLineItemLibrary === "function" ? getLineItemLibrary() : [],
+    lineItemLibrary: savedLineItemLibrary,
     formatRateToken
   });
 
@@ -2000,7 +2256,10 @@ function AIIntake() {
                       recentlyChangedDescriptions={recentlyChangedLines.descriptions}
                       billieStatus={billieStatus}
                       recentClientContext={recentClientContext}
+                      repeatWorkSuggestions={reviewRepeatWorkContext}
                       submitUserMessage={submitUserMessage}
+                      onApplySavedWording={handleApplySavedWording}
+                      onApplySavedNotes={handleApplySavedNotes}
                       onBillieLineRefine={refineBillieLineItem}
                       onBillieNotesRefine={refineBillieNotes}
                     />

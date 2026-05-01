@@ -1,6 +1,6 @@
 # NoteBill V2 Roadmap
 
-Updated: April 27, 2026
+Updated: May 1, 2026
 Status: planning draft. Do not let this expand the current Google Play review scope.
 
 Related strategy: see `docs/revenue-roadmap.md` for the larger path from tester-ready product to paid indie business.
@@ -24,7 +24,9 @@ The business bet is that users will pay when this loop saves repeated admin time
 - Manual editing also includes lightweight subscription/retainer note templates for recurring service plans.
 - Manual editing also includes lightweight templates by trade for common service starting points.
 - Manual editing also includes voice-note transcription, receipt/expense capture, and export/share packs for faster mobile capture and sharing.
+- Manual editing now surfaces recommended saved work, same-client saved service matches, and explicit "last time you billed..." rate context without changing money automatically.
 - The import screen explicitly supports legacy files and keeps imported text editable for Billie-assisted cleanup later.
+- Intake review now surfaces repeat-work cues before draft generation, including current parsed rate versus prior saved rate context for matched work.
 - Invoice Library includes a browser-notification foundation for reminder alerts and test reminders.
 - Invoice Library includes reminder automation presets for gentler, standard, and firmer follow-up timing.
 - Invoice Library follow-up reminders include a copyable reminder note preview for quick outreach.
@@ -108,6 +110,8 @@ Current trust/control baseline:
 ## V2.1 Candidate: Billie Workspace
 Goal: make Billie feel like a co-pilot inside the invoice workspace, not a separate chat box.
 
+Current status: partially implemented. Persistent workspace composer, action chips, safe wording rewrites, undo, blocked money-edit handling, and transient change highlight are live. The remaining gap is making the workspace feel more unified and deliberate across intake and manual review.
+
 Guardrails:
 - Draft remains the only source of truth.
 - Billie applies validated text/presentation patches only.
@@ -145,6 +149,8 @@ Guardrails:
 
 ## V2.3 Candidate: Service Memory And Repeat Work
 Goal: make NoteBill faster and more useful for repeat customers without silently changing money.
+
+Current status: partially implemented. Saved service catalog, same-client/manual suggestions, explicit rate suggestion context, and intake review repeat-work cues are live. The remaining work is to make recurring and repeat-work choices feel more deliberate across the full loop.
 
 First slices:
 - Suggest prior service wording for the same client.

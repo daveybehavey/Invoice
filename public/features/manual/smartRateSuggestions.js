@@ -71,7 +71,7 @@
         (score, token) => (lineTokenSet.has(token) ? score + 1 : score),
         0
       );
-      if (!clientMatch && overlap <= 0) {
+      if (overlap <= 0) {
         continue;
       }
       const updatedAtTs = Number.parseInt(
@@ -89,6 +89,12 @@
           usageCount: parseUsageCount(entry?.usageCount)
         }),
         description: typeof entry?.description === "string" ? entry.description.trim() : "",
+        qty:
+          entry?.qty === null || entry?.qty === undefined || entry?.qty === ""
+            ? ""
+            : String(entry.qty).trim(),
+        clientName:
+          typeof entry?.clientName === "string" ? entry.clientName.trim() : "",
         updatedAtTs: Number.isFinite(updatedAtTs) ? updatedAtTs : 0
       };
       if (!bestMatch) {
@@ -165,14 +171,19 @@
       });
   };
 
-  const buildLineRateSuggestionsByLineId = ({ billToDetails, lineItems, savedLineItemLibrary }) => {
+  const buildSavedRateContextsByLineId = ({
+    billToDetails,
+    lineItems,
+    savedLineItemLibrary,
+    includeRatedLines = false
+  }) => {
     const currentClientName = extractClientNameFromBillTo(billToDetails);
     const suggestions = {};
     (Array.isArray(lineItems) ? lineItems : []).forEach((item) => {
       if (!item?.id) {
         return;
       }
-      if (parsePositiveRate(item?.rate)) {
+      if (!includeRatedLines && parsePositiveRate(item?.rate ?? item?.unitPrice)) {
         return;
       }
       const description = typeof item?.description === "string" ? item.description.trim() : "";
@@ -191,8 +202,15 @@
     return suggestions;
   };
 
+  const buildLineRateSuggestionsByLineId = (options) =>
+    buildSavedRateContextsByLineId({
+      ...options,
+      includeRatedLines: false
+    });
+
   globalScope.InvoiceManualSmartRateSuggestions = {
     rankSavedLineItems,
-    buildLineRateSuggestionsByLineId
+    buildLineRateSuggestionsByLineId,
+    buildSavedRateContextsByLineId
   };
 })(typeof window !== "undefined" ? window : globalThis);

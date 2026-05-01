@@ -1,6 +1,6 @@
 # NoteBill Now / Next / Later Checklist
 
-Updated: April 27, 2026
+Updated: May 1, 2026
 Purpose: Keep execution priority stable and reduce planning drift.
 
 ## Now (Do First)
@@ -74,12 +74,17 @@ Purpose: Keep execution priority stable and reduce planning drift.
 ## Later (Higher Risk / Larger Scope)
 - [ ] Revenue roadmap experiments: pricing page copy, upgrade moments, and paid-plan boundaries.
 - [ ] Service memory and repeat-work suggestions.
+  - Partial status: saved service catalog, same-client/manual suggestions, prior-rate context, and intake review repeat-work cues are live.
 - [ ] Billie Workspace as a guarded co-pilot surface.
+  - Partial status: persistent workspace composer, action chips, safe wording rewrites, undo, blocked money edits, and transient change highlight are live.
 - [ ] Layout Studio Lite (bounded invoice presentation controls, no full freeform canvas).
+  - Partial status: style presets, accent color, spacing density, header layout, logo visibility, and notes visibility are already shipping in manual edit.
 - [ ] Production observability dashboards + alerts.
+  - Partial status: diagnostics, revenue-signal counters, and paid-plan readiness recommendations are live; richer dashboarding and alerting are still open.
 - [ ] Offline/background sync + conflict handling.
 - [ ] iOS release track (requires Apple developer + macOS build path).
 - [ ] Upload old invoice and AI-edit (high variance ingestion).
+  - Partial status: legacy import, editable imported text, and Billie-assisted cleanup groundwork are live; richer old-invoice ingestion is still open.
 
 ## Scope Guardrails
 - Do not weaken money guardrails to speed UX.

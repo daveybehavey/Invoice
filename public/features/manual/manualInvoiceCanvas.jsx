@@ -240,6 +240,11 @@
     return String(hours);
   };
 
+  const EMPTY_BILLIE_CHANGE_HIGHLIGHT = {
+    lineItemIds: [],
+    notes: false
+  };
+
 function ManualInvoiceCanvas() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -344,6 +349,7 @@ function ManualInvoiceCanvas() {
     changePreviewCount: 0,
     timingSummary: ""
   });
+  const [billieChangeHighlight, setBillieChangeHighlight] = useState(EMPTY_BILLIE_CHANGE_HIGHLIGHT);
 
   useEffect(() => {
     if (searchParams.get("source") === "import") {
@@ -366,6 +372,7 @@ function ManualInvoiceCanvas() {
       : "";
   const saveTimeoutRef = useRef(null);
   const clearStatusTimeoutRef = useRef(null);
+  const billieChangeHighlightTimeoutRef = useRef(null);
   const draftStatusLabel = "Draft restored";
   const rankedSavedLineItems = useMemo(
     () =>
@@ -385,6 +392,17 @@ function ManualInvoiceCanvas() {
       }),
     [billToDetails, lineItems, savedLineItemLibrary]
   );
+  const recommendedSavedLineItems = useMemo(
+    () =>
+      rankedSavedLineItems
+        .filter(({ clientMatch, serviceMatchScore }) => clientMatch || serviceMatchScore > 0)
+        .slice(0, 3),
+    [rankedSavedLineItems]
+  );
+  const highlightedLineItemIds = useMemo(
+    () => new Set(billieChangeHighlight.lineItemIds),
+    [billieChangeHighlight.lineItemIds]
+  );
 
   useEffect(() => {
     const notice = readBillingNoticeFromUrl();
@@ -397,6 +415,15 @@ function ManualInvoiceCanvas() {
     writeBillieWorkspaceInstruction(billieWorkspaceInstruction);
   }, [billieWorkspaceInstruction]);
 
+  useEffect(
+    () => () => {
+      if (billieChangeHighlightTimeoutRef.current) {
+        window.clearTimeout(billieChangeHighlightTimeoutRef.current);
+      }
+    },
+    []
+  );
+
   const activePreset = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.default;
   const activeSpacing = SPACING_DENSITY_PRESETS[spacingDensity] ?? SPACING_DENSITY_PRESETS.balanced;
 
@@ -406,6 +433,46 @@ function ManualInvoiceCanvas() {
   };
 
   const formatMoney = (value) => `$${value.toFixed(2)}`;
+  const triggerBillieChangeHighlight = ({ lineItemIds = [], notes: highlightNotes = false }) => {
+    if (billieChangeHighlightTimeoutRef.current) {
+      window.clearTimeout(billieChangeHighlightTimeoutRef.current);
+    }
+    if (!lineItemIds.length && !highlightNotes) {
+      setBillieChangeHighlight(EMPTY_BILLIE_CHANGE_HIGHLIGHT);
+      billieChangeHighlightTimeoutRef.current = null;
+      return;
+    }
+    setBillieChangeHighlight({
+      lineItemIds,
+      notes: highlightNotes
+    });
+    billieChangeHighlightTimeoutRef.current = window.setTimeout(() => {
+      setBillieChangeHighlight(EMPTY_BILLIE_CHANGE_HIGHLIGHT);
+      billieChangeHighlightTimeoutRef.current = null;
+    }, 1800);
+  };
+  const formatSavedRateContext = (suggestion) => {
+    if (!suggestion || !Number.isFinite(suggestion.rate)) {
+      return "";
+    }
+    const rateLabel = `$${suggestion.rate.toFixed(2)}/hr`;
+    const clientName =
+      typeof suggestion.clientName === "string" ? suggestion.clientName.trim() : "";
+    const serviceDescription =
+      typeof suggestion.description === "string" ? suggestion.description.trim() : "";
+    const qtyLabel =
+      suggestion.qty === null || suggestion.qty === undefined || suggestion.qty === ""
+        ? ""
+        : `, qty ${suggestion.qty}`;
+    if (suggestion.clientMatch && clientName) {
+      return serviceDescription
+        ? `Last time you billed ${clientName} for ${serviceDescription}, the rate was ${rateLabel}${qtyLabel}.`
+        : `Last time you billed ${clientName}, the rate was ${rateLabel}${qtyLabel}.`;
+    }
+    return serviceDescription
+      ? `Similar saved service ${serviceDescription} used ${rateLabel}${qtyLabel}.`
+      : `Similar saved service used ${rateLabel}${qtyLabel}.`;
+  };
   const getPrimaryBillToName = (value) => {
     if (typeof value !== "string") {
       return "";
@@ -1070,20 +1137,36 @@ function ManualInvoiceCanvas() {
   };
 
   const applyRewriteChanges = ({ lineItems: rewrittenLines, notes: rewrittenNotes, mode }) => {
+    const changedLineItemIds = [];
     if (Array.isArray(rewrittenLines) && rewrittenLines.length > 0) {
-      setLineItems((prev) =>
-        prev.map((item, index) => {
-          const match =
-            rewrittenLines.find((line) => line.id && line.id === item.id) ?? rewrittenLines[index];
-          if (match && typeof match.description === "string") {
-            return { ...item, description: polishLineItemDescription(match.description) };
+      const nextLineItems = lineItems.map((item, index) => {
+        const match =
+          rewrittenLines.find((line) => line.id && line.id === item.id) ?? rewrittenLines[index];
+        if (match && typeof match.description === "string") {
+          const nextDescription = polishLineItemDescription(match.description);
+          if (nextDescription !== item.description) {
+            changedLineItemIds.push(item.id);
+            return { ...item, description: nextDescription };
           }
-          return item;
-        })
-      );
+        }
+        return item;
+      });
+      if (changedLineItemIds.length > 0) {
+        setLineItems(nextLineItems);
+      }
     }
-    if ((mode === "full" || mode === "notes") && typeof rewrittenNotes === "string") {
+    const notesChanged =
+      (mode === "full" || mode === "notes") &&
+      typeof rewrittenNotes === "string" &&
+      rewrittenNotes !== notes;
+    if (notesChanged) {
       setNotes(rewrittenNotes);
+    }
+    if (changedLineItemIds.length > 0 || notesChanged) {
+      triggerBillieChangeHighlight({
+        lineItemIds: changedLineItemIds,
+        notes: notesChanged
+      });
     }
   };
 
@@ -2157,8 +2240,19 @@ function ManualInvoiceCanvas() {
                 {lineItems.map((item, index) => {
                   const rateSuggestion = item?.id ? lineRateSuggestionsByLineId[item.id] : null;
                   const hasAmount = item.qty !== "" && item.rate !== "";
+                  const lineItemHighlighted = highlightedLineItemIds.has(item.id);
+                  const rateSuggestionContext = formatSavedRateContext(rateSuggestion);
                   return (
-                    <div key={`${item.id}-mobile`} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+                    <div
+                      key={`${item.id}-mobile`}
+                      data-testid={`manual-line-item-${item.id}`}
+                      data-billie-highlight={lineItemHighlighted ? "true" : "false"}
+                      className={`rounded-2xl border p-3 transition-colors duration-500 ${
+                        lineItemHighlighted
+                          ? "border-emerald-300 bg-emerald-50/80 shadow-sm"
+                          : "border-slate-200 bg-slate-50/80"
+                      }`}
+                    >
                       <div className="flex items-center justify-between gap-2">
                         <p className={`${activePreset.textClass} ${activePreset.labelClass}`}>
                           Line {index + 1}
@@ -2208,6 +2302,14 @@ function ManualInvoiceCanvas() {
                       </div>
                       {rateSuggestion ? (
                         <div className="mt-3 flex flex-wrap items-center gap-2">
+                          {rateSuggestionContext ? (
+                            <p
+                              className="w-full text-[11px] text-slate-500"
+                              data-testid={`manual-rate-memory-${item.id}`}
+                            >
+                              {rateSuggestionContext}
+                            </p>
+                          ) : null}
                           <button
                             type="button"
                             className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 transition hover:border-blue-300 hover:text-blue-900"
@@ -2263,8 +2365,17 @@ function ManualInvoiceCanvas() {
                   <tbody className="divide-y divide-slate-100">
                     {lineItems.map((item, index) => {
                       const rateSuggestion = item?.id ? lineRateSuggestionsByLineId[item.id] : null;
+                      const lineItemHighlighted = highlightedLineItemIds.has(item.id);
+                      const rateSuggestionContext = formatSavedRateContext(rateSuggestion);
                       return (
-                        <tr key={item.id} className="odd:bg-slate-50/70">
+                        <tr
+                          key={item.id}
+                          data-testid={`manual-line-item-${item.id}`}
+                          data-billie-highlight={lineItemHighlighted ? "true" : "false"}
+                          className={`transition-colors duration-500 ${
+                            lineItemHighlighted ? "bg-emerald-50/80" : "odd:bg-slate-50/70"
+                          }`}
+                        >
                           <td className="py-3 pr-3 pl-2 align-top">
                             <input
                               type="text"
@@ -2314,6 +2425,14 @@ function ManualInvoiceCanvas() {
                             />
                           {rateSuggestion ? (
                             <div className="mt-1 flex flex-wrap items-center gap-2">
+                              {rateSuggestionContext ? (
+                                <p
+                                  className="w-full text-[11px] text-slate-500"
+                                  data-testid={`manual-rate-memory-${item.id}`}
+                                >
+                                  {rateSuggestionContext}
+                                </p>
+                              ) : null}
                               <button
                                 type="button"
                                 className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 transition hover:border-blue-300 hover:text-blue-900"
@@ -2365,6 +2484,53 @@ function ManualInvoiceCanvas() {
               >
                 + Add line item
               </button>
+              {recommendedSavedLineItems.length > 0 ? (
+                <div
+                  className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3"
+                  data-testid="manual-recommended-saved-items"
+                >
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                      Recommended from saved work
+                    </p>
+                    <p className="text-xs text-emerald-900">
+                      Reuse a familiar service line without changing money automatically.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {recommendedSavedLineItems.map(({ entry, clientMatch, serviceMatchScore, usageCount }) => (
+                      <button
+                        key={`recommended-${entry.lookupKey}`}
+                        type="button"
+                        className="rounded-xl border border-emerald-200 bg-white px-3 py-2 text-left text-sm font-semibold text-slate-700 shadow-sm transition hover:border-emerald-300"
+                        onClick={() => handleInsertSavedLineItem(entry)}
+                        aria-label={`Insert recommended saved item ${entry.description}`}
+                      >
+                        <span className="block">{entry.description}</span>
+                        <span className="mt-1 block text-xs font-medium text-slate-500">
+                          {[entry.clientName || "", formatSavedItemUsage(usageCount)].filter(Boolean).join(" · ")}
+                        </span>
+                        {entry.qty || entry.rate ? (
+                          <span className="mt-1 block text-xs font-medium text-slate-500">
+                            {[entry.qty ? `Qty ${entry.qty}` : "", entry.rate ? `Rate $${entry.rate}` : ""]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        ) : null}
+                        {clientMatch ? (
+                          <span className="mt-1 inline-flex rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                            Client match
+                          </span>
+                        ) : serviceMatchScore > 0 ? (
+                          <span className="mt-1 inline-flex rounded-full border border-blue-300 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+                            Service match
+                          </span>
+                        ) : null}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {rankedSavedLineItems.length > 0 ? (
                 <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
                   <button
@@ -2386,6 +2552,9 @@ function ManualInvoiceCanvas() {
                           aria-label={`Insert saved item ${entry.description}`}
                         >
                           <span className="block">{entry.description}</span>
+                          <span className="mt-1 block text-xs font-medium text-slate-500">
+                            {[entry.clientName || "", formatSavedItemUsage(usageCount)].filter(Boolean).join(" · ")}
+                          </span>
                           {entry.qty || entry.rate ? (
                             <span className="mt-1 block text-xs font-medium text-slate-500">
                               {[entry.qty ? `Qty ${entry.qty}` : "", entry.rate ? `Rate $${entry.rate}` : ""]
@@ -2458,7 +2627,14 @@ function ManualInvoiceCanvas() {
               </div>
             </section>
 
-            <section className="space-y-2" data-notes-visible={notesVisible ? "true" : "false"}>
+            <section
+              className={`space-y-2 rounded-2xl transition-colors duration-500 ${
+                billieChangeHighlight.notes ? "bg-emerald-50/40" : ""
+              }`}
+              data-testid="manual-notes-section"
+              data-notes-visible={notesVisible ? "true" : "false"}
+              data-billie-highlight={billieChangeHighlight.notes ? "true" : "false"}
+            >
               <div className="flex items-center justify-between gap-3">
                 <p className={`${activePreset.textClass} ${activePreset.labelClass}`}>Notes / Terms</p>
                 <span
@@ -2594,7 +2770,11 @@ function ManualInvoiceCanvas() {
               </div>
               <textarea
                 rows={4}
-                className={`w-full resize-none ${notesVisible ? "bg-slate-50/70" : "border-dashed bg-slate-50/40"} ${activePreset.inputClass} ${activePreset.textClass}`}
+                className={`w-full resize-none transition-colors duration-500 ${
+                  notesVisible ? "bg-slate-50/70" : "border-dashed bg-slate-50/40"
+                } ${
+                  billieChangeHighlight.notes ? "border-emerald-300 bg-emerald-50/70" : ""
+                } ${activePreset.inputClass} ${activePreset.textClass}`}
                 placeholder="Thank you for your business"
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
