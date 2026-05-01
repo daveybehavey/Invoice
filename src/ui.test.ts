@@ -1598,16 +1598,77 @@ test("manual editor offers prior client notes without auto-filling them", async 
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
     await page.getByPlaceholder("Client Name").fill("Note Memory Client");
 
-    await page.getByText("Prior note for this client").waitFor({ state: "visible" });
+    await page.getByTestId("manual-note-suggestions-card").waitFor({ state: "visible" });
+    await page.getByText("Repeat-work notes").waitFor({ state: "visible" });
+    await page.getByText("Saved in client memory").waitFor({ state: "visible" });
+    await page.getByText("Saved client note", { exact: true }).waitFor({ state: "visible" });
     await page
       .getByText("Payment due on receipt. Thanks for trusting us with the work.")
       .waitFor({ state: "visible" });
     await expectValueEquals(page.getByPlaceholder("Thank you for your business"), "");
 
-    await page.getByRole("button", { name: "Use prior note" }).click();
+    await page.getByRole("button", { name: "Use saved client note" }).click();
     await expectValueEquals(
       page.getByPlaceholder("Thank you for your business"),
       "Payment due on receipt. Thanks for trusting us with the work."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor surfaces recent invoice note suggestions alongside saved client notes", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-manual-recent-note-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          name: "Repeat Note Client",
+          details: "Repeat Note Client",
+          defaultNotes: "Payment due on receipt.",
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/recent-context?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          matches: [
+            {
+              invoiceId: "prior-204",
+              invoiceNumber: "INV-204",
+              notes: "Please reference the April site walkthrough when sending payment."
+            }
+          ]
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Repeat Note Client");
+
+    await page.getByTestId("manual-note-suggestions-card").waitFor({ state: "visible" });
+    await page.getByText("Saved in client memory").waitFor({ state: "visible" });
+    await page.getByText("Recent invoice INV-204").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Use note from INV-204" }).click();
+
+    await expectValueEquals(
+      page.getByPlaceholder("Thank you for your business"),
+      "Please reference the April site walkthrough when sending payment."
+    );
+    await expectAttributeEquals(
+      page.getByTestId("manual-notes-section"),
+      "data-billie-highlight",
+      "true"
     );
   } finally {
     await context.close();
@@ -5528,6 +5589,13 @@ test("review details can apply a prior client note without changing numbers", as
   });
   const page = await context.newPage();
   try {
+    await page.route("**/api/invoices/recent-context?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ matches: [] })
+      });
+    });
     await openIntake(page);
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
@@ -5536,7 +5604,10 @@ test("review details can apply a prior client note without changing numbers", as
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
-    await page.getByText("Saved in client memory:").waitFor({ state: "visible" });
+    await page.getByText("Saved in client memory").waitFor({ state: "visible" });
+    await page
+      .getByRole("button", { name: "Use prior client note" })
+      .waitFor({ state: "visible" });
     await page
       .getByText("Payment due on receipt. Thanks for trusting us with the work.")
       .waitFor({ state: "visible" });
@@ -5553,6 +5624,77 @@ test("review details can apply a prior client note without changing numbers", as
     await page.getByTestId("review-apply-saved-note-client-memory-note").waitFor({
       state: "visible"
     });
+  } finally {
+    await context.close();
+  }
+});
+
+test("review details labels client-memory and recent invoice notes separately", async () => {
+  useMockResponses([
+    {
+      customerName: "Repeat Note Client",
+      workSessions: [
+        {
+          date: "Jan 10",
+          tasks: [{ description: "Faucet repair", hours: 1, rate: 90, amount: 90 }]
+        }
+      ],
+      materials: [],
+      notes: "Thanks."
+    },
+    emptyAudit()
+  ]);
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-review-note-labels-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          name: "Repeat Note Client",
+          details: "Repeat Note Client",
+          defaultNotes: "Payment due on receipt.",
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/recent-context?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          matches: [
+            {
+              invoiceId: "prior-205",
+              invoiceNumber: "INV-205",
+              notes: "Please reference the signed scope from April 12."
+            }
+          ]
+        })
+      });
+    });
+
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 30 fixed faucet 1h at $90/hr for Repeat Note Client.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /show review details/i }).click();
+
+    await page.getByText("Saved in client memory").waitFor({ state: "visible" });
+    await page.getByText("Recent invoice INV-205").waitFor({ state: "visible" });
+    await page
+      .getByRole("button", { name: "Use prior client note" })
+      .waitFor({ state: "visible" });
+    await page
+      .getByRole("button", { name: "Use note from INV-205" })
+      .waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -6463,4 +6605,25 @@ async function expectValueEquals(
   }
   const finalValue = await locator.inputValue();
   throw new Error(`Expected value to equal "${expectedValue}" but got "${finalValue}".`);
+}
+
+async function expectAttributeEquals(
+  locator: Locator,
+  attributeName: string,
+  expectedValue: string,
+  timeoutMs = 5000
+) {
+  await locator.waitFor({ state: "visible" });
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const currentValue = await locator.getAttribute(attributeName);
+    if (currentValue === expectedValue) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const finalValue = await locator.getAttribute(attributeName);
+  throw new Error(
+    `Expected attribute "${attributeName}" to equal "${expectedValue}" but got "${finalValue}".`
+  );
 }

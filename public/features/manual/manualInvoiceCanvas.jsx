@@ -365,6 +365,7 @@ function ManualInvoiceCanvas() {
   }, [searchParams]);
   const [savedLineItemLibrary, setSavedLineItemLibrary] = useState(() => getLineItemLibrary());
   const [clientMemoryList, setClientMemoryList] = useState(() => getClientMemory());
+  const [recentClientContext, setRecentClientContext] = useState([]);
   const [showSavedLineItems, setShowSavedLineItems] = useState(false);
   const clientPortalUrl =
     savedInvoiceId && portalAccessToken
@@ -569,7 +570,6 @@ function ManualInvoiceCanvas() {
   const primaryBillToName = getPrimaryBillToName(billToDetails);
   const clientMemoryItems = rankedSavedLineItems.filter(({ clientMatch }) => clientMatch).slice(0, 3);
   const clientDefaultNotes = getClientDefaultNotes(primaryBillToName);
-  const showClientDefaultNotes = Boolean(clientDefaultNotes) && !notes.trim();
   const normalizedBillToSearch = primaryBillToName.toLocaleLowerCase();
   const currentServiceMemoryCandidate = lineItems.find(
     (item) => `${item?.description ?? ""}`.trim() && `${item?.rate ?? ""}`.trim()
@@ -594,6 +594,82 @@ function ManualInvoiceCanvas() {
       return right.entry.updatedAt.localeCompare(left.entry.updatedAt);
     })
     .slice(0, 4);
+  const noteSuggestions = useMemo(() => {
+    const currentNotes = typeof notes === "string" ? notes.trim().toLowerCase() : "";
+    const seenNoteTexts = new Set();
+    const suggestions = [];
+    const rememberSuggestion = (suggestion) => {
+      const normalizedText =
+        typeof suggestion?.text === "string" ? suggestion.text.trim().toLowerCase() : "";
+      if (!normalizedText || normalizedText === currentNotes || seenNoteTexts.has(normalizedText)) {
+        return;
+      }
+      seenNoteTexts.add(normalizedText);
+      suggestions.push({
+        id: suggestion.id,
+        title: suggestion.title,
+        source: suggestion.source,
+        actionLabel: suggestion.actionLabel,
+        appliedMessage: suggestion.appliedMessage,
+        text: suggestion.text.trim()
+      });
+    };
+    if (clientDefaultNotes) {
+      rememberSuggestion({
+        id: "client-memory-note",
+        title: "Saved client note",
+        source: "Saved in client memory",
+        actionLabel: "Use saved client note",
+        appliedMessage: "Applied saved client note",
+        text: clientDefaultNotes
+      });
+    }
+    recentClientContext.forEach((entry, index) => {
+      const noteText = typeof entry?.notes === "string" ? entry.notes.trim() : "";
+      if (!noteText) {
+        return;
+      }
+      const invoiceNumber =
+        typeof entry?.invoiceNumber === "string" ? entry.invoiceNumber.trim() : "";
+      rememberSuggestion({
+        id: entry?.invoiceId ? `recent-note-${entry.invoiceId}` : `recent-note-${index}`,
+        title: invoiceNumber ? `Recent note from ${invoiceNumber}` : "Recent invoice note",
+        source: invoiceNumber ? `Recent invoice ${invoiceNumber}` : "Recent invoice",
+        actionLabel: invoiceNumber ? `Use note from ${invoiceNumber}` : "Use recent invoice note",
+        appliedMessage: invoiceNumber ? `Applied note from ${invoiceNumber}` : "Applied recent invoice note",
+        text: noteText
+      });
+    });
+    return suggestions;
+  }, [clientDefaultNotes, notes, recentClientContext]);
+  const hasNoteSuggestions = noteSuggestions.length > 0;
+
+  useEffect(() => {
+    if (!primaryBillToName) {
+      setRecentClientContext([]);
+      return undefined;
+    }
+    const abortController = new AbortController();
+    setRecentClientContext([]);
+    apiFetch(
+      `/api/invoices/recent-context?client=${encodeURIComponent(primaryBillToName)}&limit=3`,
+      { signal: abortController.signal }
+    )
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error || "Failed to load recent client context.");
+        }
+        setRecentClientContext(Array.isArray(payload?.matches) ? payload.matches : []);
+      })
+      .catch((error) => {
+        if (error?.name === "AbortError") {
+          return;
+        }
+        setRecentClientContext([]);
+      });
+    return () => abortController.abort();
+  }, [authSession?.userId, primaryBillToName]);
 
   const handleLineItemChange = (id, field, value) => {
     setLineItems((prev) =>
@@ -900,18 +976,21 @@ function ManualInvoiceCanvas() {
       `Applied suggested rate $${suggestion.rate.toFixed(2)}/hr (${matchLabel}${confidenceLabel})`
     );
   };
-  const handleApplyClientDefaultNotes = () => {
-    if (!clientDefaultNotes) {
+  const handleApplyNoteSuggestion = (suggestion) => {
+    const nextNotes = typeof suggestion?.text === "string" ? suggestion.text.trim() : "";
+    if (!nextNotes) {
       return;
     }
-    setNotes(clientDefaultNotes);
-    setTimedDraftStatus("Applied prior client note");
+    setNotes(nextNotes);
+    setNotesVisible(true);
+    triggerBillieChangeHighlight({ notes: true });
+    setTimedDraftStatus(suggestion.appliedMessage || "Applied saved note");
     void apiFetch("/api/telemetry/revenue-signals", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        event: "client_memory_reused",
-        source: "manual_client_note_reuse"
+        event: suggestion.id === "client-memory-note" ? "client_memory_reused" : "recent_note_reused",
+        source: suggestion.id === "client-memory-note" ? "manual_client_note_reuse" : "manual_recent_note_reuse"
       })
     }).catch(() => {});
   };
@@ -2653,22 +2732,46 @@ function ManualInvoiceCanvas() {
                   Notes stay editable here but are hidden from the invoice preview and PDF.
                 </p>
               )}
-              {showClientDefaultNotes ? (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 no-print">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
-                        Prior note for this client
-                      </p>
-                      <p className="mt-1 line-clamp-2 text-sm text-slate-700">{clientDefaultNotes}</p>
-                    </div>
-                    <button
-                      type="button"
-                      className="min-h-10 w-full rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300 sm:w-auto"
-                      onClick={handleApplyClientDefaultNotes}
-                    >
-                      Use prior note
-                    </button>
+              {hasNoteSuggestions ? (
+                <div
+                  className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 no-print"
+                  data-testid="manual-note-suggestions-card"
+                >
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                      Repeat-work notes
+                    </p>
+                    <p className="text-xs text-emerald-900">
+                      Reuse a saved client note or pull wording from recent invoices. Notes only change when you tap one.
+                    </p>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {noteSuggestions.map((suggestion) => (
+                      <div
+                        key={suggestion.id}
+                        className="rounded-xl border border-white/80 bg-white px-3 py-3 shadow-sm"
+                      >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                              {suggestion.source}
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-slate-800">
+                              {suggestion.title}
+                            </p>
+                            <p className="mt-1 text-sm text-slate-700">{suggestion.text}</p>
+                          </div>
+                          <button
+                            type="button"
+                            data-testid={`manual-apply-note-suggestion-${suggestion.id}`}
+                            className="min-h-10 w-full rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300 sm:w-auto"
+                            onClick={() => handleApplyNoteSuggestion(suggestion)}
+                          >
+                            {suggestion.actionLabel}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ) : null}
