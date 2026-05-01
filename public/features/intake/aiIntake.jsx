@@ -189,6 +189,74 @@
     "Client asked for no tax this time.",
     "Payment due in 14 days."
   ].join("\n");
+  const PAYMENT_TERM_LINE_PATTERN =
+    /^(due on receipt|payment due|payment is due|please remit payment|net\s*\d+|payable within)/i;
+  const PAYMENT_SCHEDULE_LINE_PATTERN =
+    /^(deposit:|payment schedule:|milestone\s*\d+|balance due|progress payment)/i;
+  const RETAINER_PLAN_LINE_PATTERN =
+    /^(retainer:|subscription:|monthly retainer|weekly retainer|on-call support)/i;
+  const TRADE_TEMPLATE_LINE_PATTERN =
+    /^(trade template:|plumbing scope:|electrical scope:|cleaning scope:|landscaping scope:|handyman scope:)/i;
+  const NOTE_MERGE_RULES = [
+    { id: "payment_term", pattern: PAYMENT_TERM_LINE_PATTERN },
+    { id: "payment_schedule", pattern: PAYMENT_SCHEDULE_LINE_PATTERN },
+    { id: "retainer", pattern: RETAINER_PLAN_LINE_PATTERN },
+    { id: "trade_template", pattern: TRADE_TEMPLATE_LINE_PATTERN }
+  ];
+  const normalizeNoteLine = (line) =>
+    String(line ?? "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+  const getStructuredNoteGroup = (line) => {
+    const normalizedLine = String(line ?? "").trim();
+    if (!normalizedLine) {
+      return "";
+    }
+    const matchingRule = NOTE_MERGE_RULES.find(({ pattern }) => pattern.test(normalizedLine));
+    return matchingRule?.id ?? "";
+  };
+  const mergeSuggestedNotes = (currentNotes, suggestedNotes) => {
+    const existing = typeof currentNotes === "string" ? currentNotes.trim() : "";
+    const incoming = typeof suggestedNotes === "string" ? suggestedNotes.trim() : "";
+    if (!incoming) {
+      return existing;
+    }
+    if (!existing) {
+      return incoming;
+    }
+    const normalizedExisting = existing.toLowerCase();
+    const normalizedIncoming = incoming.toLowerCase();
+    if (normalizedExisting === normalizedIncoming || normalizedExisting.includes(normalizedIncoming)) {
+      return existing;
+    }
+    const incomingLines = incoming
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const incomingGroups = new Set(incomingLines.map(getStructuredNoteGroup).filter(Boolean));
+    if (incomingGroups.size === 0) {
+      return `${existing}\n\n${incoming}`;
+    }
+    const nextLines = existing
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => {
+        const group = getStructuredNoteGroup(line);
+        return !group || !incomingGroups.has(group);
+      });
+    const seenLines = new Set(nextLines.map(normalizeNoteLine));
+    incomingLines.forEach((line) => {
+      const normalizedLine = normalizeNoteLine(line);
+      if (!normalizedLine || seenLines.has(normalizedLine)) {
+        return;
+      }
+      nextLines.push(line);
+      seenLines.add(normalizedLine);
+    });
+    return nextLines.join("\n");
+  };
 
   const formatSavedRateContext = (suggestion) => {
     if (!suggestion || !Number.isFinite(suggestion.rate)) {
@@ -891,7 +959,7 @@ function AIIntake() {
       return;
     }
     const nextNotes =
-      mode === "append" && currentNotes ? `${currentNotes}\n\n${incomingNotes}` : incomingNotes;
+      mode === "append" ? mergeSuggestedNotes(currentNotes, incomingNotes) : incomingNotes;
     const nextInvoice = {
       ...previousInvoice,
       notes: nextNotes

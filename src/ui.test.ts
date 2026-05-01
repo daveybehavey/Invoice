@@ -1728,6 +1728,48 @@ test("manual editor can append a suggested note into existing notes", async () =
   }
 });
 
+test("manual editor append upgrades structured payment-term notes instead of duplicating them", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-manual-structured-append-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/recent-context?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          matches: [
+            {
+              invoiceId: "prior-208",
+              invoiceNumber: "INV-208",
+              notes: "Payment due on receipt."
+            }
+          ]
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Structured Append Client");
+    const notesInput = page.getByPlaceholder("Thank you for your business");
+    await notesInput.fill("Payment due within 14 days.\nCustomer prefers text updates.");
+
+    await page
+      .getByTestId("manual-append-note-suggestion-recent-note-prior-208")
+      .click();
+    await expectValueEquals(
+      notesInput,
+      "Customer prefers text updates.\nPayment due on receipt."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor applies quick payment terms without duplicating old terms", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -5817,7 +5859,84 @@ test("review details can append a saved note without changing numbers", async ()
     await page.getByRole("button", { name: "Generate Invoice" }).click();
     await expectValueEquals(
       page.getByPlaceholder("Thank you for your business"),
-      "Customer prefers text updates.\n\nPayment due on receipt."
+      "Customer prefers text updates.\nPayment due on receipt."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("review details append upgrades structured note wording instead of stacking it", async () => {
+  useMockResponses([
+    {
+      customerName: "Structured Append Client",
+      workSessions: [
+        {
+          date: "Jan 10",
+          tasks: [{ description: "Faucet repair", hours: 1, rate: 90, amount: 90 }]
+        }
+      ],
+      materials: [],
+      notes: ""
+    },
+    emptyAudit()
+  ]);
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-review-structured-append-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          name: "Structured Append Client",
+          details: "Structured Append Client",
+          defaultNotes: "Customer prefers text updates.",
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/recent-context?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          matches: [
+            {
+              invoiceId: "prior-209",
+              invoiceNumber: "INV-209",
+              notes: "Payment due on receipt."
+            }
+          ]
+        })
+      });
+    });
+
+    await openIntake(page);
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 30 fixed faucet 1h at $90/hr for Structured Append Client.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /show review details/i }).click();
+
+    await page
+      .getByTestId("review-apply-saved-note-client-memory-note")
+      .click();
+    await page.locator("form.fixed").getByText("Numbers unchanged").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /show review details/i }).click();
+    await page
+      .getByTestId("review-append-saved-note-recent-note-prior-209")
+      .click();
+    await page.locator("form.fixed").getByText("Numbers unchanged").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Generate Invoice" }).click();
+    await expectValueEquals(
+      page.getByPlaceholder("Thank you for your business"),
+      "Customer prefers text updates.\nPayment due on receipt."
     );
   } finally {
     await context.close();
