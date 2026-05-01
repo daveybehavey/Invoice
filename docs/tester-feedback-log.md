@@ -12,6 +12,14 @@ Use this during Android closed testing. Keep each issue small and actionable.
 - Number of testers who completed core flow:
 - Feedback channels used: in-app Feedback page, email, direct message, or other
 
+## Daily Snapshot
+
+Use one short row per day during the active closed-test window.
+
+| Date | Active Play build/version | New feedback count | New blocker/major count | Main pattern | Action taken |
+| --- | --- | ---: | ---: | --- | --- |
+|  |  |  |  |  |  |
+
 ## Workblock Rollup
 
 Use this to see where testers are getting stuck without rereading every note.
@@ -73,3 +81,4 @@ Can reproduce? Yes / No / Not sure
 - Batch minor copy/layout issues unless they affect the primary mobile path.
 - Keep screenshots with the issue ID when possible.
 - If three testers hit the same minor issue, treat it as a major clarity issue.
+- If no blocker or major issue appears, prefer keeping the tested build stable while the 14-day clock runs.

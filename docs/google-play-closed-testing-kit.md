@@ -16,6 +16,42 @@ Use these blocks to keep the test round tidy.
 4. Feedback triage: log issues in `docs/tester-feedback-log.md`, grouped by workblock and severity.
 5. Fix pass: fix blockers and major trust issues first; batch minor polish unless it hides a primary action.
 
+## While The Clock Is Running
+
+If testers are already opted in and the 14-day window is active, default to operational work instead of broad product changes.
+
+Good use of the waiting window:
+
+1. Watch for real-device feedback and log it quickly.
+2. Keep Play Console metadata, release notes, and reviewer answers current.
+3. Prepare the next higher-version Android bundle so a fast resubmission is ready if Play rejects an older build.
+4. Tighten tester instructions, triage rules, and production-access answers.
+5. Fix only blockers, major trust issues, or Play-review-specific problems.
+
+Avoid during the waiting window:
+
+1. Broad UI rewrites.
+2. New workflow branches that testers are not already using.
+3. Risky refactors that churn the tested surface.
+4. Shipping untested feature ideas just to stay busy.
+
+## Daily Closed-Test Loop
+
+Use this once per day while the test is active:
+
+1. Confirm the active Play build/version and whether any review warnings appeared.
+2. Check whether new tester feedback arrived through the in-app Feedback path, email, or direct messages.
+3. Log every issue in `docs/tester-feedback-log.md` with workblock and severity.
+4. Update pass counts in the workblock rollup so patterns show up early.
+5. If a blocker or major trust issue appears, decide whether it is worth breaking the no-churn rule.
+
+Escalate immediately if any of these happen:
+
+1. Testers cannot install or open the app.
+2. Testers cannot create, save, reopen, or export an invoice.
+3. Money, due dates, or invoice status feel untrustworthy.
+4. Play Console flags a policy, target SDK, or app-access blocker.
+
 ## What Google currently requires
 
 If your developer account is a **personal** account created after **November 13, 2023**, Google currently requires:
