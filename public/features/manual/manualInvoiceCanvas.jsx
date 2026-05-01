@@ -223,6 +223,22 @@
   const applyTradeTemplateToNotes = (currentNotes, templateText) => {
     return applyStructuredNoteToNotes(currentNotes, templateText, TRADE_TEMPLATE_LINE_PATTERN);
   };
+  const appendSuggestedNotes = (currentNotes, suggestedNotes) => {
+    const existing = typeof currentNotes === "string" ? currentNotes.trim() : "";
+    const incoming = typeof suggestedNotes === "string" ? suggestedNotes.trim() : "";
+    if (!incoming) {
+      return existing;
+    }
+    if (!existing) {
+      return incoming;
+    }
+    const normalizedExisting = existing.toLowerCase();
+    const normalizedIncoming = incoming.toLowerCase();
+    if (normalizedExisting === normalizedIncoming || normalizedExisting.includes(normalizedIncoming)) {
+      return existing;
+    }
+    return `${existing}\n\n${incoming}`;
+  };
   const addDaysToIsoDate = (dateValue, days) => {
     const baseDate = typeof dateValue === "string" && dateValue.trim() ? new Date(`${dateValue}T00:00:00`) : new Date();
     if (Number.isNaN(baseDate.getTime())) {
@@ -611,6 +627,7 @@ function ManualInvoiceCanvas() {
         source: suggestion.source,
         actionLabel: suggestion.actionLabel,
         appliedMessage: suggestion.appliedMessage,
+        appendedMessage: suggestion.appendedMessage,
         text: suggestion.text.trim()
       });
     };
@@ -621,6 +638,7 @@ function ManualInvoiceCanvas() {
         source: "Saved in client memory",
         actionLabel: "Use saved client note",
         appliedMessage: "Applied saved client note",
+        appendedMessage: "Added saved client note",
         text: clientDefaultNotes
       });
     }
@@ -637,6 +655,7 @@ function ManualInvoiceCanvas() {
         source: invoiceNumber ? `Recent invoice ${invoiceNumber}` : "Recent invoice",
         actionLabel: invoiceNumber ? `Use note from ${invoiceNumber}` : "Use recent invoice note",
         appliedMessage: invoiceNumber ? `Applied note from ${invoiceNumber}` : "Applied recent invoice note",
+        appendedMessage: invoiceNumber ? `Added note from ${invoiceNumber}` : "Added recent invoice note",
         text: noteText
       });
     });
@@ -981,6 +1000,11 @@ function ManualInvoiceCanvas() {
     if (!nextNotes) {
       return;
     }
+    const currentNotes = typeof notes === "string" ? notes.trim() : "";
+    if (currentNotes === nextNotes) {
+      setTimedDraftStatus("Saved note already matches current notes");
+      return;
+    }
     setNotes(nextNotes);
     setNotesVisible(true);
     triggerBillieChangeHighlight({ notes: true });
@@ -991,6 +1015,33 @@ function ManualInvoiceCanvas() {
       body: JSON.stringify({
         event: suggestion.id === "client-memory-note" ? "client_memory_reused" : "recent_note_reused",
         source: suggestion.id === "client-memory-note" ? "manual_client_note_reuse" : "manual_recent_note_reuse"
+      })
+    }).catch(() => {});
+  };
+  const handleAppendNoteSuggestion = (suggestion) => {
+    const incomingNotes = typeof suggestion?.text === "string" ? suggestion.text.trim() : "";
+    if (!incomingNotes) {
+      return;
+    }
+    const currentNotes = typeof notes === "string" ? notes.trim() : "";
+    const mergedNotes = appendSuggestedNotes(currentNotes, incomingNotes);
+    if (mergedNotes === currentNotes) {
+      setTimedDraftStatus("That note is already included");
+      return;
+    }
+    setNotes(mergedNotes);
+    setNotesVisible(true);
+    triggerBillieChangeHighlight({ notes: true });
+    setTimedDraftStatus(suggestion.appendedMessage || "Added saved note");
+    void apiFetch("/api/telemetry/revenue-signals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: suggestion.id === "client-memory-note" ? "client_memory_reused" : "recent_note_reused",
+        source:
+          suggestion.id === "client-memory-note"
+            ? "manual_client_note_append"
+            : "manual_recent_note_append"
       })
     }).catch(() => {});
   };
@@ -2742,7 +2793,7 @@ function ManualInvoiceCanvas() {
                       Repeat-work notes
                     </p>
                     <p className="text-xs text-emerald-900">
-                      Reuse a saved client note or pull wording from recent invoices. Notes only change when you tap one.
+                      Reuse a saved client note or pull wording from recent invoices. Replace the current note or add more detail without touching totals.
                     </p>
                   </div>
                   <div className="mt-3 space-y-2">
@@ -2768,6 +2819,14 @@ function ManualInvoiceCanvas() {
                             onClick={() => handleApplyNoteSuggestion(suggestion)}
                           >
                             {suggestion.actionLabel}
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`manual-append-note-suggestion-${suggestion.id}`}
+                            className="min-h-10 w-full rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white sm:w-auto"
+                            onClick={() => handleAppendNoteSuggestion(suggestion)}
+                          >
+                            Add to current notes
                           </button>
                         </div>
                       </div>

@@ -1675,6 +1675,59 @@ test("manual editor surfaces recent invoice note suggestions alongside saved cli
   }
 });
 
+test("manual editor can append a suggested note into existing notes", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-manual-append-note-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          name: "Append Note Client",
+          details: "Append Note Client",
+          defaultNotes: "Payment due on receipt.",
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/recent-context?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          matches: [
+            {
+              invoiceId: "prior-206",
+              invoiceNumber: "INV-206",
+              notes: "Please include the gate code on arrival."
+            }
+          ]
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Append Note Client");
+    const notesInput = page.getByPlaceholder("Thank you for your business");
+    await notesInput.fill("Customer prefers text updates.");
+
+    await page
+      .getByTestId("manual-append-note-suggestion-recent-note-prior-206")
+      .click();
+    await expectValueEquals(
+      notesInput,
+      "Customer prefers text updates.\n\nPlease include the gate code on arrival."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor applies quick payment terms without duplicating old terms", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -5605,9 +5658,7 @@ test("review details can apply a prior client note without changing numbers", as
     await page.getByRole("button", { name: /show review details/i }).click();
 
     await page.getByText("Saved in client memory").waitFor({ state: "visible" });
-    await page
-      .getByRole("button", { name: "Use prior client note" })
-      .waitFor({ state: "visible" });
+    await page.getByTestId("review-apply-saved-note-client-memory-note").waitFor({ state: "visible" });
     await page
       .getByText("Payment due on receipt. Thanks for trusting us with the work.")
       .waitFor({ state: "visible" });
@@ -5689,12 +5740,85 @@ test("review details labels client-memory and recent invoice notes separately", 
 
     await page.getByText("Saved in client memory").waitFor({ state: "visible" });
     await page.getByText("Recent invoice INV-205").waitFor({ state: "visible" });
+    await page.getByTestId("review-apply-saved-note-client-memory-note").waitFor({ state: "visible" });
+    await page.getByTestId("review-apply-saved-note-recent-note-prior-205").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("review details can append a saved note without changing numbers", async () => {
+  useMockResponses([
+    {
+      customerName: "Append Note Client",
+      workSessions: [
+        {
+          date: "Jan 10",
+          tasks: [{ description: "Faucet repair", hours: 1, rate: 90, amount: 90 }]
+        }
+      ],
+      materials: [],
+      notes: ""
+    },
+    emptyAudit()
+  ]);
+
+  const context = await browser.newContext();
+    await context.addInitScript(() => {
+      const ownerId = "ui-review-append-note-owner";
+      window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          name: "Append Note Client",
+          details: "Append Note Client",
+          defaultNotes: "Customer prefers text updates.",
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/recent-context?*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          matches: [
+            {
+              invoiceId: "prior-207",
+              invoiceNumber: "INV-207",
+              notes: "Payment due on receipt."
+            }
+          ]
+        })
+      });
+    });
+
+    await openIntake(page);
     await page
-      .getByRole("button", { name: "Use prior client note" })
-      .waitFor({ state: "visible" });
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 30 fixed faucet 1h at $90/hr for Append Note Client.");
+    await page.getByRole("button", { name: "Build invoice" }).click();
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /show review details/i }).click();
+
     await page
-      .getByRole("button", { name: "Use note from INV-205" })
-      .waitFor({ state: "visible" });
+      .getByTestId("review-apply-saved-note-client-memory-note")
+      .click();
+    await page.locator("form.fixed").getByText("Numbers unchanged").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /show review details/i }).click();
+    await page
+      .getByTestId("review-append-saved-note-recent-note-prior-207")
+      .click();
+    await page.locator("form.fixed").getByText("Numbers unchanged").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Generate Invoice" }).click();
+    await expectValueEquals(
+      page.getByPlaceholder("Thank you for your business"),
+      "Customer prefers text updates.\n\nPayment due on receipt."
+    );
   } finally {
     await context.close();
   }

@@ -694,11 +694,21 @@
                         type="button"
                         data-testid={`review-apply-saved-note-${suggestion.id}`}
                         className="mt-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 shadow-sm transition hover:border-emerald-300 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:text-emerald-500"
-                        onClick={() => onApplySavedNotes?.(suggestion.text)}
+                        onClick={() => onApplySavedNotes?.(suggestion.text, "replace")}
                         disabled={isTyping}
                         aria-label={suggestion.label}
                       >
                         {suggestion.label}
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`review-append-saved-note-${suggestion.id}`}
+                        className="mt-2 ml-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
+                        onClick={() => onApplySavedNotes?.(suggestion.text, "append")}
+                        disabled={isTyping}
+                        aria-label={`Add note from ${suggestion.source.toLowerCase()} to current notes`}
+                      >
+                        Add to current notes
                       </button>
                     </div>
                   ))}

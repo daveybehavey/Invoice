@@ -868,19 +868,33 @@ function AIIntake() {
     showBillieStatus({ kind: "safe", text: "Numbers unchanged" }, { durationMs: 9000 });
   };
 
-  const handleApplySavedNotes = (nextNotesText) => {
-    const normalizedNotes = typeof nextNotesText === "string" ? nextNotesText.trim() : "";
-    if (!finishedInvoice || !normalizedNotes) {
+  const handleApplySavedNotes = (nextNotesText, mode = "replace") => {
+    const incomingNotes = typeof nextNotesText === "string" ? nextNotesText.trim() : "";
+    if (!finishedInvoice || !incomingNotes) {
       return;
     }
     const previousInvoice = cloneJson(finishedInvoice);
-    if ((previousInvoice.notes ?? "").trim() === normalizedNotes) {
+    const currentNotes = typeof previousInvoice.notes === "string" ? previousInvoice.notes.trim() : "";
+    const normalizedCurrentNotes = currentNotes.toLowerCase();
+    const normalizedIncomingNotes = incomingNotes.toLowerCase();
+    if (mode === "append") {
+      if (
+        normalizedCurrentNotes &&
+        (normalizedCurrentNotes === normalizedIncomingNotes ||
+          normalizedCurrentNotes.includes(normalizedIncomingNotes))
+      ) {
+        showBillieStatus({ kind: "info", text: "That note is already included" }, { durationMs: 4000 });
+        return;
+      }
+    } else if (currentNotes === incomingNotes) {
       showBillieStatus({ kind: "info", text: "Saved notes already match this draft" }, { durationMs: 4000 });
       return;
     }
+    const nextNotes =
+      mode === "append" && currentNotes ? `${currentNotes}\n\n${incomingNotes}` : incomingNotes;
     const nextInvoice = {
       ...previousInvoice,
-      notes: normalizedNotes
+      notes: nextNotes
     };
     setFinishedInvoice(nextInvoice);
     setBillieUndoState({
