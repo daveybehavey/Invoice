@@ -280,6 +280,32 @@
       ? `Similar saved service ${serviceDescription} used ${rateLabel}${qtyLabel}.`
       : `Similar saved service used ${rateLabel}${qtyLabel}.`;
   };
+  const buildBillieChangeSummary = (entries) => {
+    const previewEntries = Array.isArray(entries) ? entries : [];
+    let lineChangeCount = 0;
+    let notesUpdated = false;
+    previewEntries.forEach((entry) => {
+      const label = typeof entry?.label === "string" ? entry.label.trim().toLowerCase() : "";
+      if (!label) {
+        return;
+      }
+      if (label.includes("note")) {
+        notesUpdated = true;
+        return;
+      }
+      lineChangeCount += 1;
+    });
+    const parts = [];
+    if (lineChangeCount === 1) {
+      parts.push("1 line updated");
+    } else if (lineChangeCount > 1) {
+      parts.push(`${lineChangeCount} lines updated`);
+    }
+    if (notesUpdated) {
+      parts.push("notes updated");
+    }
+    return parts.length > 0 ? `Latest: ${parts.join(" + ")}` : "";
+  };
 
 function AIIntake() {
   const navigate = useNavigate();
@@ -1400,6 +1426,10 @@ function AIIntake() {
     ? "Show context details"
     : "Hide context details";
   const activeBillieStatus = billieStatus ?? { kind: "ready", text: "Billie ready" };
+  const billieChangeSummary = useMemo(
+    () => buildBillieChangeSummary(billieChangePreview),
+    [billieChangePreview]
+  );
   const billieStatusClass =
     activeBillieStatus.kind === "safe"
       ? "nb-assistant-chip nb-assistant-chip--safe"
@@ -2337,6 +2367,7 @@ function AIIntake() {
                       recentlyChangedLineIds={recentlyChangedLines.ids}
                       recentlyChangedDescriptions={recentlyChangedLines.descriptions}
                       billieStatus={billieStatus}
+                      billieChangeSummary={billieChangeSummary}
                       recentClientContext={recentClientContext}
                       repeatWorkSuggestions={reviewRepeatWorkContext}
                       submitUserMessage={submitUserMessage}
@@ -2569,6 +2600,14 @@ function AIIntake() {
                 </span>
                 {billieRefineSummaryLabel ? (
                   <span className="text-[11px] font-medium text-slate-500">{billieRefineSummaryLabel}</span>
+                ) : null}
+                {billieChangeSummary ? (
+                  <span
+                    className="text-[11px] font-medium text-slate-500"
+                    data-testid="intake-billie-change-summary"
+                  >
+                    {billieChangeSummary}
+                  </span>
                 ) : null}
                 {billieUndoState ? (
                   <button

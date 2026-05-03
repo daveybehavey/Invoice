@@ -37,6 +37,7 @@
     recentlyChangedLineIds,
     recentlyChangedDescriptions,
     billieStatus,
+    billieChangeSummary,
     recentClientContext,
     repeatWorkSuggestions,
     submitUserMessage,
@@ -362,6 +363,7 @@
               </div>
             ) : null}
             {billieStatus && !isCompactViewport ? (
+              <>
               <div
                 className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
                   billieStatus.kind === "safe"
@@ -383,6 +385,15 @@
                   </span>
                 ) : null}
               </div>
+              {billieChangeSummary ? (
+                <p
+                  className="mt-1 text-[11px] font-medium text-slate-500"
+                  data-testid="review-billie-change-summary"
+                >
+                  {billieChangeSummary}
+                </p>
+              ) : null}
+              </>
             ) : null}
             {showReviewSecondary && quickFixes.length > 0 && pendingDecisionCount === 0 ? (
               <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">

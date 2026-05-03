@@ -90,6 +90,32 @@
       billieTelemetryUtils.getRefineSummary("manual")
     );
   };
+  const buildBillieChangeSummary = (entries) => {
+    const previewEntries = Array.isArray(entries) ? entries : [];
+    let lineChangeCount = 0;
+    let notesUpdated = false;
+    previewEntries.forEach((entry) => {
+      const label = typeof entry?.label === "string" ? entry.label.trim().toLowerCase() : "";
+      if (!label) {
+        return;
+      }
+      if (label.includes("note")) {
+        notesUpdated = true;
+        return;
+      }
+      lineChangeCount += 1;
+    });
+    const parts = [];
+    if (lineChangeCount === 1) {
+      parts.push("1 line updated");
+    } else if (lineChangeCount > 1) {
+      parts.push(`${lineChangeCount} lines updated`);
+    }
+    if (notesUpdated) {
+      parts.push("notes updated");
+    }
+    return parts.length > 0 ? `Latest: ${parts.join(" + ")}` : "";
+  };
 
 function InspectorPanel({
   activeTab,
@@ -215,6 +241,7 @@ function InspectorPanel({
       instruction: `Refine line ${item.lineNumber} wording.`,
       helperText: item.description
     }));
+  const assistantChangeSummary = buildBillieChangeSummary(assistantChangePreview);
   const tabs = [
     { id: "style", label: "Style", content: "Style controls coming soon" },
     { id: "tone", label: "Tone", content: "Tone controls coming soon" },
@@ -1060,6 +1087,7 @@ function InspectorPanel({
       hasPendingEdit: Boolean(pendingAssistantEdit),
       canUndo: Boolean(assistantUndoState),
       changePreviewCount: assistantChangePreview.length,
+      changeSummary: assistantChangeSummary,
       timingSummary: assistantTimingSummary
     });
   }, [
@@ -1070,6 +1098,7 @@ function InspectorPanel({
     pendingAssistantEdit,
     assistantUndoState,
     assistantChangePreview,
+    assistantChangeSummary,
     assistantTimingSummary,
     onAssistantRuntimeChange
   ]);
@@ -1591,6 +1620,14 @@ function InspectorPanel({
             ) : null}
             {assistantTimingSummary ? (
               <p className="text-[11px] text-slate-500">{assistantTimingSummary}</p>
+            ) : null}
+            {assistantChangeSummary ? (
+              <p
+                className="text-[11px] font-medium text-slate-500"
+                data-testid="manual-billie-change-summary"
+              >
+                {assistantChangeSummary}
+              </p>
             ) : null}
             {assistantError ? <p className="text-xs text-rose-600">{assistantError}</p> : null}
             {assistantStatus && !assistantLoading ? <p className="text-xs text-slate-500">{assistantStatus}</p> : null}

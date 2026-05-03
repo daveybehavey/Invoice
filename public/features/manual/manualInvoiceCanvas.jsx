@@ -409,6 +409,7 @@ function ManualInvoiceCanvas() {
     hasPendingEdit: false,
     canUndo: false,
     changePreviewCount: 0,
+    changeSummary: "",
     timingSummary: ""
   });
   const [billieChangeHighlight, setBillieChangeHighlight] = useState(EMPTY_BILLIE_CHANGE_HIGHLIGHT);
@@ -1993,6 +1994,14 @@ function ManualInvoiceCanvas() {
                 {assistantWorkspaceRuntime.timingSummary ? (
                   <span className="text-[11px] font-medium text-slate-500">
                     {assistantWorkspaceRuntime.timingSummary}
+                  </span>
+                ) : null}
+                {assistantWorkspaceRuntime.changeSummary ? (
+                  <span
+                    className="text-[11px] font-medium text-slate-500"
+                    data-testid="manual-workspace-change-summary"
+                  >
+                    {assistantWorkspaceRuntime.changeSummary}
                   </span>
                 ) : null}
                 {billieWorkspaceExpanded && assistantWorkspaceRuntime.latestMessage ? (

@@ -2860,6 +2860,9 @@ test("manual billie routes notes wording requests through safe notes rewording",
           .querySelector('[data-testid="manual-notes-section"]')
           ?.getAttribute("data-billie-highlight") === "true"
     );
+    await page.getByTestId("manual-workspace-change-summary").getByText("Latest: notes updated").waitFor({
+      state: "visible"
+    });
     await expectValueEquals(
       page.getByPlaceholder("Thank you for your business"),
       "Payment due within 14 days of receipt."
