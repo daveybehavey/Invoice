@@ -436,6 +436,9 @@
                 </div>
                 {Object.entries(rateContextByLineId).length > 0 ? (
                   <div className="mt-3 space-y-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
+                      Matched draft lines
+                    </p>
                     {Object.entries(rateContextByLineId).map(([lineId, context]) => (
                       <div
                         key={`repeat-work-rate-${lineId}`}
@@ -480,6 +483,9 @@
                 ) : null}
                 {matchedSavedItems.length > 0 ? (
                   <div className="mt-3 flex flex-wrap gap-2">
+                    <p className="w-full text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
+                      Saved services
+                    </p>
                     {matchedSavedItems.map(({ entry, clientMatch, serviceMatchScore, usageCount }) => (
                       <div
                         key={`repeat-work-saved-${entry.lookupKey}`}
@@ -694,6 +700,9 @@
               </p>
               {noteSuggestions.length > 0 ? (
                 <div className="mt-3 space-y-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
+                    Suggested notes
+                  </p>
                   {noteSuggestions.map((suggestion) => (
                     <div
                       key={`${suggestion.id}-source`}

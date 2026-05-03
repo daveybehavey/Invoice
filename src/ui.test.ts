@@ -5620,6 +5620,8 @@ test("review details surfaces repeat-work memory without changing parsed draft a
     const repeatWorkCard = page.getByTestId("review-repeat-work-card");
     await repeatWorkCard.waitFor({ state: "visible" });
     await repeatWorkCard.getByText("Repeat work cues").waitFor({ state: "visible" });
+    await repeatWorkCard.getByText("Matched draft lines").waitFor({ state: "visible" });
+    await repeatWorkCard.getByText("Saved services").waitFor({ state: "visible" });
     await repeatWorkCard.getByText("Current draft rate: $90.00/hr · Qty 1").waitFor({
       state: "visible"
     });
@@ -5707,6 +5709,7 @@ test("review details can apply a prior client note without changing numbers", { 
     await page.getByRole("button", { name: /show review details/i }).click();
 
     await page.getByText("Saved in client memory").waitFor({ state: "visible" });
+    await page.getByText("Suggested notes").waitFor({ state: "visible" });
     await page.getByTestId("review-apply-saved-note-client-memory-note").waitFor({ state: "visible" });
     await page
       .getByText("Payment due on receipt. Thanks for trusting us with the work.")
