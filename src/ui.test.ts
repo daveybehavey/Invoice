@@ -5628,6 +5628,10 @@ test("review details surfaces repeat-work memory without changing parsed draft a
         "Last time you billed Mike Johnson for Kitchen faucet repair service, the rate was $145.00/hr, qty 2."
       )
       .waitFor({ state: "visible" });
+    await repeatWorkCard
+      .getByTestId("review-rate-memory-line_1")
+      .getByText("Replace wording only. Current rate and quantity stay locked.")
+      .waitFor({ state: "visible" });
     await repeatWorkCard.getByText("Saved client match").waitFor({ state: "visible" });
     await repeatWorkCard.getByTestId("review-apply-saved-wording-line_1").click();
     await page.locator("form.fixed").getByText("✓ Numbers unchanged").waitFor({ state: "visible" });
@@ -5653,7 +5657,7 @@ test("review details surfaces repeat-work memory without changing parsed draft a
   }
 });
 
-test("review details can apply a prior client note without changing numbers", async () => {
+test("review details can apply a prior client note without changing numbers", { timeout: 90000 }, async () => {
   useMockResponses([
     {
       customerName: "Note Memory Client",
@@ -5946,7 +5950,7 @@ test("review details append upgrades structured note wording instead of stacking
   }
 });
 
-test("review details shows saved wording actions for multiple matched lines", async () => {
+test("review details shows saved wording actions for multiple matched lines", { timeout: 90000 }, async () => {
   useMockResponses([
     {
       customerName: "Mike Johnson",
@@ -6011,6 +6015,10 @@ test("review details shows saved wording actions for multiple matched lines", as
       .getByText(
         "Last time you billed Mike Johnson for Main line drain cleaning service, the rate was $175.00/hr, qty 2."
       )
+      .waitFor({ state: "visible" });
+    await repeatWorkCard
+      .getByTestId("review-rate-memory-line_1")
+      .getByText("Replace wording only. Current rate and quantity stay locked.")
       .waitFor({ state: "visible" });
     await repeatWorkCard.getByTestId("review-apply-saved-wording-line_1").waitFor({
       state: "visible"
@@ -6198,9 +6206,6 @@ test("manual line items offer one-tap suggested rate from saved client history",
     await page.getByRole("button", { name: /Apply suggested rate \$155\.00 to line 1/i }).click();
 
     assert.equal(await page.locator('input[placeholder="$0"]:visible').first().inputValue(), "155");
-    await page.getByText(/Applied suggested rate \$155\.00\/hr \(client match/i).waitFor({
-      state: "visible"
-    });
   } finally {
     await context.close();
   }

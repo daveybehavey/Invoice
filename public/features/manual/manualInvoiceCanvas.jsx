@@ -2495,6 +2495,9 @@ function ManualInvoiceCanvas() {
                               {rateSuggestionContext}
                             </p>
                           ) : null}
+                          <p className="w-full text-[11px] text-slate-500">
+                            Rate only. Description and quantity stay as-is.
+                          </p>
                           <button
                             type="button"
                             className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 transition hover:border-blue-300 hover:text-blue-900"
@@ -2618,6 +2621,9 @@ function ManualInvoiceCanvas() {
                                   {rateSuggestionContext}
                                 </p>
                               ) : null}
+                              <p className="w-full text-[11px] text-slate-500">
+                                Rate only. Description and quantity stay as-is.
+                              </p>
                               <button
                                 type="button"
                                 className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 transition hover:border-blue-300 hover:text-blue-900"
@@ -2866,23 +2872,30 @@ function ManualInvoiceCanvas() {
                               {suggestion.title}
                             </p>
                             <p className="mt-1 text-sm text-slate-700">{suggestion.text}</p>
+                            <p className="mt-2 text-[11px] text-slate-500">
+                              Replace the current note or add this detail without touching totals.
+                            </p>
                           </div>
-                          <button
-                            type="button"
-                            data-testid={`manual-apply-note-suggestion-${suggestion.id}`}
-                            className="min-h-10 w-full rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300 sm:w-auto"
-                            onClick={() => handleApplyNoteSuggestion(suggestion)}
-                          >
-                            {suggestion.actionLabel}
-                          </button>
-                          <button
-                            type="button"
-                            data-testid={`manual-append-note-suggestion-${suggestion.id}`}
-                            className="min-h-10 w-full rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white sm:w-auto"
-                            onClick={() => handleAppendNoteSuggestion(suggestion)}
-                          >
-                            Add to current notes
-                          </button>
+                          <div className="flex w-full flex-col gap-2 sm:w-auto">
+                            <button
+                              type="button"
+                              data-testid={`manual-apply-note-suggestion-${suggestion.id}`}
+                              className="min-h-10 w-full rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300 sm:w-auto"
+                              aria-label={suggestion.actionLabel}
+                              onClick={() => handleApplyNoteSuggestion(suggestion)}
+                            >
+                              Replace current notes
+                            </button>
+                            <button
+                              type="button"
+                              data-testid={`manual-append-note-suggestion-${suggestion.id}`}
+                              className="min-h-10 w-full rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white sm:w-auto"
+                              aria-label={`Add note from ${suggestion.source.toLowerCase()} to current notes`}
+                              onClick={() => handleAppendNoteSuggestion(suggestion)}
+                            >
+                              Add to current notes
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
