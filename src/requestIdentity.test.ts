@@ -28,6 +28,8 @@ type RequestIdentityHarness = {
   getSessionToken(): string | null;
   resolveApiUrl(input: RequestInfo | URL): RequestInfo | URL;
   apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  loadAuthProviders(): Promise<Array<{ id: string; available: boolean }>>;
+  requestSignInLink(email: string, provider?: string): Promise<unknown>;
 };
 
 type WindowHarness = {
@@ -190,4 +192,20 @@ test("request identity apiFetch attaches auth and owner headers for Request inpu
   assert.equal(forwardedRequest.headers.get("authorization"), "Bearer active-token");
   assert.equal(forwardedRequest.headers.get("x-invoice-user-id"), "usr_active");
   assert.equal(forwardedRequest.headers.get("x-test-header"), "present");
+});
+
+test("request identity loads auth providers from the auth providers endpoint", async () => {
+  const { requestIdentity, fetchCalls } = loadRequestIdentity({
+    fetchImpl: async () =>
+      new Response(JSON.stringify({ providers: [{ id: "email_link", available: true }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+  });
+
+  const providers = await requestIdentity.loadAuthProviders();
+
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0].input, "/api/auth/providers");
+  assert.deepEqual(providers, [{ id: "email_link", available: true }]);
 });

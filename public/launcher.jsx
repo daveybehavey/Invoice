@@ -96,7 +96,7 @@ if (!requestIdentity) {
   throw new Error("Missing /utils/requestIdentity.js load. Ensure it is loaded before /launcher.jsx.");
 }
 
-const { apiFetch, getAuthSession, refreshSession, requestSignInLink, completeEmailLinkSignIn, signOut } =
+const { apiFetch, getAuthSession, refreshSession, requestSignInLink, loadAuthProviders, completeEmailLinkSignIn, signOut } =
   requestIdentity;
 const onboardingUtils = window.InvoiceOnboardingState;
 if (!onboardingUtils) {
@@ -394,6 +394,9 @@ function Launcher() {
   const [authPreviewUrl, setAuthPreviewUrl] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [authProviders, setAuthProviders] = useState([]);
+  const [authProvidersBusy, setAuthProvidersBusy] = useState(false);
+  const [authProvidersError, setAuthProvidersError] = useState("");
   const [accountPlan, setAccountPlan] = useState(null);
   const [billingNotice, setBillingNotice] = useState(null);
   const showDiagnosticsLink =
@@ -489,7 +492,48 @@ function Launcher() {
     };
   }, [authModalOpen, authBusy]);
 
+  useEffect(() => {
+    if (!authModalOpen) {
+      return undefined;
+    }
+    let active = true;
+    setAuthProvidersBusy(true);
+    setAuthProvidersError("");
+    loadAuthProviders()
+      .then((providers) => {
+        if (!active) {
+          return;
+        }
+        setAuthProviders(Array.isArray(providers) ? providers : []);
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+        setAuthProviders([]);
+        setAuthProvidersError(error?.message || "Couldn't load sign-in options.");
+      })
+      .finally(() => {
+        if (!active) {
+          return;
+        }
+        setAuthProvidersBusy(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [authModalOpen]);
+
   const handleSignIn = async () => {
+    const emailLinkProvider = Array.isArray(authProviders)
+      ? authProviders.find((provider) => provider?.id === "email_link")
+      : null;
+    if (emailLinkProvider && !emailLinkProvider.available) {
+      const message = emailLinkProvider.warning || "Email sign-in isn't available right now.";
+      setAuthError(message);
+      setAuthEmailError(message);
+      return;
+    }
     const normalizedEmail = authEmail.trim().toLowerCase();
     if (!normalizedEmail) {
       setAuthEmailError("Enter your email.");
@@ -528,6 +572,7 @@ function Launcher() {
     setAuthEmailError("");
     setAuthNotice("");
     setAuthPreviewUrl("");
+    setAuthProvidersError("");
     setAuthEmail(authSession?.email ?? "");
     setAuthModalOpen(true);
   };
@@ -1135,6 +1180,9 @@ function Launcher() {
         authEmailError={authEmailError}
         authNotice={authNotice}
         authPreviewUrl={authPreviewUrl}
+        authProviders={authProviders}
+        authProvidersBusy={authProvidersBusy}
+        authProvidersError={authProvidersError}
         onChangeEmail={(event) => {
           setAuthEmail(event.target.value);
           setAuthEmailError("");

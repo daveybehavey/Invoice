@@ -272,17 +272,26 @@
     return window.fetch(resolveApiUrl(input), withOwnerHeaders(init || {}));
   };
 
-  const requestSignInLink = async (email) => {
+  const requestSignInLink = async (email, provider = "email_link") => {
     const response = await apiFetch("/api/auth/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ email, provider })
     });
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload?.error || "Sign in failed.");
     }
     return payload;
+  };
+
+  const loadAuthProviders = async () => {
+    const response = await apiFetch("/api/auth/providers");
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error || "Couldn't load sign-in options.");
+    }
+    return Array.isArray(payload?.providers) ? payload.providers : [];
   };
 
   const completeEmailLinkSignIn = async (linkToken) => {
@@ -357,6 +366,7 @@
     getInvoiceOwnerId,
     getSessionToken,
     getAuthSession,
+    loadAuthProviders,
     requestSignInLink,
     completeEmailLinkSignIn,
     signOut,

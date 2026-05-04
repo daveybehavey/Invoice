@@ -25,6 +25,8 @@ test("getInvoiceAuthPolicy requires both strong session secret and email provide
   assert.equal(policy.requireAuth, true);
   assert.equal(policy.sessionSecretConfigured, true);
   assert.equal(policy.emailProviderConfigured, false);
+  assert.equal(Array.isArray(policy.providers), true);
+  assert.equal(policy.providers.some((provider) => provider.id === "google"), true);
   assert.equal(policy.productionReady, false);
   assert.match(policy.warning ?? "", /email delivery provider/i);
 });

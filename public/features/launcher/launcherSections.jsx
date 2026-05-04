@@ -446,9 +446,11 @@ function LauncherOnboardingSection({
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-slate-200 bg-white/82 px-4 py-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Optional</p>
-            <p className="mt-1 text-sm font-semibold text-slate-900">Sign in to keep saved work tied to your email.</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">
+              Sign in to keep saved work tied to your email.
+            </p>
             <p className="mt-1 text-xs leading-5 text-slate-600">
-              This is not required for the core invoice flow, but it helps with account-based access later.
+              Email-link sign-in is ready now. Google Sign-In is planned next, but the core invoice flow stays open either way.
             </p>
           </div>
           <button
@@ -456,7 +458,7 @@ function LauncherOnboardingSection({
             className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
             onClick={onOpenSignIn}
           >
-            Sign in by email link
+            Open sign-in options
           </button>
         </div>
       ) : null}
@@ -756,6 +758,9 @@ function LauncherAuthModal({
   authEmailError,
   authNotice,
   authPreviewUrl,
+  authProviders,
+  authProvidersBusy,
+  authProvidersError,
   onChangeEmail,
   onCancel,
   onSubmit
@@ -763,6 +768,10 @@ function LauncherAuthModal({
   if (!open) {
     return null;
   }
+  const emailLinkProvider = Array.isArray(authProviders)
+    ? authProviders.find((provider) => provider?.id === "email_link")
+    : null;
+  const emailLinkReady = emailLinkProvider ? emailLinkProvider.available : true;
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 px-4">
       <div className="nb-surface nb-surface--elevated w-full max-w-sm rounded-[28px] p-5">
@@ -770,11 +779,50 @@ function LauncherAuthModal({
           Sign in
         </h2>
         <p className="mt-1 text-sm text-slate-600">
-          Enter your email and we&apos;ll send a secure sign-in link.
+          Keep saved work tied to your email today, with Google Sign-In groundwork queued up next.
         </p>
+        <div className="mt-4 space-y-2" data-testid="launcher-auth-provider-list">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Sign-in methods</p>
+          {authProvidersBusy ? (
+            <p className="text-xs text-slate-500">Checking available sign-in methods...</p>
+          ) : null}
+          {authProvidersError ? <p className="text-xs text-rose-600">{authProvidersError}</p> : null}
+          {Array.isArray(authProviders) && authProviders.length > 0 ? (
+            <div className="space-y-2">
+              {authProviders.map((provider) => {
+                const toneClass = provider.available
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                  : "border-slate-200 bg-slate-50 text-slate-700";
+                const statusLabel = provider.available
+                  ? "Available now"
+                  : provider.implemented
+                    ? "Needs setup"
+                    : "Planned next";
+                return (
+                  <div key={provider.id} className={`rounded-xl border px-3 py-3 ${toneClass}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{provider.label}</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-600">
+                          {provider.warning || (provider.available ? "Ready to use." : "Not available yet.")}
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-white/80 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em]">
+                        {statusLabel}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
         <label className="mt-4 block text-sm font-semibold text-slate-700" htmlFor="launcher-auth-email">
-          Email
+          Email link sign-in
         </label>
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          {emailLinkProvider?.warning || "We&apos;ll send a secure sign-in link to your inbox."}
+        </p>
         <input
           id="launcher-auth-email"
           type="email"
@@ -783,7 +831,7 @@ function LauncherAuthModal({
           onChange={onChangeEmail}
           className="nb-input mt-1 rounded-xl px-3 py-2"
           placeholder="you@example.com"
-          disabled={authBusy}
+          disabled={authBusy || !emailLinkReady}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !authBusy) {
               event.preventDefault();
@@ -814,7 +862,7 @@ function LauncherAuthModal({
             type="button"
             className="nb-btn-primary rounded-xl px-3 py-1.5 disabled:opacity-60"
             onClick={onSubmit}
-            disabled={authBusy}
+            disabled={authBusy || !emailLinkReady}
           >
             {authBusy ? "Sending link..." : "Email sign-in link"}
           </button>

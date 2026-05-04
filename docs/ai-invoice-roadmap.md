@@ -263,6 +263,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Production auth readiness now requires both a strong session secret and a configured email delivery provider.
    - Frontend auth state now clears expired local sessions proactively and keeps request auth headers consistent across shared fetch paths.
    - Added API/UI coverage for plan usage display and save-limit behavior.
+75. Provider-aware auth groundwork
+   - Added shared auth-provider capability evaluation so the app can report which sign-in methods are implemented, configured, and actually available.
+   - Launcher sign-in now loads provider readiness live from the backend, keeps email-link sign-in active, and honestly labels Google Sign-In as planned groundwork instead of a live path.
+   - Persistence diagnostics now include auth provider capabilities so rollout checks can verify email-link readiness while Google OAuth is still pending.
 74. Freemium upgrade-gate UX surfaces
    - Invoice Library now shows free-plan usage and a focused limit-reached banner when monthly save cap is exhausted.
    - Manual Export panel now surfaces plan usage and disables new saves when the free cap is reached (updates remain enabled).

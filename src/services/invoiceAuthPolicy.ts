@@ -3,12 +3,17 @@ import {
   type InvoiceEmailCapabilities,
   getInvoiceEmailCapabilities
 } from "./invoiceEmailDelivery.js";
+import {
+  type InvoiceAuthProviderCapability,
+  getInvoiceAuthProviderCapabilities
+} from "./invoiceAuthProviders.js";
 
 export type InvoiceAuthPolicy = {
   nodeEnv: string;
   requireAuth: boolean;
   sessionSecretConfigured: boolean;
   emailProviderConfigured: boolean;
+  providers: InvoiceAuthProviderCapability[];
   productionReady: boolean;
   warning?: string;
 };
@@ -27,19 +32,27 @@ export function getInvoiceAuthPolicy(input: InvoiceAuthPolicyInput = {}): Invoic
     input.sessionSecret ?? process.env.INVOICE_SESSION_SECRET
   );
   const emailReadiness = getInvoiceAuthEmailReadiness(input.emailCapabilities);
-  const productionReady = !requireAuth || (sessionSecretConfigured && emailReadiness.ready);
+  const providers = getInvoiceAuthProviderCapabilities({
+    nodeEnv,
+    emailCapabilities: input.emailCapabilities
+  });
+  const interactiveProviderReady = providers.some((provider) => provider.available);
+  const productionReady = !requireAuth || (sessionSecretConfigured && interactiveProviderReady);
 
   return {
     nodeEnv,
     requireAuth,
     sessionSecretConfigured,
     emailProviderConfigured: emailReadiness.ready,
+    providers,
     productionReady,
     warning: productionReady
       ? undefined
       : !sessionSecretConfigured
         ? "Authentication is required, but INVOICE_SESSION_SECRET is missing or using an insecure default."
-        : emailReadiness.warning
+        : interactiveProviderReady
+          ? undefined
+          : "A configured email delivery provider is required for verified email sign-in, or finish Google Sign-In setup."
   };
 }
 

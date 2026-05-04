@@ -745,6 +745,8 @@ test("system persistence endpoint reports active invoice backend", async () => {
   assert.equal(response.body.warning, null);
   assert.equal(response.body.authRequired, false);
   assert.equal(typeof response.body.authSessionSecretConfigured, "boolean");
+  assert.equal(Array.isArray(response.body.authProviders), true);
+  assert.equal(response.body.authProviders.some((provider: { id?: string }) => provider.id === "email_link"), true);
   assert.equal(response.body.authPolicyReady, true);
   assert.equal(response.body.authWarning, null);
   assert.equal(response.body.defaultOwnerId, "local-default");
@@ -757,6 +759,7 @@ test("system persistence migration endpoint reports file-store summary", async (
   assert.equal(response.body.configuredMode, "file");
   assert.equal(response.body.authRequired, false);
   assert.equal(typeof response.body.authSessionSecretConfigured, "boolean");
+  assert.equal(Array.isArray(response.body.authProviders), true);
   assert.equal(response.body.authPolicyReady, true);
   assert.equal(response.body.authWarning, null);
   assert.equal(response.body.migrationRequired, false);
@@ -4204,6 +4207,27 @@ test("auth session endpoint returns preview link in test mode and verify endpoin
   assert.equal(verifyResponse.body.session.email, "test@example.com");
   assert.match(verifyResponse.body.session.userId, /^usr_[a-f0-9]{24}$/);
   assert.equal(typeof verifyResponse.body.session.expiresAt, "string");
+});
+
+test("auth providers endpoint reports email-link readiness and Google groundwork", async () => {
+  const response = await request(app).get("/api/auth/providers");
+
+  assert.equal(response.status, 200);
+  assert.equal(Array.isArray(response.body.providers), true);
+  const emailProvider = response.body.providers.find((provider: { id?: string }) => provider.id === "email_link");
+  const googleProvider = response.body.providers.find((provider: { id?: string }) => provider.id === "google");
+  assert.equal(emailProvider?.implemented, true);
+  assert.equal(typeof emailProvider?.available, "boolean");
+  assert.equal(googleProvider?.implemented, false);
+  assert.equal(googleProvider?.available, false);
+  assert.match(String(googleProvider?.warning ?? ""), /Google Sign-In groundwork/i);
+});
+
+test("auth session endpoint rejects Google sign-in until OAuth flow is enabled", async () => {
+  const response = await request(app).post("/api/auth/session").send({ provider: "google" });
+
+  assert.equal(response.status, 501);
+  assert.match(String(response.body.error ?? ""), /Google Sign-In/i);
 });
 
 test("auth session request sends a sign-in email when a provider is configured", async () => {

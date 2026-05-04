@@ -93,6 +93,7 @@ import {
 } from "./services/authSession.js";
 import { buildFreePlanLimitMessage, getAccountPlanSummary } from "./services/accountPlanPolicy.js";
 import { getInvoiceAuthPolicy } from "./services/invoiceAuthPolicy.js";
+import { getInvoiceAuthProviderCapabilities } from "./services/invoiceAuthProviders.js";
 import {
   getRevenueSignalsSnapshot,
   RevenueSignalNameSchema,
@@ -288,16 +289,33 @@ app.post("/api/invoices/:id/client-portal-link", async (req: Request, res: Respo
   }
 });
 
+app.get("/api/auth/providers", async (_req: Request, res: Response) => {
+  const providers = getInvoiceAuthProviderCapabilities();
+  res.json({ providers });
+});
+
 app.post("/api/auth/session", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = z
       .object({
+        provider: z.enum(["email_link", "google"]).optional(),
         email: z.preprocess(
           (value) => (typeof value === "string" ? value.trim() : value),
-          z.string().email()
+          z.string().email().optional()
         )
       })
       .parse(req.body);
+    const provider = parsed.provider ?? "email_link";
+    if (provider === "google") {
+      const googleProvider = getInvoiceAuthProviderCapabilities().find((candidate) => candidate.id === "google");
+      throw new HttpStatusError(
+        501,
+        googleProvider?.warning ?? "Google Sign-In isn't enabled yet."
+      );
+    }
+    if (!parsed.email) {
+      throw new HttpStatusError(400, "Email is required for email sign-in.");
+    }
     const requested = createEmailSignInToken(parsed.email);
     const signInUrl = `${resolvePublicBaseUrl(req)}/auth/verify?token=${encodeURIComponent(requested.token)}`;
     const delivery = await sendAuthSignInEmail({
@@ -391,6 +409,7 @@ app.get("/api/system/persistence", async (_req: Request, res: Response, next: Ne
       authRequired: authPolicy.requireAuth,
       authSessionSecretConfigured: authPolicy.sessionSecretConfigured,
       authEmailProviderConfigured: authPolicy.emailProviderConfigured,
+      authProviders: authPolicy.providers,
       authPolicyReady: authPolicy.productionReady,
       authWarning: authPolicy.warning ?? null,
       defaultOwnerId
@@ -422,6 +441,7 @@ app.get("/api/system/persistence/migration", async (_req: Request, res: Response
       authRequired: authPolicy.requireAuth,
       authSessionSecretConfigured: authPolicy.sessionSecretConfigured,
       authEmailProviderConfigured: authPolicy.emailProviderConfigured,
+      authProviders: authPolicy.providers,
       authPolicyReady: authPolicy.productionReady,
       authWarning: authPolicy.warning ?? null,
       migrationRequired: migrationPolicy.requireMigrationComplete,

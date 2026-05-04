@@ -237,6 +237,38 @@ test("launcher footer exposes feedback and support", async () => {
   }
 });
 
+test("launcher sign-in modal shows provider readiness and keeps email-link flow active", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+
+    const providerList = page.getByTestId("launcher-auth-provider-list");
+    await providerList.waitFor({ state: "visible" });
+    await providerList.getByText("Email sign-in link", { exact: true }).waitFor({ state: "visible" });
+    await providerList.getByText("Available now", { exact: true }).waitFor({ state: "visible" });
+    await providerList
+      .getByText("Email sign-in will use preview links until an email provider is configured.")
+      .waitFor({ state: "visible" });
+    await providerList.getByText("Google Sign-In", { exact: true }).waitFor({ state: "visible" });
+    await providerList.getByText("Planned next", { exact: true }).waitFor({ state: "visible" });
+    await providerList
+      .getByText("Google Sign-In groundwork is in place, but Google client credentials are not configured yet.")
+      .waitFor({ state: "visible" });
+
+    await page.getByLabel("Email link sign-in").fill("owner@example.com");
+    await page.getByRole("button", { name: "Email sign-in link" }).click();
+    await page
+      .getByText("Email delivery is not configured here, so a preview sign-in link is available below.")
+      .waitFor({ state: "visible" });
+    await page.getByRole("link", { name: "Open preview sign-in link" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("legacy import page explains old file import and editable follow-up", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
