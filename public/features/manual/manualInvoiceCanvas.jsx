@@ -8,6 +8,17 @@
     );
   }
   const apiFetch = requestIdentity?.apiFetch ?? window.fetch.bind(window);
+  const onboardingUtils = window.InvoiceOnboardingState;
+  if (!onboardingUtils) {
+    throw new Error(
+      "Missing /utils/onboardingState.js load. Ensure it is loaded before /features/manual/manualInvoiceCanvas.jsx."
+    );
+  }
+  const {
+    buildStatus: buildOnboardingStatus,
+    markStep: markOnboardingStep,
+    subscribe: subscribeToOnboardingState
+  } = onboardingUtils;
 
   const formatUtils = window.InvoiceFormatUtils;
   if (!formatUtils) {
@@ -311,6 +322,9 @@ function ManualInvoiceCanvas() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
+  const [onboardingStatus, setOnboardingStatus] = useState(() =>
+    buildOnboardingStatus({ authSession: requestIdentity.getAuthSession?.() ?? null })
+  );
   const [billingNotice, setBillingNotice] = useState(null);
   const [importedDraftNotice, setImportedDraftNotice] = useState("");
   const legacyDraftStorageKey = "invoiceDraft";
@@ -396,6 +410,17 @@ function ManualInvoiceCanvas() {
   const [voiceNoteBusy, setVoiceNoteBusy] = useState(false);
   const [voiceNoteError, setVoiceNoteError] = useState("");
   const [voiceNoteNotice, setVoiceNoteNotice] = useState("");
+  const refreshOnboardingStatus = (sessionOverride) => {
+    setOnboardingStatus(
+      buildOnboardingStatus({
+        authSession: sessionOverride ?? requestIdentity.getAuthSession?.() ?? authSession ?? null
+      })
+    );
+  };
+  const completeOnboardingStep = (stepId) => {
+    markOnboardingStep(stepId);
+    refreshOnboardingStatus();
+  };
   const [sharePackBusy, setSharePackBusy] = useState(false);
   const [sharePackNotice, setSharePackNotice] = useState("");
   const [sharePackPreview, setSharePackPreview] = useState("");
@@ -1476,6 +1501,7 @@ function ManualInvoiceCanvas() {
       link.click();
       document.body.removeChild(link);
       window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1000);
+      completeOnboardingStep("export_pdf");
       setDraftStatus("PDF download started");
       if (clearStatusTimeoutRef.current) {
         window.clearTimeout(clearStatusTimeoutRef.current);
@@ -1571,6 +1597,7 @@ function ManualInvoiceCanvas() {
           clientName: billToDetails
         })
       );
+      completeOnboardingStep("save_invoice");
       setSaveNeedsAuth(false);
       setSaveStatus("Saved");
       window.setTimeout(() => setSaveStatus(""), 1500);
@@ -1764,11 +1791,13 @@ function ManualInvoiceCanvas() {
       const session = await requestIdentity.refreshSession();
       if (shouldApply()) {
         setAuthSession(session);
+        refreshOnboardingStatus(session);
       }
       return session;
     } catch (_error) {
       if (shouldApply()) {
         setAuthSession(null);
+        refreshOnboardingStatus(null);
       }
       return null;
     }
@@ -1847,6 +1876,20 @@ function ManualInvoiceCanvas() {
   }, []);
 
   useEffect(() => {
+    completeOnboardingStep("open_editor");
+  }, []);
+
+  useEffect(() => {
+    refreshOnboardingStatus(authSession);
+  }, [authSession?.userId, authSession?.email]);
+
+  useEffect(() => {
+    return subscribeToOnboardingState(() => {
+      refreshOnboardingStatus();
+    });
+  }, [authSession?.userId, authSession?.email]);
+
+  useEffect(() => {
     if (!initialDraftMeta?.fromLegacy || !initialDraft) {
       return;
     }
@@ -1857,6 +1900,26 @@ function ManualInvoiceCanvas() {
       // Best-effort migration only.
     }
   }, [draftStorageKey, legacyDraftStorageKey, initialDraftMeta, initialDraft]);
+
+  const handleOnboardingContinue = () => {
+    const nextStep = onboardingStatus.nextStep;
+    if (!nextStep?.id) {
+      return;
+    }
+    if (nextStep.id === "save_invoice") {
+      void handleSaveInvoice();
+      return;
+    }
+    if (nextStep.id === "export_pdf") {
+      void handleDownloadPdf();
+      return;
+    }
+    if (nextStep.routeHint === "ai-intake") {
+      navigate("/ai-intake");
+      return;
+    }
+    navigate("/");
+  };
 
   return (
     <div className="nb-page nb-page--manual min-h-screen" style={{ backgroundImage: `radial-gradient(circle at top, ${accent.muted} 0%, rgba(248,250,252,0) 46%)` }}>
@@ -1876,6 +1939,66 @@ function ManualInvoiceCanvas() {
           <div className="nb-banner nb-banner--success mb-4 text-sm font-medium md:col-span-2">
             {importedDraftNotice}
           </div>
+        ) : null}
+        {onboardingStatus.visible ? (
+          <section
+            className="nb-surface nb-surface--elevated mb-4 rounded-[30px] p-4 md:col-span-2 no-print"
+            data-testid="manual-onboarding-section"
+          >
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-2xl">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                  First invoice progress
+                </p>
+                <p className="mt-1 text-lg font-semibold text-slate-900">
+                  {onboardingStatus.completedCount} of {onboardingStatus.totalSteps} core steps complete
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  {onboardingStatus.nextStep?.helper ||
+                    "You are in the editor now. Save and export to finish the first complete loop."}
+                </p>
+                {!authSession?.userId ? (
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    Optional: sign in from the launcher if you want saved work tied to your email before public launch.
+                  </p>
+                ) : null}
+              </div>
+              {onboardingStatus.nextStep ? (
+                <button
+                  type="button"
+                  className="nb-btn-primary rounded-full px-4 py-2 text-sm"
+                  style={accentButtonStyle}
+                  onClick={handleOnboardingContinue}
+                >
+                  {onboardingStatus.nextStep.ctaLabel}
+                </button>
+              ) : null}
+            </div>
+            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
+              <div
+                className="h-full rounded-full transition-all duration-300"
+                style={{ backgroundColor: accent.primary, width: `${onboardingStatus.progressPercent}%` }}
+              />
+            </div>
+            <div className="mt-3 grid gap-2 md:grid-cols-5">
+              {onboardingStatus.steps.map((step, index) => {
+                const isNext = onboardingStatus.nextStep?.id === step.id;
+                const stepClass = step.complete
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                  : isNext
+                    ? "border-[#6993d2]/20 bg-[#f6f9ff] text-slate-900"
+                    : "border-slate-200 bg-white/82 text-slate-700";
+                return (
+                  <div key={step.id} className={`rounded-2xl border px-3 py-3 ${stepClass}`}>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] opacity-70">
+                      Step {index + 1}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold">{step.label}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
         ) : null}
         <div className="mb-4 flex items-center justify-between gap-3 md:col-span-2 no-print">
           <button

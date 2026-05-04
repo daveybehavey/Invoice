@@ -98,6 +98,12 @@ if (!requestIdentity) {
 
 const { apiFetch, getAuthSession, refreshSession, requestSignInLink, completeEmailLinkSignIn, signOut } =
   requestIdentity;
+const onboardingUtils = window.InvoiceOnboardingState;
+if (!onboardingUtils) {
+  throw new Error("Missing /utils/onboardingState.js load. Ensure it is loaded before /launcher.jsx.");
+}
+
+const { buildStatus: buildOnboardingStatus, subscribe: subscribeToOnboardingState } = onboardingUtils;
 
 const launcherSectionUtils = window.InvoiceLauncherSections;
 if (!launcherSectionUtils) {
@@ -109,6 +115,7 @@ if (!launcherSectionUtils) {
 const {
   AccountStrip,
   OperationsQueueSection,
+  OnboardingSection,
   DraftRecoverySection,
   StartSection,
   AlternateStartsSection,
@@ -373,6 +380,9 @@ function buildLauncherOperationsSummary(invoices, nowMs = Date.now()) {
 function Launcher() {
   const navigate = useNavigate();
   const [authSession, setAuthSession] = useState(() => getAuthSession?.() ?? null);
+  const [onboardingStatus, setOnboardingStatus] = useState(() =>
+    buildOnboardingStatus({ authSession: getAuthSession?.() ?? null })
+  );
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
   const [authEmailError, setAuthEmailError] = useState("");
@@ -411,6 +421,24 @@ function Launcher() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    setOnboardingStatus(buildOnboardingStatus({ authSession }));
+  }, [authSession?.userId, authSession?.email]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToOnboardingState(() => {
+      setOnboardingStatus(buildOnboardingStatus({ authSession: getAuthSession?.() ?? authSession ?? null }));
+    });
+    const handleFocus = () => {
+      setOnboardingStatus(buildOnboardingStatus({ authSession: getAuthSession?.() ?? authSession ?? null }));
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [authSession?.userId, authSession?.email]);
 
   useEffect(() => {
     let active = true;
@@ -757,6 +785,22 @@ function Launcher() {
     }
   };
 
+  const handleContinueOnboarding = (step) => {
+    if (!step?.id) {
+      navigate("/ai-intake");
+      return;
+    }
+    if (step.routeHint === "manual") {
+      navigate("/manual");
+      return;
+    }
+    if (step.id === "capture_notes") {
+      navigate("/ai-intake?sample=starter");
+      return;
+    }
+    navigate("/ai-intake");
+  };
+
   const handleLauncherSendReminder = async (invoiceId) => {
     if (!invoiceId || operationsBusyActionId) {
       return;
@@ -1011,6 +1055,11 @@ function Launcher() {
           />
           {operationsNotice ? <p className="nb-banner nb-banner--success">{operationsNotice}</p> : null}
           {operationsError ? <p className="nb-banner nb-banner--warning">{operationsError}</p> : null}
+          <OnboardingSection
+            status={onboardingStatus}
+            onContinue={handleContinueOnboarding}
+            onOpenSignIn={openSignInModal}
+          />
           <StartSection
             primaryOption={primaryOption}
             hasSavedHistory={operationsSummary?.hasInvoices}

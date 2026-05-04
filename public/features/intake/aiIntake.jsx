@@ -8,6 +8,17 @@
     );
   }
   const apiFetch = requestIdentity.apiFetch ?? window.fetch.bind(window);
+  const onboardingUtils = window.InvoiceOnboardingState;
+  if (!onboardingUtils) {
+    throw new Error(
+      "Missing /utils/onboardingState.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+  const {
+    buildStatus: buildOnboardingStatus,
+    markStep: markOnboardingStep,
+    subscribe: subscribeToOnboardingState
+  } = onboardingUtils;
 
   const formatUtils = window.InvoiceFormatUtils;
   if (!formatUtils) {
@@ -319,6 +330,9 @@ function AIIntake() {
   const laborRateStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceLastLaborRate") ?? legacyLaborRateStorageKey;
   const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
+  const [onboardingStatus, setOnboardingStatus] = useState(() =>
+    buildOnboardingStatus({ authSession: requestIdentity.getAuthSession?.() ?? null })
+  );
   const [accountPlan, setAccountPlan] = useState(null);
   const [billingNotice, setBillingNotice] = useState(null);
   const [billingBusy, setBillingBusy] = useState(false);
@@ -384,6 +398,17 @@ function AIIntake() {
   const [voiceNoteError, setVoiceNoteError] = useState("");
   const [voiceNoteNotice, setVoiceNoteNotice] = useState("");
   const audioUploadInputRef = useRef(null);
+  const refreshOnboardingStatus = (sessionOverride) => {
+    setOnboardingStatus(
+      buildOnboardingStatus({
+        authSession: sessionOverride ?? requestIdentity.getAuthSession?.() ?? authSession ?? null
+      })
+    );
+  };
+  const completeOnboardingStep = (stepId) => {
+    markOnboardingStep(stepId);
+    refreshOnboardingStatus();
+  };
 
   useEffect(() => {
     const notice = readBillingNoticeFromUrl();
@@ -401,17 +426,29 @@ function AIIntake() {
           return;
         }
         setAuthSession(session);
+        refreshOnboardingStatus(session);
       })
       .catch(() => {
         if (!active) {
           return;
         }
         setAuthSession(null);
+        refreshOnboardingStatus(null);
       });
     return () => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    refreshOnboardingStatus(authSession);
+  }, [authSession?.userId, authSession?.email]);
+
+  useEffect(() => {
+    return subscribeToOnboardingState(() => {
+      refreshOnboardingStatus();
+    });
+  }, [authSession?.userId, authSession?.email]);
 
   useEffect(() => {
     let active = true;
@@ -514,6 +551,7 @@ function AIIntake() {
     setInputValue(SAMPLE_JOB_NOTES);
     setStarterGuideActive(true);
     setVoiceNoteNotice("Sample notes loaded. Review them, then build the invoice.");
+    completeOnboardingStep("capture_notes");
     params.delete("sample");
     const nextSearch = params.toString();
     const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`;
@@ -801,7 +839,7 @@ function AIIntake() {
     showBillieStatus({ kind: "info", text: "Applying decision..." }, { durationMs: 5000 });
     pendingDecisionUndoRef.current = captureDecisionUndoSnapshot();
     decisionActionRef.current = action;
-    const accepted = submitUserMessage(message, { clickTimeMs: window.performance.now() });
+    const accepted = handleSubmitUserMessage(message, { clickTimeMs: window.performance.now() });
     if (!accepted) {
       setOptimisticDecisionState(null);
       showBillieStatus(null);
@@ -1647,11 +1685,19 @@ function AIIntake() {
         buildDraftFromInvoice(finishedInvoice, pendingTaxRate ?? "0", lastTranscriptRef.current)
       );
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+      completeOnboardingStep("open_editor");
       navigate("/manual");
     } catch (error) {
       console.error("Failed to seed draft", error);
       appendAiMessage("Something went wrong while creating the draft.");
     }
+  };
+
+  const handleLoadStarterSample = () => {
+    setInputValue(SAMPLE_JOB_NOTES);
+    setStarterGuideActive(true);
+    setVoiceNoteNotice("Sample notes loaded. Review them, then build the invoice.");
+    completeOnboardingStep("capture_notes");
   };
 
   const triggerVoiceNoteUpload = () => {
@@ -1972,6 +2018,12 @@ function AIIntake() {
   }, [hasReviewCard]);
 
   useEffect(() => {
+    if (hasReviewCard) {
+      completeOnboardingStep("review_draft");
+    }
+  }, [hasReviewCard]);
+
+  useEffect(() => {
     openDecisionsRef.current = openDecisions;
   }, [openDecisions]);
 
@@ -2039,9 +2091,42 @@ function AIIntake() {
     })
   });
 
+  const handleSubmitUserMessage = (text, options = {}) => {
+    const accepted = submitUserMessage(text, options);
+    if (accepted && typeof text === "string" && text.trim()) {
+      completeOnboardingStep("capture_notes");
+    }
+    return accepted;
+  };
+
+  const handleOnboardingContinue = (step) => {
+    if (!step?.id) {
+      return;
+    }
+    if (step.id === "capture_notes") {
+      if (!inputValue.trim()) {
+        handleLoadStarterSample();
+      }
+      return;
+    }
+    if (step.id === "review_draft") {
+      if (!hasReviewCard && inputValue.trim()) {
+        handleSubmitUserMessage(inputValue);
+      }
+      return;
+    }
+    if (step.id === "open_editor") {
+      if (finishedInvoice) {
+        handleGenerateInvoice();
+      }
+      return;
+    }
+    navigate("/manual");
+  };
+
   const handleSend = (event) => {
     event.preventDefault();
-    submitUserMessage(inputValue);
+    handleSubmitUserMessage(inputValue);
   };
 
   return (
@@ -2158,6 +2243,61 @@ function AIIntake() {
                 ) : null}
               </div>
 
+              {onboardingStatus.visible ? (
+                <div
+                  className="nb-surface rounded-[28px] border border-[#6993d2]/18 bg-white/88 p-4"
+                  data-testid="intake-onboarding-section"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                        First invoice progress
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">
+                        {onboardingStatus.completedCount} of {onboardingStatus.totalSteps} core steps complete
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                        {onboardingStatus.nextStep?.helper ||
+                          "Keep moving through the first invoice flow one clear step at a time."}
+                      </p>
+                    </div>
+                    {onboardingStatus.nextStep ? (
+                      <button
+                        type="button"
+                        className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-sm"
+                        onClick={() => handleOnboardingContinue(onboardingStatus.nextStep)}
+                      >
+                        {onboardingStatus.nextStep.ctaLabel}
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{ backgroundColor: "#093064", width: `${onboardingStatus.progressPercent}%` }}
+                    />
+                  </div>
+                  <div className="mt-3 grid gap-2 md:grid-cols-5">
+                    {onboardingStatus.steps.map((step, index) => {
+                      const isNext = onboardingStatus.nextStep?.id === step.id;
+                      const stepClass = step.complete
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                        : isNext
+                          ? "border-[#6993d2]/20 bg-[#f6f9ff] text-slate-900"
+                          : "border-slate-200 bg-white/82 text-slate-700";
+                      return (
+                        <div key={step.id} className={`rounded-2xl border px-3 py-3 ${stepClass}`}>
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] opacity-70">
+                            Step {index + 1}
+                          </p>
+                          <p className="mt-1 text-sm font-semibold">{step.label}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
               {starterGuideActive ? (
                 <div
                   className="nb-surface rounded-[28px] border-[#6993d2]/20 bg-[#f6f9ff] p-4"
@@ -2213,11 +2353,7 @@ function AIIntake() {
                     <button
                       type="button"
                       className="nb-btn-ghost"
-                      onClick={() => {
-                        setInputValue(SAMPLE_JOB_NOTES);
-                        setStarterGuideActive(true);
-                        setVoiceNoteNotice("Sample notes loaded. Review them, then build the invoice.");
-                      }}
+                      onClick={handleLoadStarterSample}
                       disabled={voiceNoteBusy || isTyping}
                     >
                       Try sample notes
@@ -2255,7 +2391,7 @@ function AIIntake() {
                     <button
                       type="button"
                       className="nb-btn-primary inline-flex h-11 px-5 disabled:cursor-not-allowed disabled:bg-blue-300"
-                      onClick={() => submitUserMessage(inputValue)}
+                      onClick={() => handleSubmitUserMessage(inputValue)}
                       disabled={!inputValue.trim() || isTyping}
                     >
                       Build invoice
@@ -2276,7 +2412,7 @@ function AIIntake() {
                           key={reply.id}
                           type="button"
                           className="rounded-full border border-amber-200 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-300 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-amber-400"
-                          onClick={() => submitUserMessage(reply.value)}
+                          onClick={() => handleSubmitUserMessage(reply.value)}
                           disabled={isTyping}
                         >
                           {reply.label}
@@ -2296,7 +2432,7 @@ function AIIntake() {
                     <button
                       type="button"
                       className="nb-btn-primary inline-flex h-11 px-5 disabled:cursor-not-allowed disabled:bg-blue-300"
-                      onClick={() => submitUserMessage(inputValue)}
+                      onClick={() => handleSubmitUserMessage(inputValue)}
                       disabled={!inputValue.trim() || isTyping}
                     >
                       Send
@@ -2435,7 +2571,7 @@ function AIIntake() {
                       billieChangeSummary={billieChangeSummary}
                       recentClientContext={recentClientContext}
                       repeatWorkSuggestions={reviewRepeatWorkContext}
-                      submitUserMessage={submitUserMessage}
+                      submitUserMessage={handleSubmitUserMessage}
                       onApplySavedWording={handleApplySavedWording}
                       onApplySavedNotes={handleApplySavedNotes}
                       onBillieLineRefine={refineBillieLineItem}
@@ -2523,7 +2659,7 @@ function AIIntake() {
                 handleManualDeepAudit={handleManualDeepAudit}
                 structuredInvoice={structuredInvoice}
                 unparsedItems={unparsedItems}
-                submitUserMessage={submitUserMessage}
+                submitUserMessage={handleSubmitUserMessage}
                 assumptionItems={assumptionItems}
                 auditAssumptionItems={auditAssumptionItems}
                 primaryCtaDisabled={primaryCtaDisabled}
@@ -2693,7 +2829,7 @@ function AIIntake() {
                     type="button"
                     className="nb-btn-secondary rounded-full px-3 py-1 text-xs disabled:cursor-not-allowed disabled:text-slate-400"
                     onClick={() =>
-                      submitUserMessage(chip.value, {
+                      handleSubmitUserMessage(chip.value, {
                         billieRefineTone: chip.tone
                       })
                     }

@@ -477,6 +477,42 @@ test("launcher sample notes open intake with a realistic starter draft", async (
   }
 });
 
+test("first invoice onboarding tracks progress across launcher, intake, and manual", async () => {
+  useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await openLauncher(page);
+    const launcherOnboarding = page.getByTestId("launcher-onboarding-section");
+    await launcherOnboarding.waitFor({ state: "visible" });
+    await launcherOnboarding.getByText(/0 of 5 complete/i).waitFor({ state: "visible" });
+    await launcherOnboarding.getByRole("button", { name: "Start with Billie" }).click();
+
+    const intakeOnboarding = page.getByTestId("intake-onboarding-section");
+    await intakeOnboarding.waitFor({ state: "visible" });
+    await intakeOnboarding.getByText("1 of 5 core steps complete").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Build invoice" }).click();
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await intakeOnboarding.getByText("2 of 5 core steps complete").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Generate Invoice" }).click();
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+
+    const manualOnboarding = page.getByTestId("manual-onboarding-section");
+    await manualOnboarding.waitFor({ state: "visible" });
+    await manualOnboarding.getByText("3 of 5 core steps complete").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Export" }).last().click();
+    await page.getByText("Save to library").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Save invoice" }).click();
+    await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
+    await manualOnboarding.getByText("4 of 5 core steps complete").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher opens the daily scratchpad quick capture flow", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();

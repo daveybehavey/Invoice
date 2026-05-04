@@ -308,6 +308,96 @@ function LauncherOperationsQueueSection({
   );
 }
 
+function LauncherOnboardingSection({ status, onContinue, onOpenSignIn }) {
+  if (!status?.visible) {
+    return null;
+  }
+  const nextStep = status.nextStep;
+  return (
+    <section className="nb-surface nb-surface--elevated mt-6 rounded-[30px] p-5 md:p-6" data-testid="launcher-onboarding-section">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="max-w-2xl">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Getting started</p>
+          <h2 className="mt-2 text-2xl text-slate-900 md:text-3xl" style={{ fontFamily: "'Fraunces', serif" }}>
+            Finish your first invoice with confidence.
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">
+            {status.completedCount} of {status.totalSteps} complete. Keep moving one trust-building step at a time.
+          </p>
+        </div>
+        <div className="lg:min-w-[260px]">
+          <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200/80">
+            <div
+              className="h-full rounded-full bg-[#093064] transition-all duration-300"
+              style={{ width: `${status.progressPercent}%` }}
+            />
+          </div>
+          {nextStep ? (
+            <div className="mt-3 rounded-[22px] border border-[#6993d2]/16 bg-[#f7faff] p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Next step</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">{nextStep.label}</p>
+              <p className="mt-1 text-xs leading-5 text-slate-600">{nextStep.helper}</p>
+              <button
+                type="button"
+                className="nb-btn-primary mt-3 rounded-full px-4 py-2 text-sm"
+                onClick={() => onContinue?.(nextStep)}
+              >
+                {nextStep.ctaLabel}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        {status.steps.map((step, index) => {
+          const stepClass = step.complete
+            ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+            : nextStep?.id === step.id
+              ? "border-[#6993d2]/25 bg-[#f6f9ff] text-slate-900"
+              : "border-slate-200 bg-white/85 text-slate-700";
+          return (
+            <div key={step.id} className={`rounded-[22px] border px-3 py-3 ${stepClass}`}>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold ${
+                    step.complete
+                      ? "bg-emerald-600 text-white"
+                      : nextStep?.id === step.id
+                        ? "bg-[#093064] text-white"
+                        : "bg-slate-200 text-slate-700"
+                  }`}
+                >
+                  {step.complete ? "✓" : index + 1}
+                </span>
+                <p className="text-xs font-semibold">{step.label}</p>
+              </div>
+              <p className="mt-2 text-xs leading-5 opacity-80">{step.helper}</p>
+            </div>
+          );
+        })}
+      </div>
+      {status.optionalSteps.some((step) => !step.complete) ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-slate-200 bg-white/82 px-4 py-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Optional</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">Sign in to keep saved work tied to your email.</p>
+            <p className="mt-1 text-xs leading-5 text-slate-600">
+              This is not required for the core invoice flow, but it helps with account-based access later.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
+            onClick={onOpenSignIn}
+          >
+            Sign in by email link
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function LauncherDraftRecoverySection({ drafts, loading, busyInvoiceId, onResumeDraft, onOpenLibrary }) {
   if (loading || !Array.isArray(drafts) || drafts.length === 0) {
     return null;
@@ -671,6 +761,7 @@ function LauncherAuthModal({
 window.InvoiceLauncherSections = {
   AccountStrip: LauncherAccountStrip,
   OperationsQueueSection: LauncherOperationsQueueSection,
+  OnboardingSection: LauncherOnboardingSection,
   DraftRecoverySection: LauncherDraftRecoverySection,
   StartSection: LauncherStartSection,
   AlternateStartsSection: LauncherAlternateStartsSection,
