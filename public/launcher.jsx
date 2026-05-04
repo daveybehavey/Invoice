@@ -622,8 +622,8 @@ function Launcher() {
     }
     return operationsSummary?.hasInvoices
       ? options.find((option) => option.key === "ai") ?? options[0]
-      : options.find((option) => option.key === "scratchpad") ??
-        options.find((option) => option.key === "ai") ??
+      : options.find((option) => option.key === "ai") ??
+        options.find((option) => option.key === "scratchpad") ??
         options[0];
   })();
   const quickStartOptions = options.filter(

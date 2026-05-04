@@ -452,6 +452,7 @@ test("launcher sample notes open intake with a realistic starter draft", async (
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByText("Start with Billie", { exact: true }).first().waitFor({ state: "visible" });
     await page.getByTestId("launcher-first-invoice-guide").getByText("Guided first invoice").waitFor({
       state: "visible"
     });
