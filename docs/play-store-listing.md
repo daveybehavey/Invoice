@@ -1,6 +1,8 @@
 # NoteBill Play Store Listing Draft
 
-This draft is written for the Android release of `NoteBill`.
+Last updated: 2026-05-04
+
+This draft is written for the Android release of `NoteBill` and updated for the V2 launch push.
 
 Before submitting, replace placeholders for the privacy policy URL, support email, and website if they are not live yet.
 
@@ -10,26 +12,29 @@ Before submitting, replace placeholders for the privacy policy URL, support emai
 
 ## Short description
 
-Turn rough job notes into polished invoices you can save, export, and send.
+Turn rough job notes into polished invoices you can review, save, and send.
 
 Short-description limit reminder: 80 characters max.
 
 ## Full description
 
-NoteBill helps solo operators and small service businesses turn rough job notes into clean, itemized invoices without starting from a blank page.
+NoteBill helps freelancers, contractors, and small service businesses turn rough job notes into clean, itemized invoices without starting from a blank page.
 
-Paste messy notes, import an invoice, or work from a draft you already saved. NoteBill organizes the details into a professional invoice, keeps the wording editable, and lets you make quick adjustments before you send or export.
+Paste messy notes, import an old invoice, or work from a draft you already saved. NoteBill organizes the details into a professional invoice, keeps the wording editable, and lets you review the money decisions before you save, export, or send.
 
 What you can do in NoteBill:
 
 - Turn rough notes into structured, send-ready invoices
-- Rewrite invoice wording without changing the meaning or pricing
+- Review what Billie understood before you finalize the invoice
+- Rewrite invoice wording while keeping totals visible
 - Edit line items manually when you want more control
 - Save invoice drafts and reopen them later
-- Duplicate past invoices to speed up repeat work
+- Reuse prior services, wording, notes, and rates for repeat work
 - Capture quick notes during the day and turn them into an invoice later
+- Import old invoice files, text files, PDFs, CSVs, JSON, and supported images
 - Export invoices to PDF
 - Track simple invoice states like draft, sent, and paid
+- Create hosted payment links and client portal links when those features are configured
 
 Who it is for:
 
@@ -50,8 +55,10 @@ NoteBill is built to keep invoice creation simple: start with the work you alrea
 ## Promotional copy ideas
 
 - From rough notes to ready-to-send invoices
-- Clean up job notes into polished invoices fast
-- Invoice writing for real-world messy notes
+- Invoice faster from the notes you already wrote
+- Billie drafts. You review. NoteBill helps you send.
+- Repeat-work memory for repeat clients and services
+- Clean invoice drafts without blank-template busywork
 
 ## Suggested keywords for internal use
 
@@ -60,8 +67,16 @@ NoteBill is built to keep invoice creation simple: start with the work you alrea
 - contractor invoice
 - service invoice
 - freelancer invoice
-- estimate to invoice
+- small business invoice
+- simple invoice app
 - invoice PDF
+- job notes invoice
+- field service invoice
+- mobile invoice maker
+- invoice template
+- invoice tracker
+- payment link invoice
+- estimate to invoice
 
 ## Store assets checklist
 
@@ -73,21 +88,47 @@ NoteBill is built to keep invoice creation simple: start with the work you alrea
 
 ## Screenshot plan
 
-1. Launcher/home screen with the core promise visible
-2. AI intake screen showing messy notes becoming a structured invoice
-3. Manual invoice editor with editable line items
-4. Wording/tone adjustment flow
-5. Saved invoices library
-6. PDF/export or send flow
+1. Launcher/home screen with the core promise and guided first step visible
+2. AI intake screen with messy job notes and the Build invoice action
+3. Review screen showing Billie suggestions, visible money decisions, and repeat-work cues
+4. Manual invoice editor with editable line items and notes
+5. Billie wording or note cleanup with a "Numbers unchanged" trust cue
+6. Invoice library with draft/sent/paid states and repeat-invoice actions
+7. PDF export or send/payment/client portal flow
 
 ## Screenshot captions draft
 
-1. Turn messy notes into a polished invoice
-2. Review and adjust line items before sending
-3. Rewrite wording without redoing the invoice
-4. Save drafts and reopen them any time
-5. Export professional invoices to PDF
-6. Keep simple draft, sent, and paid status tracking
+1. Turn messy job notes into a polished invoice
+2. Paste rough details and let Billie prepare the draft
+3. Review totals, wording, and repeat-work suggestions
+4. Edit every line item before you send
+5. Clean up wording without changing the numbers
+6. Save drafts, track sent invoices, and invoice repeat clients faster
+7. Export a professional PDF or prepare a send-ready invoice
+
+## V2 Feature Graphic Direction
+
+Use a clean mobile-workflow composition, not a generic dashboard. The message should be:
+
+```text
+Rough notes in. Client-ready invoices out.
+```
+
+Secondary caption options:
+
+```text
+Billie drafts. You approve the money.
+```
+
+```text
+Built for contractors, freelancers, and service businesses.
+```
+
+## V2 Release Notes Draft
+
+```text
+NoteBill V2 improves the core invoice workflow with clearer Billie-assisted review, stronger repeat-work memory, safer wording and note cleanup, better first-run guidance, and more polished save/reopen/send-ready invoice tools.
+```
 
 ## Contact fields to prepare
 

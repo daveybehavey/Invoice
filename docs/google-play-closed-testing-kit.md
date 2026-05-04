@@ -1,6 +1,6 @@
 # Google Play Closed Testing Kit
 
-Last updated: 2026-04-27
+Last updated: 2026-05-04
 
 This is the practical NoteBill plan for getting through Google Play closed testing.
 
@@ -180,6 +180,12 @@ Use these questions in email, Google Form, or Notion:
 
 ## Production access answers draft
 
+Use the fuller copy-paste answer set in:
+
+- `docs/google-play-production-access-answers.md`
+
+The short answers below are kept only as quick starters.
+
 Google asks about your closed test, feedback, and readiness. These are safe starting points for NoteBill.
 
 ### How did you recruit testers?
@@ -203,13 +209,13 @@ I collected feedback through direct email replies and structured feedback questi
 ### What feedback did you receive?
 
 ```text
-Testers mainly focused on clarity, trust, and workflow speed. The most useful feedback was around making the sign-in flow clearer, reducing friction when reviewing invoice details, and making it easier to understand what the app captured from messy notes before sending or saving.
+Testers reported that NoteBill performed well across the tested devices and Android configurations, with no critical crashes or blocking bugs called out in the feedback report. The main improvement themes were app store optimization, clearer first-run onboarding, stronger Play Store screenshots, and optional future login options.
 ```
 
 ### What changes did you make based on testing?
 
 ```text
-Based on testing and internal verification, I improved the sign-in flow by switching from insecure email-only session creation to verified email-link sign-in, tightened review and decision handling, and kept saved invoice behavior scoped to the authenticated account.
+Based on testing and internal verification, I improved launch readiness materials, tightened the store listing draft and screenshot plan, strengthened first-run guidance around the sample-notes path, and continued polishing review cues so users can understand Billie-assisted changes before saving or sending.
 ```
 
 ### How did you decide the app was ready for production?

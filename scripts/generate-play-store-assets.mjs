@@ -284,6 +284,17 @@ async function captureLauncher(browser) {
   try {
     await routeCommon(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const firstInvoiceGuide = page.locator('[data-testid="launcher-first-invoice-guide"]');
+    const startSection = page.getByText("Start here").first();
+    if ((await firstInvoiceGuide.count()) > 0) {
+      await firstInvoiceGuide.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+    } else {
+      await startSection.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
+    }
+    await page.getByText("Internal diagnostics").evaluate((element) => {
+      element.style.display = "none";
+    }).catch(() => {});
+    await page.waitForTimeout(250);
     await page.screenshot({
       path: path.join(outputDir, "phone-01-launcher.png"),
       fullPage: false
@@ -558,12 +569,12 @@ async function createFeatureGraphic(browser) {
                   <span>NoteBill</span>
                 </div>
                 <div class="eyebrow">Business invoicing</div>
-                <h1>Turn messy notes into professional invoices.</h1>
-                <p>Capture the job, polish the wording, and send a clean invoice without starting from a blank page.</p>
+                <h1>Rough notes in. Ready invoices out.</h1>
+                <p>Billie prepares the draft. You review the wording, totals, and money decisions before sending.</p>
                 <div class="points">
-                  <span class="point">AI intake</span>
-                  <span class="point">Manual editor</span>
-                  <span class="point">Invoice library</span>
+                  <span class="point">Billie review</span>
+                  <span class="point">Repeat work</span>
+                  <span class="point">PDF export</span>
                 </div>
               </section>
               <section class="right">
@@ -610,7 +621,14 @@ async function writeManifest() {
     "- Optional logo file: logo-notebill-lockup.png",
     "- Feature graphic: feature-graphic-1024x500.png",
     "- Phone screenshots: any 2 or more of the phone-*.png files",
-    "- Preview video: optional, not included"
+    "- Preview video: optional, not included",
+    "",
+    "Suggested screenshot captions:",
+    "1. Turn messy job notes into a polished invoice",
+    "2. Paste rough details and let Billie prepare the draft",
+    "3. Review totals, wording, and repeat-work suggestions",
+    "4. Edit every line item before you send",
+    "5. Import old invoice files and keep editing"
   ].join("\n");
   await fs.writeFile(path.join(outputDir, "README.txt"), manifest, "utf8");
 }

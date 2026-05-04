@@ -635,7 +635,8 @@ function Launcher() {
       option.key === "identity" ||
       option.key === "memory" ||
       option.key === "services" ||
-      option.key === "feedback"
+      option.key === "feedback" ||
+      option.key === "support"
   );
 
   const handleUpgradeAction = async () => {

@@ -378,6 +378,7 @@ function AIIntake() {
     return window.matchMedia("(max-width: 767px)").matches;
   });
   const [wizardStepsExpanded, setWizardStepsExpanded] = useState(false);
+  const [starterGuideActive, setStarterGuideActive] = useState(false);
   const [billieChipTrayExpanded, setBillieChipTrayExpanded] = useState(false);
   const [voiceNoteBusy, setVoiceNoteBusy] = useState(false);
   const [voiceNoteError, setVoiceNoteError] = useState("");
@@ -511,6 +512,7 @@ function AIIntake() {
     }
     sampleSeedRef.current = true;
     setInputValue(SAMPLE_JOB_NOTES);
+    setStarterGuideActive(true);
     setVoiceNoteNotice("Sample notes loaded. Review them, then build the invoice.");
     params.delete("sample");
     const nextSearch = params.toString();
@@ -1316,6 +1318,23 @@ function AIIntake() {
   const wizardStepLabel = wizardSteps[safeWizardStepIndex]?.label || "Paste";
   const shouldShowWizardDetails = !isCompactViewport || wizardStepsExpanded;
   const wizardProgressPercent = ((safeWizardStepIndex + 1) / wizardSteps.length) * 100;
+  const starterWalkthroughSteps = [
+    {
+      id: "sample",
+      label: "Sample notes loaded",
+      complete: Boolean(inputValue.trim())
+    },
+    {
+      id: "review",
+      label: "Draft review visible",
+      complete: hasReviewCard
+    },
+    {
+      id: "generate",
+      label: "Ready to generate",
+      complete: Boolean(intakeReadiness.canGenerate)
+    }
+  ];
   const scrollToSection = (ref) => {
     if (!ref?.current) {
       return;
@@ -2139,6 +2158,51 @@ function AIIntake() {
                 ) : null}
               </div>
 
+              {starterGuideActive ? (
+                <div
+                  className="nb-surface rounded-[28px] border-[#6993d2]/20 bg-[#f6f9ff] p-4"
+                  data-testid="intake-starter-walkthrough"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                        Starter walkthrough
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-[#093064]">
+                        Follow the sample job from rough notes to a reviewed invoice.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="nb-btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs"
+                      onClick={() => setStarterGuideActive(false)}
+                    >
+                      Hide guide
+                    </button>
+                  </div>
+                  <div className="mt-3 grid gap-2 md:grid-cols-3">
+                    {starterWalkthroughSteps.map((step, index) => (
+                      <div
+                        key={step.id}
+                        className={`rounded-2xl border px-3 py-3 ${
+                          step.complete
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                            : "border-slate-200 bg-white/80 text-slate-700"
+                        }`}
+                      >
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] opacity-70">
+                          Step {index + 1}
+                        </p>
+                        <p className="mt-1 text-sm font-semibold">{step.label}</p>
+                        <p className="mt-1 text-xs">
+                          {step.complete ? "Complete" : index === 0 ? "Review the loaded notes first." : "Coming up next."}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
               {wizardStep === "paste" ? (
                 <div className="nb-surface nb-surface--elevated rounded-[30px] p-5">
                   <p className="text-sm font-semibold text-slate-900">Paste your notes</p>
@@ -2151,6 +2215,7 @@ function AIIntake() {
                       className="nb-btn-ghost"
                       onClick={() => {
                         setInputValue(SAMPLE_JOB_NOTES);
+                        setStarterGuideActive(true);
                         setVoiceNoteNotice("Sample notes loaded. Review them, then build the invoice.");
                       }}
                       disabled={voiceNoteBusy || isTyping}

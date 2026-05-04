@@ -367,6 +367,11 @@ function LauncherStartSection({
   showAlternateStarts,
   onToggleAlternateStarts
 }) {
+  const firstInvoiceSteps = [
+    ["1", "Load a realistic sample", "See the rough-note format without using real client data."],
+    ["2", "Build the draft", "Billie turns the notes into line items, dates, and terms."],
+    ["3", "Review before sending", "You confirm money decisions before saving or exporting."]
+  ];
   return (
     <section
       className="nb-surface nb-surface--elevated mt-6 overflow-hidden rounded-[32px] p-0"
@@ -459,11 +464,41 @@ function LauncherStartSection({
             </button>
           </div>
           {!hasSavedHistory ? (
-            <div className="mt-3 rounded-2xl border border-[#6993d2]/25 bg-[#f6f9ff] px-3 py-2">
-              <p className="text-xs font-semibold text-[#093064]">
-                First invoice? Tap <span className="font-bold">Try sample notes</span> for a quick walkthrough,
-                or use <span className="font-bold">Open scratchpad</span> to collect notes during the day.
-              </p>
+            <div
+              className="mt-4 rounded-[24px] border border-[#6993d2]/25 bg-[#f6f9ff] px-4 py-4"
+              data-testid="launcher-first-invoice-guide"
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                    Guided first invoice
+                  </p>
+                  <p className="mt-1 text-xs font-semibold leading-5 text-[#093064]">
+                    First invoice? Try sample notes for a quick walkthrough, or open scratchpad to collect
+                    real notes during the day.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="nb-btn-primary shrink-0 rounded-full px-3 py-1.5 text-xs"
+                  onClick={onTrySampleNotes}
+                >
+                  Start walkthrough
+                </button>
+              </div>
+              <div className="mt-3 grid gap-2">
+                {firstInvoiceSteps.map(([step, title, copy]) => (
+                  <div key={step} className="flex items-start gap-2 rounded-2xl bg-white/75 px-3 py-2">
+                    <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#093064] text-[11px] font-bold text-white">
+                      {step}
+                    </span>
+                    <div>
+                      <p className="text-xs font-semibold text-slate-900">{title}</p>
+                      <p className="mt-0.5 text-xs leading-5 text-slate-600">{copy}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
           <p className="mt-3 text-xs leading-5 text-slate-500">

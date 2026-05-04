@@ -83,6 +83,14 @@
       icon: icons.feedback,
       onClick: () => navigate("/feedback"),
       disabled: false
+    },
+    {
+      key: "support",
+      title: "Help and support",
+      description: "Find support contact details, account deletion help, and common support topics.",
+      icon: icons.feedback,
+      onClick: () => navigate("/support"),
+      disabled: false
     }
   ];
 

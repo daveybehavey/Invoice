@@ -185,6 +185,22 @@ test("launcher manage tools include a tester feedback shortcut", async () => {
   }
 });
 
+test("launcher manage tools include support access", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Show manage tools" }).click();
+    await page.locator("#launcher-manage-options").getByRole("button", { name: /Help and support/ }).click();
+    await page.waitForSelector("h1");
+
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Support");
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher manage tools include a saved service catalog shortcut", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -436,16 +452,25 @@ test("launcher sample notes open intake with a realistic starter draft", async (
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByTestId("launcher-first-invoice-guide").getByText("Guided first invoice").waitFor({
+      state: "visible"
+    });
     await page.getByText(/First invoice\?/i).waitFor({ state: "visible" });
     await page.getByText(/Try sample notes.*quick walkthrough/i).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Try sample notes" }).click();
+    await page.getByRole("button", { name: "Start walkthrough" }).click();
 
     const notes = page.getByPlaceholder(/Example: Jan 10 fixed sink/i);
     await notes.waitFor({ state: "visible" });
     await expectValueContains(notes, "Repaired leaking kitchen sink");
+    await page.getByTestId("intake-starter-walkthrough").waitFor({ state: "visible" });
+    await page.getByTestId("intake-starter-walkthrough").getByText("Sample notes loaded").waitFor({
+      state: "visible"
+    });
     await page
       .getByText("Sample notes loaded. Review them, then build the invoice.")
       .waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Hide guide" }).click();
+    await page.getByTestId("intake-starter-walkthrough").waitFor({ state: "hidden" });
   } finally {
     await context.close();
   }

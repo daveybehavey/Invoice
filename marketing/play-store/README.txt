@@ -1,5 +1,5 @@
 NoteBill Play Store asset pack
-Generated from: https://app.notebill.app
+Generated from: http://127.0.0.1:3227
 
 Files:
 - app-icon-512.png
@@ -18,3 +18,10 @@ Upload guide:
 - Feature graphic: feature-graphic-1024x500.png
 - Phone screenshots: any 2 or more of the phone-*.png files
 - Preview video: optional, not included
+
+Suggested screenshot captions:
+1. Turn messy job notes into a polished invoice
+2. Paste rough details and let Billie prepare the draft
+3. Review totals, wording, and repeat-work suggestions
+4. Edit every line item before you send
+5. Import old invoice files and keep editing
