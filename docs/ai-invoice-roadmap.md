@@ -265,9 +265,13 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added API/UI coverage for plan usage display and save-limit behavior.
 75. Provider-aware auth groundwork
    - Added shared auth-provider capability evaluation so the app can report which sign-in methods are implemented, configured, and actually available.
-   - Launcher sign-in now loads provider readiness live from the backend, keeps email-link sign-in active, and honestly labels Google Sign-In as planned groundwork instead of a live path.
-   - Persistence diagnostics now include auth provider capabilities so rollout checks can verify email-link readiness while Google OAuth is still pending.
-74. Freemium upgrade-gate UX surfaces
+   - Launcher sign-in now loads provider readiness live from the backend and keeps email-link sign-in active as the stable fallback.
+   - Persistence diagnostics now include auth provider capabilities so rollout checks can verify which account paths are live in a given build.
+76. Google Sign-In callback flow
+   - Added a real Google OAuth start + callback flow on the backend, including signed state protection and a browser-bound callback cookie.
+   - Verified Google identity is converted into the same NoteBill auth session model used by email-link sign-in, so account behavior stays consistent across providers.
+   - Launcher now supports a live `Continue with Google` path when Google credentials are configured, and the hosted completion page stores the returned NoteBill session before navigating back into the app.
+77. Freemium upgrade-gate UX surfaces
    - Invoice Library now shows free-plan usage and a focused limit-reached banner when monthly save cap is exhausted.
    - Manual Export panel now surfaces plan usage and disables new saves when the free cap is reached (updates remain enabled).
    - Added UI coverage for library limit banner and manual save-disabled state at cap.

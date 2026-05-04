@@ -253,9 +253,9 @@ test("launcher sign-in modal shows provider readiness and keeps email-link flow 
       .getByText("Email sign-in will use preview links until an email provider is configured.")
       .waitFor({ state: "visible" });
     await providerList.getByText("Google Sign-In", { exact: true }).waitFor({ state: "visible" });
-    await providerList.getByText("Planned next", { exact: true }).waitFor({ state: "visible" });
+    await providerList.getByText("Needs setup", { exact: true }).waitFor({ state: "visible" });
     await providerList
-      .getByText("Google Sign-In groundwork is in place, but Google client credentials are not configured yet.")
+      .getByText("Google Sign-In requires GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET before it can be used.")
       .waitFor({ state: "visible" });
 
     await page.getByLabel("Email link sign-in").fill("owner@example.com");
@@ -264,6 +264,42 @@ test("launcher sign-in modal shows provider readiness and keeps email-link flow 
       .getByText("Email delivery is not configured here, so a preview sign-in link is available below.")
       .waitFor({ state: "visible" });
     await page.getByRole("link", { name: "Open preview sign-in link" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("google sign-in completion page stores a hosted session and returns to launcher", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    const linkResponse = await context.request.post(`${baseUrl}/api/auth/session`, {
+      data: { email: "owner@example.com" }
+    });
+    assert.equal(linkResponse.status(), 200);
+    const previewUrl = String((await linkResponse.json()).previewUrl ?? "");
+    const tokenFromLink = new URL(previewUrl).searchParams.get("token");
+    assert.ok(tokenFromLink);
+    const verifyResponse = await context.request.post(`${baseUrl}/api/auth/session/verify`, {
+      data: { token: tokenFromLink }
+    });
+    assert.equal(verifyResponse.status(), 200);
+    const verifiedPayload = await verifyResponse.json();
+    const hostedToken = String(verifiedPayload.token ?? "");
+    const hostedSession = verifiedPayload.session ?? {};
+
+    await page.goto(
+      `${baseUrl}/auth/google#token=${encodeURIComponent(hostedToken)}&userId=${encodeURIComponent(
+        String(hostedSession.userId ?? "")
+      )}&email=${encodeURIComponent(String(hostedSession.email ?? ""))}&expiresAt=${encodeURIComponent(
+        String(hostedSession.expiresAt ?? "")
+      )}&next=%2F`,
+      { waitUntil: "networkidle" }
+    );
+
+    await page.waitForURL(`${baseUrl}/`, { timeout: 10000 });
+    await page.getByText("Signed in as owner@example.com").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

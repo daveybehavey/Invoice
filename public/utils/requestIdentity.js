@@ -285,6 +285,13 @@
     return payload;
   };
 
+  const getGoogleAuthStartUrl = (returnTo = "/") => {
+    const normalizedReturnTo =
+      typeof returnTo === "string" && returnTo.trim().startsWith("/") ? returnTo.trim() : "/";
+    const params = new URLSearchParams({ returnTo: normalizedReturnTo });
+    return resolveApiUrl(`/api/auth/google/start?${params.toString()}`);
+  };
+
   const loadAuthProviders = async () => {
     const response = await apiFetch("/api/auth/providers");
     const payload = await response.json().catch(() => ({}));
@@ -311,6 +318,23 @@
     }
     setAuthSession(token, session);
     return session;
+  };
+
+  const completeRedirectSignIn = (token, session) => {
+    const normalizedToken = typeof token === "string" ? token.trim() : "";
+    const normalizedSession =
+      session && typeof session === "object"
+        ? {
+            userId: typeof session.userId === "string" ? session.userId.trim() : "",
+            email: typeof session.email === "string" ? session.email.trim().toLowerCase() : "",
+            expiresAt: typeof session.expiresAt === "string" ? session.expiresAt.trim() : ""
+          }
+        : null;
+    if (!normalizedToken || !normalizedSession?.userId || !normalizedSession.email) {
+      throw new Error("Sign in failed.");
+    }
+    setAuthSession(normalizedToken, normalizedSession);
+    return normalizedSession;
   };
 
   const refreshSession = async () => {
@@ -366,9 +390,11 @@
     getInvoiceOwnerId,
     getSessionToken,
     getAuthSession,
+    getGoogleAuthStartUrl,
     loadAuthProviders,
     requestSignInLink,
     completeEmailLinkSignIn,
+    completeRedirectSignIn,
     signOut,
     refreshSession,
     withOwnerHeaders,

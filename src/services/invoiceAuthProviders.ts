@@ -2,6 +2,7 @@ import {
   type InvoiceEmailCapabilities,
   getInvoiceEmailCapabilities
 } from "./invoiceEmailDelivery.js";
+import { getGoogleAuthReadiness } from "./googleAuth.js";
 
 export type InvoiceAuthProviderId = "email_link" | "google";
 
@@ -29,11 +30,10 @@ export function getInvoiceAuthProviderCapabilities(
   const emailCapabilities = input.emailCapabilities ?? getInvoiceEmailCapabilities();
   const emailConfigured = emailCapabilities.configured && emailCapabilities.provider !== "none";
   const emailAvailable = emailConfigured || nodeEnv !== "production";
-  const googleClientIdConfigured = Boolean((input.googleClientId ?? process.env.GOOGLE_CLIENT_ID ?? "").trim());
-  const googleClientSecretConfigured = Boolean(
-    (input.googleClientSecret ?? process.env.GOOGLE_CLIENT_SECRET ?? "").trim()
-  );
-  const googleConfigured = googleClientIdConfigured && googleClientSecretConfigured;
+  const googleReadiness = getGoogleAuthReadiness({
+    clientId: input.googleClientId,
+    clientSecret: input.googleClientSecret
+  });
 
   return [
     {
@@ -53,12 +53,10 @@ export function getInvoiceAuthProviderCapabilities(
       id: "google",
       label: "Google Sign-In",
       kind: "oauth",
-      implemented: false,
-      configured: googleConfigured,
-      available: false,
-      warning: googleConfigured
-        ? "Google client credentials are present, but the OAuth callback flow is not enabled yet."
-        : "Google Sign-In groundwork is in place, but Google client credentials are not configured yet."
+      implemented: true,
+      configured: googleReadiness.configured,
+      available: googleReadiness.available,
+      warning: googleReadiness.warning
     }
   ];
 }

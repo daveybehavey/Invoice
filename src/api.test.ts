@@ -38,12 +38,14 @@ const [
   { app },
   { setAudioTranscriptionRunnerForTests, setImageOcrRunnerForTests, setJsonTaskRunnerForTests },
   { setInvoicePaymentLinkCreatorForTests },
-  { resetInvoiceEmailVerificationCacheForTests }
+  { resetInvoiceEmailVerificationCacheForTests },
+  { setGoogleAuthClientFactoryForTests }
 ] = await Promise.all([
   import("./server.js"),
   import("./ai/openaiClient.js"),
   import("./services/stripeBilling.js"),
-  import("./services/invoiceEmailDelivery.js")
+  import("./services/invoiceEmailDelivery.js"),
+  import("./services/googleAuth.js")
 ]);
 
 const storeFilePath = process.env.INVOICE_STORE_FILE;
@@ -136,6 +138,8 @@ beforeEach(async () => {
   delete process.env.INVOICE_FROM_EMAIL;
   delete process.env.INVOICE_LAUNCH_TEST_EMAIL;
   delete process.env.APP_BASE_URL;
+  delete process.env.GOOGLE_CLIENT_ID;
+  delete process.env.GOOGLE_CLIENT_SECRET;
 });
 
 afterEach(() => {
@@ -144,6 +148,7 @@ afterEach(() => {
   setImageOcrRunnerForTests(null);
   setAudioTranscriptionRunnerForTests(null);
   setInvoicePaymentLinkCreatorForTests(null);
+  setGoogleAuthClientFactoryForTests(null);
   (globalThis as { fetch?: typeof fetch }).fetch = nativeFetch;
 });
 
@@ -152,6 +157,7 @@ after(async () => {
   setImageOcrRunnerForTests(null);
   setAudioTranscriptionRunnerForTests(null);
   setInvoicePaymentLinkCreatorForTests(null);
+  setGoogleAuthClientFactoryForTests(null);
   await fs.rm(storeFilePath, { force: true });
   await fs.rm(ocrMetricsStoreFilePath, { force: true });
   await fs.rm(flowFrictionReportFilePath, { force: true });
@@ -4209,7 +4215,7 @@ test("auth session endpoint returns preview link in test mode and verify endpoin
   assert.equal(typeof verifyResponse.body.session.expiresAt, "string");
 });
 
-test("auth providers endpoint reports email-link readiness and Google groundwork", async () => {
+test("auth providers endpoint reports email-link readiness and Google availability state", async () => {
   const response = await request(app).get("/api/auth/providers");
 
   assert.equal(response.status, 200);
@@ -4218,16 +4224,140 @@ test("auth providers endpoint reports email-link readiness and Google groundwork
   const googleProvider = response.body.providers.find((provider: { id?: string }) => provider.id === "google");
   assert.equal(emailProvider?.implemented, true);
   assert.equal(typeof emailProvider?.available, "boolean");
-  assert.equal(googleProvider?.implemented, false);
+  assert.equal(googleProvider?.implemented, true);
   assert.equal(googleProvider?.available, false);
-  assert.match(String(googleProvider?.warning ?? ""), /Google Sign-In groundwork/i);
+  assert.match(String(googleProvider?.warning ?? ""), /GOOGLE_CLIENT_ID/i);
 });
 
-test("auth session endpoint rejects Google sign-in until OAuth flow is enabled", async () => {
+test("auth session endpoint redirects Google sign-in callers to the dedicated start route", async () => {
   const response = await request(app).post("/api/auth/session").send({ provider: "google" });
 
-  assert.equal(response.status, 501);
+  assert.equal(response.status, 409);
   assert.match(String(response.body.error ?? ""), /Google Sign-In/i);
+});
+
+test("google auth start route redirects to Google and callback completes NoteBill session", async () => {
+  process.env.GOOGLE_CLIENT_ID = "google-client-id";
+  process.env.GOOGLE_CLIENT_SECRET = "google-client-secret";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+
+  let capturedAuthOptions: Record<string, unknown> | null = null;
+  let capturedCode: string | null = null;
+  setGoogleAuthClientFactoryForTests(() => ({
+    generateAuthUrl(options) {
+      capturedAuthOptions = options;
+      const params = new URLSearchParams({
+        state: String(options.state ?? ""),
+        client_id: "google-client-id"
+      });
+      return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+    },
+    async getToken(code) {
+      capturedCode = code;
+      return {
+        tokens: {
+          id_token: "google-id-token"
+        }
+      };
+    },
+    async verifyIdToken() {
+      return {
+        getPayload() {
+          return {
+            iss: "https://accounts.google.com",
+            aud: "google-client-id",
+            iat: 1,
+            exp: 4_102_444_800,
+            email: "owner@gmail.com",
+            email_verified: true,
+            name: "Owner Example",
+            picture: "https://example.com/avatar.png",
+            sub: "google-sub-123"
+          };
+        }
+      };
+    }
+  }));
+
+  const startResponse = await request(app).get("/api/auth/google/start?returnTo=%2Fmanual");
+
+  assert.equal(startResponse.status, 302);
+  assert.match(String(startResponse.headers.location ?? ""), /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/);
+  assert.ok(capturedAuthOptions);
+  const authOptions = capturedAuthOptions as Record<string, unknown>;
+  assert.equal(authOptions.prompt, "select_account");
+  assert.equal(authOptions.access_type, "online");
+  assert.equal(authOptions.response_type, "code");
+  assert.equal(Array.isArray(authOptions.scope), true);
+  assert.equal(String(authOptions.scope), "openid,email,profile");
+  const stateToken = new URL(String(startResponse.headers.location)).searchParams.get("state");
+  assert.ok(stateToken);
+  const cookieHeader = startResponse.headers["set-cookie"];
+  assert.ok(Array.isArray(cookieHeader));
+  const cookies = cookieHeader as string[];
+  assert.match(String(cookies[0] ?? ""), /invoiceGoogleOAuthState=/);
+
+  const callbackResponse = await request(app)
+    .get(`/api/auth/google/callback?code=google-code-123&state=${encodeURIComponent(String(stateToken))}`)
+    .set("Cookie", cookies);
+
+  assert.equal(callbackResponse.status, 302);
+  assert.equal(capturedCode, "google-code-123");
+  const completionUrl = new URL(String(callbackResponse.headers.location));
+  assert.equal(completionUrl.origin, "https://app.notebill.app");
+  assert.equal(completionUrl.pathname, "/auth/google");
+  const fragment = new URLSearchParams(completionUrl.hash.replace(/^#/, ""));
+  assert.equal(fragment.get("email"), "owner@gmail.com");
+  assert.equal(fragment.get("next"), "/manual");
+  assert.match(String(fragment.get("token") ?? ""), /^[^.]+\.[^.]+$/);
+  assert.match(String(fragment.get("userId") ?? ""), /^usr_[a-f0-9]{24}$/);
+});
+
+test("google auth callback returns launcher error route when Google email is not verified", async () => {
+  process.env.GOOGLE_CLIENT_ID = "google-client-id";
+  process.env.GOOGLE_CLIENT_SECRET = "google-client-secret";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+
+  setGoogleAuthClientFactoryForTests(() => ({
+    generateAuthUrl(options) {
+      return `https://accounts.google.com/o/oauth2/v2/auth?state=${encodeURIComponent(String(options.state ?? ""))}`;
+    },
+    async getToken() {
+      return {
+        tokens: {
+          id_token: "google-id-token"
+        }
+      };
+    },
+    async verifyIdToken() {
+      return {
+        getPayload() {
+          return {
+            iss: "https://accounts.google.com",
+            aud: "google-client-id",
+            iat: 1,
+            exp: 4_102_444_800,
+            email: "owner@gmail.com",
+            email_verified: false,
+            sub: "google-sub-123"
+          };
+        }
+      };
+    }
+  }));
+
+  const startResponse = await request(app).get("/api/auth/google/start");
+  const stateToken = new URL(String(startResponse.headers.location)).searchParams.get("state");
+  const cookieHeader = startResponse.headers["set-cookie"];
+  assert.ok(Array.isArray(cookieHeader));
+  const callbackResponse = await request(app)
+    .get(`/api/auth/google/callback?code=google-code-123&state=${encodeURIComponent(String(stateToken))}`)
+    .set("Cookie", cookieHeader as string[]);
+
+  assert.equal(callbackResponse.status, 302);
+  const errorUrl = new URL(String(callbackResponse.headers.location));
+  assert.equal(errorUrl.pathname, "/auth/google");
+  assert.match(String(errorUrl.searchParams.get("error") ?? ""), /verified Google email/i);
 });
 
 test("auth session request sends a sign-in email when a provider is configured", async () => {

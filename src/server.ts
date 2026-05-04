@@ -91,6 +91,15 @@ import {
   getAuthSessionFromRequest,
   verifyEmailSignInToken
 } from "./services/authSession.js";
+import {
+  buildGoogleAuthErrorUrl,
+  buildGoogleAuthStart,
+  buildGoogleAuthStateCookieHeader,
+  buildGoogleAuthSuccessUrl,
+  completeGoogleAuthCallback,
+  GOOGLE_OAUTH_STATE_COOKIE_NAME,
+  readCookieValue
+} from "./services/googleAuth.js";
 import { buildFreePlanLimitMessage, getAccountPlanSummary } from "./services/accountPlanPolicy.js";
 import { getInvoiceAuthPolicy } from "./services/invoiceAuthPolicy.js";
 import { getInvoiceAuthProviderCapabilities } from "./services/invoiceAuthProviders.js";
@@ -148,6 +157,7 @@ app.use(express.static(publicDir));
 const spaRoutes = [
   "/",
   "/auth/verify",
+  "/auth/google",
   "/ai-intake",
   "/manual",
   "/scratchpad",
@@ -309,8 +319,8 @@ app.post("/api/auth/session", async (req: Request, res: Response, next: NextFunc
     if (provider === "google") {
       const googleProvider = getInvoiceAuthProviderCapabilities().find((candidate) => candidate.id === "google");
       throw new HttpStatusError(
-        501,
-        googleProvider?.warning ?? "Google Sign-In isn't enabled yet."
+        409,
+        googleProvider?.warning ?? "Use the Google Sign-In start route instead."
       );
     }
     if (!parsed.email) {
@@ -346,6 +356,119 @@ app.post("/api/auth/session", async (req: Request, res: Response, next: NextFunc
     });
   } catch (error) {
     next(error);
+  }
+});
+
+app.get("/api/auth/google/start", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const googleProvider = getInvoiceAuthProviderCapabilities().find((candidate) => candidate.id === "google");
+    if (!googleProvider?.available) {
+      throw new HttpStatusError(503, googleProvider?.warning ?? "Google Sign-In isn't available right now.");
+    }
+    const parsed = z
+      .object({
+        returnTo: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim() : value),
+          z.string().optional()
+        )
+      })
+      .parse(req.query);
+    const publicBaseUrl = resolvePublicBaseUrl(req);
+    const secure = publicBaseUrl.startsWith("https://");
+    const start = buildGoogleAuthStart({
+      baseUrl: publicBaseUrl,
+      returnPath: parsed.returnTo
+    });
+    res.setHeader(
+      "Set-Cookie",
+      buildGoogleAuthStateCookieHeader({
+        value: start.cookieValue,
+        expiresAt: start.expiresAt,
+        secure
+      })
+    );
+    res.redirect(start.redirectUrl);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
+  const publicBaseUrl = resolvePublicBaseUrl(req);
+  const secure = publicBaseUrl.startsWith("https://");
+  const clearStateCookie = () =>
+    res.setHeader(
+      "Set-Cookie",
+      buildGoogleAuthStateCookieHeader({
+        secure
+      })
+    );
+
+  try {
+    const parsed = z
+      .object({
+        code: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim() : value),
+          z.string().min(1).optional()
+        ),
+        state: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim() : value),
+          z.string().min(1).optional()
+        ),
+        error: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim() : value),
+          z.string().optional()
+        ),
+        error_description: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim() : value),
+          z.string().optional()
+        )
+      })
+      .parse(req.query);
+
+    if (parsed.error) {
+      clearStateCookie();
+      const message = parsed.error_description || parsed.error || "Google Sign-In was cancelled.";
+      res.redirect(buildGoogleAuthErrorUrl({ baseUrl: publicBaseUrl, error: message }));
+      return;
+    }
+    if (!parsed.code || !parsed.state) {
+      clearStateCookie();
+      res.redirect(
+        buildGoogleAuthErrorUrl({
+          baseUrl: publicBaseUrl,
+          error: "Google Sign-In did not return the required callback details."
+        })
+      );
+      return;
+    }
+
+    const cookieValue = readCookieValue(asOptionalString(req.headers.cookie) ?? "", GOOGLE_OAUTH_STATE_COOKIE_NAME);
+    const completed = await completeGoogleAuthCallback({
+      baseUrl: publicBaseUrl,
+      code: parsed.code,
+      stateToken: parsed.state,
+      cookieValue
+    });
+    const created = createAuthSessionForEmail(completed.identity.email);
+    await trackRevenueSignalSafely({
+      event: "account_signed_in",
+      ownerId: created.session.userId,
+      source: "auth_google"
+    });
+    clearStateCookie();
+    res.redirect(
+      buildGoogleAuthSuccessUrl({
+        baseUrl: publicBaseUrl,
+        token: created.token,
+        session: created.session,
+        returnPath: completed.returnPath
+      })
+    );
+  } catch (error) {
+    clearStateCookie();
+    const message = error instanceof Error ? error.message : "Google Sign-In failed.";
+    res.redirect(buildGoogleAuthErrorUrl({ baseUrl: publicBaseUrl, error: message }));
   }
 });
 

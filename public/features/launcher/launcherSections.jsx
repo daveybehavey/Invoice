@@ -450,7 +450,7 @@ function LauncherOnboardingSection({
               Sign in to keep saved work tied to your email.
             </p>
             <p className="mt-1 text-xs leading-5 text-slate-600">
-              Email-link sign-in is ready now. Google Sign-In is planned next, but the core invoice flow stays open either way.
+              Email-link sign-in is always available here, and Google Sign-In can be enabled in builds that have Google credentials configured.
             </p>
           </div>
           <button
@@ -754,6 +754,7 @@ function LauncherManageSection({ showManageOptions, onToggleManageOptions, manag
 function LauncherAuthModal({
   open,
   authBusy,
+  authFlow,
   authEmail,
   authEmailError,
   authNotice,
@@ -763,6 +764,7 @@ function LauncherAuthModal({
   authProvidersError,
   onChangeEmail,
   onCancel,
+  onStartGoogle,
   onSubmit
 }) {
   if (!open) {
@@ -771,7 +773,11 @@ function LauncherAuthModal({
   const emailLinkProvider = Array.isArray(authProviders)
     ? authProviders.find((provider) => provider?.id === "email_link")
     : null;
+  const googleProvider = Array.isArray(authProviders)
+    ? authProviders.find((provider) => provider?.id === "google")
+    : null;
   const emailLinkReady = emailLinkProvider ? emailLinkProvider.available : true;
+  const googleReady = Boolean(googleProvider?.available);
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 px-4">
       <div className="nb-surface nb-surface--elevated w-full max-w-sm rounded-[28px] p-5">
@@ -779,7 +785,7 @@ function LauncherAuthModal({
           Sign in
         </h2>
         <p className="mt-1 text-sm text-slate-600">
-          Keep saved work tied to your email today, with Google Sign-In groundwork queued up next.
+          Keep saved work tied to your email with whichever sign-in path is ready for this build.
         </p>
         <div className="mt-4 space-y-2" data-testid="launcher-auth-provider-list">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Sign-in methods</p>
@@ -817,6 +823,31 @@ function LauncherAuthModal({
             </div>
           ) : null}
         </div>
+        {googleProvider ? (
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Google Sign-In</p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  {googleProvider.warning ||
+                    "Use your Google account and come right back with the same NoteBill session model."}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="nb-btn-secondary rounded-xl px-3 py-1.5 text-sm disabled:opacity-60"
+                onClick={onStartGoogle}
+                disabled={authBusy || !googleReady}
+              >
+                {authBusy && authFlow === "google"
+                  ? "Opening Google..."
+                  : googleReady
+                    ? "Continue with Google"
+                    : "Google Sign-In unavailable"}
+              </button>
+            </div>
+          </div>
+        ) : null}
         <label className="mt-4 block text-sm font-semibold text-slate-700" htmlFor="launcher-auth-email">
           Email link sign-in
         </label>
@@ -864,7 +895,7 @@ function LauncherAuthModal({
             onClick={onSubmit}
             disabled={authBusy || !emailLinkReady}
           >
-            {authBusy ? "Sending link..." : "Email sign-in link"}
+            {authBusy && authFlow === "email_link" ? "Sending link..." : "Email sign-in link"}
           </button>
         </div>
       </div>

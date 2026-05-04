@@ -96,7 +96,17 @@ if (!requestIdentity) {
   throw new Error("Missing /utils/requestIdentity.js load. Ensure it is loaded before /launcher.jsx.");
 }
 
-const { apiFetch, getAuthSession, refreshSession, requestSignInLink, loadAuthProviders, completeEmailLinkSignIn, signOut } =
+const {
+  apiFetch,
+  getAuthSession,
+  getGoogleAuthStartUrl,
+  refreshSession,
+  requestSignInLink,
+  loadAuthProviders,
+  completeEmailLinkSignIn,
+  completeRedirectSignIn,
+  signOut
+} =
   requestIdentity;
 const onboardingUtils = window.InvoiceOnboardingState;
 if (!onboardingUtils) {
@@ -393,6 +403,7 @@ function Launcher() {
   const [authNotice, setAuthNotice] = useState("");
   const [authPreviewUrl, setAuthPreviewUrl] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [authFlow, setAuthFlow] = useState("");
   const [authError, setAuthError] = useState("");
   const [authProviders, setAuthProviders] = useState([]);
   const [authProvidersBusy, setAuthProvidersBusy] = useState(false);
@@ -544,6 +555,7 @@ function Launcher() {
       return;
     }
     setAuthBusy(true);
+    setAuthFlow("email_link");
     setAuthError("");
     setAuthEmailError("");
     setAuthNotice("");
@@ -567,11 +579,39 @@ function Launcher() {
     }
   };
 
+  const handleGoogleSignIn = () => {
+    const googleProvider = Array.isArray(authProviders)
+      ? authProviders.find((provider) => provider?.id === "google")
+      : null;
+    if (!googleProvider?.available) {
+      const message = googleProvider?.warning || "Google Sign-In isn't available right now.";
+      setAuthError(message);
+      setAuthNotice("");
+      return;
+    }
+    setAuthBusy(true);
+    setAuthFlow("google");
+    setAuthError("");
+    setAuthNotice("Opening Google Sign-In...");
+    setAuthPreviewUrl("");
+    try {
+      const startUrl =
+        typeof getGoogleAuthStartUrl === "function" ? getGoogleAuthStartUrl("/") : "/api/auth/google/start";
+      window.location.assign(String(startUrl));
+    } catch (error) {
+      setAuthBusy(false);
+      setAuthFlow("");
+      setAuthNotice("");
+      setAuthError(error?.message || "Couldn't start Google Sign-In.");
+    }
+  };
+
   const openSignInModal = () => {
     setAuthError("");
     setAuthEmailError("");
     setAuthNotice("");
     setAuthPreviewUrl("");
+    setAuthFlow("");
     setAuthProvidersError("");
     setAuthEmail(authSession?.email ?? "");
     setAuthModalOpen(true);
@@ -1176,6 +1216,7 @@ function Launcher() {
       <AuthModal
         open={authModalOpen}
         authBusy={authBusy}
+        authFlow={authFlow}
         authEmail={authEmail}
         authEmailError={authEmailError}
         authNotice={authNotice}
@@ -1190,6 +1231,7 @@ function Launcher() {
           setAuthPreviewUrl("");
         }}
         onCancel={() => setAuthModalOpen(false)}
+        onStartGoogle={handleGoogleSignIn}
         onSubmit={handleSignIn}
       />
     </div>
@@ -1246,6 +1288,78 @@ function EmailLinkVerificationPage() {
         <div className="nb-surface nb-surface--elevated">
           <p className="nb-kicker">Account verification</p>
           <h1 className="nb-section-title mt-3">Email sign-in</h1>
+          <p className={`mt-3 text-sm leading-7 ${toneClass}`}>{message}</p>
+          {status === "error" ? (
+            <button type="button" className="nb-btn-primary mt-5" onClick={() => navigate("/", { replace: true })}>
+              Return to launcher
+            </button>
+          ) : null}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function GoogleSignInCompletionPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const [status, setStatus] = useState("verifying");
+  const [message, setMessage] = useState("Finishing Google Sign-In...");
+
+  useEffect(() => {
+    let active = true;
+    const errorMessage = searchParams.get("error")?.trim();
+    const hashParams = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
+    const nextPath = hashParams.get("next")?.trim() || searchParams.get("next")?.trim() || "/";
+
+    if (errorMessage) {
+      setStatus("error");
+      setMessage(errorMessage);
+      return undefined;
+    }
+
+    const token = hashParams.get("token")?.trim();
+    const userId = hashParams.get("userId")?.trim();
+    const email = hashParams.get("email")?.trim();
+    const expiresAt = hashParams.get("expiresAt")?.trim();
+    if (!token || !userId || !email || !expiresAt) {
+      setStatus("error");
+      setMessage("Google Sign-In did not return a complete session.");
+      return undefined;
+    }
+
+    try {
+      completeRedirectSignIn(token, { userId, email, expiresAt });
+      window.history.replaceState({}, document.title, "/auth/google");
+      setStatus("success");
+      setMessage("Signed in with Google. Taking you back to NoteBill...");
+      window.setTimeout(() => {
+        if (active) {
+          navigate(nextPath.startsWith("/") ? nextPath : "/", { replace: true });
+        }
+      }, 1200);
+    } catch (error) {
+      if (!active) {
+        return undefined;
+      }
+      setStatus("error");
+      setMessage(error?.message || "Google Sign-In failed.");
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [navigate, searchParams]);
+
+  const toneClass =
+    status === "success" ? "text-emerald-700" : status === "error" ? "text-rose-600" : "text-slate-600";
+
+  return (
+    <div className="nb-page nb-page--quiet">
+      <main className="nb-page-shell nb-page-shell--medium max-w-xl py-10">
+        <div className="nb-surface nb-surface--elevated">
+          <p className="nb-kicker">Account verification</p>
+          <h1 className="nb-section-title mt-3">Google Sign-In</h1>
           <p className={`mt-3 text-sm leading-7 ${toneClass}`}>{message}</p>
           {status === "error" ? (
             <button type="button" className="nb-btn-primary mt-5" onClick={() => navigate("/", { replace: true })}>
@@ -1706,6 +1820,7 @@ function App() {
         <Route path="/scratchpad" element={<DailyScratchpadPage />} />
         <Route path="/portal/:invoiceId/:token" element={<ClientPortalPage />} />
         <Route path="/auth/verify" element={<EmailLinkVerificationPage />} />
+        <Route path="/auth/google" element={<GoogleSignInCompletionPage />} />
         <Route path="/ai-intake" element={<AIIntake />} />
         <Route path="/invoices" element={<InvoiceLibrary />} />
         <Route path="/manual" element={<ManualInvoiceCanvas />} />

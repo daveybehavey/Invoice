@@ -28,8 +28,13 @@ type RequestIdentityHarness = {
   getSessionToken(): string | null;
   resolveApiUrl(input: RequestInfo | URL): RequestInfo | URL;
   apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  getGoogleAuthStartUrl(returnTo?: string): RequestInfo | URL;
   loadAuthProviders(): Promise<Array<{ id: string; available: boolean }>>;
   requestSignInLink(email: string, provider?: string): Promise<unknown>;
+  completeRedirectSignIn(
+    token: string,
+    session: { userId: string; email: string; expiresAt: string }
+  ): { userId: string; email: string; expiresAt: string };
 };
 
 type WindowHarness = {
@@ -97,6 +102,7 @@ function loadRequestIdentity({
     Headers,
     Request,
     Response,
+    URLSearchParams,
     console
   };
   vm.createContext(context);
@@ -208,4 +214,40 @@ test("request identity loads auth providers from the auth providers endpoint", a
   assert.equal(fetchCalls.length, 1);
   assert.equal(fetchCalls[0].input, "/api/auth/providers");
   assert.deepEqual(providers, [{ id: "email_link", available: true }]);
+});
+
+test("request identity resolves Google auth start URL through the shared API origin helper", () => {
+  const { requestIdentity } = loadRequestIdentity({
+    windowOverrides: {
+      location: { origin: "https://localhost" },
+      Capacitor: {},
+      WEBVIEW_SERVER_URL: "https://localhost"
+    }
+  });
+
+  assert.equal(
+    requestIdentity.getGoogleAuthStartUrl("/manual"),
+    "https://app.notebill.app/api/auth/google/start?returnTo=%2Fmanual"
+  );
+});
+
+test("request identity can store a hosted redirect sign-in session", () => {
+  const { requestIdentity, localStorage } = loadRequestIdentity();
+
+  const session = requestIdentity.completeRedirectSignIn("redirect-token", {
+    userId: "usr_google_owner",
+    email: "Owner@Example.com",
+    expiresAt: "2030-01-01T00:00:00.000Z"
+  });
+
+  assert.equal(JSON.stringify(session), JSON.stringify({
+    userId: "usr_google_owner",
+    email: "owner@example.com",
+    expiresAt: "2030-01-01T00:00:00.000Z"
+  }));
+  assert.equal(JSON.stringify(requestIdentity.getAuthSession()), JSON.stringify(session));
+  const stored = localStorage.dump();
+  assert.equal(stored.invoiceSessionToken, "redirect-token");
+  assert.equal(typeof stored.invoiceAuthSession, "string");
+  assert.match(stored.invoiceAuthSession, /owner@example\.com/);
 });

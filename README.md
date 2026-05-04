@@ -21,8 +21,8 @@ Set `OPENAI_API_KEY` in `.env`.
 
 - Optional account sign-in currently uses verified email links.
 - Launcher sign-in surfaces provider readiness from `GET /api/auth/providers`.
-- Google Sign-In groundwork is wired into the backend policy and launcher UI, but the OAuth callback flow is not enabled yet.
-- If you want to prepare Google credentials ahead of that final implementation, set:
+- Google Sign-In now uses a backend OAuth callback that converts verified Google identity into the same NoteBill session model used by email-link sign-in.
+- To enable Google Sign-In, set:
   - `GOOGLE_CLIENT_ID`
   - `GOOGLE_CLIENT_SECRET`
 
