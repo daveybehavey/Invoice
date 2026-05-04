@@ -17,6 +17,7 @@
   const {
     buildStatus: buildOnboardingStatus,
     markStep: markOnboardingStep,
+    acknowledgeCompletion: acknowledgeOnboardingCompletion,
     subscribe: subscribeToOnboardingState
   } = onboardingUtils;
 
@@ -1921,6 +1922,11 @@ function ManualInvoiceCanvas() {
     navigate("/");
   };
 
+  const handleDismissOnboardingCompletion = () => {
+    acknowledgeOnboardingCompletion();
+    refreshOnboardingStatus();
+  };
+
   return (
     <div className="nb-page nb-page--manual min-h-screen" style={{ backgroundImage: `radial-gradient(circle at top, ${accent.muted} 0%, rgba(248,250,252,0) 46%)` }}>
       <main className="nb-page-shell nb-page-shell--wide mx-auto flex w-full flex-col pb-24 md:grid md:grid-cols-[minmax(0,1fr)_320px] md:gap-6 md:pb-8">
@@ -1940,64 +1946,133 @@ function ManualInvoiceCanvas() {
             {importedDraftNotice}
           </div>
         ) : null}
-        {onboardingStatus.visible ? (
+        {onboardingStatus.visible || onboardingStatus.completionVisible ? (
           <section
             className="nb-surface nb-surface--elevated mb-4 rounded-[30px] p-4 md:col-span-2 no-print"
             data-testid="manual-onboarding-section"
           >
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div className="max-w-2xl">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
-                  First invoice progress
-                </p>
-                <p className="mt-1 text-lg font-semibold text-slate-900">
-                  {onboardingStatus.completedCount} of {onboardingStatus.totalSteps} core steps complete
-                </p>
-                <p className="mt-1 text-sm leading-6 text-slate-600">
-                  {onboardingStatus.nextStep?.helper ||
-                    "You are in the editor now. Save and export to finish the first complete loop."}
-                </p>
-                {!authSession?.userId ? (
-                  <p className="mt-2 text-xs leading-5 text-slate-500">
-                    Optional: sign in from the launcher if you want saved work tied to your email before public launch.
-                  </p>
-                ) : null}
-              </div>
-              {onboardingStatus.nextStep ? (
-                <button
-                  type="button"
-                  className="nb-btn-primary rounded-full px-4 py-2 text-sm"
-                  style={accentButtonStyle}
-                  onClick={handleOnboardingContinue}
-                >
-                  {onboardingStatus.nextStep.ctaLabel}
-                </button>
-              ) : null}
-            </div>
-            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
-              <div
-                className="h-full rounded-full transition-all duration-300"
-                style={{ backgroundColor: accent.primary, width: `${onboardingStatus.progressPercent}%` }}
-              />
-            </div>
-            <div className="mt-3 grid gap-2 md:grid-cols-5">
-              {onboardingStatus.steps.map((step, index) => {
-                const isNext = onboardingStatus.nextStep?.id === step.id;
-                const stepClass = step.complete
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-950"
-                  : isNext
-                    ? "border-[#6993d2]/20 bg-[#f6f9ff] text-slate-900"
-                    : "border-slate-200 bg-white/82 text-slate-700";
-                return (
-                  <div key={step.id} className={`rounded-2xl border px-3 py-3 ${stepClass}`}>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] opacity-70">
-                      Step {index + 1}
+            {onboardingStatus.completionVisible ? (
+              <>
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="max-w-2xl">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                      First invoice complete
                     </p>
-                    <p className="mt-1 text-sm font-semibold">{step.label}</p>
+                    <p className="mt-1 text-lg font-semibold text-slate-900">
+                      You finished the first full NoteBill loop.
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      Your first invoice is drafted, saved, and exported. Next best move: personalize the experience so the second invoice feels even faster.
+                    </p>
                   </div>
-                );
-              })}
-            </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="nb-btn-primary rounded-full px-4 py-2 text-sm"
+                      style={accentButtonStyle}
+                      onClick={() => navigate("/settings/business")}
+                    >
+                      Set up branding
+                    </button>
+                    <button
+                      type="button"
+                      className="nb-btn-ghost rounded-full px-4 py-2 text-sm"
+                      onClick={handleDismissOnboardingCompletion}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <button
+                    type="button"
+                    className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4 text-left"
+                    onClick={() => navigate("/settings/business")}
+                  >
+                    <p className="text-sm font-semibold text-slate-900">Branding</p>
+                    <p className="mt-2 text-xs leading-5 text-slate-600">
+                      Add your logo, colors, and defaults before the public launch push.
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4 text-left"
+                    onClick={() => navigate("/settings/memory")}
+                  >
+                    <p className="text-sm font-semibold text-slate-900">Client memory</p>
+                    <p className="mt-2 text-xs leading-5 text-slate-600">
+                      Review what repeat-client details NoteBill has already remembered.
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4 text-left"
+                    onClick={() => navigate("/settings/services")}
+                  >
+                    <p className="text-sm font-semibold text-slate-900">Service catalog</p>
+                    <p className="mt-2 text-xs leading-5 text-slate-600">
+                      Save reusable line items so repeat work gets even faster.
+                    </p>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="max-w-2xl">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                      First invoice progress
+                    </p>
+                    <p className="mt-1 text-lg font-semibold text-slate-900">
+                      {onboardingStatus.completedCount} of {onboardingStatus.totalSteps} core steps complete
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {onboardingStatus.nextStep?.helper ||
+                        "You are in the editor now. Save and export to finish the first complete loop."}
+                    </p>
+                    {!authSession?.userId ? (
+                      <p className="mt-2 text-xs leading-5 text-slate-500">
+                        Optional: sign in from the launcher if you want saved work tied to your email before public launch.
+                      </p>
+                    ) : null}
+                  </div>
+                  {onboardingStatus.nextStep ? (
+                    <button
+                      type="button"
+                      className="nb-btn-primary rounded-full px-4 py-2 text-sm"
+                      style={accentButtonStyle}
+                      onClick={handleOnboardingContinue}
+                    >
+                      {onboardingStatus.nextStep.ctaLabel}
+                    </button>
+                  ) : null}
+                </div>
+                <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
+                  <div
+                    className="h-full rounded-full transition-all duration-300"
+                    style={{ backgroundColor: accent.primary, width: `${onboardingStatus.progressPercent}%` }}
+                  />
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-5">
+                  {onboardingStatus.steps.map((step, index) => {
+                    const isNext = onboardingStatus.nextStep?.id === step.id;
+                    const stepClass = step.complete
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                      : isNext
+                        ? "border-[#6993d2]/20 bg-[#f6f9ff] text-slate-900"
+                        : "border-slate-200 bg-white/82 text-slate-700";
+                    return (
+                      <div key={step.id} className={`rounded-2xl border px-3 py-3 ${stepClass}`}>
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] opacity-70">
+                          Step {index + 1}
+                        </p>
+                        <p className="mt-1 text-sm font-semibold">{step.label}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </section>
         ) : null}
         <div className="mb-4 flex items-center justify-between gap-3 md:col-span-2 no-print">

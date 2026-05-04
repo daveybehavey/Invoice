@@ -308,9 +308,75 @@ function LauncherOperationsQueueSection({
   );
 }
 
-function LauncherOnboardingSection({ status, onContinue, onOpenSignIn }) {
-  if (!status?.visible) {
+function LauncherOnboardingSection({
+  status,
+  onContinue,
+  onOpenSignIn,
+  onOpenBranding,
+  onOpenMemory,
+  onOpenServices,
+  onStartNextInvoice,
+  onDismissCompletion
+}) {
+  if (!status?.visible && !status?.completionVisible) {
     return null;
+  }
+  if (status?.completionVisible) {
+    return (
+      <section
+        className="nb-surface nb-surface--elevated mt-6 rounded-[30px] p-5 md:p-6"
+        data-testid="launcher-onboarding-complete"
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">First invoice complete</p>
+            <h2 className="mt-2 text-2xl text-slate-900 md:text-3xl" style={{ fontFamily: "'Fraunces', serif" }}>
+              You finished the full first-invoice loop.
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Notes captured, draft reviewed, editor opened, invoice saved, and PDF exported. Now let&apos;s make NoteBill feel even more like your shop.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="nb-btn-primary rounded-full px-4 py-2 text-sm" onClick={onStartNextInvoice}>
+              Start next invoice
+            </button>
+            <button type="button" className="nb-btn-ghost rounded-full px-4 py-2 text-sm" onClick={onDismissCompletion}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+        <div className="mt-5 grid gap-3 md:grid-cols-3">
+          <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/60 p-4">
+            <p className="text-sm font-semibold text-slate-900">Set your branding</p>
+            <p className="mt-2 text-xs leading-5 text-slate-600">
+              Add your logo, colors, and invoice defaults so every draft looks client-ready faster.
+            </p>
+            <button type="button" className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-sm" onClick={onOpenBranding}>
+              Open branding
+            </button>
+          </div>
+          <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/60 p-4">
+            <p className="text-sm font-semibold text-slate-900">Review client memory</p>
+            <p className="mt-2 text-xs leading-5 text-slate-600">
+              Check the repeat-client details NoteBill has remembered and clear anything stale.
+            </p>
+            <button type="button" className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-sm" onClick={onOpenMemory}>
+              Open memory
+            </button>
+          </div>
+          <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/60 p-4">
+            <p className="text-sm font-semibold text-slate-900">Build your service catalog</p>
+            <p className="mt-2 text-xs leading-5 text-slate-600">
+              Save the line items you reuse most so repeat work gets even faster from here.
+            </p>
+            <button type="button" className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-sm" onClick={onOpenServices}>
+              Open services
+            </button>
+          </div>
+        </div>
+      </section>
+    );
   }
   const nextStep = status.nextStep;
   return (
@@ -367,7 +433,7 @@ function LauncherOnboardingSection({ status, onContinue, onOpenSignIn }) {
                         : "bg-slate-200 text-slate-700"
                   }`}
                 >
-                  {step.complete ? "✓" : index + 1}
+                  {step.complete ? "OK" : index + 1}
                 </span>
                 <p className="text-xs font-semibold">{step.label}</p>
               </div>

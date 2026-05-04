@@ -56,7 +56,8 @@
   const createEmptyState = () => ({
     version: ONBOARDING_VERSION,
     completedSteps: {},
-    startedAt: new Date().toISOString()
+    startedAt: new Date().toISOString(),
+    completionAcknowledgedAt: ""
   });
 
   const normalizeState = (value) => {
@@ -71,7 +72,9 @@
       startedAt:
         typeof value.startedAt === "string" && value.startedAt.trim()
           ? value.startedAt
-          : new Date().toISOString()
+          : new Date().toISOString(),
+      completionAcknowledgedAt:
+        typeof value.completionAcknowledgedAt === "string" ? value.completionAcknowledgedAt : ""
     };
   };
 
@@ -129,6 +132,17 @@
 
   const reset = () => writeState(createEmptyState());
 
+  const acknowledgeCompletion = () => {
+    const current = readState();
+    if (current.completionAcknowledgedAt) {
+      return current;
+    }
+    return writeState({
+      ...current,
+      completionAcknowledgedAt: new Date().toISOString()
+    });
+  };
+
   const subscribe = (listener) => {
     if (typeof listener !== "function") {
       return () => {};
@@ -165,6 +179,14 @@
     const nextStep = steps.find((step) => !step.complete) ?? null;
     const complete = completedCount === totalSteps;
     const progressPercent = totalSteps > 0 ? Math.round((completedCount / totalSteps) * 100) : 0;
+    const completedAt = complete
+      ? steps
+          .map((step) => step.completedAt)
+          .filter(Boolean)
+          .sort()
+          .slice(-1)[0] ?? ""
+      : "";
+    const completionVisible = complete && !state.completionAcknowledgedAt;
     const optionalSteps = OPTIONAL_DEFINITIONS.map((definition) => ({
       ...definition,
       complete: Boolean(authSession?.userId)
@@ -177,6 +199,9 @@
       progressPercent,
       nextStep,
       complete,
+      completedAt,
+      completionVisible,
+      completionAcknowledgedAt: state.completionAcknowledgedAt,
       visible: !complete,
       startedAt: state.startedAt
     };
@@ -189,6 +214,7 @@
       writeState,
       markStep,
       reset,
+      acknowledgeCompletion,
       subscribe,
       buildStatus
   };

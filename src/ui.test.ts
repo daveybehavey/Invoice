@@ -508,6 +508,26 @@ test("first invoice onboarding tracks progress across launcher, intake, and manu
     await page.getByRole("button", { name: "Save invoice" }).click();
     await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
     await manualOnboarding.getByText("4 of 5 core steps complete").waitFor({ state: "visible" });
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download PDF" }).click();
+    const download = await downloadPromise;
+    assert.match(await download.suggestedFilename(), /^Invoice-.*\.pdf$/i);
+    await manualOnboarding.getByText("You finished the first full NoteBill loop.").waitFor({
+      state: "visible"
+    });
+
+    await openLauncher(page);
+    const completionCard = page.getByTestId("launcher-onboarding-complete");
+    await completionCard.waitFor({ state: "visible" });
+    await completionCard.getByText("You finished the full first-invoice loop.").waitFor({
+      state: "visible"
+    });
+    await completionCard.getByRole("button", { name: "Open branding" }).click();
+    await page.waitForURL(/\/settings\/business$/, { timeout: 10000 });
+    await page.getByRole("heading", { name: "Set your default invoice branding" }).waitFor({
+      state: "visible"
+    });
   } finally {
     await context.close();
   }

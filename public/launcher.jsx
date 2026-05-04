@@ -103,7 +103,11 @@ if (!onboardingUtils) {
   throw new Error("Missing /utils/onboardingState.js load. Ensure it is loaded before /launcher.jsx.");
 }
 
-const { buildStatus: buildOnboardingStatus, subscribe: subscribeToOnboardingState } = onboardingUtils;
+const {
+  buildStatus: buildOnboardingStatus,
+  subscribe: subscribeToOnboardingState,
+  acknowledgeCompletion: acknowledgeOnboardingCompletion
+} = onboardingUtils;
 
 const launcherSectionUtils = window.InvoiceLauncherSections;
 if (!launcherSectionUtils) {
@@ -801,6 +805,11 @@ function Launcher() {
     navigate("/ai-intake");
   };
 
+  const handleDismissOnboardingCompletion = () => {
+    acknowledgeOnboardingCompletion();
+    setOnboardingStatus(buildOnboardingStatus({ authSession: getAuthSession?.() ?? authSession ?? null }));
+  };
+
   const handleLauncherSendReminder = async (invoiceId) => {
     if (!invoiceId || operationsBusyActionId) {
       return;
@@ -1059,6 +1068,11 @@ function Launcher() {
             status={onboardingStatus}
             onContinue={handleContinueOnboarding}
             onOpenSignIn={openSignInModal}
+            onOpenBranding={() => navigate("/settings/business")}
+            onOpenMemory={() => navigate("/settings/memory")}
+            onOpenServices={() => navigate("/settings/services")}
+            onStartNextInvoice={() => navigate("/ai-intake")}
+            onDismissCompletion={handleDismissOnboardingCompletion}
           />
           <StartSection
             primaryOption={primaryOption}
