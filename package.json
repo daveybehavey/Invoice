@@ -15,6 +15,7 @@
     "pretest": "npm run build:frontend",
     "test": "tsx --test --test-concurrency=1 src/**/*.test.ts",
     "test:friction": "tsx scripts/ai-intake-friction-pass.mjs",
+    "assets:play-store": "node scripts/generate-play-store-assets.mjs",
     "check:mobile-wrapper": "node scripts/check-mobile-wrapper-readiness.mjs",
     "cap:sync": "npm run build:frontend && npx cap sync",
     "cap:open:ios": "npx cap open ios",

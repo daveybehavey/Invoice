@@ -68,6 +68,23 @@ $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 - Privacy policy URL
 - Support contact details
 
+Current generated asset pack:
+
+- `marketing/play-store/app-icon-512.png`
+- `marketing/play-store/feature-graphic-1024x500.png`
+- `marketing/play-store/phone-01-launcher.png`
+- `marketing/play-store/phone-02-ai-intake.png`
+- `marketing/play-store/phone-03-manual-editor.png`
+- `marketing/play-store/phone-04-invoice-library.png`
+- `marketing/play-store/phone-05-import.png`
+
+Regenerate after UI changes:
+
+```powershell
+$env:PLAY_ASSET_BASE_URL = "https://app.notebill.app"
+npm run assets:play-store
+```
+
 ## Play Console setup tasks
 
 - Create Play Console account and pay the one-time registration fee

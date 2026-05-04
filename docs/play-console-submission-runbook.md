@@ -48,6 +48,20 @@ Prepare and enter:
 Use:
 
 - [play-store-listing.md](c:/Users/david/OneDrive/Desktop/Invoice/docs/play-store-listing.md)
+- [google-play-production-access-answers.md](c:/Users/david/OneDrive/Desktop/Invoice/docs/google-play-production-access-answers.md)
+
+Generated local asset pack:
+
+- `C:\Users\david\OneDrive\Desktop\Invoice\marketing\play-store`
+
+Repeatable asset command:
+
+```powershell
+$env:PLAY_ASSET_BASE_URL = "https://app.notebill.app"
+npm run assets:play-store
+```
+
+For local pre-deploy captures, run the app locally first and set `PLAY_ASSET_BASE_URL` to that local URL.
 
 ## 4. Privacy policy, support, and deletion URLs
 
