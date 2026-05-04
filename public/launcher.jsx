@@ -1068,9 +1068,9 @@ function Launcher() {
             status={onboardingStatus}
             onContinue={handleContinueOnboarding}
             onOpenSignIn={openSignInModal}
-            onOpenBranding={() => navigate("/settings/business")}
-            onOpenMemory={() => navigate("/settings/memory")}
-            onOpenServices={() => navigate("/settings/services")}
+            onOpenBranding={() => navigate("/settings/business?from=onboarding-complete")}
+            onOpenMemory={() => navigate("/settings/memory?from=onboarding-complete")}
+            onOpenServices={() => navigate("/settings/services?from=onboarding-complete")}
             onStartNextInvoice={() => navigate("/ai-intake")}
             onDismissCompletion={handleDismissOnboardingCompletion}
           />

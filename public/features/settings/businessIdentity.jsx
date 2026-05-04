@@ -1,5 +1,5 @@
 (() => {
-  const { useNavigate } = ReactRouterDOM;
+  const { useNavigate, useSearchParams } = ReactRouterDOM;
   const { useEffect, useMemo, useState } = React;
 
   const requestIdentity = window.InvoiceRequestIdentity;
@@ -121,8 +121,18 @@
     };
   };
 
+  function SetupContinuationBanner({ title, body }) {
+    return (
+      <div className="nb-banner nb-banner--success mt-4 rounded-[22px] px-4 py-3">
+        <p className="text-sm font-semibold text-emerald-950">{title}</p>
+        <p className="mt-1 text-xs leading-5 text-emerald-900">{body}</p>
+      </div>
+    );
+  }
+
   function BusinessIdentitySettings() {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
     const [fromDetails, setFromDetails] = useState("");
     const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
@@ -162,6 +172,7 @@
 
     const activePreset = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.default;
     const accent = useMemo(() => buildAccentPalette(accentColor), [accentColor]);
+    const showOnboardingCompleteBanner = searchParams.get("from") === "onboarding-complete";
 
     const handleSave = () => {
       try {
@@ -231,6 +242,12 @@
               Account: {authSession?.email ? authSession.email : "local mode"}
             </p>
           </div>
+          {showOnboardingCompleteBanner ? (
+            <SetupContinuationBanner
+              title="First invoice complete. Branding is the fastest next upgrade."
+              body="Set your defaults once here so the next invoice starts polished instead of generic."
+            />
+          ) : null}
 
           <div className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
             <section className="nb-surface nb-surface--elevated space-y-4 rounded-[28px] p-4 md:p-5">
@@ -377,6 +394,7 @@
 
   function ClientMemorySettings() {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
     const [clientMemory, setClientMemory] = useState(() => getClientMemory());
     const [status, setStatus] = useState("");
@@ -402,6 +420,7 @@
     }, []);
 
     const stats = useMemo(() => buildMemoryStats(clientMemory), [clientMemory]);
+    const showOnboardingCompleteBanner = searchParams.get("from") === "onboarding-complete";
 
     const handleDeleteClient = (entry) => {
       setClientMemory(deleteClientMemoryEntry(entry.name));
@@ -454,6 +473,12 @@
               </p>
             </aside>
           </div>
+          {showOnboardingCompleteBanner ? (
+            <SetupContinuationBanner
+              title="Nice work. Now make repeat clients feel easier."
+              body="This is where you review what NoteBill remembered from your first invoice and keep that memory tidy."
+            />
+          ) : null}
 
           <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
@@ -598,6 +623,7 @@
 
   function ServiceCatalogSettings() {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
     const [serviceCatalog, setServiceCatalog] = useState(() => getLineItemLibrary());
     const [status, setStatus] = useState("");
@@ -623,6 +649,7 @@
     }, []);
 
     const stats = useMemo(() => buildServiceStats(serviceCatalog), [serviceCatalog]);
+    const showOnboardingCompleteBanner = searchParams.get("from") === "onboarding-complete";
 
     const handleDeleteService = (entry) => {
       setServiceCatalog((current) => {
@@ -679,6 +706,12 @@
               </p>
             </aside>
           </div>
+          {showOnboardingCompleteBanner ? (
+            <SetupContinuationBanner
+              title="Your first invoice is done. Now save the work you want to repeat."
+              body="Build a service catalog from real jobs so the second and third invoices feel much faster."
+            />
+          ) : null}
 
           <section className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[

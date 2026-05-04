@@ -1970,7 +1970,7 @@ function ManualInvoiceCanvas() {
                       type="button"
                       className="nb-btn-primary rounded-full px-4 py-2 text-sm"
                       style={accentButtonStyle}
-                      onClick={() => navigate("/settings/business")}
+                      onClick={() => navigate("/settings/business?from=onboarding-complete")}
                     >
                       Set up branding
                     </button>
@@ -1987,7 +1987,7 @@ function ManualInvoiceCanvas() {
                   <button
                     type="button"
                     className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4 text-left"
-                    onClick={() => navigate("/settings/business")}
+                    onClick={() => navigate("/settings/business?from=onboarding-complete")}
                   >
                     <p className="text-sm font-semibold text-slate-900">Branding</p>
                     <p className="mt-2 text-xs leading-5 text-slate-600">
@@ -1997,7 +1997,7 @@ function ManualInvoiceCanvas() {
                   <button
                     type="button"
                     className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4 text-left"
-                    onClick={() => navigate("/settings/memory")}
+                    onClick={() => navigate("/settings/memory?from=onboarding-complete")}
                   >
                     <p className="text-sm font-semibold text-slate-900">Client memory</p>
                     <p className="mt-2 text-xs leading-5 text-slate-600">
@@ -2007,7 +2007,7 @@ function ManualInvoiceCanvas() {
                   <button
                     type="button"
                     className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4 text-left"
-                    onClick={() => navigate("/settings/services")}
+                    onClick={() => navigate("/settings/services?from=onboarding-complete")}
                   >
                     <p className="text-sm font-semibold text-slate-900">Service catalog</p>
                     <p className="mt-2 text-xs leading-5 text-slate-600">

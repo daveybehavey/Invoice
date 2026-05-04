@@ -524,10 +524,13 @@ test("first invoice onboarding tracks progress across launcher, intake, and manu
       state: "visible"
     });
     await completionCard.getByRole("button", { name: "Open branding" }).click();
-    await page.waitForURL(/\/settings\/business$/, { timeout: 10000 });
+    await page.waitForURL(/\/settings\/business(?:\?from=onboarding-complete)?$/, { timeout: 10000 });
     await page.getByRole("heading", { name: "Set your default invoice branding" }).waitFor({
       state: "visible"
     });
+    await page
+      .getByText("First invoice complete. Branding is the fastest next upgrade.")
+      .waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
