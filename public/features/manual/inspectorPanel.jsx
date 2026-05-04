@@ -152,6 +152,7 @@ function InspectorPanel({
   saveStatus,
   saveError,
   saveNeedsAuth,
+  saveAuthHint,
   paymentLinkBusy,
   paymentLinkError,
   accountPlan,
@@ -1778,6 +1779,7 @@ function InspectorPanel({
               {saveNeedsAuth ? (
                 <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
                   <p className="text-xs text-slate-600">Sign in, then retry save.</p>
+                  {saveAuthHint ? <p className="text-xs text-slate-500">{saveAuthHint}</p> : null}
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"

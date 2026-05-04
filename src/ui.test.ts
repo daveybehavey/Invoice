@@ -4371,6 +4371,9 @@ test("invoice library shows sign-in-required panel when auth policy requires it"
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     await page.getByText("Sign in required to use Invoice Library").waitFor({ state: "visible" });
     await page.getByText("Local mode").waitFor({ state: "visible" });
+    await page
+      .getByText("Open launcher sign-in to send yourself an email link, then come right back here.")
+      .waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Go to launcher sign-in" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "I signed in, retry" }).waitFor({ state: "visible" });
   } finally {
@@ -6395,6 +6398,9 @@ test("manual editor save shows sign-in guidance when auth is required", async ()
     await page.getByRole("button", { name: "Save invoice" }).click();
 
     await page.getByText("Sign in required to save invoices.").waitFor({ state: "visible" });
+    await page
+      .getByText("Use launcher sign-in to send yourself an email link, then retry save here.")
+      .waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Go to launcher sign-in" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "I signed in, retry" }).waitFor({ state: "visible" });
   } finally {

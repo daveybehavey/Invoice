@@ -305,6 +305,7 @@ function InvoiceLibrary() {
   const [authSession, setAuthSession] = useState(() => getAuthSession?.() ?? null);
   const [authPolicyLoaded, setAuthPolicyLoaded] = useState(false);
   const [authRequiredByPolicy, setAuthRequiredByPolicy] = useState(false);
+  const [authProviders, setAuthProviders] = useState([]);
   const [authRequiredError, setAuthRequiredError] = useState(false);
   const [accountPlan, setAccountPlan] = useState(null);
   const [billingNotice, setBillingNotice] = useState(null);
@@ -347,6 +348,12 @@ function InvoiceLibrary() {
   const [followUpNoteNotice, setFollowUpNoteNotice] = useState("");
   const undoTimeoutRef = useRef(null);
   const requiresSignIn = (authRequiredByPolicy || authRequiredError) && !authSession?.userId;
+  const emailLinkProvider = Array.isArray(authProviders)
+    ? authProviders.find((provider) => provider?.id === "email_link")
+    : null;
+  const requiresSignInHint = emailLinkProvider?.available
+    ? "Open launcher sign-in to send yourself an email link, then come right back here."
+    : emailLinkProvider?.warning || "Open launcher sign-in to continue.";
 
   const requestJson = async (input, init, fallbackMessage) => {
     const response = await apiFetch(input, init);
@@ -668,6 +675,7 @@ function InvoiceLibrary() {
           return;
         }
         setAuthRequiredByPolicy(Boolean(payload?.authRequired));
+        setAuthProviders(Array.isArray(payload?.authProviders) ? payload.authProviders : []);
       } catch (policyError) {
         if (!cancelled) {
           handleLibraryError(policyError, "Failed to load auth policy.");
@@ -2187,6 +2195,7 @@ function InvoiceLibrary() {
             <p className="mt-1 text-sm text-amber-800">
               Your server currently requires an authenticated account for saved invoices.
             </p>
+            <p className="mt-1 text-sm text-amber-800">{requiresSignInHint}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"

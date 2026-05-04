@@ -380,6 +380,7 @@ function ManualInvoiceCanvas() {
   const [saveError, setSaveError] = useState("");
   const [saveNeedsAuth, setSaveNeedsAuth] = useState(false);
   const [saveAuthRequiredPolicy, setSaveAuthRequiredPolicy] = useState(false);
+  const [saveAuthProviders, setSaveAuthProviders] = useState([]);
   const [accountPlan, setAccountPlan] = useState(null);
   const [savedInvoiceId, setSavedInvoiceId] = useState(() => initialDraft?.savedInvoiceId ?? "");
   const [savedInvoiceStatus, setSavedInvoiceStatus] = useState(
@@ -439,6 +440,12 @@ function ManualInvoiceCanvas() {
     timingSummary: ""
   });
   const [billieChangeHighlight, setBillieChangeHighlight] = useState(EMPTY_BILLIE_CHANGE_HIGHLIGHT);
+  const emailLinkSaveProvider = Array.isArray(saveAuthProviders)
+    ? saveAuthProviders.find((provider) => provider?.id === "email_link")
+    : null;
+  const saveAuthHint = emailLinkSaveProvider?.available
+    ? "Use launcher sign-in to send yourself an email link, then retry save here."
+    : emailLinkSaveProvider?.warning || "Use launcher sign-in, then retry save here.";
 
   useEffect(() => {
     if (searchParams.get("source") === "import") {
@@ -1814,11 +1821,13 @@ function ManualInvoiceCanvas() {
       const authRequired = Boolean(payload?.authRequired);
       if (shouldApply()) {
         setSaveAuthRequiredPolicy(authRequired);
+        setSaveAuthProviders(Array.isArray(payload?.authProviders) ? payload.authProviders : []);
       }
       return authRequired;
     } catch (_error) {
       if (shouldApply()) {
         setSaveAuthRequiredPolicy(false);
+        setSaveAuthProviders([]);
       }
       return false;
     }
@@ -3347,6 +3356,7 @@ function ManualInvoiceCanvas() {
             saveStatus={saveStatus}
             saveError={saveError}
             saveNeedsAuth={saveNeedsAuth}
+            saveAuthHint={saveAuthHint}
             paymentLinkBusy={paymentLinkBusy}
             paymentLinkError={paymentLinkError}
             accountPlan={accountPlan}
@@ -3463,6 +3473,7 @@ function ManualInvoiceCanvas() {
                 saveStatus={saveStatus}
                 saveError={saveError}
                 saveNeedsAuth={saveNeedsAuth}
+                saveAuthHint={saveAuthHint}
                 paymentLinkBusy={paymentLinkBusy}
                 paymentLinkError={paymentLinkError}
                 accountPlan={accountPlan}
