@@ -6,6 +6,8 @@ This checklist is for shipping `NoteBill` to the Google Play Store from a Window
 
 - Confirm latest signed bundle exists:
   - `android/app/build/outputs/bundle/release/app-release.aab`
+- For the V2 candidate, use the archived named file:
+  - `android/app/build/outputs/bundle/release/app-release-2.0.0.aab`
 - If uploading an older named bundle, use the exact archived file:
   - `android/app/build/outputs/bundle/release/app-release-1.0.13.aab`
 - Confirm package/application id is correct:

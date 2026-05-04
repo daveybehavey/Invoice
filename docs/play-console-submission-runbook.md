@@ -28,7 +28,8 @@ Verified local bundle inventory:
 | `app-release-1.0.14.aab` | `app.notebill.app` | `1.0.14` | 15 |
 | `app-release-1.0.15.aab` | `app.notebill.app` | `1.0.15` | 16 |
 | `app-release-1.0.16.aab` | `app.notebill.app` | `1.0.16` | 17 |
-| `app-release.aab` | `app.notebill.app` | `1.0.16` | 17 |
+| `app-release-2.0.0.aab` | `app.notebill.app` | `2.0.0` | 18 |
+| `app-release.aab` | `app.notebill.app` | `2.0.0` | 18 |
 
 If Play Console has already accepted version code 14, do not upload `app-release-1.0.13.aab` again. Use the next unused higher version code instead.
 
