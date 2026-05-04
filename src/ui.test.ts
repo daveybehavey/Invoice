@@ -536,6 +536,36 @@ test("first invoice onboarding tracks progress across launcher, intake, and manu
   }
 });
 
+test("onboarding completion setup pages chain branding, memory, and services", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/settings/business?from=onboarding-complete`, {
+      waitUntil: "networkidle"
+    });
+    await page.getByText("First invoice complete. Branding is the fastest next upgrade.").waitFor({
+      state: "visible"
+    });
+    await page.getByRole("button", { name: "Open memory" }).click();
+
+    await page.waitForURL(/\/settings\/memory\?from=onboarding-complete$/, { timeout: 10000 });
+    await page.getByText("Nice work. Now make repeat clients feel easier.").waitFor({
+      state: "visible"
+    });
+    await page.getByRole("button", { name: "Open services" }).click();
+
+    await page.waitForURL(/\/settings\/services\?from=onboarding-complete$/, { timeout: 10000 });
+    await page.getByText("Your first invoice is done. Now save the work you want to repeat.").waitFor({
+      state: "visible"
+    });
+    await page.getByRole("button", { name: "Return to launcher" }).click();
+    await page.waitForURL(/\/$/, { timeout: 10000 });
+    await page.getByText("Start with Billie", { exact: true }).first().waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher opens the daily scratchpad quick capture flow", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();

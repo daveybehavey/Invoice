@@ -130,6 +130,26 @@
     );
   }
 
+  function SetupNextStepCard({ title, body, ctaLabel, onClick }) {
+    if (!ctaLabel || typeof onClick !== "function") {
+      return null;
+    }
+    return (
+      <div className="mt-4 rounded-[22px] border border-[#6993d2]/18 bg-[#f7faff] px-4 py-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Next setup step</p>
+        <p className="mt-2 text-sm font-semibold text-slate-900">{title}</p>
+        <p className="mt-1 text-xs leading-5 text-slate-600">{body}</p>
+        <button
+          type="button"
+          className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-sm"
+          onClick={onClick}
+        >
+          {ctaLabel}
+        </button>
+      </div>
+    );
+  }
+
   function BusinessIdentitySettings() {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
@@ -173,6 +193,9 @@
     const activePreset = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.default;
     const accent = useMemo(() => buildAccentPalette(accentColor), [accentColor]);
     const showOnboardingCompleteBanner = searchParams.get("from") === "onboarding-complete";
+    const handleBack = () => {
+      navigate("/");
+    };
 
     const handleSave = () => {
       try {
@@ -357,6 +380,14 @@
               </div>
               {status ? <p className="text-xs text-blue-800">{status}</p> : null}
               {error ? <p className="text-xs text-rose-600">{error}</p> : null}
+              {showOnboardingCompleteBanner ? (
+                <SetupNextStepCard
+                  title="Review client memory next"
+                  body="After branding, make sure repeat-client details and saved notes look right before more invoices pile up."
+                  ctaLabel="Open memory"
+                  onClick={() => navigate("/settings/memory?from=onboarding-complete")}
+                />
+              ) : null}
             </section>
 
             <section className={`rounded-2xl border p-4 ${activePreset.shellClass}`}>
@@ -421,6 +452,9 @@
 
     const stats = useMemo(() => buildMemoryStats(clientMemory), [clientMemory]);
     const showOnboardingCompleteBanner = searchParams.get("from") === "onboarding-complete";
+    const handleBack = () => {
+      navigate("/");
+    };
 
     const handleDeleteClient = (entry) => {
       setClientMemory(deleteClientMemoryEntry(entry.name));
@@ -445,7 +479,7 @@
           <button
             type="button"
             className="nb-btn-ghost"
-            onClick={() => navigate("/")}
+            onClick={handleBack}
           >
             Back to launcher
           </button>
@@ -616,6 +650,14 @@
               </div>
             )}
           </section>
+          {showOnboardingCompleteBanner ? (
+            <SetupNextStepCard
+              title="Save repeat work into services"
+              body="Once memory looks good, build the saved services list you want Billie to reuse on future jobs."
+              ctaLabel="Open services"
+              onClick={() => navigate("/settings/services?from=onboarding-complete")}
+            />
+          ) : null}
         </main>
       </div>
     );
@@ -650,6 +692,9 @@
 
     const stats = useMemo(() => buildServiceStats(serviceCatalog), [serviceCatalog]);
     const showOnboardingCompleteBanner = searchParams.get("from") === "onboarding-complete";
+    const handleBack = () => {
+      navigate(showOnboardingCompleteBanner ? "/" : "/manual");
+    };
 
     const handleDeleteService = (entry) => {
       setServiceCatalog((current) => {
@@ -678,9 +723,9 @@
           <button
             type="button"
             className="nb-btn-ghost"
-            onClick={() => navigate("/manual")}
+            onClick={handleBack}
           >
-            Back to invoice editor
+            {showOnboardingCompleteBanner ? "Back to launcher" : "Back to invoice editor"}
           </button>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_320px]">
@@ -832,6 +877,14 @@
               </div>
             )}
           </section>
+          {showOnboardingCompleteBanner ? (
+            <SetupNextStepCard
+              title="You are set up for stronger repeat work"
+              body="Head back to the launcher and start the next invoice with branding, memory, and saved services already working together."
+              ctaLabel="Return to launcher"
+              onClick={() => navigate("/")}
+            />
+          ) : null}
         </main>
       </div>
     );
