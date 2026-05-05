@@ -895,6 +895,27 @@ function Launcher() {
     setOnboardingStatus(buildOnboardingStatus({ authSession: getAuthSession?.() ?? authSession ?? null }));
   };
 
+  const handleContinueSetup = (step) => {
+    if (!step?.routeHint) {
+      return;
+    }
+    if (step.routeHint === "sign-in") {
+      openSignInModal();
+      return;
+    }
+    if (step.routeHint === "settings/business") {
+      navigate("/settings/business?from=onboarding-complete");
+      return;
+    }
+    if (step.routeHint === "settings/memory") {
+      navigate("/settings/memory?from=onboarding-complete");
+      return;
+    }
+    if (step.routeHint === "settings/services") {
+      navigate("/settings/services?from=onboarding-complete");
+    }
+  };
+
   const handleLauncherSendReminder = async (invoiceId) => {
     if (!invoiceId || operationsBusyActionId) {
       return;
@@ -1152,10 +1173,8 @@ function Launcher() {
           <OnboardingSection
             status={onboardingStatus}
             onContinue={handleContinueOnboarding}
+            onContinueSetup={handleContinueSetup}
             onOpenSignIn={openSignInModal}
-            onOpenBranding={() => navigate("/settings/business?from=onboarding-complete")}
-            onOpenMemory={() => navigate("/settings/memory?from=onboarding-complete")}
-            onOpenServices={() => navigate("/settings/services?from=onboarding-complete")}
             onStartNextInvoice={() => navigate("/ai-intake")}
             onDismissCompletion={handleDismissOnboardingCompletion}
           />

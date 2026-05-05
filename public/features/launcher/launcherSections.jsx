@@ -311,14 +311,12 @@ function LauncherOperationsQueueSection({
 function LauncherOnboardingSection({
   status,
   onContinue,
+  onContinueSetup,
   onOpenSignIn,
-  onOpenBranding,
-  onOpenMemory,
-  onOpenServices,
   onStartNextInvoice,
   onDismissCompletion
 }) {
-  if (!status?.visible && !status?.completionVisible) {
+  if (!status?.visible && !status?.completionVisible && !status?.setupVisible) {
     return null;
   }
   if (status?.completionVisible) {
@@ -334,7 +332,7 @@ function LauncherOnboardingSection({
               You finished the full first-invoice loop.
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              Notes captured, draft reviewed, editor opened, invoice saved, and PDF exported. Now let&apos;s make NoteBill feel even more like your shop.
+              Notes captured, draft reviewed, editor opened, invoice saved, and PDF exported. Now let&apos;s turn that first invoice into a setup advantage for the second one.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -346,35 +344,33 @@ function LauncherOnboardingSection({
             </button>
           </div>
         </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-3">
-          <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/60 p-4">
-            <p className="text-sm font-semibold text-slate-900">Set your branding</p>
-            <p className="mt-2 text-xs leading-5 text-slate-600">
-              Add your logo, colors, and invoice defaults so every draft looks client-ready faster.
+        <LauncherSetupChecklist status={status} onContinueSetup={onContinueSetup} />
+      </section>
+    );
+  }
+  if (status?.setupVisible) {
+    return (
+      <section
+        className="nb-surface nb-surface--elevated mt-6 rounded-[30px] p-5 md:p-6"
+        data-testid="launcher-setup-section"
+      >
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Complete your setup</p>
+            <h2 className="mt-2 text-2xl text-slate-900 md:text-3xl" style={{ fontFamily: "'Fraunces', serif" }}>
+              Turn that first invoice into a faster second one.
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              The core loop is done. These setup power-ups make repeat jobs feel calmer, faster, and more like your business.
             </p>
-            <button type="button" className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-sm" onClick={onOpenBranding}>
-              Open branding
-            </button>
           </div>
-          <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/60 p-4">
-            <p className="text-sm font-semibold text-slate-900">Review client memory</p>
-            <p className="mt-2 text-xs leading-5 text-slate-600">
-              Check the repeat-client details NoteBill has remembered and clear anything stale.
-            </p>
-            <button type="button" className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-sm" onClick={onOpenMemory}>
-              Open memory
-            </button>
-          </div>
-          <div className="rounded-[24px] border border-emerald-100 bg-emerald-50/60 p-4">
-            <p className="text-sm font-semibold text-slate-900">Build your service catalog</p>
-            <p className="mt-2 text-xs leading-5 text-slate-600">
-              Save the line items you reuse most so repeat work gets even faster from here.
-            </p>
-            <button type="button" className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-sm" onClick={onOpenServices}>
-              Open services
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="nb-btn-primary rounded-full px-4 py-2 text-sm" onClick={onStartNextInvoice}>
+              Start next invoice
             </button>
           </div>
         </div>
+        <LauncherSetupChecklist status={status} onContinueSetup={onContinueSetup} />
       </section>
     );
   }
@@ -463,6 +459,83 @@ function LauncherOnboardingSection({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function LauncherSetupChecklist({ status, onContinueSetup }) {
+  const setupSteps = Array.isArray(status?.setupSteps) ? status.setupSteps : [];
+  if (setupSteps.length === 0) {
+    return null;
+  }
+  const nextSetupStep = status?.setupNextStep ?? null;
+  const completionLabel = status?.setupComplete
+    ? "Workspace setup complete"
+    : `${status?.setupCompletedCount ?? 0} of ${status?.setupTotalSteps ?? setupSteps.length} setup steps complete`;
+  const helperCopy = status?.setupComplete
+    ? "Your account, branding, memory, and saved services are ready for repeat work."
+    : "These are the high-leverage moves that make the next invoice feel much more automatic.";
+  return (
+    <div className="mt-5" data-testid="launcher-setup-progress">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="max-w-2xl">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">Workspace power-ups</p>
+          <p className="mt-2 text-sm font-semibold text-slate-900">{completionLabel}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-600">{helperCopy}</p>
+        </div>
+        {nextSetupStep ? (
+          <button
+            type="button"
+            className="nb-btn-secondary rounded-full px-4 py-2 text-sm"
+            onClick={() => onContinueSetup?.(nextSetupStep)}
+          >
+            {nextSetupStep.ctaLabel}
+          </button>
+        ) : null}
+      </div>
+      <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-slate-200/80">
+        <div
+          className="h-full rounded-full bg-emerald-600 transition-all duration-300"
+          style={{ width: `${status?.setupProgressPercent ?? 0}%` }}
+        />
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {setupSteps.map((step, index) => {
+          const stepClass = step.complete
+            ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+            : nextSetupStep?.id === step.id
+              ? "border-[#6993d2]/25 bg-[#f6f9ff] text-slate-900"
+              : "border-slate-200 bg-white/85 text-slate-700";
+          return (
+            <div key={step.id} className={`rounded-[22px] border px-3 py-3 ${stepClass}`}>
+              <div className="flex items-center gap-2">
+                <span
+                  className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold ${
+                    step.complete
+                      ? "bg-emerald-600 text-white"
+                      : nextSetupStep?.id === step.id
+                        ? "bg-[#093064] text-white"
+                        : "bg-slate-200 text-slate-700"
+                  }`}
+                >
+                  {step.complete ? "OK" : index + 1}
+                </span>
+                <p className="text-xs font-semibold">{step.label}</p>
+              </div>
+              <p className="mt-2 text-xs leading-5 opacity-80">{step.helper}</p>
+              {!step.complete ? (
+                <button
+                  type="button"
+                  className="nb-btn-ghost mt-3 rounded-full px-3 py-1.5 text-xs"
+                  onClick={() => onContinueSetup?.(step)}
+                >
+                  {step.ctaLabel}
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

@@ -49,6 +49,36 @@
       helper: "Optional, but helpful if you want saved work tied to your email."
     }
   ];
+  const SETUP_DEFINITIONS = [
+    {
+      id: "sign_in",
+      label: "Link your account",
+      helper: "Use email or Google sign-in so saved work follows your email.",
+      ctaLabel: "Open sign-in",
+      routeHint: "sign-in"
+    },
+    {
+      id: "setup_branding",
+      label: "Save your branding defaults",
+      helper: "Add your business details, logo, and invoice accent once.",
+      ctaLabel: "Open branding",
+      routeHint: "settings/business"
+    },
+    {
+      id: "setup_memory",
+      label: "Review client memory",
+      helper: "Confirm the repeat-client details Billie is remembering.",
+      ctaLabel: "Open memory",
+      routeHint: "settings/memory"
+    },
+    {
+      id: "setup_services",
+      label: "Review service catalog",
+      helper: "Build the saved services you want to reuse on repeat jobs.",
+      ctaLabel: "Open services",
+      routeHint: "settings/services"
+    }
+  ];
 
   const getStorageKey = () =>
     requestIdentity?.getScopedStorageKey?.(STORAGE_KEY_FALLBACK) ?? STORAGE_KEY_FALLBACK;
@@ -56,6 +86,7 @@
   const createEmptyState = () => ({
     version: ONBOARDING_VERSION,
     completedSteps: {},
+    completedSetupSteps: {},
     startedAt: new Date().toISOString(),
     completionAcknowledgedAt: ""
   });
@@ -66,9 +97,12 @@
     }
     const completedSteps =
       value.completedSteps && typeof value.completedSteps === "object" ? value.completedSteps : {};
+    const completedSetupSteps =
+      value.completedSetupSteps && typeof value.completedSetupSteps === "object" ? value.completedSetupSteps : {};
     return {
       version: ONBOARDING_VERSION,
       completedSteps,
+      completedSetupSteps,
       startedAt:
         typeof value.startedAt === "string" && value.startedAt.trim()
           ? value.startedAt
@@ -125,6 +159,24 @@
       ...current,
       completedSteps: {
         ...current.completedSteps,
+        [normalizedStepId]: new Date().toISOString()
+      }
+    });
+  };
+
+  const markSetupStep = (stepId) => {
+    const normalizedStepId = typeof stepId === "string" ? stepId.trim() : "";
+    if (!normalizedStepId) {
+      return readState();
+    }
+    const current = readState();
+    if (current.completedSetupSteps[normalizedStepId]) {
+      return current;
+    }
+    return writeState({
+      ...current,
+      completedSetupSteps: {
+        ...current.completedSetupSteps,
         [normalizedStepId]: new Date().toISOString()
       }
     });
@@ -191,9 +243,26 @@
       ...definition,
       complete: Boolean(authSession?.userId)
     }));
+    const setupSteps = SETUP_DEFINITIONS.map((definition) => {
+      const signInComplete = definition.id === "sign_in" ? Boolean(authSession?.userId) : false;
+      return {
+        ...definition,
+        completedAt: signInComplete
+          ? authSession?.expiresAt ?? state.completedSetupSteps[definition.id] ?? ""
+          : state.completedSetupSteps[definition.id] ?? "",
+        complete: signInComplete || Boolean(state.completedSetupSteps[definition.id])
+      };
+    });
+    const setupCompletedCount = setupSteps.filter((step) => step.complete).length;
+    const setupTotalSteps = setupSteps.length;
+    const setupNextStep = setupSteps.find((step) => !step.complete) ?? null;
+    const setupComplete = setupTotalSteps > 0 && setupCompletedCount === setupTotalSteps;
+    const setupProgressPercent =
+      setupTotalSteps > 0 ? Math.round((setupCompletedCount / setupTotalSteps) * 100) : 0;
     return {
       steps,
       optionalSteps,
+      setupSteps,
       completedCount,
       totalSteps,
       progressPercent,
@@ -202,6 +271,12 @@
       completedAt,
       completionVisible,
       completionAcknowledgedAt: state.completionAcknowledgedAt,
+      setupVisible: complete && !setupComplete,
+      setupComplete,
+      setupCompletedCount,
+      setupTotalSteps,
+      setupProgressPercent,
+      setupNextStep,
       visible: !complete,
       startedAt: state.startedAt
     };
@@ -210,9 +285,11 @@
   window.InvoiceOnboardingState = {
     STEP_DEFINITIONS,
     OPTIONAL_DEFINITIONS,
+      SETUP_DEFINITIONS,
       readState,
       writeState,
       markStep,
+      markSetupStep,
       reset,
       acknowledgeCompletion,
       subscribe,

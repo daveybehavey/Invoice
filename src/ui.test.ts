@@ -591,6 +591,7 @@ test("first invoice onboarding tracks progress across launcher, intake, and manu
     await completionCard.getByText("You finished the full first-invoice loop.").waitFor({
       state: "visible"
     });
+    await completionCard.getByText("0 of 4 setup steps complete").waitFor({ state: "visible" });
     await completionCard.getByRole("button", { name: "Open branding" }).click();
     await page.waitForURL(/\/settings\/business(?:\?from=onboarding-complete)?$/, { timeout: 10000 });
     await page.getByRole("heading", { name: "Set your default invoice branding" }).waitFor({
@@ -606,6 +607,25 @@ test("first invoice onboarding tracks progress across launcher, intake, and manu
 
 test("onboarding completion setup pages chain branding, memory, and services", async () => {
   const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-onboarding-setup-owner");
+    window.localStorage.setItem(
+      "firstInvoiceOnboarding::owner:ui-onboarding-setup-owner",
+      JSON.stringify({
+        version: 1,
+        startedAt: "2026-05-01T12:00:00.000Z",
+        completionAcknowledgedAt: "2026-05-01T12:05:00.000Z",
+        completedSetupSteps: {},
+        completedSteps: {
+          capture_notes: "2026-05-01T12:01:00.000Z",
+          review_draft: "2026-05-01T12:02:00.000Z",
+          open_editor: "2026-05-01T12:03:00.000Z",
+          save_invoice: "2026-05-01T12:04:00.000Z",
+          export_pdf: "2026-05-01T12:05:00.000Z"
+        }
+      })
+    );
+  });
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/settings/business?from=onboarding-complete`, {
@@ -614,6 +634,8 @@ test("onboarding completion setup pages chain branding, memory, and services", a
     await page.getByText("First invoice complete. Branding is the fastest next upgrade.").waitFor({
       state: "visible"
     });
+    await page.getByRole("button", { name: "Save defaults" }).click();
+    await page.getByText("Business identity saved.").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Open memory" }).click();
 
     await page.waitForURL(/\/settings\/memory\?from=onboarding-complete$/, { timeout: 10000 });
@@ -628,7 +650,10 @@ test("onboarding completion setup pages chain branding, memory, and services", a
     });
     await page.getByRole("button", { name: "Return to launcher" }).click();
     await page.waitForURL(/\/$/, { timeout: 10000 });
-    await page.getByText("Start with Billie", { exact: true }).first().waitFor({ state: "visible" });
+    const setupSection = page.getByTestId("launcher-setup-section");
+    await setupSection.waitFor({ state: "visible" });
+    await setupSection.getByText("3 of 4 setup steps complete").waitFor({ state: "visible" });
+    await setupSection.getByText("Link your account").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

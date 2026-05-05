@@ -271,6 +271,10 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added a real Google OAuth start + callback flow on the backend, including signed state protection and a browser-bound callback cookie.
    - Verified Google identity is converted into the same NoteBill auth session model used by email-link sign-in, so account behavior stays consistent across providers.
    - Launcher now supports a live `Continue with Google` path when Google credentials are configured, and the hosted completion page stores the returned NoteBill session before navigating back into the app.
+77. Two-phase onboarding setup progression
+   - Expanded onboarding beyond the first invoice loop into a tracked setup phase for account linking, branding, client memory review, and service catalog review.
+   - Launcher now keeps a persistent post-completion setup card visible until those power-ups are done, instead of dropping users into disconnected settings pages.
+   - Branding, memory, and service-catalog screens now mark setup progress so the onboarding flow feels continuous across routes.
 77. Freemium upgrade-gate UX surfaces
    - Invoice Library now shows free-plan usage and a focused limit-reached banner when monthly save cap is exhausted.
    - Manual Export panel now surfaces plan usage and disables new saves when the free cap is reached (updates remain enabled).

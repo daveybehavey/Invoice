@@ -15,6 +15,12 @@
       "Missing /utils/businessProfile.js load. Ensure it is loaded before /features/settings/businessIdentity.jsx."
     );
   }
+  const onboardingUtils = window.InvoiceOnboardingState;
+  if (!onboardingUtils) {
+    throw new Error(
+      "Missing /utils/onboardingState.js load. Ensure it is loaded before /features/settings/businessIdentity.jsx."
+    );
+  }
 
   const clientMemoryUtils = window.InvoiceClientMemory;
   if (!clientMemoryUtils) {
@@ -57,6 +63,7 @@
   const { DEFAULT_ACCENT_COLOR, normalizeAccentColor, buildAccentPalette } = brandThemeUtils;
   const { STYLE_OPTIONS, STYLE_PRESETS } = styleCatalogUtils;
   const { readLogoFileForStorage } = logoImageUtils;
+  const { markSetupStep } = onboardingUtils;
 
   const formatMemoryDate = (value) => {
     if (!value) {
@@ -205,6 +212,7 @@
           stylePreset,
           logoUrl
         });
+        markSetupStep("setup_branding");
         setFromDetails(profile.fromDetails);
         setAccentColor(profile.accentColor);
         setStylePreset(profile.stylePreset);
@@ -430,6 +438,10 @@
     const [clientMemory, setClientMemory] = useState(() => getClientMemory());
     const [status, setStatus] = useState("");
     const [clearArmed, setClearArmed] = useState(false);
+
+    useEffect(() => {
+      markSetupStep("setup_memory");
+    }, []);
 
     useEffect(() => {
       let active = true;
@@ -670,6 +682,10 @@
     const [serviceCatalog, setServiceCatalog] = useState(() => getLineItemLibrary());
     const [status, setStatus] = useState("");
     const [clearArmed, setClearArmed] = useState(false);
+
+    useEffect(() => {
+      markSetupStep("setup_services");
+    }, []);
 
     useEffect(() => {
       let active = true;
