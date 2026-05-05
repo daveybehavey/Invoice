@@ -299,7 +299,9 @@ test("google sign-in completion page stores a hosted session and returns to laun
     );
 
     await page.waitForURL(`${baseUrl}/`, { timeout: 10000 });
-    await page.getByText("Signed in as owner@example.com").waitFor({ state: "visible" });
+    await page
+      .getByText("Signed in as owner@example.com with Google Sign-In. Setup progress is now tied to your account.")
+      .waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -6731,6 +6733,110 @@ test("manual export panel can create a client portal link for a saved invoice", 
       portalHref ?? "",
       /^https?:\/\/[^/]+\/portal\/[0-9a-f-]{36}\/token123$/
     );
+  } finally {
+    await context.close();
+  }
+});
+
+test("client portal highlights payment status, notes, and customer history", async () => {
+  const context = await browser.newContext();
+  const ownerId = "ui-client-portal-owner";
+  try {
+    const firstSaveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+      headers: { "x-invoice-user-id": ownerId },
+      data: {
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: {
+            customerName: "V2 Portal Client",
+            workSessions: [],
+            materials: []
+          },
+          finishedInvoice: {
+            invoiceNumber: "INV-V2-PORTAL-1",
+            issueDate: "2026-05-01",
+            customerName: "V2 Portal Client",
+            currency: "USD",
+            lineItems: [
+              {
+                id: "portal-ui-line-1",
+                type: "labor",
+                description: "Earlier site visit",
+                quantity: 1,
+                unitPrice: 95,
+                amount: 95
+              }
+            ],
+            subtotal: 95,
+            total: 95,
+            balanceDue: 95
+          }
+        }
+      }
+    });
+    assert.equal(firstSaveResponse.status(), 200);
+
+    const secondSaveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+      headers: { "x-invoice-user-id": ownerId },
+      data: {
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: {
+            customerName: "V2 Portal Client",
+            workSessions: [],
+            materials: []
+          },
+          finishedInvoice: {
+            invoiceNumber: "INV-V2-PORTAL-2",
+            issueDate: "2026-05-05",
+            dueDate: "2026-05-12",
+            customerName: "V2 Portal Client",
+            currency: "USD",
+            lineItems: [
+              {
+                id: "portal-ui-line-2",
+                type: "labor",
+                description: "Finish trim and cleanup",
+                quantity: 2,
+                unitPrice: 125,
+                amount: 250
+              }
+            ],
+            subtotal: 250,
+            total: 250,
+            balanceDue: 250,
+            paymentLinkUrl: "https://pay.stripe.test/plink_portal_ui",
+            notes: "Payment due on receipt. Thank you for the quick turnaround."
+          }
+        }
+      }
+    });
+    assert.equal(secondSaveResponse.status(), 200);
+    const secondInvoiceId = String((await secondSaveResponse.json()).invoice?.invoiceId ?? "");
+    assert.ok(secondInvoiceId);
+
+    const portalResponse = await context.request.post(`${baseUrl}/api/invoices/${secondInvoiceId}/client-portal-link`, {
+      headers: { "x-invoice-user-id": ownerId },
+      data: {}
+    });
+    assert.equal(portalResponse.status(), 200);
+    const portalUrl = String((await portalResponse.json()).clientPortalUrl ?? "");
+    assert.ok(portalUrl);
+
+    const page = await context.newPage();
+    await page.goto(portalUrl, { waitUntil: "networkidle" });
+
+    await page.getByText("Payment status", { exact: true }).waitFor({ state: "visible" });
+    await page.getByRole("heading", { name: "Ready for payment" }).waitFor({ state: "visible" });
+    await page
+      .getByText("Pay securely online now, or review the line items and notes before paying.")
+      .waitFor({ state: "visible" });
+    await page.getByRole("link", { name: "Pay online" }).first().waitFor({ state: "visible" });
+    await page.getByText("Notes and terms", { exact: true }).waitFor({ state: "visible" });
+    await page.getByText("Payment due on receipt. Thank you for the quick turnaround.").waitFor({ state: "visible" });
+    await page.getByText("INV-V2-PORTAL-1", { exact: true }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

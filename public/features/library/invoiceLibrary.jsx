@@ -913,10 +913,10 @@ function InvoiceLibrary() {
         )
       );
       if (payload?.mode === "provider") {
-        setDeliveryNotice(`Invoice emailed to ${recipientEmail}.`);
+        setDeliveryNotice(`Invoice sent to ${recipientEmail}. Delivery tracking is now active.`);
       } else {
         setDeliveryNotice(
-          payload?.warning || "Delivery was recorded. Configure an email provider to send automatically."
+          payload?.warning || `Send recorded for ${recipientEmail}. Configure an email provider to send automatically.`
         );
       }
       if (invoice.customerName) {
@@ -964,10 +964,11 @@ function InvoiceLibrary() {
       );
       const recipient = payload?.delivery?.recipientEmail ?? invoice?.delivery?.recipientEmail ?? "";
       if (payload?.mode === "provider") {
-        setDeliveryNotice(`Reminder emailed to ${recipient}.`);
+        setDeliveryNotice(`Reminder sent to ${recipient}. Delivery tracking is now active.`);
       } else {
         setDeliveryNotice(
-          payload?.warning || "Reminder was recorded. Configure an email provider to send automatically."
+          payload?.warning ||
+            `Reminder recorded for ${recipient || "the saved recipient"}. Configure an email provider to send automatically.`
         );
       }
     } catch (reminderError) {

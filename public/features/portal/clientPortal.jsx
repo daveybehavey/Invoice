@@ -65,8 +65,31 @@
     const total = Number(finishedInvoice?.total ?? 0);
     const balanceDue = Number(finishedInvoice?.balanceDue ?? total);
     const paymentLinkUrl = typeof finishedInvoice?.paymentLinkUrl === "string" ? finishedInvoice.paymentLinkUrl.trim() : "";
+    const notes = typeof finishedInvoice?.notes === "string" ? finishedInvoice.notes.trim() : "";
     const customerName =
       finishedInvoice?.customerName ?? invoice?.invoiceData?.structuredInvoice?.customerName ?? "Customer";
+    const statusLabel = (() => {
+      const rawStatus = typeof invoice?.status === "string" ? invoice.status.trim() : "";
+      if (!rawStatus) {
+        return "Ready";
+      }
+      return rawStatus
+        .split(/[\s_-]+/)
+        .filter(Boolean)
+        .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
+        .join(" ");
+    })();
+    const isPaid = invoice?.status === "paid" || balanceDue <= 0;
+    const paymentAvailable = Boolean(paymentLinkUrl) && !isPaid;
+    const nextStepTitle = isPaid ? "Paid in full" : paymentAvailable ? "Ready for payment" : "Review invoice";
+    const nextStepBody = isPaid
+      ? "Thanks, this invoice is marked paid. You can still review the details and past invoices below."
+      : paymentAvailable
+        ? "Pay securely online now, or review the line items and notes before paying."
+        : "Review the details below. Contact the sender if you need a payment link or any changes.";
+    const balanceCardClassName = isPaid
+      ? "rounded-3xl bg-emerald-700 px-5 py-4 text-white shadow-lg shadow-emerald-900/10"
+      : "rounded-3xl bg-slate-900 px-5 py-4 text-white shadow-lg shadow-slate-900/10";
 
     return (
       <div className="nb-page min-h-screen bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.16),_transparent_36%),linear-gradient(180deg,_#f8fafc_0%,_#eef2ff_100%)]">
@@ -119,16 +142,36 @@
                       {finishedInvoice?.issueDate ? ` · Issued ${finishedInvoice.issueDate}` : ""}
                     </p>
                   </div>
-                  <div className="rounded-3xl bg-slate-900 px-5 py-4 text-white shadow-lg shadow-slate-900/10">
+                  <div className={balanceCardClassName}>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-slate-300">Balance due</p>
                     <p className="mt-1 text-3xl font-black tabular-nums">{formatMoney(balanceDue)}</p>
+                  </div>
+                </div>
+
+                <div className="overflow-hidden rounded-[26px] border border-emerald-200 bg-[linear-gradient(135deg,_#ecfdf5_0%,_#ffffff_52%,_#eef2ff_100%)] p-4 shadow-sm">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Payment status</p>
+                      <h3 className="mt-1 text-xl font-black text-slate-950">{nextStepTitle}</h3>
+                      <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">{nextStepBody}</p>
+                    </div>
+                    {paymentAvailable ? (
+                      <a
+                        href={paymentLinkUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-slate-900/15 transition hover:-translate-y-0.5 hover:bg-slate-800"
+                      >
+                        Pay online
+                      </a>
+                    ) : null}
                   </div>
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Status</p>
-                    <p className="mt-1 text-lg font-semibold text-slate-900">{invoice.status}</p>
+                    <p className="mt-1 text-lg font-semibold text-slate-900">{statusLabel}</p>
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Total</p>
@@ -175,6 +218,13 @@
                     <p className="mt-4 text-sm text-slate-500">No line items were provided.</p>
                   )}
                 </div>
+
+                {notes ? (
+                  <div className="rounded-[24px] border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notes and terms</p>
+                    <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-700">{notes}</p>
+                  </div>
+                ) : null}
 
                 <div className="rounded-[24px] border border-slate-200 bg-white p-4">
                   <h3 className="text-sm font-semibold text-slate-900">Past invoices</h3>

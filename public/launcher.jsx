@@ -408,6 +408,7 @@ function Launcher() {
   const [authProviders, setAuthProviders] = useState([]);
   const [authProvidersBusy, setAuthProvidersBusy] = useState(false);
   const [authProvidersError, setAuthProvidersError] = useState("");
+  const [authSuccessNotice, setAuthSuccessNotice] = useState("");
   const [accountPlan, setAccountPlan] = useState(null);
   const [billingNotice, setBillingNotice] = useState(null);
   const showDiagnosticsLink =
@@ -428,6 +429,22 @@ function Launcher() {
           return;
         }
         setAuthSession(session);
+        try {
+          const rawNotice = window.sessionStorage.getItem("invoiceAuthJustSignedIn");
+          if (rawNotice) {
+            const parsed = JSON.parse(rawNotice);
+            const email = typeof parsed?.email === "string" ? parsed.email.trim() : session?.email ?? "";
+            const provider = parsed?.provider === "google" ? "Google Sign-In" : "email link";
+            setAuthSuccessNotice(
+              email
+                ? `Signed in as ${email} with ${provider}. Setup progress is now tied to your account.`
+                : "Signed in. Setup progress is now tied to your account."
+            );
+            window.sessionStorage.removeItem("invoiceAuthJustSignedIn");
+          }
+        } catch (_error) {
+          window.sessionStorage.removeItem("invoiceAuthJustSignedIn");
+        }
       })
       .catch(() => {
         if (!active) {
@@ -620,6 +637,7 @@ function Launcher() {
   const handleSignOut = async () => {
     setAuthBusy(true);
     setAuthError("");
+    setAuthSuccessNotice("");
     try {
       await signOut();
       setAuthSession(null);
@@ -916,6 +934,14 @@ function Launcher() {
     }
   };
 
+  const handleContinueAfterSignIn = () => {
+    const nextStep = onboardingStatus?.setupNextStep;
+    setAuthSuccessNotice("");
+    if (nextStep) {
+      handleContinueSetup(nextStep);
+    }
+  };
+
   const handleLauncherSendReminder = async (invoiceId) => {
     if (!invoiceId || operationsBusyActionId) {
       return;
@@ -938,8 +964,8 @@ function Launcher() {
         payload?.reminder?.recipientEmail ?? payload?.delivery?.recipientEmail ?? "the saved recipient";
       setOperationsNotice(
         payload?.mode === "provider"
-          ? `Reminder emailed to ${recipient}.`
-          : payload?.warning || `Reminder recorded for ${recipient}.`
+          ? `Reminder sent to ${recipient}. Delivery tracking is now active.`
+          : payload?.warning || `Reminder recorded for ${recipient}. Configure an email provider to send automatically.`
       );
       setSavedWorkRefreshToken((current) => current + 1);
     } catch (error) {
@@ -1106,6 +1132,20 @@ function Launcher() {
                 </p>
               ) : null}
               {authError ? <p className="mt-3 text-sm text-rose-600">{authError}</p> : null}
+              {authSuccessNotice ? (
+                <div className="nb-banner nb-banner--success mt-3 flex flex-col gap-3 rounded-[22px] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm font-semibold text-emerald-950">{authSuccessNotice}</p>
+                  {onboardingStatus?.setupNextStep ? (
+                    <button
+                      type="button"
+                      className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
+                      onClick={handleContinueAfterSignIn}
+                    >
+                      Continue setup
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
               {billingError ? <p className="mt-3 text-sm text-rose-600">{billingError}</p> : null}
               <div className="mt-4 rounded-[24px] border border-[#6993d2]/18 bg-[#093064] px-4 py-4 text-white shadow-[0_14px_40px_rgba(9,48,100,0.18)] md:hidden">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#acd0f4]">Built for real work</p>
@@ -1273,9 +1313,17 @@ function EmailLinkVerificationPage() {
     }
 
     completeEmailLinkSignIn(linkToken)
-      .then(() => {
+      .then((session) => {
         if (!active) {
           return;
+        }
+        try {
+          window.sessionStorage.setItem(
+            "invoiceAuthJustSignedIn",
+            JSON.stringify({ provider: "email_link", email: session?.email ?? "" })
+          );
+        } catch (_error) {
+          // Best-effort handoff only.
         }
         setStatus("success");
         setMessage("Signed in. Taking you back to NoteBill...");
@@ -1348,7 +1396,15 @@ function GoogleSignInCompletionPage() {
     }
 
     try {
-      completeRedirectSignIn(token, { userId, email, expiresAt });
+      const session = completeRedirectSignIn(token, { userId, email, expiresAt });
+      try {
+        window.sessionStorage.setItem(
+          "invoiceAuthJustSignedIn",
+          JSON.stringify({ provider: "google", email: session?.email ?? email })
+        );
+      } catch (_error) {
+        // Best-effort handoff only.
+      }
       window.history.replaceState({}, document.title, "/auth/google");
       setStatus("success");
       setMessage("Signed in with Google. Taking you back to NoteBill...");

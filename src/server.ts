@@ -1665,7 +1665,8 @@ function toPublicPortalInvoice(invoice: SavedInvoice) {
         subtotal: finishedInvoice.subtotal,
         total: finishedInvoice.total,
         balanceDue: finishedInvoice.balanceDue,
-        paymentLinkUrl: finishedInvoice.paymentLinkUrl
+        paymentLinkUrl: finishedInvoice.paymentLinkUrl,
+        notes: finishedInvoice.notes
       }
     }
   };

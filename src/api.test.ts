@@ -2698,7 +2698,8 @@ test("client portal endpoint creates a tokenized customer portal link and expose
           ],
           subtotal: 180,
           total: 180,
-          balanceDue: 180
+          balanceDue: 180,
+          notes: "Portal-safe customer terms."
         }
       }
     });
@@ -2725,6 +2726,10 @@ test("client portal endpoint creates a tokenized customer portal link and expose
   assert.equal(publicPortalResponse.status, 200);
   assert.equal(publicPortalResponse.body.invoice?.invoiceId, secondInvoiceId);
   assert.equal(publicPortalResponse.body.invoice?.ownerId, undefined);
+  assert.equal(
+    publicPortalResponse.body.invoice?.invoiceData?.finishedInvoice?.notes,
+    "Portal-safe customer terms."
+  );
   assert.equal(publicPortalResponse.body.history.length, 1);
   assert.equal(publicPortalResponse.body.history[0].invoiceId, firstInvoiceId);
   assert.equal(publicPortalResponse.body.history[0].status, "draft");
