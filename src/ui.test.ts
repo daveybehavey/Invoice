@@ -3653,6 +3653,10 @@ test("client memory settings lets users inspect and clear remembered clients", a
     await page.goto(`${baseUrl}/settings/memory`, { waitUntil: "networkidle" });
     await page.waitForURL(/\/settings\/memory$/, { timeout: 10000 });
     await page.getByRole("heading", { name: "Review and clear repeat-client memory" }).waitFor({ state: "visible" });
+    const readiness = page.getByTestId("client-memory-repeat-readiness");
+    await readiness.getByText("Repeat readiness").waitFor({ state: "visible" });
+    await readiness.getByText("Ready for faster repeat invoices.").waitFor({ state: "visible" });
+    await readiness.getByText("Send once from the library to remember the recipient.").waitFor({ state: "visible" });
     await page.getByText("Trust Client", { exact: true }).first().waitFor({ state: "visible" });
     await page.getByText("Show saved details").first().click();
     await page.getByText("billing@trust-client.example").waitFor({ state: "visible" });

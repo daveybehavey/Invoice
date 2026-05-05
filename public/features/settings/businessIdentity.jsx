@@ -463,6 +463,33 @@
     }, []);
 
     const stats = useMemo(() => buildMemoryStats(clientMemory), [clientMemory]);
+    const repeatReadiness = useMemo(
+      () =>
+        clientMemory.slice(0, 3).map((entry) => {
+          const hasDetailedAddress = Boolean(
+            entry.details && entry.details.trim() && entry.details.trim() !== entry.name
+          );
+          const strengths = [
+            hasDetailedAddress ? "billing details" : "",
+            entry.recipientEmail ? "send email" : "",
+            entry.defaultNotes ? "default notes" : "",
+            entry.recurringIntervalDays ? formatRecurringCadence(entry.recurringIntervalDays) : ""
+          ].filter(Boolean);
+          const nextStep = !entry.recipientEmail
+            ? "Send once from the library to remember the recipient."
+            : !entry.defaultNotes
+              ? "Save default notes from a repeat invoice when useful."
+              : !entry.recurringIntervalDays
+                ? "Set a cadence in the library if this is recurring work."
+                : "Ready for faster repeat invoices.";
+          return {
+            ...entry,
+            strengths,
+            nextStep
+          };
+        }),
+      [clientMemory]
+    );
     const showOnboardingCompleteBanner = searchParams.get("from") === "onboarding-complete";
     const handleBack = () => {
       navigate("/");
@@ -541,6 +568,47 @@
               </div>
             ))}
           </section>
+
+          {repeatReadiness.length > 0 ? (
+            <section
+              className="nb-surface nb-surface--muted mt-5 rounded-[26px] p-4 md:rounded-[30px] md:p-5"
+              data-testid="client-memory-repeat-readiness"
+            >
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Repeat readiness</p>
+                  <h2 className="mt-2 text-lg font-semibold text-slate-900">Clients closest to one-click reuse</h2>
+                </div>
+                <p className="max-w-sm text-xs leading-5 text-slate-500">
+                  Use this to spot missing email, notes, or cadence details before the next busy day.
+                </p>
+              </div>
+              <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                {repeatReadiness.map((entry) => (
+                  <article key={entry.lookupKey} className="rounded-[22px] border border-white/80 bg-white/85 p-4">
+                    <p className="text-sm font-semibold text-slate-900">{entry.name}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {entry.strengths.length > 0 ? (
+                        entry.strengths.map((strength) => (
+                          <span
+                            key={strength}
+                            className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800"
+                          >
+                            {strength}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-500">
+                          Needs first reuse signal
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-3 text-xs leading-5 text-slate-600">{entry.nextStep}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <section className="nb-surface mt-5 rounded-[26px] p-4 md:rounded-[30px] md:p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
