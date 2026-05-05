@@ -309,6 +309,34 @@ test("google sign-in completion page stores a hosted session and returns to laun
   }
 });
 
+test("email sign-in verification returns to the pending app route", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    const linkResponse = await context.request.post(`${baseUrl}/api/auth/session`, {
+      data: { email: "owner@example.com" }
+    });
+    assert.equal(linkResponse.status(), 200);
+    const previewUrl = String((await linkResponse.json()).previewUrl ?? "");
+    const tokenFromLink = new URL(previewUrl).searchParams.get("token");
+    assert.ok(tokenFromLink);
+
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.evaluate(() => {
+      window.sessionStorage.setItem("invoiceAuthPendingReturnPath", "/manual");
+    });
+
+    await page.goto(`${baseUrl}/auth/verify?token=${encodeURIComponent(String(tokenFromLink))}`, {
+      waitUntil: "networkidle"
+    });
+
+    await page.waitForURL(`${baseUrl}/manual`, { timeout: 10000 });
+  } finally {
+    await context.close();
+  }
+});
+
 test("legacy import page explains old file import and editable follow-up", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -703,6 +731,41 @@ test("launcher shows a V2 runway after onboarding and setup are complete", async
     await readySection.getByRole("button", { name: "Open feedback" }).click();
     await page.waitForSelector("h1");
     assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Feedback");
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher sign-in setup step explains the post-sign-in return path", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-onboarding-signin-owner");
+    window.localStorage.setItem(
+      "firstInvoiceOnboarding::owner:ui-onboarding-signin-owner",
+      JSON.stringify({
+        version: 1,
+        startedAt: "2026-05-01T12:00:00.000Z",
+        completionAcknowledgedAt: "2026-05-01T12:10:00.000Z",
+        completedSteps: {
+          capture_notes: "2026-05-01T12:01:00.000Z",
+          review_draft: "2026-05-01T12:02:00.000Z",
+          open_editor: "2026-05-01T12:03:00.000Z",
+          save_invoice: "2026-05-01T12:04:00.000Z",
+          export_pdf: "2026-05-01T12:05:00.000Z"
+        },
+        completedSetupSteps: {}
+      })
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await openLauncher(page);
+    const setupSection = page.getByTestId("launcher-setup-section");
+    await setupSection.waitFor({ state: "visible" });
+    await setupSection.getByRole("button", { name: "Open sign-in" }).first().click();
+    await page.getByText("After sign-in, you'll go straight to branding setup.").waitFor({
+      state: "visible"
+    });
   } finally {
     await context.close();
   }
@@ -4492,8 +4555,9 @@ test("invoice library shows sign-in-required panel when auth policy requires it"
     await page
       .getByText("Open launcher sign-in to send yourself an email link, then come right back here.")
       .waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Go to launcher sign-in" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "I signed in, retry" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Go to launcher sign-in" }).click();
+    await page.getByText("After sign-in, you'll return to the invoice library.").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Email sign-in link" }).waitFor({ state: "visible" });
   } finally {
     delete process.env.INVOICE_REQUIRE_AUTH;
     await context.close();
@@ -6524,8 +6588,9 @@ test("manual editor save shows sign-in guidance when auth is required", async ()
     await page
       .getByText("Use launcher sign-in to send yourself an email link, then retry save here.")
       .waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Go to launcher sign-in" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "I signed in, retry" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Go to launcher sign-in" }).click();
+    await page.getByText("After sign-in, you'll return to the invoice editor.").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Email sign-in link" }).waitFor({ state: "visible" });
   } finally {
     delete process.env.INVOICE_REQUIRE_AUTH;
     await context.close();

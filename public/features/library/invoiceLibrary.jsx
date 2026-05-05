@@ -1,5 +1,5 @@
 (() => {
-  const { useNavigate } = ReactRouterDOM;
+  const { useLocation, useNavigate } = ReactRouterDOM;
   const { useEffect, useRef, useState } = React;
   const requestIdentity = window.InvoiceRequestIdentity;
   const apiFetch = requestIdentity?.apiFetch ?? window.fetch.bind(window);
@@ -287,7 +287,8 @@
     return Math.max(min, Math.min(max, Math.round(parsed)));
   };
 
-function InvoiceLibrary() {
+  function InvoiceLibrary() {
+  const location = useLocation();
   const navigate = useNavigate();
   const legacyDraftStorageKey = "invoiceDraft";
   const draftStorageKey =
@@ -2201,7 +2202,9 @@ function InvoiceLibrary() {
               <button
                 type="button"
                 className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-900"
-                onClick={() => navigate("/")}
+                onClick={() =>
+                  navigate(`/?auth=sign-in&returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`)
+                }
               >
                 Go to launcher sign-in
               </button>

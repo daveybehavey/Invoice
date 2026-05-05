@@ -929,6 +929,7 @@ function LauncherAuthModal({
   authEmailError,
   authNotice,
   authPreviewUrl,
+  authReturnPathLabel,
   authProviders,
   authProvidersBusy,
   authProvidersError,
@@ -957,6 +958,7 @@ function LauncherAuthModal({
         <p className="mt-1 text-sm text-slate-600">
           Keep saved work tied to your email with whichever sign-in path is ready for this build.
         </p>
+        {authReturnPathLabel ? <p className="mt-2 text-xs font-semibold text-[#093064]">{authReturnPathLabel}</p> : null}
         <div className="mt-4 space-y-2" data-testid="launcher-auth-provider-list">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Sign-in methods</p>
           {authProvidersBusy ? (
@@ -1005,7 +1007,7 @@ function LauncherAuthModal({
               </div>
               <button
                 type="button"
-                className="nb-btn-secondary rounded-xl px-3 py-1.5 text-sm disabled:opacity-60"
+                className={`${googleReady ? "nb-btn-primary" : "nb-btn-secondary"} rounded-xl px-3 py-1.5 text-sm disabled:opacity-60`}
                 onClick={onStartGoogle}
                 disabled={authBusy || !googleReady}
               >

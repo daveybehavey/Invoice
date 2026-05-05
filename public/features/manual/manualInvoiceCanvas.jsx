@@ -1,5 +1,5 @@
 (() => {
-  const { useNavigate, useSearchParams } = ReactRouterDOM;
+  const { useLocation, useNavigate, useSearchParams } = ReactRouterDOM;
   const { useEffect, useMemo, useRef, useState } = React;
   const requestIdentity = window.InvoiceRequestIdentity;
   if (!requestIdentity) {
@@ -320,6 +320,7 @@
   };
 
 function ManualInvoiceCanvas() {
+  const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
@@ -3366,7 +3367,7 @@ function ManualInvoiceCanvas() {
             onSaveAuthRetry={handleSaveAuthRetry}
             onGoToLauncherSignIn={() => {
               persistDraft();
-              navigate("/");
+              navigate(`/?auth=sign-in&returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`);
             }}
             savedInvoiceId={savedInvoiceId}
             savedInvoiceStatus={savedInvoiceStatus}
@@ -3483,7 +3484,7 @@ function ManualInvoiceCanvas() {
                 onSaveAuthRetry={handleSaveAuthRetry}
                 onGoToLauncherSignIn={() => {
                   persistDraft();
-                  navigate("/");
+                  navigate(`/?auth=sign-in&returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`);
                 }}
                 savedInvoiceId={savedInvoiceId}
                 savedInvoiceStatus={savedInvoiceStatus}

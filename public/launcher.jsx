@@ -1,4 +1,4 @@
-const { BrowserRouter, Routes, Route, useNavigate, useSearchParams } = ReactRouterDOM;
+const { BrowserRouter, Routes, Route, useLocation, useNavigate, useSearchParams } = ReactRouterDOM;
 const { useEffect, useState } = React;
 
 const uiPrimitives = window.InvoiceUIPrimitives;
@@ -194,6 +194,64 @@ function parseDisplayTimestamp(value) {
   }
   const parsed = Date.parse(text);
   return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+const AUTH_PENDING_RETURN_PATH_STORAGE_KEY = "invoiceAuthPendingReturnPath";
+
+function sanitizeInternalAppPath(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) {
+    return "/";
+  }
+  try {
+    const parsed = new URL(raw, "https://notebill.local");
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch (_error) {
+    return "/";
+  }
+}
+
+function writePendingAuthReturnPath(value) {
+  const nextPath = sanitizeInternalAppPath(value);
+  try {
+    window.sessionStorage.setItem(AUTH_PENDING_RETURN_PATH_STORAGE_KEY, nextPath);
+  } catch (_error) {
+    // Best-effort only.
+  }
+  return nextPath;
+}
+
+function consumePendingAuthReturnPath() {
+  try {
+    const stored = window.sessionStorage.getItem(AUTH_PENDING_RETURN_PATH_STORAGE_KEY);
+    window.sessionStorage.removeItem(AUTH_PENDING_RETURN_PATH_STORAGE_KEY);
+    return sanitizeInternalAppPath(stored);
+  } catch (_error) {
+    return "/";
+  }
+}
+
+function describeAuthReturnPath(value) {
+  const path = sanitizeInternalAppPath(value);
+  if (path.startsWith("/settings/business")) {
+    return "After sign-in, you'll go straight to branding setup.";
+  }
+  if (path.startsWith("/settings/memory")) {
+    return "After sign-in, you'll go straight to client memory review.";
+  }
+  if (path.startsWith("/settings/services")) {
+    return "After sign-in, you'll go straight to the service catalog.";
+  }
+  if (path.startsWith("/manual")) {
+    return "After sign-in, you'll return to the invoice editor.";
+  }
+  if (path.startsWith("/invoices")) {
+    return "After sign-in, you'll return to the invoice library.";
+  }
+  if (path.startsWith("/ai-intake")) {
+    return "After sign-in, you'll return to Billie intake.";
+  }
+  return "After sign-in, you'll come right back here.";
 }
 
 function getInvoiceDueDateValue(invoice) {
@@ -392,7 +450,9 @@ function buildLauncherOperationsSummary(invoices, nowMs = Date.now()) {
 }
 
 function Launcher() {
+  const location = useLocation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [authSession, setAuthSession] = useState(() => getAuthSession?.() ?? null);
   const [onboardingStatus, setOnboardingStatus] = useState(() =>
     buildOnboardingStatus({ authSession: getAuthSession?.() ?? null })
@@ -409,6 +469,7 @@ function Launcher() {
   const [authProvidersBusy, setAuthProvidersBusy] = useState(false);
   const [authProvidersError, setAuthProvidersError] = useState("");
   const [authSuccessNotice, setAuthSuccessNotice] = useState("");
+  const [authReturnPath, setAuthReturnPath] = useState("/");
   const [accountPlan, setAccountPlan] = useState(null);
   const [billingNotice, setBillingNotice] = useState(null);
   const showDiagnosticsLink =
@@ -420,6 +481,21 @@ function Launcher() {
       setBillingNotice(notice);
     }
   }, []);
+
+  useEffect(() => {
+    if (authSession?.userId) {
+      return;
+    }
+    if (searchParams.get("auth") !== "sign-in") {
+      return;
+    }
+    const requestedReturnPath = sanitizeInternalAppPath(searchParams.get("returnTo"));
+    openSignInModal({ returnTo: requestedReturnPath });
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("auth");
+    nextParams.delete("returnTo");
+    setSearchParams(nextParams, { replace: true });
+  }, [authSession?.userId, searchParams, setSearchParams]);
 
   useEffect(() => {
     let active = true;
@@ -578,6 +654,7 @@ function Launcher() {
     setAuthNotice("");
     setAuthPreviewUrl("");
     try {
+      writePendingAuthReturnPath(authReturnPath);
       const payload = await requestSignInLink(normalizedEmail);
       const notice = payload?.emailSent
         ? `Check ${normalizedEmail} for your secure sign-in link.`
@@ -612,8 +689,11 @@ function Launcher() {
     setAuthNotice("Opening Google Sign-In...");
     setAuthPreviewUrl("");
     try {
+      const returnPath = writePendingAuthReturnPath(authReturnPath);
       const startUrl =
-        typeof getGoogleAuthStartUrl === "function" ? getGoogleAuthStartUrl("/") : "/api/auth/google/start";
+        typeof getGoogleAuthStartUrl === "function"
+          ? getGoogleAuthStartUrl(returnPath)
+          : `/api/auth/google/start?returnTo=${encodeURIComponent(returnPath)}`;
       window.location.assign(String(startUrl));
     } catch (error) {
       setAuthBusy(false);
@@ -623,13 +703,45 @@ function Launcher() {
     }
   };
 
-  const openSignInModal = () => {
+  const resolveSetupContinuationPath = () => {
+    const nextSetupAfterSignIn = Array.isArray(onboardingStatus?.setupSteps)
+      ? onboardingStatus.setupSteps.find((step) => !step.complete && step.id !== "sign_in")
+      : null;
+    if (!nextSetupAfterSignIn?.routeHint) {
+      return "/";
+    }
+    if (nextSetupAfterSignIn.routeHint === "settings/business") {
+      return "/settings/business?from=onboarding-complete";
+    }
+    if (nextSetupAfterSignIn.routeHint === "settings/memory") {
+      return "/settings/memory?from=onboarding-complete";
+    }
+    if (nextSetupAfterSignIn.routeHint === "settings/services") {
+      return "/settings/services?from=onboarding-complete";
+    }
+    return "/";
+  };
+
+  const deriveDefaultAuthReturnPath = () => {
+    const currentPath = sanitizeInternalAppPath(`${location.pathname}${location.search}${location.hash}`);
+    if (currentPath !== "/") {
+      return currentPath;
+    }
+    if (onboardingStatus?.setupNextStep?.id === "sign_in" || onboardingStatus?.setupVisible || onboardingStatus?.completionVisible) {
+      return resolveSetupContinuationPath();
+    }
+    return "/";
+  };
+
+  const openSignInModal = (options = {}) => {
+    const returnPath = sanitizeInternalAppPath(options?.returnTo || deriveDefaultAuthReturnPath());
     setAuthError("");
     setAuthEmailError("");
     setAuthNotice("");
     setAuthPreviewUrl("");
     setAuthFlow("");
     setAuthProvidersError("");
+    setAuthReturnPath(returnPath);
     setAuthEmail(authSession?.email ?? "");
     setAuthModalOpen(true);
   };
@@ -1283,6 +1395,7 @@ function Launcher() {
         authEmailError={authEmailError}
         authNotice={authNotice}
         authPreviewUrl={authPreviewUrl}
+        authReturnPathLabel={describeAuthReturnPath(authReturnPath)}
         authProviders={authProviders}
         authProvidersBusy={authProvidersBusy}
         authProvidersError={authProvidersError}
@@ -1330,9 +1443,10 @@ function EmailLinkVerificationPage() {
         }
         setStatus("success");
         setMessage("Signed in. Taking you back to NoteBill...");
+        const returnPath = consumePendingAuthReturnPath();
         window.setTimeout(() => {
           if (active) {
-            navigate("/", { replace: true });
+            navigate(returnPath, { replace: true });
           }
         }, 1200);
       })
@@ -1380,7 +1494,9 @@ function GoogleSignInCompletionPage() {
     let active = true;
     const errorMessage = searchParams.get("error")?.trim();
     const hashParams = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
-    const nextPath = hashParams.get("next")?.trim() || searchParams.get("next")?.trim() || "/";
+    const nextPath = sanitizeInternalAppPath(
+      hashParams.get("next")?.trim() || searchParams.get("next")?.trim() || consumePendingAuthReturnPath()
+    );
 
     if (errorMessage) {
       setStatus("error");
