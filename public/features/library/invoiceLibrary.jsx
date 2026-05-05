@@ -2374,6 +2374,8 @@ function InvoiceLibrary() {
                 const providerDelivery = delivery?.mode === "provider";
                 const deliveryRecipient = typeof delivery?.recipientEmail === "string" ? delivery.recipientEmail : "";
                 const canInstantResend = Boolean(hasDelivery && isValidEmail(deliveryRecipient));
+                const paymentLinkReady =
+                  typeof invoice?.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0;
                 const showSendComposer = sendComposer?.invoiceId === invoice.invoiceId;
                 const isDeleted = invoice.status === "deleted";
                 const isSelected = selectedIds.includes(invoice.invoiceId);
@@ -2382,6 +2384,45 @@ function InvoiceLibrary() {
                 const showMarkPaid = invoice.status === "sent";
                 const showMarkDraft = invoice.status === "sent" || invoice.status === "paid";
                 const nextActionHint = getInvoiceNextActionHint({ invoice, hasDelivery, isPastDue });
+                const workflowStages = [
+                  {
+                    label: "Send",
+                    value:
+                      invoice.status === "deleted"
+                        ? "Restore first"
+                        : hasDelivery
+                          ? providerDelivery
+                            ? "Tracking active"
+                            : "Tracking recorded"
+                          : invoice.status === "draft"
+                            ? "Ready after review"
+                            : "Add recipient"
+                  },
+                  {
+                    label: "Payment",
+                    value:
+                      invoice.status === "paid"
+                        ? "Payment complete"
+                        : paymentLinkReady
+                          ? "Hosted link ready"
+                          : invoice.status === "sent"
+                            ? "No hosted link yet"
+                            : "Add link before send"
+                  },
+                  {
+                    label: "Follow-up",
+                    value:
+                      invoice.status === "paid"
+                        ? "No follow-up needed"
+                        : isPastDue
+                          ? "Past due follow-up"
+                          : hasDelivery
+                            ? deliveryOpened
+                              ? "Opened by client"
+                              : "Reminder-ready"
+                            : "Track a send first"
+                  }
+                ];
                 return (
                   <div
                     key={invoice.invoiceId}
@@ -2451,6 +2492,28 @@ function InvoiceLibrary() {
                     </div>
                     {recurringEntry ? (
                       <p className="mt-3 text-xs text-slate-600">Next due {recurringNextDue || "soon"}</p>
+                    ) : null}
+                    {!isDeleted && !showTrash ? (
+                      <div className="mt-4 rounded-[24px] border border-[#6993d2]/18 bg-[#f7faff] px-4 py-3">
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                            Send/payment workflow
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Send, payment, and follow-up in one card.
+                          </p>
+                        </div>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                          {workflowStages.map((stage) => (
+                            <div key={stage.label} className="rounded-2xl border border-white/80 bg-white px-3 py-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                {stage.label}
+                              </p>
+                              <p className="mt-1 text-xs font-semibold text-slate-800">{stage.value}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     ) : null}
                     <div className="mt-4 flex flex-wrap gap-2">
                       {isDeleted || showTrash ? (
@@ -2670,6 +2733,9 @@ function InvoiceLibrary() {
                       <div className="nb-surface nb-surface--muted mt-3 rounded-xl p-3">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                           Recipient email
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Sending records this invoice as sent, updates delivery tracking, and remembers the recipient for this client.
                         </p>
                         {sendComposer?.prefilledFrom === "client_memory" ? (
                           <p className="mt-1 text-xs text-emerald-700">

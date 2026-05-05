@@ -5363,10 +5363,13 @@ test("invoice library send action records delivery and supports mark opened", as
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("Send/payment workflow").waitFor({ state: "visible" });
+    await page.getByText("Add link before send").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Send invoice INV-SEND-1" }).click();
     await page.getByPlaceholder("client@example.com").fill("client@example.com");
     await page.getByRole("button", { name: "Send now" }).click();
     await page.getByText(/(Sent to|Prepared for) client@example.com/i).waitFor({ state: "visible" });
+    await page.getByText(/Tracking (active|recorded)/).waitFor({ state: "visible" });
     const rememberedEmail = await page.evaluate((storageOwnerId) => {
       const raw = window.localStorage.getItem(`invoiceClientMemory::owner:${storageOwnerId}`);
       const entries = raw ? JSON.parse(raw) : [];
@@ -5733,6 +5736,8 @@ test("invoice library shows open pay link action when payment link exists", asyn
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     await page.getByText("INV-PAY-LINK-1").waitFor({ state: "visible" });
+    await page.getByText("Send/payment workflow").waitFor({ state: "visible" });
+    await page.getByText("Hosted link ready").waitFor({ state: "visible" });
     await page.getByRole("link", { name: "Open hosted payment link" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
