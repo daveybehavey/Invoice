@@ -29,6 +29,7 @@ This checklist is for shipping `NoteBill` to the Google Play Store from a Window
 
 ```powershell
 cd C:\Users\david\OneDrive\Desktop\Invoice
+npm run check:android-release
 npx cap sync android
 cd android
 $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"

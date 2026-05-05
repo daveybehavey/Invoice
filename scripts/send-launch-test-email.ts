@@ -10,7 +10,9 @@ async function main() {
 
   const capabilities = getInvoiceEmailCapabilities();
   if (!capabilities.configured) {
-    throw new Error("Invoice email delivery is not configured. Set INVOICE_EMAIL_PROVIDER/RESEND_API_KEY first.");
+    throw new Error(
+      "Invoice email delivery is not configured. Set INVOICE_EMAIL_PROVIDER plus the matching provider key (SMTP2GO_API_KEY or RESEND_API_KEY) first."
+    );
   }
 
   const result = await sendLaunchTestEmail({

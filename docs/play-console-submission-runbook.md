@@ -14,6 +14,8 @@ Use this while filling out Play Console so nothing gets skipped.
 
 - Confirm package name matches the Android app:
   - `app.notebill.app`
+- Print the current Android version + local bundle inventory before uploading:
+  - `npm run check:android-release`
 - Upload the signed release bundle:
   - Current latest bundle: `C:\Users\david\OneDrive\Desktop\Invoice\android\app\build\outputs\bundle\release\app-release.aab`
   - Named archived bundles live in the same folder, for example `app-release-1.0.13.aab`.
