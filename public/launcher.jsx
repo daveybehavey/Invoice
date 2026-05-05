@@ -1216,6 +1216,9 @@ function Launcher() {
             onContinueSetup={handleContinueSetup}
             onOpenSignIn={openSignInModal}
             onStartNextInvoice={() => navigate("/ai-intake")}
+            onOpenLibrary={() => navigate("/invoices")}
+            onOpenEditor={() => navigate("/manual")}
+            onOpenFeedback={() => navigate("/feedback")}
             onDismissCompletion={handleDismissOnboardingCompletion}
           />
           <StartSection

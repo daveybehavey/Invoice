@@ -314,10 +314,42 @@ function LauncherOnboardingSection({
   onContinueSetup,
   onOpenSignIn,
   onStartNextInvoice,
+  onOpenLibrary,
+  onOpenEditor,
+  onOpenFeedback,
   onDismissCompletion
 }) {
-  if (!status?.visible && !status?.completionVisible && !status?.setupVisible) {
+  const launchReadyVisible = Boolean(status?.complete && status?.setupComplete);
+  if (!status?.visible && !status?.completionVisible && !status?.setupVisible && !launchReadyVisible) {
     return null;
+  }
+  if (launchReadyVisible && !status?.completionVisible && !status?.setupVisible) {
+    return (
+      <section
+        className="nb-surface nb-surface--elevated mt-6 rounded-[30px] p-5 md:p-6"
+        data-testid="launcher-v2-ready-section"
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700">Workspace ready</p>
+            <h2 className="mt-2 text-2xl text-slate-900 md:text-3xl" style={{ fontFamily: "'Fraunces', serif" }}>
+              V2 launch runway is unlocked.
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              First invoice loop complete, account linked, branding saved, memory reviewed, and service catalog checked. Now the highest-value work is testing the real send, payment, and customer-facing paths.
+            </p>
+          </div>
+          <button type="button" className="nb-btn-primary rounded-full px-4 py-2 text-sm" onClick={onStartNextInvoice}>
+            Start next invoice
+          </button>
+        </div>
+        <LauncherLaunchRunway
+          onOpenLibrary={onOpenLibrary}
+          onOpenEditor={onOpenEditor}
+          onOpenFeedback={onOpenFeedback}
+        />
+      </section>
+    );
   }
   if (status?.completionVisible) {
     return (
@@ -345,6 +377,11 @@ function LauncherOnboardingSection({
           </div>
         </div>
         <LauncherSetupChecklist status={status} onContinueSetup={onContinueSetup} />
+        <LauncherLaunchRunway
+          onOpenLibrary={onOpenLibrary}
+          onOpenEditor={onOpenEditor}
+          onOpenFeedback={onOpenFeedback}
+        />
       </section>
     );
   }
@@ -371,6 +408,11 @@ function LauncherOnboardingSection({
           </div>
         </div>
         <LauncherSetupChecklist status={status} onContinueSetup={onContinueSetup} />
+        <LauncherLaunchRunway
+          onOpenLibrary={onOpenLibrary}
+          onOpenEditor={onOpenEditor}
+          onOpenFeedback={onOpenFeedback}
+        />
       </section>
     );
   }
@@ -459,6 +501,61 @@ function LauncherOnboardingSection({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function LauncherLaunchRunway({ onOpenLibrary, onOpenEditor, onOpenFeedback }) {
+  const runwayCards = [
+    {
+      title: "Send/payment dress rehearsal",
+      body: "Open the library, send or record a send, then confirm reminders and mark-paid feel trustworthy.",
+      ctaLabel: "Open library",
+      onClick: onOpenLibrary
+    },
+    {
+      title: "Portal-ready invoice",
+      body: "Open the editor, save a draft, then create or refresh the customer portal and payment link from the export panel.",
+      ctaLabel: "Open editor",
+      onClick: onOpenEditor
+    },
+    {
+      title: "Tester feedback loop",
+      body: "Use the feedback page after each run so tester reports include the device details needed to fix issues fast.",
+      ctaLabel: "Open feedback",
+      onClick: onOpenFeedback
+    }
+  ];
+
+  return (
+    <div
+      className="mt-5 rounded-[26px] border border-[#6993d2]/18 bg-[linear-gradient(135deg,_#f7faff_0%,_#ffffff_56%,_#ecfdf5_100%)] p-4"
+      data-testid="launcher-v2-runway"
+    >
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">V2 launch runway</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Next best blocks after setup</p>
+          <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-600">
+            These are the safest high-reward paths to rehearse before the public Play Store push.
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-3">
+        {runwayCards.map((card) => (
+          <div key={card.title} className="rounded-[22px] border border-white/70 bg-white/82 p-4 shadow-sm">
+            <p className="text-sm font-semibold text-slate-900">{card.title}</p>
+            <p className="mt-2 min-h-[60px] text-xs leading-5 text-slate-600">{card.body}</p>
+            <button
+              type="button"
+              className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-xs"
+              onClick={card.onClick}
+            >
+              {card.ctaLabel}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

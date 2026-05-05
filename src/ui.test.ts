@@ -594,6 +594,9 @@ test("first invoice onboarding tracks progress across launcher, intake, and manu
       state: "visible"
     });
     await completionCard.getByText("0 of 4 setup steps complete").waitFor({ state: "visible" });
+    await completionCard.getByTestId("launcher-v2-runway").getByText("V2 launch runway").waitFor({
+      state: "visible"
+    });
     await completionCard.getByRole("button", { name: "Open branding" }).click();
     await page.waitForURL(/\/settings\/business(?:\?from=onboarding-complete)?$/, { timeout: 10000 });
     await page.getByRole("heading", { name: "Set your default invoice branding" }).waitFor({
@@ -656,6 +659,48 @@ test("onboarding completion setup pages chain branding, memory, and services", a
     await setupSection.waitFor({ state: "visible" });
     await setupSection.getByText("3 of 4 setup steps complete").waitFor({ state: "visible" });
     await setupSection.getByText("Link your account").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher shows a V2 runway after onboarding and setup are complete", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-v2-ready-owner");
+    window.localStorage.setItem(
+      "firstInvoiceOnboarding::owner:ui-v2-ready-owner",
+      JSON.stringify({
+        version: 1,
+        startedAt: "2026-05-01T12:00:00.000Z",
+        completionAcknowledgedAt: "2026-05-01T12:10:00.000Z",
+        completedSteps: {
+          capture_notes: "2026-05-01T12:01:00.000Z",
+          review_draft: "2026-05-01T12:02:00.000Z",
+          open_editor: "2026-05-01T12:03:00.000Z",
+          save_invoice: "2026-05-01T12:04:00.000Z",
+          export_pdf: "2026-05-01T12:05:00.000Z"
+        },
+        completedSetupSteps: {
+          sign_in: "2026-05-01T12:06:00.000Z",
+          setup_branding: "2026-05-01T12:07:00.000Z",
+          setup_memory: "2026-05-01T12:08:00.000Z",
+          setup_services: "2026-05-01T12:09:00.000Z"
+        }
+      })
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await openLauncher(page);
+    const readySection = page.getByTestId("launcher-v2-ready-section");
+    await readySection.waitFor({ state: "visible" });
+    await readySection.getByText("V2 launch runway is unlocked.").waitFor({ state: "visible" });
+    await readySection.getByText("Send/payment dress rehearsal").waitFor({ state: "visible" });
+    await readySection.getByText("Portal-ready invoice").waitFor({ state: "visible" });
+    await readySection.getByRole("button", { name: "Open feedback" }).click();
+    await page.waitForSelector("h1");
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Feedback");
   } finally {
     await context.close();
   }
