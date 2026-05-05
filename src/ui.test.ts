@@ -1810,7 +1810,9 @@ test("manual editor surfaces repeat-client memory without changing money until r
 
     await page.getByText("Past work for Casey Client").waitFor({ state: "visible" });
     await page.getByText("Money never changes automatically.").waitFor({ state: "visible" });
-    await page.getByText("Quarterly drain maintenance").waitFor({ state: "visible" });
+    await page
+      .getByRole("button", { name: "Reuse Quarterly drain maintenance from client memory" })
+      .waitFor({ state: "visible" });
     await page.getByText("Rate $120 / Used 4 times").waitFor({ state: "visible" });
     const firstRow = page.locator("tbody tr").first();
     await expectValueEquals(firstRow.getByPlaceholder("Description", { exact: true }), "");
@@ -2277,7 +2279,9 @@ test("manual editor ranks exact repeat-client matches ahead of looser suggestion
     await page.getByPlaceholder("Client Name").fill("Known Client");
 
     await page.getByText("Repeat client matches").waitFor({ state: "visible" });
-    const suggestionButtons = page.getByRole("button", { name: /Use saved client / });
+    const suggestionButtons = page.locator(
+      'button[aria-label="Use saved client Known Client"], button[aria-label="Use saved client Known Client West"]'
+    );
     await assert.equal(await suggestionButtons.count(), 2);
     await assert.equal(await suggestionButtons.first().getAttribute("aria-label"), "Use saved client Known Client");
     await assert.equal(
@@ -5834,8 +5838,8 @@ test("intake review surfaces recent saved jobs for the matched client", async ()
     await page.getByRole("button", { name: /show review details/i }).click();
 
     await page.getByText("Recent for Mike Johnson").waitFor({ state: "visible" });
-    await page.getByText("INV-RECENT-1").waitFor({ state: "visible" });
-    await page.getByText("Collect a 50% deposit before ordering cedar shingles.").waitFor({
+    await page.getByText("INV-RECENT-1", { exact: true }).first().waitFor({ state: "visible" });
+    await page.getByText("Collect a 50% deposit before ordering cedar shingles.", { exact: true }).first().waitFor({
       state: "visible"
     });
   } finally {

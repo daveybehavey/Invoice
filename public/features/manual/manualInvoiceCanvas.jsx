@@ -480,6 +480,10 @@ function ManualInvoiceCanvas() {
       }),
     [billToDetails, lineItems, savedLineItemLibrary]
   );
+  const clientMemoryItems = useMemo(
+    () => rankedSavedLineItems.filter(({ clientMatch }) => clientMatch).slice(0, 3),
+    [rankedSavedLineItems]
+  );
   const lineRateSuggestionsByLineId = useMemo(
     () =>
       buildLineRateSuggestionsByLineId({
@@ -664,7 +668,6 @@ function ManualInvoiceCanvas() {
     color: accent.primary
   };
   const primaryBillToName = getPrimaryBillToName(billToDetails);
-  const clientMemoryItems = rankedSavedLineItems.filter(({ clientMatch }) => clientMatch).slice(0, 3);
   const clientDefaultNotes = getClientDefaultNotes(primaryBillToName);
   const normalizedBillToSearch = primaryBillToName.toLocaleLowerCase();
   const currentServiceMemoryCandidate = lineItems.find(
@@ -2941,7 +2944,7 @@ function ManualInvoiceCanvas() {
                   </button>
                   {showSavedLineItems ? (
                     <div className="flex flex-wrap gap-2">
-                      {rankedSavedLineItems.slice(0, 8).map(({ entry, clientMatch, serviceMatchScore }) => (
+                      {rankedSavedLineItems.slice(0, 8).map(({ entry, clientMatch, serviceMatchScore, usageCount }) => (
                         <button
                           key={entry.lookupKey}
                           type="button"
