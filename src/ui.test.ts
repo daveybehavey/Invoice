@@ -131,6 +131,8 @@ test("public policy pages render from their routes", async () => {
     assert.equal(await feedbackLink.isVisible(), true);
     assert.match(decodeURIComponent((await feedbackLink.getAttribute("href")) ?? ""), /NoteBill feedback details/);
     assert.equal(await page.getByText("Two-minute tester script", { exact: true }).isVisible(), true);
+    await page.getByTestId("feedback-v2-test-plan").getByText("V2 tester pass").waitFor({ state: "visible" });
+    await page.getByTestId("feedback-v2-test-plan").getByText("Send/payment").waitFor({ state: "visible" });
 
     await page.goto(`${baseUrl}/data-deletion`);
     await page.waitForSelector("h1");

@@ -1732,6 +1732,24 @@ function SupportPage() {
 function FeedbackPage() {
   const [deviceDetails] = useState(() => buildFeedbackDeviceDetails());
   const [copyStatus, setCopyStatus] = useState("");
+  const v2TesterMissions = [
+    {
+      label: "Onboarding",
+      body: "Start from sample notes and see if the first-invoice guide makes the next step obvious."
+    },
+    {
+      label: "Sign-in",
+      body: "Try email-link sign-in, or Google Sign-In if this build has Google enabled."
+    },
+    {
+      label: "Send/payment",
+      body: "Save an invoice, open the library, and check whether send, payment, and follow-up status feel clear."
+    },
+    {
+      label: "Portal",
+      body: "Create or open a client portal link and confirm the customer-facing invoice feels trustworthy."
+    }
+  ];
 
   const handleCopyDeviceDetails = async () => {
     if (!navigator.clipboard?.writeText) {
@@ -1801,6 +1819,28 @@ function FeedbackPage() {
         }
       ]}
     >
+      <section className="nb-subcard border-emerald-200 bg-emerald-50/70" data-testid="feedback-v2-test-plan">
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">V2 tester pass</p>
+            <h2 className="mt-2 text-lg font-semibold text-slate-900">Best flows to test before public launch</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-700">
+              If you only have a few minutes, run one of these paths and tell us where you hesitated.
+            </p>
+          </div>
+          <a href={buildFeedbackMailto(deviceDetails)} className="nb-btn-primary shrink-0">
+            Email V2 feedback
+          </a>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {v2TesterMissions.map((mission) => (
+            <div key={mission.label} className="rounded-2xl border border-white/80 bg-white/80 px-4 py-3">
+              <p className="text-sm font-semibold text-slate-900">{mission.label}</p>
+              <p className="mt-1 text-xs leading-5 text-slate-600">{mission.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
       <section className="nb-subcard border-[#6993d2]/30 bg-[#f6f9ff]">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
