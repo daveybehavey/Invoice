@@ -4421,6 +4421,60 @@ test("launcher starts a fresh repeat invoice from paid work", async () => {
   }
 });
 
+test("launcher can start a fresh draft from repeat client memory", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-launcher-repeat-memory-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          name: "Casey Client",
+          details: "Casey Client\n123 Main St",
+          defaultNotes: "Monthly maintenance visit. Payment due on receipt.",
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          description: "Quarterly drain maintenance",
+          qty: "2",
+          rate: "120",
+          clientName: "Casey Client",
+          usageCount: 4,
+          updatedAt: "2026-04-21T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await openLauncher(page);
+    await page.getByRole("button", { name: "Need a different start?" }).click();
+    await page.getByText("Repeat client: Casey Client").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Repeat client: Casey Client" }).click();
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Casey Client");
+    await expectValueEquals(
+      page.locator("tbody tr").first().getByPlaceholder("Description", { exact: true }),
+      "Quarterly drain maintenance"
+    );
+    await expectValueEquals(page.locator("tbody tr").first().getByPlaceholder("0", { exact: true }), "2");
+    await expectValueEquals(page.locator("tbody tr").first().getByPlaceholder("$0", { exact: true }), "120");
+    await expectValueEquals(
+      page.getByPlaceholder("Thank you for your business"),
+      "Monthly maintenance visit. Payment due on receipt."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher shows pre-limit warning when one free save remains", async () => {
   process.env.INVOICE_DEFAULT_PLAN = "free";
   process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "2";

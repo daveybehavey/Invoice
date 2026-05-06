@@ -108,6 +108,16 @@ const {
   signOut
 } =
   requestIdentity;
+const clientMemoryUtils = window.InvoiceClientMemory;
+if (!clientMemoryUtils) {
+  throw new Error("Missing /utils/clientMemory.js load. Ensure it is loaded before /launcher.jsx.");
+}
+const { getClientMemory } = clientMemoryUtils;
+const lineItemLibraryUtils = window.InvoiceLineItemLibrary;
+if (!lineItemLibraryUtils) {
+  throw new Error("Missing /utils/lineItemLibrary.js load. Ensure it is loaded before /launcher.jsx.");
+}
+const { getLineItemLibrary } = lineItemLibraryUtils;
 const onboardingUtils = window.InvoiceOnboardingState;
 if (!onboardingUtils) {
   throw new Error("Missing /utils/onboardingState.js load. Ensure it is loaded before /launcher.jsx.");
@@ -295,6 +305,38 @@ function formatMoneyLabel(value) {
     style: "currency",
     currency: "USD"
   }).format(amount);
+}
+
+function buildRepeatWorkStarter(clientMemoryEntries, savedLineItems) {
+  const memoryEntries = Array.isArray(clientMemoryEntries) ? clientMemoryEntries : [];
+  const items = Array.isArray(savedLineItems) ? savedLineItems : [];
+  const candidates = memoryEntries
+    .map((entry) => {
+      const normalizedName = typeof entry?.name === "string" ? entry.name.trim().toLowerCase() : "";
+      if (!normalizedName) {
+        return null;
+      }
+      const matchingItems = items
+        .filter((item) => typeof item?.clientName === "string" && item.clientName.trim().toLowerCase() === normalizedName)
+        .sort((left, right) => {
+          const usageDelta = Number(right?.usageCount ?? 0) - Number(left?.usageCount ?? 0);
+          if (usageDelta !== 0) {
+            return usageDelta;
+          }
+          return String(right?.updatedAt ?? "").localeCompare(String(left?.updatedAt ?? ""));
+        });
+      if (!matchingItems.length) {
+        return null;
+      }
+      return {
+        entry,
+        leadItem: matchingItems[0],
+        savedItemCount: matchingItems.length
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => String(right.entry?.updatedAt ?? "").localeCompare(String(left.entry?.updatedAt ?? "")));
+  return candidates[0] ?? null;
 }
 
 function pluralize(count, singular, plural = `${singular}s`) {
@@ -810,6 +852,7 @@ function Launcher() {
   const [operationsNotice, setOperationsNotice] = useState("");
   const [operationsError, setOperationsError] = useState("");
   const [savedWorkRefreshToken, setSavedWorkRefreshToken] = useState(0);
+  const repeatWorkStarter = buildRepeatWorkStarter(getClientMemory?.() ?? [], getLineItemLibrary?.() ?? []);
   const primaryOption = (() => {
     const primaryAction = Array.isArray(operationsSummary?.actions) ? operationsSummary.actions[0] : null;
     if (primaryAction) {
@@ -874,9 +917,66 @@ function Launcher() {
         options.find((option) => option.key === "scratchpad") ??
         options[0];
   })();
-  const quickStartOptions = options.filter(
-    (option) => option.key === "scratchpad" || option.key === "import" || option.key === "manual"
-  );
+  const handleStartFromMemory = () => {
+    if (!repeatWorkStarter?.entry || !repeatWorkStarter?.leadItem) {
+      navigate("/manual");
+      return;
+    }
+    const draft = {
+      billToDetails: repeatWorkStarter.entry.details || repeatWorkStarter.entry.name || "",
+      notes: repeatWorkStarter.entry.defaultNotes || "",
+      lineItems: [
+        {
+          id: `line-${Date.now()}`,
+          description: repeatWorkStarter.leadItem.description || "",
+          qty: repeatWorkStarter.leadItem.qty ?? "",
+          rate: repeatWorkStarter.leadItem.rate ?? ""
+        }
+      ],
+      savedInvoiceId: "",
+      savedInvoiceStatus: ""
+    };
+    window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+    void apiFetch("/api/telemetry/revenue-signals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "client_memory_reused",
+        source: "launcher_repeat_bundle_reuse"
+      })
+    }).catch(() => {});
+    void apiFetch("/api/telemetry/revenue-signals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "service_memory_reused",
+        source: "launcher_repeat_bundle_reuse"
+      })
+    }).catch(() => {});
+    navigate("/manual");
+  };
+  const quickStartOptions = options
+    .filter((option) => option.key === "scratchpad" || option.key === "import" || option.key === "manual")
+    .concat(
+      repeatWorkStarter
+        ? [
+            {
+              key: "repeat-memory",
+              title: `Repeat client: ${repeatWorkStarter.entry.name}`,
+              description: `Start with ${repeatWorkStarter.leadItem.description}${
+                repeatWorkStarter.savedItemCount > 1
+                  ? ` and ${repeatWorkStarter.savedItemCount - 1} more saved match${
+                      repeatWorkStarter.savedItemCount - 1 > 1 ? "es" : ""
+                    }`
+                  : ""
+              }.`,
+              icon: <ArchiveIcon />,
+              onClick: handleStartFromMemory,
+              disabled: false
+            }
+          ]
+        : []
+    );
   const manageOptions = options.filter(
     (option) =>
       option.key === "library" ||
