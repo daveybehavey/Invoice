@@ -1920,6 +1920,169 @@ function ManualInvoiceCanvas() {
       value: hasClientPortal ? "Portal ready" : hasSavedDraft ? "Create portal" : "Save first"
     }
   ];
+  const onboardingContextCue = useMemo(() => {
+    if (onboardingStatus.completionVisible || !onboardingStatus.visible) {
+      return null;
+    }
+
+    if (!hasClientDetails || !hasBillableLineItem) {
+      return {
+        eyebrow: "Right now",
+        title: "Make this invoice send-ready first.",
+        detail:
+          "Add the client and at least one priced line item so saving, links, and sharing become worth doing.",
+        actions: [
+          !hasClientDetails
+            ? {
+                id: "client-details",
+                label: "Add client details",
+                onClick: () => {
+                  document.querySelector('textarea[placeholder="Client Name"]')?.focus();
+                }
+              }
+            : null,
+          !hasBillableLineItem
+            ? {
+                id: "priced-work",
+                label: "Add priced work",
+                onClick: () => {
+                  document.querySelector('input[placeholder="Description"]')?.focus();
+                }
+              }
+            : null
+        ].filter(Boolean)
+      };
+    }
+
+    if (!hasSavedDraft) {
+      return {
+        eyebrow: "Right now",
+        title: "Your draft is ready to save.",
+        detail:
+          "Save it once so the library, hosted payment link, and client portal unlock for this invoice.",
+        actions: [
+          {
+            id: "save-draft",
+            label: saveStatus === "Saving..." ? "Saving..." : "Save draft",
+            disabled: saveStatus === "Saving...",
+            onClick: () => {
+              void handleSaveInvoice();
+            }
+          }
+        ]
+      };
+    }
+
+    if (!hasHostedPaymentLink && !hasClientPortal) {
+      return {
+        eyebrow: "Nice progress",
+        title: "The draft is saved. Add the customer handoff pieces next.",
+        detail:
+          "Create the hosted payment link and client portal before you send so the invoice feels complete on first delivery.",
+        actions: [
+          {
+            id: "payment-link",
+            label: paymentLinkBusy ? "Creating..." : "Create payment link",
+            disabled: paymentLinkBusy,
+            onClick: () => {
+              void handleGeneratePaymentLink();
+            }
+          },
+          {
+            id: "client-portal",
+            label: clientPortalBusy ? "Creating..." : "Create client portal",
+            disabled: clientPortalBusy,
+            onClick: () => {
+              void handleGenerateClientPortalLink();
+            }
+          }
+        ]
+      };
+    }
+
+    if (hasHostedPaymentLink && !hasClientPortal) {
+      return {
+        eyebrow: "Nice progress",
+        title: "Payment link is ready. Add the portal to finish the handoff.",
+        detail:
+          "The payment step is covered. Create the client portal next so customers also have a clean review page.",
+        actions: [
+          {
+            id: "client-portal",
+            label: clientPortalBusy ? "Creating..." : "Create client portal",
+            disabled: clientPortalBusy,
+            onClick: () => {
+              void handleGenerateClientPortalLink();
+            }
+          },
+          {
+            id: "share-pack",
+            label: sharePackBusy ? "Copying..." : "Copy share pack",
+            disabled: sharePackBusy,
+            onClick: handleCopySharePack
+          }
+        ]
+      };
+    }
+
+    if (!hasHostedPaymentLink && hasClientPortal) {
+      return {
+        eyebrow: "Nice progress",
+        title: "Portal is ready. Add the payment link before you send.",
+        detail:
+          "The client can review the invoice already. Add the hosted payment link so paying feels just as polished.",
+        actions: [
+          {
+            id: "payment-link",
+            label: paymentLinkBusy ? "Creating..." : "Create payment link",
+            disabled: paymentLinkBusy,
+            onClick: () => {
+              void handleGeneratePaymentLink();
+            }
+          }
+        ]
+      };
+    }
+
+    return {
+      eyebrow: "Ready to send",
+      title: "Everything needed for a polished handoff is ready.",
+      detail:
+        "Copy the share pack or export the PDF next. You already have the saved draft, payment link, and portal in place.",
+      actions: [
+        {
+          id: "share-pack",
+          label: sharePackBusy ? "Copying..." : "Copy share pack",
+          disabled: sharePackBusy,
+          onClick: handleCopySharePack
+        },
+        {
+          id: "export-pdf",
+          label: "Export PDF",
+          onClick: () => {
+            void handleDownloadPdf();
+          }
+        }
+      ]
+    };
+  }, [
+    clientPortalBusy,
+    handleDownloadPdf,
+    handleGenerateClientPortalLink,
+    handleGeneratePaymentLink,
+    handleCopySharePack,
+    handleSaveInvoice,
+    hasBillableLineItem,
+    hasClientDetails,
+    hasClientPortal,
+    hasHostedPaymentLink,
+    hasSavedDraft,
+    onboardingStatus.completionVisible,
+    onboardingStatus.visible,
+    paymentLinkBusy,
+    saveStatus,
+    sharePackBusy
+  ]);
 
   const handleBillieLineRefine = (lineNumber, description) => {
     setActiveInspectorTab("assistant");
@@ -2272,6 +2435,39 @@ function ManualInvoiceCanvas() {
                     style={{ backgroundColor: accent.primary, width: `${onboardingStatus.progressPercent}%` }}
                   />
                 </div>
+                {onboardingContextCue ? (
+                  <div
+                    className="mt-3 rounded-[24px] border border-[#6993d2]/18 bg-[#f7faff] px-4 py-4"
+                    data-testid="manual-onboarding-next-cue"
+                  >
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="max-w-2xl">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                          {onboardingContextCue.eyebrow}
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-900">
+                          {onboardingContextCue.title}
+                        </p>
+                        <p className="mt-1 text-xs leading-5 text-slate-600">
+                          {onboardingContextCue.detail}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {onboardingContextCue.actions.map((action) => (
+                          <button
+                            key={action.id}
+                            type="button"
+                            className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={action.onClick}
+                            disabled={action.disabled}
+                          >
+                            {action.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="mt-3 grid gap-2 md:grid-cols-5">
                   {onboardingStatus.steps.map((step, index) => {
                     const isNext = onboardingStatus.nextStep?.id === step.id;

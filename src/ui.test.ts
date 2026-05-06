@@ -642,6 +642,68 @@ test("guided walkthrough stays active from launcher through manual editor", asyn
   }
 });
 
+test("manual onboarding cue updates through save, payment link, and portal setup", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-manual-onboarding-cue-owner");
+  });
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/*/payment-link", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          paymentLinkUrl: "https://pay.stripe.test/plink_manual_onboarding_123"
+        })
+      });
+    });
+    await page.route("**/api/invoices/*/client-portal-link", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          clientPortalUrl: "https://app.notebill.app/portal/123e4567-e89b-12d3-a456-426614174111/token-onboarding",
+          invoice: {
+            invoiceData: {
+              finishedInvoice: {
+                portalAccessToken: "token-onboarding"
+              }
+            }
+          }
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const cue = page.getByTestId("manual-onboarding-next-cue");
+    await cue.getByText("Make this invoice send-ready first.").waitFor({ state: "visible" });
+
+    await page.locator('textarea[placeholder="Client Name"]:visible').fill("Northwind Roofing");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Roof patch repair");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("325");
+
+    await cue.getByText("Your draft is ready to save.").waitFor({ state: "visible" });
+    await cue.getByRole("button", { name: "Save draft" }).click();
+    await cue.getByText("The draft is saved. Add the customer handoff pieces next.").waitFor({
+      state: "visible"
+    });
+    await cue.getByRole("button", { name: "Create payment link" }).click();
+    await cue.getByText("Payment link is ready. Add the portal to finish the handoff.").waitFor({
+      state: "visible"
+    });
+
+    await cue.getByRole("button", { name: "Create client portal" }).click();
+    await cue.getByText("Everything needed for a polished handoff is ready.").waitFor({
+      state: "visible"
+    });
+    await cue.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("first invoice onboarding tracks progress across launcher, intake, and manual", async () => {
   useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
   const context = await browser.newContext();
