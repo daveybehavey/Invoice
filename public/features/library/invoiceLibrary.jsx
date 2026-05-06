@@ -1680,6 +1680,167 @@
     sentFollowUpInvoices.length > 0 &&
     !reminderIsSnoozed &&
     !reminderIsDismissed;
+  const latestDraftInvoice =
+    invoices
+      .filter((invoice) => invoice?.status === "draft")
+      .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
+  const sentWithoutPaymentLinkInvoice =
+    invoices
+      .filter((invoice) => invoice?.status === "sent" && !String(invoice?.paymentLinkUrl ?? "").trim())
+      .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
+  const paidRepeatCandidate =
+    invoices
+      .filter((invoice) => invoice?.status === "paid")
+      .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
+  const libraryGuide = (() => {
+    if (showTrash || requiresSignIn) {
+      return null;
+    }
+    if (oldestSentReminder) {
+      return {
+        toneClass: "border-blue-200 bg-blue-50 text-blue-950",
+        eyebrow: "Billie next up",
+        title: oldestSentReminder.isPastDue
+          ? `Follow up on ${oldestSentReminder.invoiceNumber || "this sent invoice"}`
+          : `Check ${oldestSentReminder.invoiceNumber || "this sent invoice"}`,
+        body: oldestSentReminder.isPastDue
+          ? "Payment is still open. Send the reminder now, then mark it paid if the money already arrived."
+          : "Keep the send workflow moving before this invoice goes cold.",
+        meta: [
+          oldestSentReminderDueLabel
+            ? oldestSentReminder.isPastDue
+              ? `Due ${oldestSentReminderDueLabel}`
+              : `Due soon: ${oldestSentReminderDueLabel}`
+            : "",
+          Number.isFinite(oldestSentReminder.openBalance)
+            ? `Open balance ${formatMoney(oldestSentReminder.openBalance)}`
+            : "",
+          oldestSentRecipient ? `Recipient ${oldestSentRecipient}` : ""
+        ].filter(Boolean),
+        primaryLabel:
+          canQuickSendReminderOldest && actionId === oldestSentReminder.invoiceId
+            ? "Sending..."
+            : canQuickSendReminderOldest
+              ? "Send reminder"
+              : "Show sent invoices",
+        primaryDisabled: canQuickSendReminderOldest && actionId === oldestSentReminder.invoiceId,
+        onPrimary: () => {
+          if (canQuickSendReminderOldest) {
+            void handleSendReminder(oldestSentReminder);
+            return;
+          }
+          setStatusFilter("sent");
+          setSelectedIds([]);
+        },
+        secondaryLabel: "Open repeat invoice",
+        secondaryDisabled: actionId === oldestSentReminder.invoiceId,
+        onSecondary: () => handleInvoiceAgain(oldestSentReminder.invoiceId)
+      };
+    }
+    if (sentWithoutPaymentLinkInvoice) {
+      return {
+        toneClass: "border-amber-200 bg-amber-50 text-amber-950",
+        eyebrow: "Billie next up",
+        title: `Add a payment link for ${sentWithoutPaymentLinkInvoice.invoiceNumber || "this invoice"}`,
+        body: "The invoice has already gone out. Opening it now to add a hosted payment link will tighten the payment handoff.",
+        meta: [
+          sentWithoutPaymentLinkInvoice.customerName || "",
+          Number.isFinite(sentWithoutPaymentLinkInvoice.total)
+            ? `Total ${formatMoney(sentWithoutPaymentLinkInvoice.total)}`
+            : ""
+        ].filter(Boolean),
+        primaryLabel:
+          actionId === sentWithoutPaymentLinkInvoice.invoiceId ? "Opening..." : "Open invoice",
+        primaryDisabled: actionId === sentWithoutPaymentLinkInvoice.invoiceId,
+        onPrimary: () => handleOpen(sentWithoutPaymentLinkInvoice.invoiceId),
+        secondaryLabel: "Show sent invoices",
+        secondaryDisabled: false,
+        onSecondary: () => {
+          setStatusFilter("sent");
+          setSelectedIds([]);
+        }
+      };
+    }
+    if (nextRecurringCandidate) {
+      return {
+        toneClass: "border-indigo-200 bg-indigo-50 text-indigo-950",
+        eyebrow: "Billie next up",
+        title: "Start the next repeat invoice",
+        body: recurringDueCount > 0
+          ? "Recurring work is ready now. Open the next invoice and keep the repeat job moving."
+          : "A repeat job is coming up soon. Open it now if you want a head start.",
+        meta: [
+          nextRecurringCandidate.invoiceNumber || "Draft invoice",
+          nextRecurringCandidate.customerName || "",
+          nextRecurringCandidate.recurringEntry?.nextDueAt
+            ? `Next due ${formatDate(nextRecurringCandidate.recurringEntry.nextDueAt)}`
+            : ""
+        ].filter(Boolean),
+        primaryLabel:
+          actionId === nextRecurringCandidate.invoiceId ? "Opening..." : "Open repeat invoice",
+        primaryDisabled: actionId === nextRecurringCandidate.invoiceId,
+        onPrimary: () =>
+          handleInvoiceAgain(nextRecurringCandidate.invoiceId, {
+            onLoaded: () => advanceRecurringSchedule(nextRecurringCandidate.invoiceId)
+          }),
+        secondaryLabel: "Show draft invoices",
+        secondaryDisabled: false,
+        onSecondary: () => {
+          setStatusFilter("draft");
+          setSelectedIds([]);
+        }
+      };
+    }
+    if (oldestStaleDraft || latestDraftInvoice) {
+      const targetDraft = oldestStaleDraft ?? latestDraftInvoice;
+      return {
+        toneClass: "border-emerald-200 bg-emerald-50 text-emerald-950",
+        eyebrow: "Billie next up",
+        title: `Resume ${targetDraft?.invoiceNumber || "your latest draft"}`,
+        body: oldestStaleDraft
+          ? "This draft has been sitting for a while. Finishing it now is the fastest way to turn it into a send-ready invoice."
+          : "Open the draft and keep moving it toward save, send, or export.",
+        meta: [
+          targetDraft?.customerName || "",
+          targetDraft?.updatedAt ? `Updated ${formatDate(targetDraft.updatedAt)}` : ""
+        ].filter(Boolean),
+        primaryLabel: actionId === targetDraft?.invoiceId ? "Opening..." : "Open draft",
+        primaryDisabled: actionId === targetDraft?.invoiceId,
+        onPrimary: () => handleOpen(targetDraft.invoiceId),
+        secondaryLabel: "Show draft invoices",
+        secondaryDisabled: false,
+        onSecondary: () => {
+          setStatusFilter("draft");
+          setSelectedIds([]);
+        }
+      };
+    }
+    if (paidRepeatCandidate) {
+      return {
+        toneClass: "border-slate-200 bg-slate-50 text-slate-950",
+        eyebrow: "Billie next up",
+        title: `Start another invoice for ${paidRepeatCandidate.customerName || "a repeat client"}`,
+        body: "Paid work is one of the strongest repeat signals. Open a fresh draft and reuse what already worked.",
+        meta: [
+          paidRepeatCandidate.invoiceNumber || "",
+          Number.isFinite(paidRepeatCandidate.total)
+            ? `Last total ${formatMoney(paidRepeatCandidate.total)}`
+            : ""
+        ].filter(Boolean),
+        primaryLabel:
+          actionId === paidRepeatCandidate.invoiceId ? "Opening..." : "Invoice again",
+        primaryDisabled: actionId === paidRepeatCandidate.invoiceId,
+        onPrimary: () => handleInvoiceAgain(paidRepeatCandidate.invoiceId),
+        secondaryLabel: "Show paid invoices",
+        secondaryDisabled: false,
+        onSecondary: () => {
+          setStatusFilter("paid");
+          setSelectedIds([]);
+        }
+      };
+    }
+    return null;
+  })();
 
   const handleUpgradeAction = async () => {
     setBillingBusy(true);
@@ -2333,6 +2494,54 @@
               </button>
             </div>
           </div>
+        ) : null}
+        {libraryGuide ? (
+          <section
+            className={`mt-6 rounded-[28px] border px-5 py-4 ${libraryGuide.toneClass}`}
+            data-testid="library-billie-next-up"
+          >
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] opacity-70">
+                  {libraryGuide.eyebrow}
+                </p>
+                <div className="space-y-1">
+                  <h2 className="text-lg font-semibold">{libraryGuide.title}</h2>
+                  <p className="text-sm opacity-90">{libraryGuide.body}</p>
+                </div>
+                {libraryGuide.meta?.length ? (
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {libraryGuide.meta.map((item) => (
+                      <span
+                        key={item}
+                        className="rounded-full border border-white/80 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-slate-700"
+                      >
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="rounded-xl border border-white/80 bg-white px-3 py-1.5 text-xs font-semibold text-slate-900 shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={libraryGuide.onPrimary}
+                  disabled={libraryGuide.primaryDisabled}
+                >
+                  {libraryGuide.primaryLabel}
+                </button>
+                <button
+                  type="button"
+                  className="rounded-xl border border-white/60 bg-transparent px-3 py-1.5 text-xs font-semibold shadow-sm transition hover:bg-white/40 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={libraryGuide.onSecondary}
+                  disabled={libraryGuide.secondaryDisabled}
+                >
+                  {libraryGuide.secondaryLabel}
+                </button>
+              </div>
+            </div>
+          </section>
         ) : null}
 
         {!requiresSignIn && selectionMode && filteredInvoices.length > 0 ? (

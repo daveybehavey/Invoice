@@ -5622,6 +5622,81 @@ test("invoice library send action records delivery and supports mark opened", as
   }
 });
 
+test("invoice library Billie next-up guide prioritizes follow-up work", async () => {
+  const ownerId = "ui-library-next-up-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Guide Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-GUIDE-1",
+          issueDate: "2026-03-05",
+          dueDate: "2026-03-20",
+          customerName: "Guide Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-guide-1",
+              type: "labor",
+              description: "Guide baseline",
+              quantity: 1,
+              unitPrice: 190,
+              amount: 190
+            }
+          ],
+          subtotal: 190,
+          total: 190,
+          balanceDue: 190
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const savePayload = await saveResponse.json();
+  const invoiceId = savePayload?.invoice?.invoiceId as string;
+
+  const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      recipientEmail: "guide-follow-up@example.com"
+    }
+  });
+  assert.equal(sendResponse.status(), 200);
+  await mutateStoredInvoice(invoiceId, {
+    status: "sent",
+    updatedAt: "2026-03-01T12:00:00.000Z"
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const nextUp = page.getByTestId("library-billie-next-up");
+    await nextUp.waitFor({ state: "visible" });
+    await nextUp.getByText("Billie next up").waitFor({ state: "visible" });
+    await nextUp.getByText("Follow up on INV-GUIDE-1").waitFor({ state: "visible" });
+    await nextUp.getByText("Open balance $190.00").waitFor({ state: "visible" });
+    await nextUp.getByRole("button", { name: "Send reminder" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library prefills send recipient from client memory", async () => {
   const ownerId = "ui-send-memory-owner";
   const context = await browser.newContext();
