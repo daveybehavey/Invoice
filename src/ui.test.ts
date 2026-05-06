@@ -124,6 +124,16 @@ test("public policy pages render from their routes", async () => {
     assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Support");
     assert.equal(await page.getByText("Support email: support@notebill.app", { exact: true }).isVisible(), true);
 
+    await page.goto(`${baseUrl}/help`);
+    await page.waitForSelector("h1");
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Help Center");
+    await page.getByTestId("help-center-quick-starts").getByText("Build your first invoice").waitFor({
+      state: "visible"
+    });
+    await page.getByTestId("help-center-faq").getByText("Where should I start if I only have messy job notes?").waitFor({
+      state: "visible"
+    });
+
     await page.goto(`${baseUrl}/feedback`);
     await page.waitForSelector("h1");
     assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Feedback");
@@ -198,6 +208,30 @@ test("launcher manage tools include support access", async () => {
     await page.waitForSelector("h1");
 
     assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Support");
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual, intake, and library can open the help center", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Help center" }).click();
+    await page.waitForSelector("h1");
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Help Center");
+
+    await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Help center" }).click();
+    await page.waitForSelector("h1");
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Help Center");
+
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Help" }).click();
+    await page.waitForSelector("h1");
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Help Center");
   } finally {
     await context.close();
   }
@@ -912,7 +946,7 @@ test("core mobile routes do not create horizontal page overflow", async () => {
     deviceScaleFactor: 3
   });
   const page = await context.newPage();
-  const routes = ["/", "/ai-intake", "/manual", "/scratchpad", "/import", "/invoices", "/privacy", "/support", "/feedback"];
+  const routes = ["/", "/ai-intake", "/manual", "/scratchpad", "/import", "/invoices", "/privacy", "/help", "/support", "/feedback"];
 
   try {
     for (const route of routes) {

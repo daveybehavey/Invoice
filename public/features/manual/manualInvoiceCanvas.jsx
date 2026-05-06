@@ -2262,16 +2262,25 @@ function ManualInvoiceCanvas() {
           </section>
         ) : null}
         <div className="mb-4 flex items-center justify-between gap-3 md:col-span-2 no-print">
-          <button
-            type="button"
-            className="nb-btn-ghost"
-            onClick={() => {
-              persistDraft();
-              navigate("/");
-            }}
-          >
-            &larr; Back
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="nb-btn-ghost"
+              onClick={() => {
+                persistDraft();
+                navigate("/");
+              }}
+            >
+              &larr; Back
+            </button>
+            <button
+              type="button"
+              className="inline-flex min-h-10 items-center justify-center rounded-full px-3 text-xs font-semibold text-slate-500 underline-offset-2 transition hover:bg-white/70 hover:text-slate-700 hover:underline"
+              onClick={() => navigate("/help")}
+            >
+              Help center
+            </button>
+          </div>
           <button
             type="button"
             className="inline-flex min-h-10 items-center justify-center rounded-full px-3 text-xs font-semibold text-slate-500 underline-offset-2 transition hover:bg-white/70 hover:text-slate-700 hover:underline"

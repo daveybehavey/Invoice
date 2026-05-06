@@ -1952,6 +1952,118 @@ function SupportPage() {
   );
 }
 
+function HelpCenterPage() {
+  const commonTasks = [
+    {
+      title: "Build your first invoice",
+      body: "Start with Billie if you have rough notes. Use the manual editor if you want full control from a blank draft.",
+      action: { href: "/ai-intake", label: "Start with Billie" }
+    },
+    {
+      title: "Finish and save a draft",
+      body: "Open the manual editor, confirm the client, line items, totals, and notes, then save to the library so the invoice is reusable.",
+      action: { href: "/manual", label: "Open manual editor" }
+    },
+    {
+      title: "Send and follow up",
+      body: "Use the library to send invoices, track delivery, create reminders, and reopen repeat work from one place.",
+      action: { href: "/invoices", label: "Open invoice library" }
+    },
+    {
+      title: "Report a bug or confusing step",
+      body: "The feedback page is the fastest path for tester reports, screenshots, and device details.",
+      action: { href: "/feedback", label: "Open feedback" }
+    }
+  ];
+  const faqItems = [
+    {
+      question: "Where should I start if I only have messy job notes?",
+      answer:
+        "Use Billie intake. Paste the notes, review what Billie captured, then open the draft in the manual editor for final approval."
+    },
+    {
+      question: "How do I make repeat invoices faster?",
+      answer:
+        "Save the draft to the library, save strong services to memory, and reuse repeat-client shortcuts from the launcher, manual editor, or library."
+    },
+    {
+      question: "Why can I not create a payment link or client portal yet?",
+      answer:
+        "Those flows need a saved invoice first. Save the draft, then create the hosted payment link or client portal from the editor or library."
+    },
+    {
+      question: "What should I send if something breaks?",
+      answer:
+        "Tell us what you were trying to do, what happened, what you expected, and include a screenshot or invoice number if you have one."
+    }
+  ];
+
+  return (
+    <PublicInfoPage
+      kicker="Help center"
+      title="NoteBill Help Center"
+      intro="Use this page when you want the fastest path to the right screen, the right workflow, or the right support channel. It is designed to keep you moving without digging through long docs."
+      footerNote={`Last updated: ${PUBLIC_INFO_LAST_UPDATED}. Need human help? Email ${SUPPORT_EMAIL}.`}
+      actions={[
+        { href: "/", label: "Open NoteBill", tone: "primary" },
+        { href: "/feedback", label: "Feedback", tone: "ghost" },
+        { href: "/support", label: "Support", tone: "ghost" }
+      ]}
+      sections={[
+        {
+          title: "Best place to go next",
+          items: [
+            "Use Billie intake when you have rough notes and want NoteBill to prepare the draft.",
+            "Use the manual editor when you want full control over client details, line items, notes, payment links, and portal setup.",
+            "Use the invoice library when the work is already saved and you want send, payment, follow-up, or repeat-work actions."
+          ],
+          paragraphs: []
+        },
+        {
+          title: "When to use feedback vs support",
+          items: [
+            "Use Feedback for bugs, confusing UI, cramped mobile layouts, slow screens, or anything testers notice while using the app.",
+            "Use Support for account issues, billing questions, privacy requests, delivery problems, or anything that needs a direct reply."
+          ],
+          paragraphs: []
+        }
+      ]}
+    >
+      <section className="nb-subcard border-[#6993d2]/30 bg-[#f6f9ff]" data-testid="help-center-quick-starts">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Quick starts</p>
+          <h2 className="mt-2 text-lg font-semibold text-slate-900">Most common things people need help with</h2>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {commonTasks.map((task) => (
+            <div key={task.title} className="rounded-2xl border border-white/80 bg-white/85 px-4 py-4">
+              <p className="text-sm font-semibold text-slate-900">{task.title}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-600">{task.body}</p>
+              <a href={task.action.href} className="mt-3 inline-flex rounded-full border border-[#6993d2]/20 bg-[#f6f9ff] px-3 py-1.5 text-xs font-semibold text-[#285ea8]">
+                {task.action.label}
+              </a>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="nb-subcard border-emerald-200 bg-emerald-50/70" data-testid="help-center-faq">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">Fast answers</p>
+          <h2 className="mt-2 text-lg font-semibold text-slate-900">Questions we expect most often</h2>
+        </div>
+        <div className="mt-4 space-y-3">
+          {faqItems.map((item) => (
+            <div key={item.question} className="rounded-2xl border border-white/80 bg-white/85 px-4 py-4">
+              <p className="text-sm font-semibold text-slate-900">{item.question}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-600">{item.answer}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+    </PublicInfoPage>
+  );
+}
+
 function FeedbackPage() {
   const [deviceDetails] = useState(() => buildFeedbackDeviceDetails());
   const [copyStatus, setCopyStatus] = useState("");
@@ -2171,6 +2283,7 @@ function App() {
         <Route path="/settings/memory" element={<ClientMemorySettings />} />
         <Route path="/settings/services" element={<ServiceCatalogSettings />} />
         <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/help" element={<HelpCenterPage />} />
         <Route path="/support" element={<SupportPage />} />
         <Route path="/feedback" element={<FeedbackPage />} />
         <Route path="/data-deletion" element={<DataDeletionPage />} />

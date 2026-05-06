@@ -1940,6 +1940,13 @@
               >
                 Manage
               </button>
+              <button
+                type="button"
+                className="font-semibold text-blue-800 hover:text-blue-900"
+                onClick={() => navigate("/help")}
+              >
+                Help
+              </button>
               {showBillingPortalAction ? (
                 useStripePortalAction ? (
                   <button

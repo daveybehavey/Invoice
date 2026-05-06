@@ -2159,6 +2159,13 @@ function AIIntake() {
                 New intake
               </button>
             ) : null}
+            <button
+              type="button"
+              className="inline-flex min-h-10 items-center rounded-full px-3 text-sm font-semibold text-slate-600 transition hover:bg-white/70 hover:text-slate-900"
+              onClick={() => navigate("/help")}
+            >
+              Help center
+            </button>
           </div>
           <div className="text-right">
             <p className="text-sm font-semibold text-slate-900">Billie at NoteBill</p>

@@ -168,6 +168,7 @@ const spaRoutes = [
   "/settings/services",
   "/portal",
   "/privacy",
+  "/help",
   "/support",
   "/feedback",
   "/data-deletion",
