@@ -1887,6 +1887,39 @@ function ManualInvoiceCanvas() {
     saveStatus,
     savedInvoiceId
   ]);
+  const hasClientDetails = Boolean(String(billToDetails ?? "").trim());
+  const hasBillableLineItem = lineItems.some((item) => {
+    const description = String(item?.description ?? "").trim();
+    const amount = getLineAmount(item);
+    return description && amount > 0;
+  });
+  const hasSavedDraft = Boolean(savedInvoiceId);
+  const hasHostedPaymentLink = Boolean(String(paymentLinkUrl ?? "").trim());
+  const hasClientPortal = Boolean(String(clientPortalUrl ?? "").trim());
+  const handoffStages = [
+    {
+      label: "Send-ready basics",
+      value: hasClientDetails && hasBillableLineItem
+        ? "Ready"
+        : hasClientDetails
+          ? "Add a priced line item"
+          : hasBillableLineItem
+            ? "Add client details"
+            : "Add client + priced work"
+    },
+    {
+      label: "Save",
+      value: hasSavedDraft ? "Saved to library" : "Save before links"
+    },
+    {
+      label: "Payment link",
+      value: hasHostedPaymentLink ? "Hosted link ready" : hasSavedDraft ? "Create link" : "Save first"
+    },
+    {
+      label: "Client portal",
+      value: hasClientPortal ? "Portal ready" : hasSavedDraft ? "Create portal" : "Save first"
+    }
+  ];
 
   const handleBillieLineRefine = (lineNumber, description) => {
     setActiveInspectorTab("assistant");
@@ -3468,6 +3501,108 @@ function ManualInvoiceCanvas() {
                 value={notes}
                 onChange={(event) => setNotes(event.target.value)}
               />
+            </section>
+
+            <section
+              className="rounded-2xl border border-[#6993d2]/18 bg-[#f7faff] p-4 no-print"
+              data-testid="manual-send-payment-handoff"
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                    Send & payment handoff
+                  </p>
+                  <h3 className="mt-1 text-sm font-semibold text-slate-900">
+                    Make the customer handoff feel complete before you leave the editor.
+                  </h3>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">
+                    Billie keeps the handoff explicit: first make the invoice send-ready, then save it, then add the payment and portal steps you want.
+                  </p>
+                </div>
+                <p className="text-xs font-medium text-slate-500">
+                  Nothing here sends automatically.
+                </p>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                {handoffStages.map((stage) => (
+                  <div key={stage.label} className="rounded-2xl border border-white/80 bg-white px-3 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      {stage.label}
+                    </p>
+                    <p className="mt-1 text-xs font-semibold text-slate-800">{stage.value}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {!hasClientDetails ? (
+                  <button
+                    type="button"
+                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35"
+                    onClick={() => {
+                      document.querySelector('textarea[placeholder="Client Name"]')?.focus();
+                    }}
+                  >
+                    Add client details
+                  </button>
+                ) : null}
+                {!hasBillableLineItem ? (
+                  <button
+                    type="button"
+                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35"
+                    onClick={() => {
+                      document.querySelector('input[placeholder="Description"]')?.focus();
+                    }}
+                  >
+                    Add priced work
+                  </button>
+                ) : null}
+                {!hasSavedDraft && hasClientDetails && hasBillableLineItem ? (
+                  <button
+                    type="button"
+                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => {
+                      void handleSaveInvoice();
+                    }}
+                    disabled={saveStatus === "Saving..."}
+                  >
+                    {saveStatus === "Saving..." ? "Saving..." : "Save draft"}
+                  </button>
+                ) : null}
+                {hasSavedDraft && !hasHostedPaymentLink ? (
+                  <button
+                    type="button"
+                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => {
+                      void handleGeneratePaymentLink();
+                    }}
+                    disabled={paymentLinkBusy}
+                  >
+                    {paymentLinkBusy ? "Creating..." : "Create payment link"}
+                  </button>
+                ) : null}
+                {hasSavedDraft && !hasClientPortal ? (
+                  <button
+                    type="button"
+                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => {
+                      void handleGenerateClientPortalLink();
+                    }}
+                    disabled={clientPortalBusy}
+                  >
+                    {clientPortalBusy ? "Creating..." : "Create client portal"}
+                  </button>
+                ) : null}
+                {hasBillableLineItem ? (
+                  <button
+                    type="button"
+                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={handleCopySharePack}
+                    disabled={sharePackBusy}
+                  >
+                    {sharePackBusy ? "Copying..." : "Copy share pack"}
+                  </button>
+                ) : null}
+              </div>
             </section>
 
             <section className="space-y-2">

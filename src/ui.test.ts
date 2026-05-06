@@ -6940,6 +6940,30 @@ test("manual editor export summarizes send readiness", async () => {
   }
 });
 
+test("manual editor send and payment handoff updates after save", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Handoff Client");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Deck repair");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("210");
+
+    const handoff = page.getByTestId("manual-send-payment-handoff");
+    await handoff.waitFor({ state: "visible" });
+    await handoff.getByText("Ready").waitFor({ state: "visible" });
+    await handoff.getByText("Save before links").waitFor({ state: "visible" });
+    await handoff.getByRole("button", { name: "Save draft" }).click();
+
+    await handoff.getByText("Saved to library").waitFor({ state: "visible" });
+    await handoff.getByText("Create link").waitFor({ state: "visible" });
+    await handoff.getByText("Create portal").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor save shows sign-in guidance when auth is required", async () => {
   process.env.INVOICE_REQUIRE_AUTH = "true";
   const context = await browser.newContext();
