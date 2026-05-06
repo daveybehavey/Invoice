@@ -693,11 +693,26 @@ function ManualInvoiceCanvas() {
     borderColor: accent.border,
     color: accent.primary
   };
+  const normalizeMemoryText = (value) =>
+    typeof value === "string" ? value.trim().replace(/\s+/g, " ").toLocaleLowerCase() : "";
   const primaryBillToName = getPrimaryBillToName(billToDetails);
   const clientDefaultNotes = getClientDefaultNotes(primaryBillToName);
   const normalizedBillToSearch = primaryBillToName.toLocaleLowerCase();
   const currentServiceMemoryCandidate = lineItems.find(
     (item) => `${item?.description ?? ""}`.trim() && `${item?.rate ?? ""}`.trim()
+  );
+  const hasCurrentServiceInMemory = Boolean(
+    currentServiceMemoryCandidate &&
+      savedLineItemLibrary.some((entry) => {
+        const sameDescription =
+          normalizeMemoryText(entry?.description) ===
+          normalizeMemoryText(currentServiceMemoryCandidate.description);
+        const sameQty = String(entry?.qty ?? "").trim() === String(currentServiceMemoryCandidate.qty ?? "").trim();
+        const sameRate = String(entry?.rate ?? "").trim() === String(currentServiceMemoryCandidate.rate ?? "").trim();
+        const sameClient =
+          normalizeMemoryText(entry?.clientName) === normalizeMemoryText(primaryBillToName);
+        return sameDescription && sameQty && sameRate && sameClient;
+      })
   );
   const timerRateSuggestion =
     timeCaptureRate.trim() ||
@@ -1801,6 +1816,78 @@ function ManualInvoiceCanvas() {
     }
   };
 
+  const billieNextMoves = useMemo(() => {
+    const moves = [];
+    if (!savedInvoiceId) {
+      moves.push({
+        id: "save",
+        label: "Save this draft",
+        helper: "Keep this invoice reusable in the library before you move into links, reminders, or portal sharing.",
+        actionLabel: saveStatus === "Saving..." ? "Saving..." : "Save draft",
+        busy: saveStatus === "Saving...",
+        onClick: () => {
+          void handleSaveInvoice();
+        }
+      });
+    }
+    if (currentServiceMemoryCandidate && !hasCurrentServiceInMemory) {
+      moves.push({
+        id: "service-memory",
+        label: "Save this service to memory",
+        helper: "Teach Billie the strongest line item on this draft so the next repeat job starts faster.",
+        actionLabel: "Save service",
+        busy: false,
+        onClick: () => handleRememberCurrentLineItem(currentServiceMemoryCandidate)
+      });
+    }
+    if (savedInvoiceId && !paymentLinkUrl.trim()) {
+      moves.push({
+        id: "payment-link",
+        label: "Add a payment link",
+        helper: "Generate a hosted payment link so send, share pack, and portal handoff feel complete.",
+        actionLabel: paymentLinkBusy ? "Creating..." : "Create payment link",
+        busy: paymentLinkBusy,
+        onClick: () => {
+          void handleGeneratePaymentLink();
+        }
+      });
+    }
+    if (savedInvoiceId && !clientPortalUrl) {
+      moves.push({
+        id: "client-portal",
+        label: "Create the client portal",
+        helper: "Give the customer one clean place to review the invoice and payment details.",
+        actionLabel: clientPortalBusy ? "Creating..." : "Create client portal",
+        busy: clientPortalBusy,
+        onClick: () => {
+          void handleGenerateClientPortalLink();
+        }
+      });
+    }
+    if (moves.length < 3 && primaryBillToName) {
+      moves.push({
+        id: "memory-review",
+        label: "Review repeat-client memory",
+        helper: "Check what Billie already remembers for this client so future invoices stay fast and accurate.",
+        actionLabel: "Open memory",
+        busy: false,
+        onClick: () => navigate("/settings/memory")
+      });
+    }
+    return moves.slice(0, 3);
+  }, [
+    clientPortalBusy,
+    clientPortalUrl,
+    currentServiceMemoryCandidate,
+    hasCurrentServiceInMemory,
+    navigate,
+    paymentLinkBusy,
+    paymentLinkUrl,
+    primaryBillToName,
+    saveStatus,
+    savedInvoiceId
+  ]);
+
   const handleBillieLineRefine = (lineNumber, description) => {
     setActiveInspectorTab("assistant");
     setInspectorOpen(true);
@@ -2316,6 +2403,45 @@ function ManualInvoiceCanvas() {
             )}
           </div>
         </section>
+        {billieNextMoves.length > 0 ? (
+          <section
+            className="mb-4 rounded-[28px] border border-[#6993d2]/18 bg-[#f7faff] p-4 md:col-span-2 no-print"
+            data-testid="manual-billie-next-moves"
+          >
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                  Billie next moves
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Keep this draft moving with the next highest-value step.
+                </p>
+              </div>
+              <p className="text-xs font-medium text-slate-500">
+                Explicit only. Nothing auto-runs.
+              </p>
+            </div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-3">
+              {billieNextMoves.map((move) => (
+                <div
+                  key={move.id}
+                  className="rounded-2xl border border-white/80 bg-white px-4 py-3 shadow-sm"
+                >
+                  <p className="text-sm font-semibold text-slate-900">{move.label}</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">{move.helper}</p>
+                  <button
+                    type="button"
+                    className="mt-3 rounded-full border border-[#6993d2]/22 bg-[#f6f9ff] px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={move.onClick}
+                    disabled={move.busy}
+                  >
+                    {move.actionLabel}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
         <div
           className={`printable-invoice relative w-full overflow-hidden rounded-[32px] border ${activeSpacing.shellPaddingClass} ${activePreset.shellClass} ${invoiceInteractionClass}`}
           style={{ borderColor: accent.border }}

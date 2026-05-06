@@ -3031,6 +3031,30 @@ test("manual billie workspace keeps composer text after a refresh", async () => 
   }
 });
 
+test("manual billie next moves guide the draft from save into payment setup", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Billie Next Client");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Fence repair");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("120");
+
+    const nextMoves = page.getByTestId("manual-billie-next-moves");
+    await nextMoves.waitFor({ state: "visible" });
+    await nextMoves.getByText("Save this draft").waitFor({ state: "visible" });
+    await nextMoves.getByText("Save this service to memory").waitFor({ state: "visible" });
+    await nextMoves.getByRole("button", { name: "Save draft" }).click();
+
+    await page.getByText("Saved").waitFor({ state: "visible" });
+    await nextMoves.getByText("Add a payment link").waitFor({ state: "visible" });
+    await nextMoves.getByText("Create the client portal").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual billie quick line action rewrites only one line via reword-line", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
