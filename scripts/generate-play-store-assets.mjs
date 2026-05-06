@@ -56,6 +56,7 @@ const libraryInvoicesPayload = {
         finishedInvoice: {
           invoiceNumber: "INV-2048",
           issueDate: "2026-04-12",
+          dueDate: "2026-04-20",
           customerName: "North Shore Fitness",
           currency: "USD",
           paymentLinkUrl: "https://pay.notebill.app/i/INV-2048",
@@ -149,10 +150,12 @@ const manualDraft = {
   invoiceDate: "2026-04-17",
   fromDetails: "NoteBill Demo Co.\n(555) 014-2211\ninvoices@notebill.app",
   billToDetails: "Oak & Pine Renovations\nAttn: Megan Torres\nmegan@oakpine.example",
-  notes: "Thank you for the opportunity to support your spring service call.",
+  dueDate: "2026-04-24",
+  notes: "Payment due within 7 days.\nThank you for the opportunity to support your spring service call.",
   taxRate: "5",
   discountAmount: "0",
   paymentLinkUrl: "https://pay.notebill.app/i/INV-2052",
+  portalAccessToken: "portal-demo-2052",
   lineItems: [
     { id: "line-1", description: "Site visit and scope review", qty: "1", rate: "95" },
     { id: "line-2", description: "Fixture replacement labor", qty: "3", rate: "120" },
@@ -164,8 +167,8 @@ const manualDraft = {
   logoVisible: true,
   notesVisible: true,
   accentColor: "#093064",
-  savedInvoiceId: "",
-  savedInvoiceStatus: ""
+  savedInvoiceId: "inv-store-2052",
+  savedInvoiceStatus: "draft"
 };
 
 const appIconPath = path.resolve("public", "icons", "notebill-512.png");
@@ -350,6 +353,8 @@ async function captureManual(browser) {
   try {
     await routeCommon(page);
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.locator('[data-testid="manual-send-payment-handoff"]').scrollIntoViewIfNeeded();
+    await page.waitForTimeout(250);
     await page.screenshot({
       path: path.join(outputDir, "phone-03-manual-editor.png"),
       fullPage: false
@@ -366,8 +371,28 @@ async function captureLibrary(browser) {
   try {
     await routeCommon(page, { invoicesPayload: libraryInvoicesPayload });
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.locator('[data-testid="library-billie-next-up"]').scrollIntoViewIfNeeded();
+    await page.waitForTimeout(250);
     await page.screenshot({
       path: path.join(outputDir, "phone-04-invoice-library.png"),
+      fullPage: false
+    });
+  } finally {
+    await context.close();
+  }
+}
+
+async function captureHelpCenter(browser) {
+  const context = await browser.newContext(buildContextOptions());
+  await context.addInitScript(seedDemoIdentity);
+  const page = await context.newPage();
+  try {
+    await routeCommon(page);
+    await page.goto(`${baseUrl}/help`, { waitUntil: "networkidle" });
+    await page.locator('[data-testid="help-center-quick-starts"]').scrollIntoViewIfNeeded();
+    await page.waitForTimeout(250);
+    await page.screenshot({
+      path: path.join(outputDir, "phone-05-help-center.png"),
       fullPage: false
     });
   } finally {
@@ -383,7 +408,7 @@ async function captureImport(browser) {
     await routeCommon(page);
     await page.goto(`${baseUrl}/import`, { waitUntil: "networkidle" });
     await page.screenshot({
-      path: path.join(outputDir, "phone-05-import.png"),
+      path: path.join(outputDir, "phone-06-import.png"),
       fullPage: false
     });
   } finally {
@@ -424,31 +449,32 @@ async function createFeatureGraphic(browser) {
               width: 1024px;
               height: 500px;
               overflow: hidden;
-              font-family: Inter, "Segoe UI", Arial, sans-serif;
+              font-family: "Sora", "Segoe UI", Arial, sans-serif;
               background:
-                radial-gradient(circle at top left, rgba(172, 207, 240, 0.55), transparent 30%),
-                linear-gradient(135deg, #f8fbff 0%, #eef4fb 45%, #f9fbff 100%);
+                radial-gradient(circle at 12% 18%, rgba(74, 163, 255, 0.22), transparent 22%),
+                radial-gradient(circle at 82% 22%, rgba(39, 180, 115, 0.15), transparent 20%),
+                linear-gradient(135deg, #f5f9ff 0%, #edf4ff 38%, #f8fbff 100%);
             }
             .canvas {
               position: relative;
               width: 1024px;
               height: 500px;
-              padding: 34px 36px;
+              padding: 34px 40px;
               overflow: hidden;
             }
             .glow {
               position: absolute;
-              inset: auto auto -90px 260px;
-              width: 520px;
-              height: 260px;
-              background: radial-gradient(circle, rgba(9, 48, 100, 0.14), rgba(9, 48, 100, 0));
-              filter: blur(18px);
+              inset: auto auto -110px 250px;
+              width: 560px;
+              height: 280px;
+              background: radial-gradient(circle, rgba(9, 48, 100, 0.16), rgba(9, 48, 100, 0));
+              filter: blur(20px);
             }
             .content {
               position: relative;
               z-index: 2;
               display: grid;
-              grid-template-columns: 1.06fr 0.94fr;
+              grid-template-columns: 1.02fr 0.98fr;
               gap: 24px;
               height: 100%;
             }
@@ -472,7 +498,7 @@ async function createFeatureGraphic(browser) {
             }
             .brand span {
               color: #2f8f3b;
-              font-size: 28px;
+              font-size: 30px;
               font-weight: 800;
               letter-spacing: -0.04em;
             }
@@ -493,9 +519,10 @@ async function createFeatureGraphic(browser) {
             h1 {
               margin: 0 0 14px;
               color: #10223d;
-              font-size: 46px;
-              line-height: 0.95;
+              font-size: 48px;
+              line-height: 0.93;
               letter-spacing: -0.05em;
+              max-width: 500px;
             }
             p {
               margin: 0;
@@ -508,7 +535,7 @@ async function createFeatureGraphic(browser) {
               display: flex;
               gap: 12px;
               flex-wrap: wrap;
-              margin-top: 22px;
+              margin-top: 24px;
             }
             .point {
               padding: 10px 14px;
@@ -526,6 +553,15 @@ async function createFeatureGraphic(browser) {
               align-items: center;
               justify-content: center;
             }
+            .right::before {
+              content: "";
+              position: absolute;
+              inset: 42px 8px 46px 18px;
+              border-radius: 36px;
+              background: linear-gradient(180deg, rgba(255,255,255,0.88), rgba(244,248,255,0.72));
+              border: 1px solid rgba(9, 48, 100, 0.06);
+              box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+            }
             .shot {
               position: absolute;
               width: 168px;
@@ -541,21 +577,21 @@ async function createFeatureGraphic(browser) {
               height: auto;
             }
             .shot.one {
-              left: 24px;
-              top: 70px;
-              transform: rotate(-11deg);
+              left: 18px;
+              top: 84px;
+              transform: rotate(-10deg);
             }
             .shot.two {
-              left: 168px;
-              top: 8px;
-              width: 184px;
-              transform: rotate(3.5deg);
+              left: 160px;
+              top: 2px;
+              width: 188px;
+              transform: rotate(3deg);
               z-index: 3;
             }
             .shot.three {
-              right: 4px;
-              top: 92px;
-              transform: rotate(12deg);
+              right: 8px;
+              top: 96px;
+              transform: rotate(11deg);
             }
           </style>
         </head>
@@ -569,12 +605,12 @@ async function createFeatureGraphic(browser) {
                   <span>NoteBill</span>
                 </div>
                 <div class="eyebrow">Business invoicing</div>
-                <h1>Rough notes in. Ready invoices out.</h1>
-                <p>Billie prepares the draft. You review the wording, totals, and money decisions before sending.</p>
+                <h1>Turn rough job notes into client-ready invoices.</h1>
+                <p>Guide the first invoice, reuse repeat work faster, and tighten the payment handoff before you send.</p>
                 <div class="points">
-                  <span class="point">Billie review</span>
+                  <span class="point">Guided onboarding</span>
                   <span class="point">Repeat work</span>
-                  <span class="point">PDF export</span>
+                  <span class="point">Payment handoff</span>
                 </div>
               </section>
               <section class="right">
@@ -614,7 +650,8 @@ async function writeManifest() {
     "- phone-02-ai-intake.png",
     "- phone-03-manual-editor.png",
     "- phone-04-invoice-library.png",
-    "- phone-05-import.png",
+    "- phone-05-help-center.png",
+    "- phone-06-import.png",
     "",
     "Upload guide:",
     "- App icon: app-icon-512.png",
@@ -624,11 +661,12 @@ async function writeManifest() {
     "- Preview video: optional, not included",
     "",
     "Suggested screenshot captions:",
-    "1. Turn messy job notes into a polished invoice",
-    "2. Paste rough details and let Billie prepare the draft",
-    "3. Review totals, wording, and repeat-work suggestions",
-    "4. Edit every line item before you send",
-    "5. Import old invoice files and keep editing"
+    "1. Start with a guided first invoice instead of a blank screen",
+    "2. Paste rough job notes and let Billie prepare the draft",
+    "3. Finish the customer handoff with save, payment link, and portal steps",
+    "4. Reopen saved work and see the clearest next action instantly",
+    "5. Find help, support, and feedback without leaving the app",
+    "6. Import old invoices, PDFs, and files when you need a head start"
   ].join("\n");
   await fs.writeFile(path.join(outputDir, "README.txt"), manifest, "utf8");
 }
@@ -642,6 +680,7 @@ async function main() {
     await captureAiIntake(browser);
     await captureManual(browser);
     await captureLibrary(browser);
+    await captureHelpCenter(browser);
     await captureImport(browser);
     await createFeatureGraphic(browser);
     await writeManifest();

@@ -1,6 +1,6 @@
 # NoteBill Play Store Listing Draft
 
-Last updated: 2026-05-04
+Last updated: 2026-05-06
 
 This draft is written for the Android release of `NoteBill` and updated for the V2 launch push.
 
@@ -88,33 +88,39 @@ NoteBill is built to keep invoice creation simple: start with the work you alrea
 
 ## Screenshot plan
 
-1. Launcher/home screen with the core promise and guided first step visible
-2. AI intake screen with messy job notes and the Build invoice action
-3. Review screen showing Billie suggestions, visible money decisions, and repeat-work cues
-4. Manual invoice editor with editable line items and notes
-5. Billie wording or note cleanup with a "Numbers unchanged" trust cue
-6. Invoice library with draft/sent/paid states and repeat-invoice actions
-7. PDF export or send/payment/client portal flow
+1. Launcher/home screen with the guided first-invoice path visible
+2. AI intake screen with rough job notes and Billie preparing the draft
+3. Manual editor showing the send/payment handoff state clearly
+4. Invoice library showing Billie next-up guidance and repeat-work/payment follow-up cues
+5. In-app help center showing quick starts and support paths
+6. Import flow for old invoice files, PDFs, and images
+7. Optional extra: a review-state screen that highlights trust cues like money review and repeat-work suggestions
 
 ## Screenshot captions draft
 
-1. Turn messy job notes into a polished invoice
-2. Paste rough details and let Billie prepare the draft
-3. Review totals, wording, and repeat-work suggestions
-4. Edit every line item before you send
-5. Clean up wording without changing the numbers
-6. Save drafts, track sent invoices, and invoice repeat clients faster
-7. Export a professional PDF or prepare a send-ready invoice
+1. Start with a guided first invoice instead of a blank screen
+2. Paste rough job notes and let Billie prepare the draft
+3. Finish the customer handoff with save, payment link, and portal steps
+4. Reopen saved work and see the clearest next action instantly
+5. Find help, support, and feedback without leaving the app
+6. Import old invoices, PDFs, and files when you need a head start
+7. Review Billie suggestions while keeping money decisions visible
 
 ## V2 Feature Graphic Direction
 
-Use a clean mobile-workflow composition, not a generic dashboard. The message should be:
+Use a polished mobile-workflow composition, not a generic dashboard. The message should feel premium, practical, and specific to service work.
+
+Primary direction:
 
 ```text
-Rough notes in. Client-ready invoices out.
+Turn rough job notes into client-ready invoices.
 ```
 
 Secondary caption options:
+
+```text
+Guide the first invoice. Reuse repeat work. Tighten the payment handoff.
+```
 
 ```text
 Billie drafts. You approve the money.
