@@ -5469,6 +5469,10 @@ test("invoice library suggests remembered recurring cadence for repeat clients",
       .getByRole("button", { name: "Set monthly recurring for INV-RECUR-MEMORY-A" })
       .click();
     await page.locator('select[aria-label="Recurring cadence for INV-RECUR-MEMORY-A"]').selectOption("7");
+    const secondRepeatWorkflow = page.getByTestId(`library-repeat-workflow-${secondInvoiceId}`);
+    await secondRepeatWorkflow.waitFor({ state: "visible" });
+    await secondRepeatWorkflow.getByText("Saved weekly").waitFor({ state: "visible" });
+    await secondRepeatWorkflow.getByText("Reuse saved cadence").waitFor({ state: "visible" });
     await page
       .getByRole("button", { name: "Use weekly cadence for INV-RECUR-MEMORY-B" })
       .waitFor({ state: "visible" });

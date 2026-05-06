@@ -2716,6 +2716,101 @@
                 const showMarkPaid = invoice.status === "sent";
                 const showMarkDraft = invoice.status === "sent" || invoice.status === "paid";
                 const nextActionHint = getInvoiceNextActionHint({ invoice, hasDelivery, isPastDue });
+                const repeatWorkflow = (() => {
+                  if (isDeleted || showTrash) {
+                    return null;
+                  }
+                  const cadenceValue = recurringEntry
+                    ? recurringNextDue
+                      ? `Due ${recurringNextDue}`
+                      : "Running"
+                    : rememberedRecurringLabel
+                      ? `Saved ${rememberedRecurringLabel}`
+                      : invoice.status === "paid"
+                        ? "Ready to define"
+                        : "Optional";
+                  const memoryValue = repeatMemoryStarter
+                    ? repeatMemoryStarter.leadItem
+                      ? repeatMemoryStarter.leadItem.description
+                      : "Client setup ready"
+                    : invoice.customerName
+                      ? "No saved bundle yet"
+                      : "Needs client";
+                  const nextStepValue = recurringEntry
+                    ? recurringDueCount > 0 && nextRecurringCandidate?.invoiceId === invoice.invoiceId
+                      ? "Open repeat invoice"
+                      : "Keep schedule active"
+                    : rememberedRecurringLabel
+                      ? "Reuse saved cadence"
+                      : repeatMemoryStarter
+                        ? "Start from memory"
+                        : invoice.status === "paid"
+                          ? "Invoice again"
+                          : "Set cadence later";
+                  const actions = [];
+                  if (repeatMemoryStarter) {
+                    actions.push({
+                      id: "memory",
+                      label: "Start from saved memory",
+                      className:
+                        "rounded-full border border-indigo-200 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-900 transition hover:border-indigo-300 disabled:cursor-not-allowed disabled:text-indigo-300",
+                      onClick: () => handleStartFromClientMemory(invoice)
+                    });
+                  }
+                  if (recurringEntry) {
+                    actions.push({
+                      id: "repeat-open",
+                      label: actionId === invoice.invoiceId ? "Opening..." : "Open repeat invoice",
+                      disabled: actionId === invoice.invoiceId || isStatusBusy,
+                      className:
+                        "rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-900 transition hover:border-indigo-300 disabled:cursor-not-allowed disabled:text-indigo-300",
+                      onClick: () =>
+                        handleInvoiceAgain(invoice.invoiceId, {
+                          onLoaded: () => advanceRecurringSchedule(invoice.invoiceId)
+                        })
+                    });
+                  } else if (rememberedRecurringInterval) {
+                    actions.push({
+                      id: "cadence-memory",
+                      label: `Use ${rememberedRecurringLabel} cadence`,
+                      disabled: actionId === invoice.invoiceId || isDeleting || isStatusBusy,
+                      className:
+                        "rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300 disabled:cursor-not-allowed disabled:text-emerald-300",
+                      onClick: () =>
+                        setRecurringSchedule(invoice.invoiceId, rememberedRecurringInterval, {
+                          source: "library_client_cadence_reuse"
+                        })
+                    });
+                  } else if (invoice.status === "paid") {
+                    actions.push({
+                      id: "cadence-monthly",
+                      label: "Set monthly recurring",
+                      disabled: actionId === invoice.invoiceId || isDeleting || isStatusBusy,
+                      className:
+                        "rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300",
+                      onClick: () => setRecurringSchedule(invoice.invoiceId, 30)
+                    });
+                  }
+                  if (!recurringEntry && invoice.status === "paid") {
+                    actions.push({
+                      id: "invoice-again",
+                      label: actionId === invoice.invoiceId ? "Opening..." : "Invoice again",
+                      disabled: actionId === invoice.invoiceId || isStatusBusy,
+                      className:
+                        "rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300",
+                      onClick: () => handleInvoiceAgain(invoice.invoiceId)
+                    });
+                  }
+                  if (actions.length === 0) {
+                    return null;
+                  }
+                  return {
+                    cadenceValue,
+                    memoryValue,
+                    nextStepValue,
+                    actions: actions.slice(0, 3)
+                  };
+                })();
                 const cardNextAction = (() => {
                   if (invoice.status === "deleted") {
                     return {
@@ -2908,6 +3003,54 @@
                               : " Start a fresh draft with the remembered client setup."}
                           </p>
                         ) : null}
+                      </div>
+                    ) : null}
+                    {repeatWorkflow ? (
+                      <div
+                        className="mt-4 rounded-[24px] border border-indigo-200/60 bg-indigo-50/60 px-4 py-3"
+                        data-testid={`library-repeat-workflow-${invoice.invoiceId}`}
+                      >
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-700">
+                            Repeat workflow
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Keep repeat jobs deliberate and fast.
+                          </p>
+                        </div>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                          <div className="rounded-2xl border border-white/80 bg-white px-3 py-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              Cadence
+                            </p>
+                            <p className="mt-1 text-xs font-semibold text-slate-800">{repeatWorkflow.cadenceValue}</p>
+                          </div>
+                          <div className="rounded-2xl border border-white/80 bg-white px-3 py-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              Saved memory
+                            </p>
+                            <p className="mt-1 text-xs font-semibold text-slate-800">{repeatWorkflow.memoryValue}</p>
+                          </div>
+                          <div className="rounded-2xl border border-white/80 bg-white px-3 py-2">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              Next repeat step
+                            </p>
+                            <p className="mt-1 text-xs font-semibold text-slate-800">{repeatWorkflow.nextStepValue}</p>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {repeatWorkflow.actions.map((action) => (
+                            <button
+                              key={action.id}
+                              type="button"
+                              className={action.className}
+                              onClick={action.onClick}
+                              disabled={action.disabled}
+                            >
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     ) : null}
                     <div className="mt-4 flex flex-wrap gap-2">
