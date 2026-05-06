@@ -55,11 +55,20 @@
     );
   }
   const {
+    getClientMemory,
     getClientRecipientEmail,
+    getClientDefaultNotes,
     rememberClientRecipientEmail,
     getClientRecurringInterval,
     rememberClientRecurringInterval
   } = clientMemoryUtils;
+  const lineItemLibraryUtils = window.InvoiceLineItemLibrary;
+  if (!lineItemLibraryUtils) {
+    throw new Error(
+      "Missing /utils/lineItemLibrary.js load. Ensure it is loaded before /features/library/invoiceLibrary.jsx."
+    );
+  }
+  const { getLineItemLibrary } = lineItemLibraryUtils;
   const deleteSkipStorageKey = "invoiceDeleteSkipConfirm";
   const followUpReminderStorageKey = "invoiceFollowUpReminder";
   const recurringScheduleStorageKey = "invoiceRecurringSchedules";
@@ -176,6 +185,46 @@
   const parseInvoiceDueTimestamp = (value) => {
     const parsed = parseDisplayTimestamp(value);
     return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const normalizeLookupText = (value) =>
+    typeof value === "string" ? value.trim().toLocaleLowerCase() : "";
+
+  const buildClientMemoryStarterForInvoice = (invoice, clientMemoryEntries, savedLineItems) => {
+    const customerName = normalizeLookupText(
+      invoice?.customerName ?? invoice?.invoiceData?.finishedInvoice?.customerName ?? ""
+    );
+    if (!customerName) {
+      return null;
+    }
+    const memoryEntries = Array.isArray(clientMemoryEntries) ? clientMemoryEntries : [];
+    const savedItems = Array.isArray(savedLineItems) ? savedLineItems : [];
+    const entry = memoryEntries.find((candidate) => normalizeLookupText(candidate?.name) === customerName);
+    const matchingItems = savedItems
+      .filter((candidate) => normalizeLookupText(candidate?.clientName) === customerName)
+      .sort((left, right) => {
+        const usageDelta = Number(right?.usageCount ?? 0) - Number(left?.usageCount ?? 0);
+        if (usageDelta !== 0) {
+          return usageDelta;
+        }
+        return String(right?.updatedAt ?? "").localeCompare(String(left?.updatedAt ?? ""));
+      });
+    const leadItem = matchingItems[0] ?? null;
+    const hasSavedDetails = Boolean(String(entry?.details ?? "").trim());
+    const hasSavedNotes = Boolean(String(entry?.defaultNotes ?? "").trim());
+    if (!entry && !leadItem) {
+      return null;
+    }
+    return {
+      customerName:
+        String(entry?.details ?? "").trim() ||
+        String(invoice?.customerName ?? invoice?.invoiceData?.finishedInvoice?.customerName ?? "").trim(),
+      defaultNotes: hasSavedNotes ? String(entry.defaultNotes).trim() : "",
+      leadItem,
+      savedItemCount: matchingItems.length,
+      hasSavedDetails,
+      hasSavedNotes
+    };
   };
 
   const readRecurringSchedules = (storageKey) => {
@@ -422,6 +471,17 @@
   };
 
   const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+
+  const trackRevenueSignal = (event, source) => {
+    void apiFetch("/api/telemetry/revenue-signals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event,
+        source
+      })
+    }).catch(() => {});
+  };
 
   const deriveTaxRate = (invoice) => {
     if (!invoice) {
@@ -820,15 +880,19 @@
       if (!invoiceData?.finishedInvoice) {
         throw new Error("Saved invoice data is incomplete.");
       }
-      const draft = buildDraftFromFinishedInvoice(invoiceData.finishedInvoice, {
+      const baseDraft = buildDraftFromFinishedInvoice(invoiceData.finishedInvoice, {
         taxRate: deriveTaxRate(invoiceData.finishedInvoice),
         savedInvoiceId: savedInvoice?.invoiceId ?? "",
         savedInvoiceStatus: savedInvoice?.status ?? "",
         ...draftOptions
       });
+      const draft =
+        typeof options?.transformDraft === "function"
+          ? options.transformDraft(baseDraft, savedInvoice) ?? baseDraft
+          : baseDraft;
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
       if (typeof options?.onLoaded === "function") {
-        options.onLoaded(savedInvoice);
+        options.onLoaded(savedInvoice, draft);
       }
       navigate("/manual");
     } catch (openError) {
@@ -845,6 +909,50 @@
       savedInvoiceId: "",
       savedInvoiceStatus: ""
     }, options);
+
+  const handleStartFromClientMemory = (invoice) => {
+    if (!invoice?.invoiceId) {
+      return;
+    }
+    const starter = buildClientMemoryStarterForInvoice(
+      invoice,
+      getClientMemory(),
+      getLineItemLibrary()
+    );
+    if (!starter) {
+      void handleInvoiceAgain(invoice.invoiceId);
+      return;
+    }
+    const draft = buildDraftFromFinishedInvoice(
+      {
+        customerName: starter.customerName,
+        notes: starter.defaultNotes || getClientDefaultNotes(invoice?.customerName ?? ""),
+        lineItems: starter.leadItem
+          ? [
+              {
+                id: `memory-line-${Date.now()}`,
+                description: starter.leadItem.description,
+                quantity: Number(starter.leadItem.qty),
+                unitPrice: Number(starter.leadItem.rate),
+                amount: Number(starter.leadItem.qty) * Number(starter.leadItem.rate)
+              }
+            ]
+          : []
+      },
+      {
+        freshDraft: true,
+        taxRate: "0",
+        savedInvoiceId: "",
+        savedInvoiceStatus: ""
+      }
+    );
+    window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+    trackRevenueSignal("client_memory_reused", "library_client_memory_start");
+    if (starter.leadItem) {
+      trackRevenueSignal("service_memory_reused", "library_client_memory_start");
+    }
+    navigate("/manual");
+  };
 
   const handleStatusUpdate = async (invoiceId, status) => {
     const statusActionKey = `${invoiceId}:${status}`;
@@ -2383,6 +2491,11 @@
                 const isDeleted = invoice.status === "deleted";
                 const isSelected = selectedIds.includes(invoice.invoiceId);
                 const isStatusBusy = statusActionId.startsWith(`${invoice.invoiceId}:`);
+                const repeatMemoryStarter = buildClientMemoryStarterForInvoice(
+                  invoice,
+                  getClientMemory(),
+                  getLineItemLibrary()
+                );
                 const showMarkSent = invoice.status === "draft" || invoice.status === "paid";
                 const showMarkPaid = invoice.status === "sent";
                 const showMarkDraft = invoice.status === "sent" || invoice.status === "paid";
@@ -2516,6 +2629,14 @@
                             </div>
                           ))}
                         </div>
+                        {repeatMemoryStarter ? (
+                          <p className="mt-3 text-xs text-slate-600">
+                            Saved memory is ready for {invoice.customerName || "this client"}.
+                            {repeatMemoryStarter.leadItem
+                              ? ` Start a fresh draft with ${repeatMemoryStarter.leadItem.description}.`
+                              : " Start a fresh draft with the remembered client setup."}
+                          </p>
+                        ) : null}
                       </div>
                     ) : null}
                     <div className="mt-4 flex flex-wrap gap-2">
@@ -2562,6 +2683,17 @@
                           >
                             Invoice again
                           </button>
+                          {repeatMemoryStarter ? (
+                            <button
+                              type="button"
+                              className="nb-btn-secondary rounded-xl border-indigo-200 bg-indigo-50 px-4 py-2 text-indigo-900 hover:border-indigo-300 disabled:cursor-not-allowed disabled:text-indigo-300"
+                              onClick={() => handleStartFromClientMemory(invoice)}
+                              disabled={actionId === invoice.invoiceId || isStatusBusy}
+                              aria-label={`Start from saved memory for ${invoice.invoiceNumber || "Draft invoice"}`}
+                            >
+                              Start from saved memory
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             className="nb-btn-secondary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:text-slate-300"

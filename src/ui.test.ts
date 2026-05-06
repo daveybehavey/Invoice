@@ -5737,6 +5737,99 @@ test("invoice library invoice again opens a fresh draft with today's date and a 
   }
 });
 
+test("invoice library can start a fresh draft from saved client memory", async () => {
+  const ownerId = "ui-library-repeat-memory-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          name: "Memory Library Client",
+          details: "Memory Library Client\n88 Service Rd",
+          defaultNotes: "Preferred gate code: 2468. Payment due on receipt.",
+          updatedAt: "2026-05-01T12:00:00.000Z"
+        }
+      ])
+    );
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          description: "Seasonal maintenance visit",
+          qty: "3",
+          rate: "150",
+          clientName: "Memory Library Client",
+          usageCount: 6,
+          updatedAt: "2026-05-02T12:00:00.000Z"
+        }
+      ])
+    );
+  }, ownerId);
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Memory Library Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LIB-MEMORY-1",
+          issueDate: "2026-04-15",
+          customerName: "Memory Library Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-lib-memory-1",
+              type: "labor",
+              description: "One-off visit",
+              quantity: 1,
+              unitPrice: 95,
+              amount: 95
+            }
+          ],
+          subtotal: 95,
+          total: 95,
+          balanceDue: 95
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("Saved memory is ready for Memory Library Client.").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Start from saved memory for INV-LIB-MEMORY-1" }).click();
+
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Memory Library Client");
+    await expectValueContains(page.getByPlaceholder("Client Name"), "88 Service Rd");
+    await expectValueEquals(
+      page.locator("tbody tr").first().getByPlaceholder("Description", { exact: true }),
+      "Seasonal maintenance visit"
+    );
+    await expectValueEquals(page.locator("tbody tr").first().getByPlaceholder("0", { exact: true }), "3");
+    await expectValueEquals(page.locator("tbody tr").first().getByPlaceholder("$0", { exact: true }), "150");
+    await expectValueEquals(
+      page.getByPlaceholder("Thank you for your business"),
+      "Preferred gate code: 2468. Payment due on receipt."
+    );
+    assert.notEqual(await page.getByLabel("Invoice #").inputValue(), "INV-LIB-MEMORY-1");
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library supports sent and paid status actions", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {
