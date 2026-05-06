@@ -5079,6 +5079,78 @@ test("invoice library follow-up reminder can copy a suggested reminder note", as
   }
 });
 
+test("invoice library follow-up plan can mark the oldest reminder paid", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-reminder-mark-paid-owner");
+  });
+
+  const sentSeedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-reminder-mark-paid-owner"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Reminder Paid Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REM-PAID-1",
+          issueDate: "2026-02-01",
+          dueDate: "2026-02-15",
+          customerName: "Reminder Paid Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-rem-paid-1",
+              type: "labor",
+              description: "Reminder paid baseline",
+              quantity: 1,
+              unitPrice: 125,
+              amount: 125
+            }
+          ],
+          subtotal: 125,
+          total: 125,
+          balanceDue: 125
+        }
+      }
+    }
+  });
+  assert.equal(sentSeedResponse.status(), 200);
+  const sentSeedPayload = await sentSeedResponse.json();
+  const invoiceId = sentSeedPayload?.invoice?.invoiceId as string;
+  await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": "ui-reminder-mark-paid-owner"
+    },
+    data: {
+      recipientEmail: "reminder.paid@example.com"
+    }
+  });
+  await mutateStoredInvoice(invoiceId, {
+    status: "sent",
+    updatedAt: "2026-01-15T00:00:00.000Z"
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const plan = page.getByTestId("library-follow-up-plan");
+    await plan.waitFor({ state: "visible" });
+    await plan.getByText("Past due since").waitFor({ state: "visible" });
+    await plan.getByText("Sent to reminder.paid@example.com").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Mark paid" }).first().click();
+    await page.getByText("Follow-up queue").waitFor({ state: "hidden" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library can enable and test browser reminder notifications", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

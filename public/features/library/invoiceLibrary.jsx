@@ -1670,6 +1670,33 @@
       "Billie from NoteBill"
     ].join("\n");
   })();
+  const followUpPlan = oldestSentReminder
+    ? {
+        urgencyValue: oldestSentReminder.isPastDue
+          ? oldestSentReminderDueLabel
+            ? `Past due since ${oldestSentReminderDueLabel}`
+            : "Past due"
+          : `${Math.max(0, oldestSentReminder.daysSinceUpdate)} day${
+              oldestSentReminder.daysSinceUpdate === 1 ? "" : "s"
+            } since last update`,
+        deliveryValue: oldestSentRecipient
+          ? oldestSentReminder?.delivery?.openedAt
+            ? `Opened by ${oldestSentRecipient}`
+            : `Sent to ${oldestSentRecipient}`
+          : "No tracked recipient yet",
+        nextStepValue: canQuickSendReminderOldest
+          ? oldestSentReminder.isPastDue
+            ? "Send reminder now"
+            : "Review timing, then remind"
+          : oldestSentReminder.customerName
+            ? "Open sent invoices and add a recipient"
+            : "Review this invoice",
+        automationValue: `${reminderAutomationSettings.dueAfterDays}d first follow-up · ${reminderAutomationSettings.cooldownDays}d cooldown`,
+        summary: oldestSentReminder.isPastDue
+          ? "This invoice is overdue and still has an open balance."
+          : "This invoice is in the follow-up window and still has an open balance."
+      }
+    : null;
   const reminderHiddenUntilMs = Date.parse(followUpReminderState?.hiddenUntil ?? "");
   const reminderIsSnoozed =
     Number.isFinite(reminderHiddenUntilMs) && reminderHiddenUntilMs > Date.now();
@@ -2292,6 +2319,45 @@
                 {buildFollowUpNoteText()}
               </p>
             ) : null}
+            {followUpPlan ? (
+              <div
+                className="mt-3 rounded-[22px] border border-blue-200 bg-white/75 p-3"
+                data-testid="library-follow-up-plan"
+              >
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-800">
+                    Follow-up plan
+                  </p>
+                  <p className="text-xs text-blue-800">{followUpPlan.summary}</p>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                  <div className="rounded-2xl border border-blue-100 bg-white px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Urgency
+                    </p>
+                    <p className="mt-1 text-xs font-semibold text-slate-800">{followUpPlan.urgencyValue}</p>
+                  </div>
+                  <div className="rounded-2xl border border-blue-100 bg-white px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Delivery
+                    </p>
+                    <p className="mt-1 text-xs font-semibold text-slate-800">{followUpPlan.deliveryValue}</p>
+                  </div>
+                  <div className="rounded-2xl border border-blue-100 bg-white px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Next step
+                    </p>
+                    <p className="mt-1 text-xs font-semibold text-slate-800">{followUpPlan.nextStepValue}</p>
+                  </div>
+                  <div className="rounded-2xl border border-blue-100 bg-white px-3 py-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Automation
+                    </p>
+                    <p className="mt-1 text-xs font-semibold text-slate-800">{followUpPlan.automationValue}</p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -2323,6 +2389,16 @@
                   disabled={actionId === oldestSentReminder.invoiceId}
                 >
                   {actionId === oldestSentReminder.invoiceId ? "Sending..." : "Send reminder"}
+                </button>
+              ) : null}
+              {oldestSentReminder ? (
+                <button
+                  type="button"
+                  className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 disabled:cursor-not-allowed disabled:text-blue-400"
+                  onClick={() => handleStatusUpdate(oldestSentReminder.invoiceId, "paid")}
+                  disabled={statusActionId === `${oldestSentReminder.invoiceId}:paid`}
+                >
+                  {statusActionId === `${oldestSentReminder.invoiceId}:paid` ? "Marking..." : "Mark paid"}
                 </button>
               ) : null}
               {oldestSentReminder ? (
