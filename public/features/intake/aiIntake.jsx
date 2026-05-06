@@ -2137,6 +2137,144 @@ function AIIntake() {
     event.preventDefault();
     handleSubmitUserMessage(inputValue);
   };
+  const intakeRepeatSuggestionCount =
+    (Array.isArray(reviewRepeatWorkContext?.matchedSavedItems)
+      ? reviewRepeatWorkContext.matchedSavedItems.length
+      : 0) +
+    (Array.isArray(reviewRepeatWorkContext?.noteSuggestions)
+      ? reviewRepeatWorkContext.noteSuggestions.length
+      : 0);
+  const billieNextUpGuide = (() => {
+    if (!inputValue.trim() && !hasReviewCard && !followUp) {
+      return {
+        eyebrow: "Billie next up",
+        title: "Load notes to start the draft.",
+        detail:
+          "Paste rough job notes, add a voice note, or use the sample path so Billie has something real to organize.",
+        actions: [
+          {
+            id: "sample",
+            label: "Try sample notes",
+            onClick: handleLoadStarterSample
+          },
+          {
+            id: "focus-notes",
+            label: "Paste notes",
+            onClick: () => focusInputWithValue("")
+          }
+        ]
+      };
+    }
+
+    if (!hasReviewCard && inputValue.trim()) {
+      return {
+        eyebrow: starterGuideActive ? "Starter walkthrough" : "Billie next up",
+        title: starterGuideActive ? "Build this sample into a draft." : "Build the draft from these notes.",
+        detail: starterGuideActive
+          ? "Scan the sample job first, then let Billie turn it into a reviewable draft."
+          : "Billie has enough detail to structure a draft. Build it now so you can review the money decisions in context.",
+        actions: [
+          {
+            id: "build-draft",
+            label: isTyping ? "Building..." : "Build invoice",
+            disabled: isTyping,
+            onClick: () => handleSubmitUserMessage(inputValue)
+          }
+        ]
+      };
+    }
+
+    if (intakePhase === "awaiting_follow_up" && followUp) {
+      return {
+        eyebrow: "Billie next up",
+        title: "Answer the missing pricing question.",
+        detail:
+          followUp.message || "Billie found missing money details. Reply with the rate, hours, or amount before continuing.",
+        actions: [
+          {
+            id: "reply",
+            label: "Reply with pricing",
+            onClick: () => focusInputWithValue(inputValue || "")
+          }
+        ]
+      };
+    }
+
+    if (displayOpenDecisionCount > 0) {
+      return {
+        eyebrow: "Billie next up",
+        title: "Resolve the money decisions first.",
+        detail:
+          displayOpenDecisionCount === 1
+            ? "There is 1 billable choice still open. Pick Add or Skip so Billie can finish the draft safely."
+            : `There are ${displayOpenDecisionCount} billable choices still open. Clear those first so the draft can move forward safely.`,
+        actions: [
+          {
+            id: "resolve-decisions",
+            label: "Resolve decisions",
+            onClick: () => scrollToSection(decisionsRef)
+          },
+          {
+            id: "ask-billie",
+            label: "Ask Billie",
+            onClick: () => focusInputWithValue("Update: ")
+          }
+        ]
+      };
+    }
+
+    if (hasReviewCard && !canGenerateInvoice) {
+      return {
+        eyebrow: "Billie next up",
+        title: "Review the draft before you generate.",
+        detail:
+          intakeRepeatSuggestionCount > 0
+            ? `Billie also found ${intakeRepeatSuggestionCount} repeat-work cue${
+                intakeRepeatSuggestionCount > 1 ? "s" : ""
+              } you can reuse before opening the editor.`
+            : ctaHelper || "Use the review card to check wording, notes, and any items Billie could not fully place yet.",
+        actions: [
+          !showReviewExpandedSections
+            ? {
+                id: "show-details",
+                label: "Show review details",
+                onClick: () => setReviewCardCollapsed(false)
+              }
+            : null,
+          {
+            id: "ask-billie",
+            label: "Ask Billie",
+            onClick: () => focusInputWithValue("Update: ")
+          }
+        ].filter(Boolean)
+      };
+    }
+
+    if (hasReviewCard && canGenerateInvoice) {
+      return {
+        eyebrow: "Billie next up",
+        title: "The draft is ready for the editor.",
+        detail:
+          intakeRepeatSuggestionCount > 0
+            ? `Review the saved wording and note cues if you want, then open the editor with repeat-work context already in place.`
+            : "Billie finished the capture pass. Generate now and continue the handoff in the manual editor.",
+        actions: [
+          {
+            id: "generate",
+            label: "Generate Invoice",
+            onClick: handleGenerateInvoice
+          },
+          {
+            id: "ask-billie",
+            label: "Ask Billie",
+            onClick: () => focusInputWithValue("Update: ")
+          }
+        ]
+      };
+    }
+
+    return null;
+  })();
 
   return (
     <div className="nb-page nb-page--intake flex min-h-screen flex-col">
@@ -2202,6 +2340,39 @@ function AIIntake() {
                 >
                   {billingNotice.message}
                 </div>
+              ) : null}
+              {billieNextUpGuide ? (
+                <section
+                  className="nb-surface nb-surface--elevated rounded-[28px] border border-[#6993d2]/18 bg-[#f7faff] p-4"
+                  data-testid="intake-billie-next-up"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="max-w-2xl">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                        {billieNextUpGuide.eyebrow}
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">
+                        {billieNextUpGuide.title}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                        {billieNextUpGuide.detail}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {billieNextUpGuide.actions.map((action) => (
+                        <button
+                          key={action.id}
+                          type="button"
+                          className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={action.onClick}
+                          disabled={action.disabled}
+                        >
+                          {action.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </section>
               ) : null}
               <div className="nb-surface nb-surface--muted rounded-[28px]">
                 <div className="flex items-center justify-between gap-3">

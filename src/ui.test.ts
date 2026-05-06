@@ -704,6 +704,26 @@ test("manual onboarding cue updates through save, payment link, and portal setup
   }
 });
 
+test("intake Billie next-up guide updates from notes to draft-ready state", async () => {
+  useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await openIntake(page);
+    const guide = page.getByTestId("intake-billie-next-up");
+    await guide.getByText("Load notes to start the draft.").waitFor({ state: "visible" });
+
+    await guide.getByRole("button", { name: "Try sample notes" }).click();
+    await guide.getByText("Build this sample into a draft.").waitFor({ state: "visible" });
+
+    await guide.getByRole("button", { name: "Build invoice" }).click();
+    await guide.getByText("The draft is ready for the editor.").waitFor({ state: "visible" });
+    await guide.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("first invoice onboarding tracks progress across launcher, intake, and manual", async () => {
   useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
   const context = await browser.newContext();
