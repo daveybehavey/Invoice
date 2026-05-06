@@ -2716,6 +2716,54 @@
                 const showMarkPaid = invoice.status === "sent";
                 const showMarkDraft = invoice.status === "sent" || invoice.status === "paid";
                 const nextActionHint = getInvoiceNextActionHint({ invoice, hasDelivery, isPastDue });
+                const cardNextAction = (() => {
+                  if (invoice.status === "deleted") {
+                    return {
+                      label: "Restore invoice",
+                      detail: "Bring this invoice back before editing, exporting, or sending it again."
+                    };
+                  }
+                  if (invoice.status === "paid") {
+                    return {
+                      label: "Invoice this client again",
+                      detail: "Paid work is the best repeat-work baseline for a fresh draft."
+                    };
+                  }
+                  if (invoice.status === "sent" && isPastDue) {
+                    return {
+                      label: canQuickSendReminderOldest && oldestSentReminder?.invoiceId === invoice.invoiceId
+                        ? "Send reminder now"
+                        : "Follow up now",
+                      detail: paymentLinkReady
+                        ? "The invoice is overdue. Nudge the client and keep the hosted payment path handy."
+                        : "The invoice is overdue. Follow up first, then consider adding a hosted payment link."
+                    };
+                  }
+                  if (invoice.status === "sent" && !paymentLinkReady) {
+                    return {
+                      label: "Open and add payment link",
+                      detail: "This invoice is already out. Tighten the handoff by adding a hosted payment link."
+                    };
+                  }
+                  if (invoice.status === "sent") {
+                    return {
+                      label: hasDelivery ? "Track payment" : "Track the send first",
+                      detail: hasDelivery
+                        ? "Delivery is recorded. Next step is watching for payment or sending a reminder later."
+                        : "Add a tracked send so reminders and payment follow-up have better context."
+                    };
+                  }
+                  if (repeatMemoryStarter) {
+                    return {
+                      label: "Start from saved memory",
+                      detail: "Use the remembered client setup and strongest saved service instead of reopening from scratch."
+                    };
+                  }
+                  return {
+                    label: "Open draft and finish",
+                    detail: "Confirm the details, then move into save, send, payment link, or export."
+                  };
+                })();
                 const workflowStages = [
                   {
                     label: "Send",
@@ -2805,6 +2853,13 @@
                           <p className="mt-2 text-xs leading-5 text-slate-500">
                             <span className="font-semibold text-slate-600">Next:</span> {nextActionHint}
                           </p>
+                          <div className="mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              Best next action
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-slate-900">{cardNextAction.label}</p>
+                            <p className="mt-1 text-xs leading-5 text-slate-600">{cardNextAction.detail}</p>
+                          </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">

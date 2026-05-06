@@ -6051,6 +6051,72 @@ test("invoice library supports sent and paid status actions", async () => {
   }
 });
 
+test("invoice library card surfaces a best next action for sent invoices", async () => {
+  const ownerId = "ui-library-card-next-action-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Card Next Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-CARD-NEXT-1",
+          issueDate: "2026-04-15",
+          customerName: "Card Next Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-card-next-1",
+              type: "labor",
+              description: "Card next baseline",
+              quantity: 1,
+              unitPrice: 160,
+              amount: 160
+            }
+          ],
+          subtotal: 160,
+          total: 160,
+          balanceDue: 160
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const invoiceId = seedPayload?.invoice?.invoiceId as string;
+
+  const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      recipientEmail: "card-next@example.com"
+    }
+  });
+  assert.equal(sendResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page.locator("div").filter({ hasText: "INV-CARD-NEXT-1" }).first();
+    await card.getByText("Best next action").waitFor({ state: "visible" });
+    await card.getByText("Open and add payment link").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library filters cards by lifecycle status", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {
