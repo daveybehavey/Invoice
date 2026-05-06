@@ -422,11 +422,21 @@ function LauncherOnboardingSection({
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="max-w-2xl">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Getting started</p>
+          {status?.walkthroughActive ? (
+            <p
+              className="mt-2 inline-flex rounded-full border border-[#6993d2]/20 bg-[#f6f9ff] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#093064]"
+              data-testid="launcher-guided-walkthrough-chip"
+            >
+              Guided walkthrough active
+            </p>
+          ) : null}
           <h2 className="mt-2 text-2xl text-slate-900 md:text-3xl" style={{ fontFamily: "'Fraunces', serif" }}>
             Finish your first invoice with confidence.
           </h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            {status.completedCount} of {status.totalSteps} complete. Keep moving one trust-building step at a time.
+            {status?.walkthroughActive
+              ? "You are on the guided path. Follow the next step and keep the sample job moving until you reach save and export."
+              : `${status.completedCount} of ${status.totalSteps} complete. Keep moving one trust-building step at a time.`}
           </p>
         </div>
         <div className="lg:min-w-[260px]">

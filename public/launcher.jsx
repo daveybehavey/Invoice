@@ -115,6 +115,7 @@ if (!onboardingUtils) {
 
 const {
   buildStatus: buildOnboardingStatus,
+  activateWalkthrough: activateOnboardingWalkthrough,
   subscribe: subscribeToOnboardingState,
   acknowledgeCompletion: acknowledgeOnboardingCompletion
 } = onboardingUtils;
@@ -1014,10 +1015,16 @@ function Launcher() {
       return;
     }
     if (step.id === "capture_notes") {
+      activateOnboardingWalkthrough();
       navigate("/ai-intake?sample=starter");
       return;
     }
     navigate("/ai-intake");
+  };
+
+  const handleStartGuidedWalkthrough = () => {
+    activateOnboardingWalkthrough();
+    navigate("/ai-intake?sample=starter");
   };
 
   const handleDismissOnboardingCompletion = () => {
@@ -1338,7 +1345,7 @@ function Launcher() {
             hasSavedHistory={operationsSummary?.hasInvoices}
             hasResumeDraft={hasResumeDraft}
             onResumeDraft={() => navigate("/manual")}
-            onTrySampleNotes={() => navigate("/ai-intake?sample=starter")}
+            onTrySampleNotes={handleStartGuidedWalkthrough}
             onOpenScratchpad={() => navigate("/scratchpad")}
             showAlternateStarts={showAlternateStarts}
             onToggleAlternateStarts={() => setShowAlternateStarts((current) => !current)}

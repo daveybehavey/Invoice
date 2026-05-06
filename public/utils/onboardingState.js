@@ -88,7 +88,10 @@
     completedSteps: {},
     completedSetupSteps: {},
     startedAt: new Date().toISOString(),
-    completionAcknowledgedAt: ""
+    completionAcknowledgedAt: "",
+    walkthroughActive: false,
+    walkthroughStartedAt: "",
+    walkthroughDismissedAt: ""
   });
 
   const normalizeState = (value) => {
@@ -108,7 +111,12 @@
           ? value.startedAt
           : new Date().toISOString(),
       completionAcknowledgedAt:
-        typeof value.completionAcknowledgedAt === "string" ? value.completionAcknowledgedAt : ""
+        typeof value.completionAcknowledgedAt === "string" ? value.completionAcknowledgedAt : "",
+      walkthroughActive: Boolean(value.walkthroughActive),
+      walkthroughStartedAt:
+        typeof value.walkthroughStartedAt === "string" ? value.walkthroughStartedAt : "",
+      walkthroughDismissedAt:
+        typeof value.walkthroughDismissedAt === "string" ? value.walkthroughDismissedAt : ""
     };
   };
 
@@ -195,6 +203,31 @@
     });
   };
 
+  const activateWalkthrough = () => {
+    const current = readState();
+    if (current.walkthroughActive && current.walkthroughStartedAt) {
+      return current;
+    }
+    return writeState({
+      ...current,
+      walkthroughActive: true,
+      walkthroughStartedAt: current.walkthroughStartedAt || new Date().toISOString(),
+      walkthroughDismissedAt: ""
+    });
+  };
+
+  const dismissWalkthrough = () => {
+    const current = readState();
+    if (!current.walkthroughActive && current.walkthroughDismissedAt) {
+      return current;
+    }
+    return writeState({
+      ...current,
+      walkthroughActive: false,
+      walkthroughDismissedAt: new Date().toISOString()
+    });
+  };
+
   const subscribe = (listener) => {
     if (typeof listener !== "function") {
       return () => {};
@@ -259,6 +292,7 @@
     const setupComplete = setupTotalSteps > 0 && setupCompletedCount === setupTotalSteps;
     const setupProgressPercent =
       setupTotalSteps > 0 ? Math.round((setupCompletedCount / setupTotalSteps) * 100) : 0;
+    const walkthroughActive = Boolean(state.walkthroughActive && !complete);
     return {
       steps,
       optionalSteps,
@@ -277,6 +311,9 @@
       setupTotalSteps,
       setupProgressPercent,
       setupNextStep,
+      walkthroughActive,
+      walkthroughStartedAt: state.walkthroughStartedAt,
+      walkthroughDismissedAt: state.walkthroughDismissedAt,
       visible: !complete,
       startedAt: state.startedAt
     };
@@ -285,14 +322,16 @@
   window.InvoiceOnboardingState = {
     STEP_DEFINITIONS,
     OPTIONAL_DEFINITIONS,
-      SETUP_DEFINITIONS,
-      readState,
-      writeState,
-      markStep,
-      markSetupStep,
-      reset,
-      acknowledgeCompletion,
-      subscribe,
-      buildStatus
+    SETUP_DEFINITIONS,
+    readState,
+    writeState,
+    markStep,
+    markSetupStep,
+    reset,
+    acknowledgeCompletion,
+    activateWalkthrough,
+    dismissWalkthrough,
+    subscribe,
+    buildStatus
   };
 })();

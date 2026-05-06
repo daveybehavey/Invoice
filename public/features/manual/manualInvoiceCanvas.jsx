@@ -16,6 +16,7 @@
   }
   const {
     buildStatus: buildOnboardingStatus,
+    dismissWalkthrough: dismissOnboardingWalkthrough,
     markStep: markOnboardingStep,
     acknowledgeCompletion: acknowledgeOnboardingCompletion,
     subscribe: subscribeToOnboardingState
@@ -1940,6 +1941,11 @@ function ManualInvoiceCanvas() {
     refreshOnboardingStatus();
   };
 
+  const handleDismissWalkthrough = () => {
+    dismissOnboardingWalkthrough();
+    refreshOnboardingStatus();
+  };
+
   return (
     <div className="nb-page nb-page--manual min-h-screen" style={{ backgroundImage: `radial-gradient(circle at top, ${accent.muted} 0%, rgba(248,250,252,0) 46%)` }}>
       <main className="nb-page-shell nb-page-shell--wide mx-auto flex w-full flex-col pb-24 md:grid md:grid-cols-[minmax(0,1fr)_320px] md:gap-6 md:pb-8">
@@ -2034,13 +2040,15 @@ function ManualInvoiceCanvas() {
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="max-w-2xl">
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
-                      First invoice progress
+                      {onboardingStatus.walkthroughActive ? "Guided walkthrough" : "First invoice progress"}
                     </p>
                     <p className="mt-1 text-lg font-semibold text-slate-900">
                       {onboardingStatus.completedCount} of {onboardingStatus.totalSteps} core steps complete
                     </p>
                     <p className="mt-1 text-sm leading-6 text-slate-600">
-                      {onboardingStatus.nextStep?.helper ||
+                      {onboardingStatus.walkthroughActive
+                        ? "You made it to the editor. Save this draft first, then export the PDF so you finish the full first-invoice loop."
+                        : onboardingStatus.nextStep?.helper ||
                         "You are in the editor now. Save and export to finish the first complete loop."}
                     </p>
                     {!authSession?.userId ? (
@@ -2049,16 +2057,27 @@ function ManualInvoiceCanvas() {
                       </p>
                     ) : null}
                   </div>
-                  {onboardingStatus.nextStep ? (
-                    <button
-                      type="button"
-                      className="nb-btn-primary rounded-full px-4 py-2 text-sm"
-                      style={accentButtonStyle}
-                      onClick={handleOnboardingContinue}
-                    >
-                      {onboardingStatus.nextStep.ctaLabel}
-                    </button>
-                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    {onboardingStatus.nextStep ? (
+                      <button
+                        type="button"
+                        className="nb-btn-primary rounded-full px-4 py-2 text-sm"
+                        style={accentButtonStyle}
+                        onClick={handleOnboardingContinue}
+                      >
+                        {onboardingStatus.nextStep.ctaLabel}
+                      </button>
+                    ) : null}
+                    {onboardingStatus.walkthroughActive ? (
+                      <button
+                        type="button"
+                        className="nb-btn-ghost rounded-full px-4 py-2 text-sm"
+                        onClick={handleDismissWalkthrough}
+                      >
+                        Hide guide
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
                   <div

@@ -563,6 +563,9 @@ test("launcher sample notes open intake with a realistic starter draft", async (
     const notes = page.getByPlaceholder(/Example: Jan 10 fixed sink/i);
     await notes.waitFor({ state: "visible" });
     await expectValueContains(notes, "Repaired leaking kitchen sink");
+    await page.getByTestId("intake-onboarding-section").getByText("Guided walkthrough").waitFor({
+      state: "visible"
+    });
     await page.getByTestId("intake-starter-walkthrough").waitFor({ state: "visible" });
     await page.getByTestId("intake-starter-walkthrough").getByText("Sample notes loaded").waitFor({
       state: "visible"
@@ -570,8 +573,36 @@ test("launcher sample notes open intake with a realistic starter draft", async (
     await page
       .getByText("Sample notes loaded. Review them, then build the invoice.")
       .waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Hide guide" }).click();
+    await page.getByTestId("intake-starter-walkthrough").getByRole("button", { name: "Hide guide" }).click();
     await page.getByTestId("intake-starter-walkthrough").waitFor({ state: "hidden" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("guided walkthrough stays active from launcher through manual editor", async () => {
+  useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await openLauncher(page);
+    await page.getByRole("button", { name: "Start walkthrough" }).click();
+
+    await page.getByTestId("intake-onboarding-section").getByText("Guided walkthrough").waitFor({
+      state: "visible"
+    });
+
+    await page.getByRole("button", { name: "Build invoice" }).click();
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Generate Invoice" }).click();
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+
+    const manualOnboarding = page.getByTestId("manual-onboarding-section");
+    await manualOnboarding.waitFor({ state: "visible" });
+    await manualOnboarding.getByText("Guided walkthrough").waitFor({ state: "visible" });
+    await manualOnboarding
+      .getByText("You made it to the editor. Save this draft first, then export the PDF")
+      .waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

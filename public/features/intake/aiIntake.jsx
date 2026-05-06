@@ -16,6 +16,8 @@
   }
   const {
     buildStatus: buildOnboardingStatus,
+    activateWalkthrough: activateOnboardingWalkthrough,
+    dismissWalkthrough: dismissOnboardingWalkthrough,
     markStep: markOnboardingStep,
     subscribe: subscribeToOnboardingState
   } = onboardingUtils;
@@ -548,6 +550,7 @@ function AIIntake() {
       return;
     }
     sampleSeedRef.current = true;
+    activateOnboardingWalkthrough();
     setInputValue(SAMPLE_JOB_NOTES);
     setStarterGuideActive(true);
     setVoiceNoteNotice("Sample notes loaded. Review them, then build the invoice.");
@@ -2124,6 +2127,12 @@ function AIIntake() {
     navigate("/manual");
   };
 
+  const handleDismissWalkthrough = () => {
+    dismissOnboardingWalkthrough();
+    setStarterGuideActive(false);
+    refreshOnboardingStatus();
+  };
+
   const handleSend = (event) => {
     event.preventDefault();
     handleSubmitUserMessage(inputValue);
@@ -2251,25 +2260,38 @@ function AIIntake() {
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
-                        First invoice progress
+                        {onboardingStatus.walkthroughActive ? "Guided walkthrough" : "First invoice progress"}
                       </p>
                       <p className="mt-1 text-sm font-semibold text-slate-900">
                         {onboardingStatus.completedCount} of {onboardingStatus.totalSteps} core steps complete
                       </p>
                       <p className="mt-1 text-xs leading-5 text-slate-600">
-                        {onboardingStatus.nextStep?.helper ||
+                        {onboardingStatus.walkthroughActive
+                          ? "Stay with the sample job, review what Billie captured, and only move on once the draft feels trustworthy."
+                          : onboardingStatus.nextStep?.helper ||
                           "Keep moving through the first invoice flow one clear step at a time."}
                       </p>
                     </div>
-                    {onboardingStatus.nextStep ? (
-                      <button
-                        type="button"
-                        className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-sm"
-                        onClick={() => handleOnboardingContinue(onboardingStatus.nextStep)}
-                      >
-                        {onboardingStatus.nextStep.ctaLabel}
-                      </button>
-                    ) : null}
+                    <div className="flex flex-wrap gap-2">
+                      {onboardingStatus.nextStep ? (
+                        <button
+                          type="button"
+                          className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-sm"
+                          onClick={() => handleOnboardingContinue(onboardingStatus.nextStep)}
+                        >
+                          {onboardingStatus.nextStep.ctaLabel}
+                        </button>
+                      ) : null}
+                      {onboardingStatus.walkthroughActive ? (
+                        <button
+                          type="button"
+                          className="nb-btn-ghost shrink-0 rounded-full px-3 py-1.5 text-sm"
+                          onClick={handleDismissWalkthrough}
+                        >
+                          Hide guide
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
                     <div
@@ -2311,11 +2333,14 @@ function AIIntake() {
                       <p className="mt-1 text-sm font-semibold text-[#093064]">
                         Follow the sample job from rough notes to a reviewed invoice.
                       </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                        First move: scan the sample notes, then press Build invoice to see how Billie turns rough field notes into a draft.
+                      </p>
                     </div>
                     <button
                       type="button"
                       className="nb-btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs"
-                      onClick={() => setStarterGuideActive(false)}
+                      onClick={handleDismissWalkthrough}
                     >
                       Hide guide
                     </button>
