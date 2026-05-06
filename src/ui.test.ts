@@ -1928,6 +1928,62 @@ test("manual editor surfaces repeat-client memory without changing money until r
   }
 });
 
+test("manual editor can quick fill repeat client setup from memory", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-repeat-quick-fill-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          name: "Casey Client",
+          details: "Casey Client\n123 Main St",
+          defaultNotes: "Monthly maintenance visit. Payment due on receipt.",
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          description: "Quarterly drain maintenance",
+          qty: "2",
+          rate: "120",
+          clientName: "Casey Client",
+          usageCount: 4,
+          updatedAt: "2026-04-21T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Casey");
+
+    await page.getByText("Quick fill from memory").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Quick fill repeat setup for Casey Client" }).click();
+
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Casey Client");
+    const firstRow = page.locator("tbody tr").first();
+    await expectValueEquals(
+      firstRow.getByPlaceholder("Description", { exact: true }),
+      "Quarterly drain maintenance"
+    );
+    await expectValueEquals(firstRow.getByPlaceholder("0", { exact: true }), "2");
+    await expectValueEquals(firstRow.getByPlaceholder("$0", { exact: true }), "120");
+    await expectValueEquals(
+      page.getByPlaceholder("Thank you for your business"),
+      "Monthly maintenance visit. Payment due on receipt."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor offers prior client notes without auto-filling them", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

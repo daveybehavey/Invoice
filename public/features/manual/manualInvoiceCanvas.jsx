@@ -629,6 +629,30 @@ function ManualInvoiceCanvas() {
     }
     return -1;
   };
+  const buildRepeatClientQuickFillOptions = (suggestions, lineItemLibrary) => {
+    const savedItems = Array.isArray(lineItemLibrary) ? lineItemLibrary : [];
+    return (Array.isArray(suggestions) ? suggestions : [])
+      .map(({ entry, priority }) => {
+        const normalizedName = typeof entry?.name === "string" ? entry.name.trim().toLowerCase() : "";
+        const matchingSavedItems = savedItems
+          .filter((item) => typeof item?.clientName === "string" && item.clientName.trim().toLowerCase() === normalizedName)
+          .sort((left, right) => {
+            const usageDelta = Number(right?.usageCount ?? 0) - Number(left?.usageCount ?? 0);
+            if (usageDelta !== 0) {
+              return usageDelta;
+            }
+            return String(right?.updatedAt ?? "").localeCompare(String(left?.updatedAt ?? ""));
+          });
+        return {
+          entry,
+          priority,
+          leadSavedItem: matchingSavedItems[0] ?? null,
+          savedItemCount: matchingSavedItems.length
+        };
+      })
+      .filter(({ entry, leadSavedItem }) => Boolean(entry?.details) && Boolean(leadSavedItem))
+      .slice(0, 2);
+  };
 
   const getLineAmount = (item) => parseNumber(item.qty) * parseNumber(item.rate);
   const subtotal = lineItems.reduce((sum, item) => sum + getLineAmount(item), 0);
@@ -695,6 +719,10 @@ function ManualInvoiceCanvas() {
       return right.entry.updatedAt.localeCompare(left.entry.updatedAt);
     })
     .slice(0, 4);
+  const repeatClientQuickFillOptions = useMemo(
+    () => buildRepeatClientQuickFillOptions(clientMemorySuggestions, savedLineItemLibrary),
+    [clientMemorySuggestions, savedLineItemLibrary]
+  );
   const noteSuggestions = useMemo(() => {
     const currentNotes = typeof notes === "string" ? notes.trim().toLowerCase() : "";
     const seenNoteTexts = new Set();
@@ -1194,6 +1222,45 @@ function ManualInvoiceCanvas() {
         source: "manual_client_details_reuse"
       })
     }).catch(() => {});
+  };
+  const handleApplyRepeatClientQuickFill = ({ entry, leadSavedItem }) => {
+    if (!entry?.details) {
+      return;
+    }
+    setBillToDetails(entry.details);
+    if (!notes.trim() && entry.defaultNotes) {
+      setNotes(entry.defaultNotes);
+      setNotesVisible(true);
+    }
+    if (leadSavedItem?.description) {
+      const nextLineItem = {
+        id: `line-${Date.now()}`,
+        description: leadSavedItem.description,
+        qty: leadSavedItem.qty ?? "",
+        rate: leadSavedItem.rate ?? ""
+      };
+      setLineItems((prev) => {
+        const emptyIndex = prev.findIndex(
+          (item) => !item.description.trim() && item.qty === "" && item.rate === ""
+        );
+        if (emptyIndex === -1) {
+          return [nextLineItem, ...prev];
+        }
+        return prev.map((item, index) => (index === emptyIndex ? nextLineItem : item));
+      });
+    }
+    const parts = [`Loaded repeat setup for ${entry.name || "saved client"}`];
+    if (leadSavedItem?.description) {
+      parts.push(`added ${leadSavedItem.description}`);
+    }
+    if (!notes.trim() && entry.defaultNotes) {
+      parts.push("included saved note");
+    }
+    setTimedDraftStatus(parts.join(" • "));
+    trackRevenueSignal("client_memory_reused", "manual_repeat_bundle_reuse");
+    if (leadSavedItem?.description) {
+      trackRevenueSignal("service_memory_reused", "manual_repeat_bundle_reuse");
+    }
   };
 
   const handleLogoChange = async (event) => {
@@ -2400,6 +2467,33 @@ function ManualInvoiceCanvas() {
                         );
                       })}
                     </div>
+                    {repeatClientQuickFillOptions.length > 0 ? (
+                      <div className="mt-3 rounded-2xl border border-emerald-200/70 bg-white/75 p-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                          Quick fill from memory
+                        </p>
+                        <p className="mt-1 text-xs text-slate-600">
+                          Apply the saved client details and the strongest remembered service in one explicit step.
+                        </p>
+                        <div className="mt-3 grid gap-2 md:grid-cols-2">
+                          {repeatClientQuickFillOptions.map((option) => (
+                            <button
+                              key={`repeat-quick-fill-${option.entry.lookupKey}`}
+                              type="button"
+                              className="rounded-2xl border border-emerald-200 bg-white px-3 py-3 text-left shadow-sm transition hover:border-emerald-300"
+                              onClick={() => handleApplyRepeatClientQuickFill(option)}
+                              aria-label={`Quick fill repeat setup for ${option.entry.name}`}
+                            >
+                              <p className="text-sm font-semibold text-emerald-900">{option.entry.name}</p>
+                              <p className="mt-1 text-xs leading-5 text-slate-600">
+                                Adds {option.leadSavedItem.description}
+                                {option.savedItemCount > 1 ? ` and ${option.savedItemCount - 1} more saved match${option.savedItemCount - 1 > 1 ? "es" : ""} to choose from later.` : "."}
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
