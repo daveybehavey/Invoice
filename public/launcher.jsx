@@ -400,6 +400,26 @@ function formatRecurringCadence(intervalDays) {
   return `${normalized}-day`;
 }
 
+function buildLauncherPostReminderNextStepNotice(invoice) {
+  const paymentLinkReady = Boolean(String(invoice?.paymentLinkUrl ?? "").trim());
+  const deliveryOpened = Boolean(invoice?.delivery?.openedAt) || invoice?.delivery?.status === "opened";
+  const dueDateValue = getInvoiceDueDateValue(invoice);
+  const dueDateMs = toTimestamp(dueDateValue);
+  const isPastDue =
+    invoice?.status === "sent" && Number.isFinite(dueDateMs) && dueDateMs > 0 && dueDateMs <= Date.now();
+
+  if (!paymentLinkReady) {
+    return "Next: add a hosted payment link so the follow-up points to an easier payment path.";
+  }
+  if (isPastDue && deliveryOpened) {
+    return "Next: watch for payment and mark it paid as soon as the money lands.";
+  }
+  if (isPastDue && !deliveryOpened) {
+    return "Next: if it still stays unopened, re-send it or confirm the best delivery route.";
+  }
+  return "Next: watch for a reply or payment before nudging again.";
+}
+
 function pluralize(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
@@ -1364,10 +1384,26 @@ function Launcher() {
       }
       const recipient =
         payload?.reminder?.recipientEmail ?? payload?.delivery?.recipientEmail ?? "the saved recipient";
+      const invoice = payload?.invoice ?? null;
+      const dueDateValue = getInvoiceDueDateValue(invoice);
+      const dueDateMs = toTimestamp(dueDateValue);
+      const isPastDue =
+        invoice?.status === "sent" && Number.isFinite(dueDateMs) && dueDateMs > 0 && dueDateMs <= Date.now();
+      const deliveryOpened = Boolean(invoice?.delivery?.openedAt) || invoice?.delivery?.status === "opened";
+      const isFocusedReminder = isPastDue && deliveryOpened;
+      const nextStepNotice = buildLauncherPostReminderNextStepNotice(invoice);
       setOperationsNotice(
         payload?.mode === "provider"
-          ? `Reminder sent to ${recipient}. Delivery tracking is now active.`
-          : payload?.warning || `Reminder recorded for ${recipient}. Configure an email provider to send automatically.`
+          ? `${
+              isFocusedReminder ? "Focused reminder" : "Reminder"
+            } sent to ${recipient}. Delivery tracking is now active. ${nextStepNotice}`
+          : payload?.warning
+            ? `${
+                isFocusedReminder ? "Focused reminder" : "Reminder"
+              } recorded for ${recipient}. ${payload.warning} ${nextStepNotice}`
+            : `${
+                isFocusedReminder ? "Focused reminder" : "Reminder"
+              } recorded for ${recipient}. Configure an email provider to send automatically. ${nextStepNotice}`
       );
       setSavedWorkRefreshToken((current) => current + 1);
     } catch (error) {

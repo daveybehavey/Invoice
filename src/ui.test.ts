@@ -4477,7 +4477,11 @@ test("launcher shows invoice command center for drafts and follow-ups", async ()
     await queue.getByText("Last sent to ops-reminder@example.com.").waitFor({ state: "visible" });
     await queue.getByRole("button", { name: "Mark INV-OPS-SENT paid" }).waitFor({ state: "visible" });
     await queue.getByRole("button", { name: "Send reminder for INV-OPS-SENT" }).click();
-    await page.getByText("delivery is tracked without sending").waitFor({ state: "visible" });
+    await page
+      .getByText(
+        "Reminder recorded for ops-reminder@example.com. delivery is tracked without sending Next: add a hosted payment link so the follow-up points to an easier payment path."
+      )
+      .waitFor({ state: "visible" });
     await queue.getByText("$210.00", { exact: true }).waitFor({ state: "visible" });
 
     await queue.getByRole("button", { name: "Resume INV-OPS-DRAFT" }).click();
@@ -4820,6 +4824,12 @@ test("launcher follow-up card prefers focused reminder for overdue opened invoic
     await queue.getByRole("button", { name: "Send reminder for INV-LAUNCHER-OVERDUE-OPENED" }).waitFor({
       state: "visible"
     });
+    await queue.getByRole("button", { name: "Send reminder for INV-LAUNCHER-OVERDUE-OPENED" }).click();
+    await page
+      .getByText(
+        "Focused reminder recorded for overdue-opened-launcher@example.com. delivery is tracked without sending Next: add a hosted payment link so the follow-up points to an easier payment path."
+      )
+      .waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
