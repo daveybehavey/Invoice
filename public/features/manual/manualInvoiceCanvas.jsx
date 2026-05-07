@@ -1864,6 +1864,16 @@ function ManualInvoiceCanvas() {
         }
       });
     }
+    if (savedInvoiceId && moves.length < 3) {
+      moves.push({
+        id: "open-library",
+        label: "Open in library",
+        helper: "Jump into the operations view to track send, delivery, reminders, and repeat work from one place.",
+        actionLabel: "Open library",
+        busy: false,
+        onClick: () => navigate("/invoices")
+      });
+    }
     if (moves.length < 3 && primaryBillToName) {
       moves.push({
         id: "memory-review",
@@ -1995,6 +2005,11 @@ function ManualInvoiceCanvas() {
             onClick: () => {
               void handleGenerateClientPortalLink();
             }
+          },
+          {
+            id: "open-library",
+            label: "Open library",
+            onClick: () => navigate("/invoices")
           }
         ]
       };
@@ -2020,6 +2035,11 @@ function ManualInvoiceCanvas() {
             label: sharePackBusy ? "Copying..." : "Copy share pack",
             disabled: sharePackBusy,
             onClick: handleCopySharePack
+          },
+          {
+            id: "open-library",
+            label: "Open library",
+            onClick: () => navigate("/invoices")
           }
         ]
       };
@@ -2039,6 +2059,11 @@ function ManualInvoiceCanvas() {
             onClick: () => {
               void handleGeneratePaymentLink();
             }
+          },
+          {
+            id: "open-library",
+            label: "Open library",
+            onClick: () => navigate("/invoices")
           }
         ]
       };
@@ -2062,6 +2087,11 @@ function ManualInvoiceCanvas() {
           onClick: () => {
             void handleDownloadPdf();
           }
+        },
+        {
+          id: "open-library",
+          label: "Open library",
+          onClick: () => navigate("/invoices")
         }
       ]
     };
@@ -2079,6 +2109,7 @@ function ManualInvoiceCanvas() {
     hasSavedDraft,
     onboardingStatus.completionVisible,
     onboardingStatus.visible,
+    navigate,
     paymentLinkBusy,
     saveStatus,
     sharePackBusy

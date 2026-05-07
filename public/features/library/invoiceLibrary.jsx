@@ -987,6 +987,57 @@
     }
   };
 
+  const buildPostSendNextStepNotice = (invoice, { isResend = false } = {}) => {
+    const paymentLinkReady = Boolean(String(invoice?.paymentLinkUrl ?? "").trim());
+    const clientPortalReady = Boolean(buildLibraryClientPortalUrl(invoice));
+    const deliveryOpened = invoice?.delivery?.status === "opened";
+    const dueDateValue = getInvoiceDueDateValue(invoice);
+    const dueDateMs = parseInvoiceDueTimestamp(dueDateValue);
+    const isPastDue =
+      invoice?.status === "sent" && Number.isFinite(dueDateMs) && dueDateMs <= Date.now();
+
+    if (!paymentLinkReady) {
+      return isResend
+        ? "Next: add the hosted payment link so the resent invoice is easier to pay."
+        : "Next: add the hosted payment link so paying feels easier on first delivery.";
+    }
+    if (!clientPortalReady) {
+      return isResend
+        ? "Next: create the client portal so the resend includes the full review-and-pay handoff."
+        : "Next: create the client portal so the customer can review everything in one place.";
+    }
+    if (isResend) {
+      return isPastDue && !deliveryOpened
+        ? "Next: watch for an open before escalating into another payment reminder."
+        : "Next: watch for payment and only send a focused reminder if the balance stays stuck.";
+    }
+    return "Next: watch for opens and payment before nudging again.";
+  };
+
+  const buildPostReminderNextStepNotice = (invoice) => {
+    const paymentLinkReady = Boolean(String(invoice?.paymentLinkUrl ?? "").trim());
+    const clientPortalReady = Boolean(buildLibraryClientPortalUrl(invoice));
+    const deliveryOpened = invoice?.delivery?.status === "opened";
+    const dueDateValue = getInvoiceDueDateValue(invoice);
+    const dueDateMs = parseInvoiceDueTimestamp(dueDateValue);
+    const isPastDue =
+      invoice?.status === "sent" && Number.isFinite(dueDateMs) && dueDateMs <= Date.now();
+
+    if (!paymentLinkReady) {
+      return "Next: add a hosted payment link so the follow-up points to an easier payment path.";
+    }
+    if (!clientPortalReady) {
+      return "Next: add the client portal so the customer has a cleaner review surface with the reminder.";
+    }
+    if (isPastDue && deliveryOpened) {
+      return "Next: watch for payment and mark it paid as soon as the money lands.";
+    }
+    if (isPastDue && !deliveryOpened) {
+      return "Next: if it still stays unopened, re-send it or confirm the best delivery route.";
+    }
+    return "Next: watch for a reply or payment before nudging again.";
+  };
+
   const handleSendInvoice = async (invoice, options = {}) => {
     if (!invoice?.invoiceId) {
       return;
@@ -1028,8 +1079,8 @@
       if (payload?.mode === "provider") {
         setDeliveryNotice(
           isResend
-            ? `Invoice re-sent to ${recipientEmail}. Delivery tracking is now active.`
-            : `Invoice sent to ${recipientEmail}. Delivery tracking is now active.`
+            ? `Invoice re-sent to ${recipientEmail}. Delivery tracking is now active. ${buildPostSendNextStepNotice(invoice, { isResend })}`
+            : `Invoice sent to ${recipientEmail}. Delivery tracking is now active. ${buildPostSendNextStepNotice(invoice, { isResend })}`
         );
       } else {
         const fallbackNotice = isResend
@@ -1037,8 +1088,8 @@
           : `Send recorded for ${recipientEmail}.`;
         setDeliveryNotice(
           payload?.warning
-            ? `${fallbackNotice} ${payload.warning}`
-            : `${fallbackNotice} Configure an email provider to send automatically.`
+            ? `${fallbackNotice} ${payload.warning} ${buildPostSendNextStepNotice(invoice, { isResend })}`
+            : `${fallbackNotice} Configure an email provider to send automatically. ${buildPostSendNextStepNotice(invoice, { isResend })}`
         );
       }
       if (invoice.customerName) {
@@ -1085,12 +1136,25 @@
         )
       );
       const recipient = payload?.delivery?.recipientEmail ?? invoice?.delivery?.recipientEmail ?? "";
+      const dueDateValue = getInvoiceDueDateValue(invoice);
+      const dueDateMs = parseInvoiceDueTimestamp(dueDateValue);
+      const isPastDue =
+        invoice?.status === "sent" && Number.isFinite(dueDateMs) && dueDateMs <= Date.now();
+      const isFocusedReminder = isPastDue && invoice?.delivery?.status === "opened";
       if (payload?.mode === "provider") {
-        setDeliveryNotice(`Reminder sent to ${recipient}. Delivery tracking is now active.`);
-      } else {
         setDeliveryNotice(
-          payload?.warning ||
-            `Reminder recorded for ${recipient || "the saved recipient"}. Configure an email provider to send automatically.`
+          isFocusedReminder
+            ? `Focused reminder sent to ${recipient}. Delivery tracking is now active. ${buildPostReminderNextStepNotice(invoice)}`
+            : `Reminder sent to ${recipient}. Delivery tracking is now active. ${buildPostReminderNextStepNotice(invoice)}`
+        );
+      } else {
+        const fallbackNotice = isFocusedReminder
+          ? `Focused reminder recorded for ${recipient || "the saved recipient"}.`
+          : `Reminder recorded for ${recipient || "the saved recipient"}.`;
+        setDeliveryNotice(
+          payload?.warning
+            ? `${fallbackNotice} ${payload.warning} ${buildPostReminderNextStepNotice(invoice)}`
+            : `${fallbackNotice} Configure an email provider to send automatically. ${buildPostReminderNextStepNotice(invoice)}`
         );
       }
     } catch (reminderError) {
@@ -1643,7 +1707,9 @@
     const nextStep = oldestSentReminder.isPastDue
       ? oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened
         ? "I wanted to make sure you saw it. If it helps, I can resend the invoice or send it another way."
-        : "If possible, please take a look and let me know if anything is blocking payment."
+        : oldestSentReminderHasTrackedDelivery && oldestSentReminderOpened
+          ? "I saw the invoice was opened, so I wanted to check whether anything is blocking payment."
+          : "If possible, please take a look and let me know if anything is blocking payment."
       : "If you need anything from me, please let me know.";
     return [
       `Hi ${greetingName},`,
@@ -1919,7 +1985,7 @@
         toneClass: "border-amber-200 bg-amber-50 text-amber-950",
         eyebrow: "Billie next up",
         title: `Add a payment link for ${sentWithoutPaymentLinkInvoice.invoiceNumber || "this invoice"}`,
-        body: "The invoice has already gone out. Opening it now to add a hosted payment link will tighten the payment handoff.",
+        body: "The invoice has already gone out. Opening it now to add a hosted payment link gives the customer a clearer, safer way to pay.",
         meta: [
           sentWithoutPaymentLinkInvoice.customerName || "",
           Number.isFinite(sentWithoutPaymentLinkInvoice.total)
@@ -1943,7 +2009,7 @@
         toneClass: "border-cyan-200 bg-cyan-50 text-cyan-950",
         eyebrow: "Billie next up",
         title: `Create the portal for ${sentWithoutPortalInvoice.invoiceNumber || "this invoice"}`,
-        body: "The hosted payment link is already in place. Finish the handoff with a client portal so the customer can review details before paying.",
+        body: "The hosted payment link is already in place. Finish the handoff with a client portal so the customer can review details clearly before paying.",
         meta: [
           sentWithoutPortalInvoice.customerName || "",
           Number.isFinite(sentWithoutPortalInvoice.total)
@@ -3089,14 +3155,24 @@
                 const sendComposerIntro = sendComposerIsResend
                   ? isPastDue && !deliveryOpened
                     ? "This invoice is overdue and still unopened. Re-send it to put the invoice back in front of the client and keep delivery tracking current."
-                    : "Re-sending keeps delivery tracking current and lets you confirm the best recipient before the next follow-up."
+                    : isPastDue && deliveryOpened
+                      ? "This invoice is overdue and already opened. Re-send only if the client needs another copy; otherwise move into a focused reminder."
+                      : "Re-sending keeps delivery tracking current and lets you confirm the best recipient before the next follow-up."
                   : "Sending records this invoice as sent, updates delivery tracking, and remembers the recipient for this client.";
                 const sendComposerButtonLabel = sendComposerIsResend ? "Re-send now" : "Send now";
                 const sendComposerNextStep = !paymentLinkReady
-                  ? "After tracking the send, add a hosted payment link so the invoice is easier to pay."
+                  ? sendComposerIsResend
+                    ? "After the re-send, add a hosted payment link so the client has a clearer way to pay."
+                    : "After tracking the send, add a hosted payment link so the invoice is easier to pay."
                   : !clientPortalReady
-                    ? "After tracking the send, create the client portal so the customer gets the full review-and-pay handoff."
-                    : "After tracking the send, watch for opens and follow up only if the client needs another copy.";
+                    ? sendComposerIsResend
+                      ? "After the re-send, create the client portal so the customer gets the full review-and-pay handoff."
+                      : "After tracking the send, create the client portal so the customer gets the full review-and-pay handoff."
+                    : sendComposerIsResend
+                      ? isPastDue && deliveryOpened
+                        ? "After the re-send, watch for payment and move into a focused reminder only if the balance still does not move."
+                        : "After the re-send, watch for an open before escalating into another reminder."
+                      : "After tracking the send, watch for opens and follow up only if the client needs another copy.";
                 const isDeleted = invoice.status === "deleted";
                 const isSelected = selectedIds.includes(invoice.invoiceId);
                 const isStatusBusy = statusActionId.startsWith(`${invoice.invoiceId}:`);
@@ -3257,14 +3333,14 @@
                   if (invoice.status === "sent" && !paymentLinkReady) {
                     return {
                       label: "Open and add payment link",
-                      detail: "This invoice is already out. Tighten the handoff by adding a hosted payment link."
+                      detail: "This invoice is already out. Add a hosted payment link so the customer has a clearer, safer way to pay."
                     };
                   }
                   if (invoice.status === "sent" && !clientPortalReady) {
                     return {
                       label: "Create client portal",
                       detail: paymentLinkReady
-                        ? "The payment link is ready. Add the portal so the customer gets the full review-and-pay handoff."
+                        ? "The payment link is ready. Add the portal so the customer also gets a clear review surface before paying."
                         : "Once the draft is sent, add a client portal so the customer can review details in one place."
                     };
                   }
@@ -3309,7 +3385,7 @@
                         : paymentLinkReady
                           ? "Hosted link ready"
                           : invoice.status === "sent"
-                            ? "No hosted link yet"
+                            ? "Manual payment only"
                             : "Add link before send"
                   },
                   {
@@ -3335,10 +3411,10 @@
                       invoice.status === "deleted"
                         ? "Restore first"
                         : clientPortalReady
-                          ? "Client portal ready"
+                          ? "Review portal ready"
                           : invoice.status === "draft"
                             ? "Create after save"
-                            : "Create portal"
+                            : "Review portal missing"
                   }
                 ];
                 return (

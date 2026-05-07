@@ -6398,6 +6398,15 @@ test("invoice library can start a fresh draft from saved client memory", async (
     }
   });
   assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const invoiceId = seedPayload?.invoice?.invoiceId as string;
+  await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/status`, {
+    headers: {
+      "x-invoice-user-id": ownerId,
+      "Content-Type": "application/json"
+    },
+    data: { status: "sent" }
+  });
 
   const page = await context.newPage();
   try {
@@ -6631,7 +6640,7 @@ test("invoice library card highlights a missing client portal after the payment 
     await card.getByText("Best next action").waitFor({ state: "visible" });
     await card.getByText("Create client portal").waitFor({ state: "visible" });
     await card
-      .getByText("The payment link is ready. Add the portal so the customer gets the full review-and-pay handoff.")
+      .getByText("The payment link is ready. Add the portal so the customer also gets a clear review surface before paying.")
       .waitFor({ state: "visible" });
   } finally {
     await context.close();
@@ -6698,10 +6707,13 @@ test("invoice library resend flow reports a re-send notice for tracked delivery 
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     const card = page.locator("div").filter({ hasText: "INV-RESEND-1" }).first();
-    await card.getByRole("button", { name: "Re-send invoice" }).click();
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
     await page
       .getByText(/Invoice re-sent to resend@example\.com|Re-send recorded for resend@example\.com/)
       .waitFor({ state: "visible" });
+    await page.getByText("Next: add the hosted payment link so the resent invoice is easier to pay.").waitFor({
+      state: "visible"
+    });
   } finally {
     await context.close();
   }
@@ -7697,6 +7709,7 @@ test("manual editor send and payment handoff updates after save", async () => {
     await handoff.getByText("Saved to library").waitFor({ state: "visible" });
     await handoff.getByText("Create link").waitFor({ state: "visible" });
     await handoff.getByText("Create portal").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Open library" }).first().waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
