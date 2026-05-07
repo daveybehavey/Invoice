@@ -5900,6 +5900,81 @@ test("invoice library Billie next-up guide prioritizes follow-up work", async ()
   }
 });
 
+test("invoice library Billie next-up guide highlights missing tracked delivery for sent invoices", async () => {
+  const ownerId = "ui-library-delivery-guide-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Delivery Gap Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-GUIDE-DELIVERY-1",
+          issueDate: "2026-05-01",
+          dueDate: "2026-05-14",
+          customerName: "Delivery Gap Client",
+          currency: "USD",
+          paymentLinkUrl: "https://pay.example.com/invoice/INV-GUIDE-DELIVERY-1",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Drywall patch",
+              quantity: 1,
+              unitPrice: 160,
+              amount: 160
+            }
+          ],
+          subtotal: 160,
+          total: 160,
+          balanceDue: 160
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const invoiceId = String((await saveResponse.json()).invoice?.invoiceId ?? "");
+  assert.ok(invoiceId);
+
+  const sentResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/status`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      status: "sent"
+    }
+  });
+  assert.equal(sentResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const nextUp = page.getByTestId("library-billie-next-up");
+    await nextUp.waitFor({ state: "visible" });
+    await nextUp.getByText("Track delivery for INV-GUIDE-DELIVERY-1").waitFor({ state: "visible" });
+    await nextUp
+      .getByText(
+        "This invoice is already marked sent, but delivery is not being tracked yet. Run it through the send flow so reminders and payment follow-up have stronger context."
+      )
+      .waitFor({ state: "visible" });
+    await nextUp.getByRole("button", { name: "Open send flow" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library prefills send recipient from client memory", async () => {
   const ownerId = "ui-send-memory-owner";
   const context = await browser.newContext();

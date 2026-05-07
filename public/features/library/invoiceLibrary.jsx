@@ -1725,6 +1725,16 @@
           !String(invoice?.portalAccessToken ?? "").trim()
       )
       .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
+  const sentWithoutTrackedDeliveryInvoice =
+    invoices
+      .filter((invoice) => {
+        if (invoice?.status !== "sent") {
+          return false;
+        }
+        const delivery = invoice?.delivery ?? null;
+        return !(delivery?.recipientEmail && delivery?.sentAt);
+      })
+      .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
   const paidRepeatCandidate =
     invoices
       .filter((invoice) => invoice?.status === "paid")
@@ -1732,6 +1742,29 @@
   const libraryGuide = (() => {
     if (showTrash || requiresSignIn) {
       return null;
+    }
+    if (sentWithoutTrackedDeliveryInvoice) {
+      return {
+        toneClass: "border-sky-200 bg-sky-50 text-sky-950",
+        eyebrow: "Billie next up",
+        title: `Track delivery for ${sentWithoutTrackedDeliveryInvoice.invoiceNumber || "this invoice"}`,
+        body: "This invoice is already marked sent, but delivery is not being tracked yet. Run it through the send flow so reminders and payment follow-up have stronger context.",
+        meta: [
+          sentWithoutTrackedDeliveryInvoice.customerName || "",
+          Number.isFinite(sentWithoutTrackedDeliveryInvoice.total)
+            ? `Total ${formatMoney(sentWithoutTrackedDeliveryInvoice.total)}`
+            : ""
+        ].filter(Boolean),
+        primaryLabel: "Open send flow",
+        primaryDisabled: actionId === sentWithoutTrackedDeliveryInvoice.invoiceId,
+        onPrimary: () => startSendComposer(sentWithoutTrackedDeliveryInvoice),
+        secondaryLabel: "Show sent invoices",
+        secondaryDisabled: false,
+        onSecondary: () => {
+          setStatusFilter("sent");
+          setSelectedIds([]);
+        }
+      };
     }
     if (oldestSentReminder) {
       return {
