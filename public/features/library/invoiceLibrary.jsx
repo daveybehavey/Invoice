@@ -1867,6 +1867,10 @@
             ? actionId === oldestSentReminder.invoiceId
               ? "Opening..."
               : "Re-send invoice"
+            : oldestSentReminder.isPastDue && oldestSentReminderHasTrackedDelivery && oldestReminderOpened
+            ? actionId === oldestSentReminder.invoiceId
+              ? "Sending..."
+              : "Send focused reminder"
             : oldestReminderHasTrackedDelivery && !oldestReminderOpened
             ? actionId === oldestSentReminder.invoiceId
               ? "Marking..."
@@ -2659,7 +2663,13 @@
                   onClick={() => handleSendReminder(oldestSentReminder)}
                   disabled={actionId === oldestSentReminder.invoiceId}
                 >
-                  {actionId === oldestSentReminder.invoiceId ? "Sending..." : "Send reminder"}
+                  {actionId === oldestSentReminder.invoiceId
+                    ? "Sending..."
+                    : oldestSentReminder.isPastDue &&
+                        oldestSentReminderHasTrackedDelivery &&
+                        oldestSentReminderOpened
+                      ? "Send focused reminder"
+                      : "Send reminder"}
                 </button>
               ) : null}
               {oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened ? (
