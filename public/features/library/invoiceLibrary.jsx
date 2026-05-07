@@ -3050,6 +3050,13 @@
                 const clientPortalUrl = buildLibraryClientPortalUrl(invoice);
                 const clientPortalReady = clientPortalUrl.length > 0;
                 const showSendComposer = sendComposer?.invoiceId === invoice.invoiceId;
+                const sendComposerIsResend = hasDelivery;
+                const sendComposerIntro = sendComposerIsResend
+                  ? isPastDue && !deliveryOpened
+                    ? "This invoice is overdue and still unopened. Re-send it to put the invoice back in front of the client and keep delivery tracking current."
+                    : "Re-sending keeps delivery tracking current and lets you confirm the best recipient before the next follow-up."
+                  : "Sending records this invoice as sent, updates delivery tracking, and remembers the recipient for this client.";
+                const sendComposerButtonLabel = sendComposerIsResend ? "Re-send now" : "Send now";
                 const sendComposerNextStep = !paymentLinkReady
                   ? "After tracking the send, add a hosted payment link so the invoice is easier to pay."
                   : !clientPortalReady
@@ -3699,10 +3706,10 @@
                     {showSendComposer ? (
                       <div className="nb-surface nb-surface--muted mt-3 rounded-xl p-3">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                          Recipient email
+                          {sendComposerIsResend ? "Re-send recipient" : "Recipient email"}
                         </p>
                         <p className="mt-1 text-xs text-slate-500">
-                          Sending records this invoice as sent, updates delivery tracking, and remembers the recipient for this client.
+                          {sendComposerIntro}
                         </p>
                         <p className="mt-2 rounded-2xl border border-blue-100/80 bg-white/90 px-3 py-2 text-xs leading-5 text-blue-900 shadow-sm">
                           {sendComposerNextStep}
@@ -3737,7 +3744,7 @@
                               onClick={() => void submitSendComposer(invoice.invoiceId)}
                               disabled={actionId === invoice.invoiceId}
                             >
-                              {actionId === invoice.invoiceId ? "Sending..." : "Send now"}
+                              {actionId === invoice.invoiceId ? "Sending..." : sendComposerButtonLabel}
                             </button>
                             <button
                               type="button"
