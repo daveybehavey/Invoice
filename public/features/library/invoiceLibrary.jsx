@@ -1882,6 +1882,19 @@
     invoices
       .filter((invoice) => invoice?.status === "paid")
       .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
+  const paidRepeatMemoryStarter = paidRepeatCandidate
+    ? buildClientMemoryStarterForInvoice(
+        paidRepeatCandidate,
+        getClientMemory(),
+        getLineItemLibrary()
+      )
+    : null;
+  const paidRepeatRecurringInterval = paidRepeatCandidate
+    ? getClientRecurringInterval(paidRepeatCandidate.customerName ?? "")
+    : null;
+  const paidRepeatRecurringLabel = paidRepeatRecurringInterval
+    ? formatRecurringCadence(paidRepeatRecurringInterval)
+    : "";
   const libraryGuide = (() => {
     if (showTrash || requiresSignIn) {
       return null;
@@ -2116,20 +2129,42 @@
         toneClass: "border-slate-200 bg-slate-50 text-slate-950",
         eyebrow: "Billie next up",
         title: `Start another invoice for ${paidRepeatCandidate.customerName || "a repeat client"}`,
-        body: "Paid work is one of the strongest repeat signals. Open a fresh draft, reuse what already worked, and keep the next job moving faster.",
+        body: paidRepeatRecurringLabel
+          ? `Paid work is one of the strongest repeat signals. Reuse what already worked and lock in the saved ${paidRepeatRecurringLabel} cadence for the next job.`
+          : paidRepeatMemoryStarter
+            ? "Paid work is one of the strongest repeat signals. Start from saved memory so the next draft keeps the best client and service details."
+            : "Paid work is one of the strongest repeat signals. Open a fresh draft, reuse what already worked, and keep the next job moving faster.",
         meta: [
           paidRepeatCandidate.invoiceNumber || "",
           Number.isFinite(paidRepeatCandidate.total)
             ? `Last total ${formatMoney(paidRepeatCandidate.total)}`
+            : "",
+          paidRepeatRecurringLabel ? `Saved cadence ${paidRepeatRecurringLabel}` : "",
+          paidRepeatMemoryStarter?.leadItem?.description
+            ? `Saved service ${paidRepeatMemoryStarter.leadItem.description}`
             : ""
         ].filter(Boolean),
         primaryLabel:
           actionId === paidRepeatCandidate.invoiceId ? "Opening..." : "Invoice again",
         primaryDisabled: actionId === paidRepeatCandidate.invoiceId,
         onPrimary: () => handleInvoiceAgain(paidRepeatCandidate.invoiceId),
-        secondaryLabel: "Show paid invoices",
-        secondaryDisabled: false,
+        secondaryLabel: paidRepeatRecurringLabel
+          ? `Use ${paidRepeatRecurringLabel} cadence`
+          : paidRepeatMemoryStarter
+            ? "Start from saved memory"
+            : "Show paid invoices",
+        secondaryDisabled: actionId === paidRepeatCandidate.invoiceId || isDeleting,
         onSecondary: () => {
+          if (paidRepeatRecurringInterval) {
+            setRecurringSchedule(paidRepeatCandidate.invoiceId, paidRepeatRecurringInterval, {
+              source: "library_paid_repeat_guide"
+            });
+            return;
+          }
+          if (paidRepeatMemoryStarter) {
+            handleStartFromClientMemory(paidRepeatCandidate);
+            return;
+          }
           setStatusFilter("paid");
           setSelectedIds([]);
         }
@@ -3324,7 +3359,11 @@
                   if (invoice.status === "paid") {
                     return {
                       label: "Invoice this client again",
-                      detail: "This invoice is fully cleared. Reuse it as the baseline for the next similar job or set recurring cadence."
+                      detail: rememberedRecurringLabel
+                        ? `This invoice is fully cleared. Reuse it as the baseline for the next similar job or apply the saved ${rememberedRecurringLabel} cadence.`
+                        : repeatMemoryStarter?.leadItem?.description
+                          ? `This invoice is fully cleared. Reuse it as the baseline for the next similar job or start from saved memory with ${repeatMemoryStarter.leadItem.description}.`
+                          : "This invoice is fully cleared. Reuse it as the baseline for the next similar job or set recurring cadence."
                     };
                   }
                   if (invoice.status === "sent" && isPastDue) {
