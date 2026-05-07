@@ -959,7 +959,9 @@
     const statusActionKey = `${invoiceId}:${status}`;
     setStatusActionId(statusActionKey);
     setError("");
+    setDeliveryNotice("");
     try {
+      const currentInvoice = invoices.find((invoice) => invoice.invoiceId === invoiceId) ?? null;
       const payload = await requestJson(
         `/api/invoices/${invoiceId}/status`,
         {
@@ -972,6 +974,9 @@
       setAuthRequiredError(false);
       const updatedInvoice = payload?.invoice;
       if (updatedInvoice?.invoiceId) {
+        const mergedInvoice = currentInvoice
+          ? mergeUpdatedInvoiceMetadata(currentInvoice, updatedInvoice)
+          : updatedInvoice;
         setInvoices((prev) =>
           prev.map((invoice) =>
             invoice.invoiceId === updatedInvoice.invoiceId
@@ -979,6 +984,21 @@
               : invoice
           )
         );
+        if (status === "paid") {
+          setDeliveryNotice(
+            `Marked ${updatedInvoice.invoiceNumber || "the invoice"} as paid. Next: use Invoice again when similar work comes back.`
+          );
+        } else if (status === "sent") {
+          setDeliveryNotice(
+            Boolean(mergedInvoice?.delivery?.recipientEmail && mergedInvoice?.delivery?.sentAt)
+              ? `Marked ${updatedInvoice.invoiceNumber || "the invoice"} as sent. Next: watch delivery before following up.`
+              : `Marked ${updatedInvoice.invoiceNumber || "the invoice"} as sent. Next: add a tracked recipient so delivery and reminders stay clearer.`
+          );
+        } else if (status === "draft") {
+          setDeliveryNotice(
+            `Moved ${updatedInvoice.invoiceNumber || "the invoice"} back to draft. Next: finish the edits before sending it again.`
+          );
+        }
       }
     } catch (statusError) {
       handleLibraryError(statusError, "Failed to update invoice status.");
@@ -1316,7 +1336,16 @@
             : candidate
         )
       );
-      setDeliveryNotice("Marked as opened.");
+      const openedInvoice = invoices.find((invoice) => invoice.invoiceId === invoiceId) ?? null;
+      const dueDateValue = getInvoiceDueDateValue(openedInvoice);
+      const dueDateMs = parseInvoiceDueTimestamp(dueDateValue);
+      const isPastDue =
+        openedInvoice?.status === "sent" && Number.isFinite(dueDateMs) && dueDateMs <= Date.now();
+      setDeliveryNotice(
+        isPastDue
+          ? "Marked as opened. Next: send a focused reminder or mark it paid if the money already arrived."
+          : "Marked as opened. Next: watch for payment before following up again."
+      );
     } catch (deliveryError) {
       handleLibraryError(deliveryError, "Failed to update delivery status.");
     } finally {

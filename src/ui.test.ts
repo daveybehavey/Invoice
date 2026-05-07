@@ -5156,6 +5156,9 @@ test("invoice library follow-up plan can mark the oldest reminder paid", async (
     await plan.getByText("Past due since").waitFor({ state: "visible" });
     await plan.getByText("Sent to reminder.paid@example.com").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Mark paid" }).first().click();
+    await page
+      .getByText("Marked INV-REMINDER-PAID as paid. Next: use Invoice again when similar work comes back.")
+      .waitFor({ state: "visible" });
     await page.getByText("Follow-up queue").waitFor({ state: "hidden" });
   } finally {
     await context.close();
@@ -5819,7 +5822,9 @@ test("invoice library send action records delivery and supports mark opened", as
     }, ownerId);
     assert.equal(rememberedEmail, "client@example.com");
     await page.getByRole("button", { name: "Mark opened INV-SEND-1" }).click();
-    await page.getByText("Marked as opened.").waitFor({ state: "visible" });
+    await page.getByText("Marked as opened. Next: watch for payment before following up again.").waitFor({
+      state: "visible"
+    });
   } finally {
     await context.close();
   }
