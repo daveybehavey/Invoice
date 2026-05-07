@@ -414,6 +414,9 @@ function ManualInvoiceCanvas() {
   const [voiceNoteBusy, setVoiceNoteBusy] = useState(false);
   const [voiceNoteError, setVoiceNoteError] = useState("");
   const [voiceNoteNotice, setVoiceNoteNotice] = useState("");
+  const hostedPaymentLinkUnavailable = accountPlan?.billing?.invoicePaymentAvailable === false;
+  const hostedPaymentLinkUnavailableMessage =
+    "Hosted payment links are not configured on this build yet. You can still share the client portal, copy the share pack, or send the invoice manually.";
   const refreshOnboardingStatus = (sessionOverride) => {
     setOnboardingStatus(
       buildOnboardingStatus({
@@ -1849,7 +1852,9 @@ function ManualInvoiceCanvas() {
       moves.push({
         id: "payment-link",
         label: "Add a payment link",
-        helper: "Generate a hosted payment link so send, share pack, and portal handoff feel complete.",
+        helper: hostedPaymentLinkUnavailable
+          ? "Hosted payment links are unavailable on this build, so use the client portal or share pack instead."
+          : "Generate a hosted payment link so send, share pack, and portal handoff feel complete.",
         actionLabel: paymentLinkBusy ? "Creating..." : "Create payment link",
         busy: paymentLinkBusy,
         onClick: () => {
@@ -1895,6 +1900,7 @@ function ManualInvoiceCanvas() {
     clientPortalUrl,
     currentServiceMemoryCandidate,
     hasCurrentServiceInMemory,
+    hostedPaymentLinkUnavailable,
     navigate,
     paymentLinkBusy,
     paymentLinkUrl,
@@ -3839,6 +3845,11 @@ function ManualInvoiceCanvas() {
                   </button>
                 ) : null}
               </div>
+              {hasSavedDraft && !hasHostedPaymentLink && hostedPaymentLinkUnavailable && !paymentLinkError ? (
+                <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium leading-5 text-amber-900">
+                  {hostedPaymentLinkUnavailableMessage}
+                </p>
+              ) : null}
               {paymentLinkError ? (
                 <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium leading-5 text-amber-900">
                   {paymentLinkError}
@@ -3875,6 +3886,11 @@ function ManualInvoiceCanvas() {
                 >
                   Open hosted payment link
                 </a>
+              ) : null}
+              {hostedPaymentLinkUnavailable && !paymentLinkUrl.trim() && !paymentLinkError ? (
+                <p className="text-xs font-medium leading-5 text-amber-700">
+                  {hostedPaymentLinkUnavailableMessage}
+                </p>
               ) : null}
               {paymentLinkError ? (
                 <p className="text-xs font-medium leading-5 text-amber-700">{paymentLinkError}</p>
