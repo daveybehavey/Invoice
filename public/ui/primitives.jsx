@@ -151,7 +151,7 @@
         className={`${cardBase} ${
           disabled
             ? "nb-surface cursor-not-allowed opacity-70"
-            : "nb-surface nb-surface--elevated rounded-[30px] hover:-translate-y-0.5"
+            : "nb-surface nb-surface--elevated nb-hero-glow rounded-[30px] hover:-translate-y-1"
         }`}
         onClick={disabled ? undefined : onClick}
         disabled={disabled}
@@ -159,27 +159,30 @@
       >
         <div className="flex items-start justify-between gap-4">
           <div
-            className={`flex h-11 w-11 items-center justify-center rounded-[18px] ${
-              disabled ? "bg-slate-100" : "bg-[#e8f0fb]"
+            className={`flex h-12 w-12 items-center justify-center rounded-[20px] border ${
+              disabled ? "border-slate-200 bg-slate-100" : "border-[#6993d2]/12 bg-[linear-gradient(135deg,_#ecf4ff_0%,_#ffffff_100%)] shadow-[0_14px_32px_rgba(8,47,99,0.08)]"
             }`}
           >
             {React.cloneElement(icon, { className: iconClass })}
           </div>
           <div className="min-w-0 flex-1 space-y-1 text-left">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
+              NoteBill path
+            </p>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+              <h2 className="text-[1.05rem] font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
                 {title}
               </h2>
               {badge ? (
-                <span className="nb-chip border-0 bg-[#093064] px-2 py-0.5 text-[10px] text-white">
+                <span className="nb-chip border-0 bg-[linear-gradient(135deg,_#093064_0%,_#184d8e_100%)] px-2 py-0.5 text-[10px] text-white shadow-[0_10px_26px_rgba(8,47,99,0.16)]">
                   {badge}
                 </span>
               ) : null}
             </div>
-            <p className="max-w-md text-sm text-slate-600">{description}</p>
+            <p className="max-w-md text-sm leading-6 text-slate-600">{description}</p>
           </div>
           {!disabled ? (
-            <div className="mt-0.5 hidden rounded-full border border-[#6993d2]/18 bg-white/82 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#093064] sm:block">
+            <div className="mt-0.5 hidden rounded-full border border-[#6993d2]/18 bg-white/88 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#093064] shadow-sm sm:block">
               Open
             </div>
           ) : null}

@@ -712,26 +712,42 @@ function LauncherStartSection({
   ];
   return (
     <section
-      className="nb-surface nb-surface--elevated mt-6 overflow-hidden rounded-[32px] p-0"
+      className="nb-surface nb-surface--elevated nb-hero-glow nb-reveal-up mt-6 overflow-hidden rounded-[36px] p-0"
       style={{
         backgroundImage:
-          "radial-gradient(circle at top left, rgba(172,204,240,0.9), rgba(255,255,255,0) 42%), linear-gradient(180deg, #ffffff 0%, #f6f9fd 100%)"
+          "radial-gradient(circle at top left, rgba(185,215,246,0.95), rgba(255,255,255,0) 40%), radial-gradient(circle at top right, rgba(243,194,125,0.18), rgba(255,255,255,0) 24%), linear-gradient(145deg, #ffffff 0%, #f5f9ff 60%, #eef5ff 100%)"
       }}
     >
-      <div className="grid gap-4 p-4 md:grid-cols-[minmax(0,1.3fr)_minmax(280px,0.9fr)] md:gap-5 md:p-7">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Start here</p>
-          <p className="nb-assistant-chip nb-assistant-chip--ready mt-2 inline-flex text-xs normal-case tracking-normal">
+      <div className="grid gap-5 p-4 md:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.9fr)] md:gap-6 md:p-8">
+        <div className="relative">
+          <div className="inline-flex rounded-full border border-[#6993d2]/14 bg-white/82 px-3 py-1 shadow-sm">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[#5f8fd2]">Start Here</p>
+          </div>
+          <p className="nb-assistant-chip nb-assistant-chip--ready mt-3 inline-flex text-xs normal-case tracking-normal">
             <span className="nb-assistant-chip__dot" aria-hidden="true" />
             Billie ready
           </p>
-          <h2 className="mt-2 text-[1.75rem] text-slate-900 md:text-4xl" style={{ fontFamily: "'Fraunces', serif" }}>
-            Paste rough notes. Billie prepares the draft.
+          <h2 className="nb-hero-title mt-4 max-w-3xl">
+            Turn rough field notes into a client-ready invoice before the day gets away from you.
           </h2>
-          <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 md:mt-3 md:text-base">
-            This is the fastest path for most jobs. Paste what happened, approve money decisions, then send.
+          <p className="nb-hero-copy mt-4 max-w-2xl">
+            Start with the messy version. Billie organizes the draft, flags the money decisions that need your call, and keeps the send-ready path clear from the first tap.
           </p>
-          <div className="mt-4 grid gap-2 sm:grid-cols-3 md:mt-5 md:gap-3">
+          <div className="mt-5 flex flex-wrap gap-2">
+            {[
+              "Fastest path for most jobs",
+              "Money never changes silently",
+              "Built to save, send, and repeat"
+            ].map((item) => (
+              <span
+                key={item}
+                className="rounded-full border border-white/70 bg-white/78 px-3 py-1.5 text-[11px] font-semibold tracking-[0.04em] text-slate-700 shadow-sm"
+              >
+                {item}
+              </span>
+            ))}
+          </div>
+          <div className="mt-5 grid gap-3 sm:grid-cols-3 md:mt-6">
             {[
               ["1", "Paste notes", "Drop in the messy version."],
               ["2", "Approve money", "Confirm decisions that change totals."],
@@ -739,21 +755,29 @@ function LauncherStartSection({
             ].map(([step, title, copy]) => (
               <div
                 key={step}
-                className="nb-subcard border-white/70 bg-white/75 p-3 shadow-sm backdrop-blur"
+                className="nb-subcard border-white/70 bg-white/78 p-4 shadow-sm backdrop-blur"
               >
                 <div className="flex items-center gap-2">
-                  <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#093064] text-xs font-bold text-white">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[linear-gradient(135deg,_#093064_0%,_#184d8e_100%)] text-xs font-bold text-white shadow-[0_12px_28px_rgba(8,47,99,0.18)]">
                     {step}
                   </span>
                   <p className="text-sm font-semibold text-slate-900">{title}</p>
                 </div>
-                <p className="mt-2 hidden text-xs leading-5 text-slate-600 sm:block">{copy}</p>
+                <p className="mt-2 text-xs leading-5 text-slate-600">{copy}</p>
               </div>
             ))}
           </div>
         </div>
-        <div className="nb-surface nb-surface--muted rounded-[28px] p-4 md:p-5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#6993d2]">Recommended path</p>
+        <div className="nb-surface nb-surface--muted rounded-[30px] p-4 md:p-5">
+          <div className="rounded-[24px] bg-[linear-gradient(145deg,_#093064_0%,_#0e437c_58%,_#123d6d_100%)] px-4 py-4 text-white shadow-[0_24px_60px_rgba(8,47,99,0.18)]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#c5dcf7]">Recommended path</p>
+            <p className="mt-2 text-lg font-semibold" style={{ fontFamily: "'Fraunces', serif" }}>
+              One calm route from notes to invoice.
+            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-100">
+              If you only use one start option, use this one.
+            </p>
+          </div>
           <div className="mt-3">
             {primaryOption ? (
               <LauncherCard
@@ -803,7 +827,7 @@ function LauncherStartSection({
           </div>
           {!hasSavedHistory ? (
             <div
-              className="mt-4 rounded-[24px] border border-[#6993d2]/25 bg-[#f6f9ff] px-4 py-4"
+              className="mt-4 rounded-[26px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_#f6f9ff_0%,_#ffffff_52%,_#eef6ff_100%)] px-4 py-4 shadow-sm"
               data-testid="launcher-first-invoice-guide"
             >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -811,7 +835,7 @@ function LauncherStartSection({
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
                     Guided first invoice
                   </p>
-                  <p className="mt-1 text-xs font-semibold leading-5 text-[#093064]">
+                  <p className="mt-1 text-sm font-semibold leading-6 text-[#093064]">
                     First invoice? Try sample notes for a quick walkthrough, or open scratchpad to collect
                     real notes during the day.
                   </p>
@@ -826,8 +850,8 @@ function LauncherStartSection({
               </div>
               <div className="mt-3 grid gap-2">
                 {firstInvoiceSteps.map(([step, title, copy]) => (
-                  <div key={step} className="flex items-start gap-2 rounded-2xl bg-white/75 px-3 py-2">
-                    <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#093064] text-[11px] font-bold text-white">
+                  <div key={step} className="flex items-start gap-2 rounded-2xl bg-white/78 px-3 py-2 shadow-sm">
+                    <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,_#093064_0%,_#184d8e_100%)] text-[11px] font-bold text-white">
                       {step}
                     </span>
                     <div>
@@ -839,7 +863,7 @@ function LauncherStartSection({
               </div>
             </div>
           ) : null}
-          <p className="mt-3 text-xs leading-5 text-slate-500">
+          <p className="mt-4 text-xs leading-5 text-slate-500">
             Start here unless you already have a file or want a blank invoice from scratch.
           </p>
         </div>

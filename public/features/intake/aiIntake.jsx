@@ -2306,14 +2306,17 @@ function AIIntake() {
             </button>
           </div>
           <div className="text-right">
-            <p className="text-sm font-semibold text-slate-900">Billie at NoteBill</p>
-            <p className="text-xs text-slate-500">{intakeHeaderStatus}</p>
-            <p className="mt-1 inline-flex rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#5f8fd2]">Billie intake</p>
+            <p className="mt-1 text-xl font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+              Build the draft before you touch the editor.
+            </p>
+            <p className="mt-1 text-xs text-slate-500">{intakeHeaderStatus}</p>
+            <p className="mt-2 inline-flex rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 shadow-sm">
               Billie suggests. You approve money decisions.
             </p>
             <button
               type="button"
-              className="mt-1 inline-flex min-h-10 items-center justify-center rounded-full px-3 text-xs font-semibold text-slate-500 underline-offset-2 transition hover:bg-white/70 hover:text-slate-700 hover:underline"
+              className="mt-2 inline-flex min-h-10 items-center justify-center rounded-full border border-white/70 bg-white/70 px-3 text-xs font-semibold text-slate-500 shadow-sm underline-offset-2 transition hover:bg-white/90 hover:text-slate-700 hover:underline"
               onClick={() => navigate("/")}
             >
               {authSession?.email ? `Account: ${authSession.email}` : "Account: local mode"}
@@ -2343,7 +2346,7 @@ function AIIntake() {
               ) : null}
               {billieNextUpGuide ? (
                 <section
-                  className="nb-surface nb-surface--elevated rounded-[28px] border border-[#6993d2]/18 bg-[#f7faff] p-4"
+                  className="nb-surface nb-surface--elevated nb-hero-glow rounded-[30px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_#f7faff_0%,_#ffffff_56%,_#edf6ff_100%)] p-5"
                   data-testid="intake-billie-next-up"
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -2351,10 +2354,10 @@ function AIIntake() {
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
                         {billieNextUpGuide.eyebrow}
                       </p>
-                      <p className="mt-1 text-sm font-semibold text-slate-900">
+                      <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
                         {billieNextUpGuide.title}
                       </p>
-                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
                         {billieNextUpGuide.detail}
                       </p>
                     </div>
@@ -2374,7 +2377,7 @@ function AIIntake() {
                   </div>
                 </section>
               ) : null}
-              <div className="nb-surface nb-surface--muted rounded-[28px]">
+              <div className="nb-surface nb-surface--muted rounded-[30px] border border-white/70 bg-[linear-gradient(180deg,_rgba(255,255,255,0.88)_0%,_rgba(242,247,255,0.92)_100%)]">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                     Intake steps
@@ -2391,7 +2394,7 @@ function AIIntake() {
                     </button>
                   ) : null}
                 </div>
-                <p className="mt-2 text-sm font-semibold text-slate-700">
+                <p className="mt-3 text-sm font-semibold text-slate-700">
                   Step {safeWizardStepIndex + 1} of {wizardSteps.length}: {wizardStepLabel}
                 </p>
                 <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
@@ -2432,7 +2435,7 @@ function AIIntake() {
 
               {onboardingStatus.visible ? (
                 <div
-                  className="nb-surface rounded-[28px] border border-[#6993d2]/18 bg-white/88 p-4"
+                  className="nb-surface rounded-[30px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_rgba(255,255,255,0.96)_0%,_rgba(247,250,255,0.92)_100%)] p-5"
                   data-testid="intake-onboarding-section"
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -2440,10 +2443,10 @@ function AIIntake() {
                       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
                         {onboardingStatus.walkthroughActive ? "Guided walkthrough" : "First invoice progress"}
                       </p>
-                      <p className="mt-1 text-sm font-semibold text-slate-900">
+                      <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
                         {onboardingStatus.completedCount} of {onboardingStatus.totalSteps} core steps complete
                       </p>
-                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
                         {onboardingStatus.walkthroughActive
                           ? "Stay with the sample job, review what Billie captured, and only move on once the draft feels trustworthy."
                           : onboardingStatus.nextStep?.helper ||
@@ -2500,7 +2503,7 @@ function AIIntake() {
 
               {starterGuideActive ? (
                 <div
-                  className="nb-surface rounded-[28px] border-[#6993d2]/20 bg-[#f6f9ff] p-4"
+                  className="nb-surface nb-hero-glow rounded-[30px] border-[#6993d2]/20 bg-[linear-gradient(145deg,_#f6f9ff_0%,_#ffffff_58%,_#edf5ff_100%)] p-5"
                   data-testid="intake-starter-walkthrough"
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -2508,10 +2511,10 @@ function AIIntake() {
                       <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
                         Starter walkthrough
                       </p>
-                      <p className="mt-1 text-sm font-semibold text-[#093064]">
+                      <p className="mt-2 text-lg font-semibold text-[#093064]" style={{ fontFamily: "'Fraunces', serif" }}>
                         Follow the sample job from rough notes to a reviewed invoice.
                       </p>
-                      <p className="mt-1 text-xs leading-5 text-slate-600">
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
                         First move: scan the sample notes, then press Build invoice to see how Billie turns rough field notes into a draft.
                       </p>
                     </div>
