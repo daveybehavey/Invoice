@@ -5898,6 +5898,78 @@ test("invoice library card distinguishes tracked but unopened delivery", async (
   }
 });
 
+test("invoice library overdue unopened invoices prefer resend over reminder", async () => {
+  const ownerId = "ui-overdue-unopened-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Overdue Unopened Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-OVERDUE-UNOPENED-1",
+          issueDate: "2026-04-15",
+          dueDate: "2026-04-20",
+          customerName: "Overdue Unopened Client",
+          currency: "USD",
+          paymentLinkUrl: "https://pay.example.com/invoice/INV-OVERDUE-UNOPENED-1",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Roof patch",
+              quantity: 1,
+              unitPrice: 240,
+              amount: 240
+            }
+          ],
+          subtotal: 240,
+          total: 240,
+          balanceDue: 240
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const invoiceId = String((await saveResponse.json()).invoice?.invoiceId ?? "");
+  assert.ok(invoiceId);
+
+  const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      recipientEmail: "overdue-unopened@example.com"
+    }
+  });
+  assert.equal(sendResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page.locator("div").filter({ hasText: "INV-OVERDUE-UNOPENED-1" }).first();
+    await card.getByText("Best next action").waitFor({ state: "visible" });
+    await card.getByText("Re-send or confirm delivery").waitFor({ state: "visible" });
+    await card
+      .getByText("This invoice is overdue, but it still has not been opened. Re-send it or confirm delivery before escalating into a payment reminder.")
+      .waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library Billie next-up guide prioritizes follow-up work", async () => {
   const ownerId = "ui-library-next-up-owner";
   const context = await browser.newContext();

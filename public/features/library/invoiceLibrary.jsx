@@ -1590,12 +1590,18 @@
     : "";
   const recurringCandidateInvoice = oldestSentReminder;
   const oldestSentRecipient = oldestSentReminder?.delivery?.recipientEmail ?? "";
+  const oldestSentReminderOpened = oldestSentReminder?.delivery?.status === "opened";
+  const oldestSentReminderHasTrackedDelivery = Boolean(
+    oldestSentReminder?.delivery?.recipientEmail && oldestSentReminder?.delivery?.sentAt
+  );
   const canQuickSendReminderOldest = Boolean(
     oldestSentReminder?.invoiceId && isValidEmail(oldestSentRecipient)
   );
   const smartFollowUpSuggestion = oldestSentReminder
     ? oldestSentReminder.isPastDue
-      ? "Best next step: send a reminder now."
+      ? oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened
+        ? "Best next step: re-send it or confirm delivery before sending a payment reminder."
+        : "Best next step: send a reminder now."
       : oldestSentReminder.daysSinceUpdate >= 21
         ? "Best next step: send a short check-in, then open the repeat invoice if this becomes routine."
         : "Best next step: review the latest reminder timing before sending again."
@@ -1615,7 +1621,9 @@
           ? `It is due ${oldestSentReminderDueLabel}.`
           : "I'm checking in on the latest invoice.";
     const nextStep = oldestSentReminder.isPastDue
-      ? "If possible, please take a look and let me know if anything is blocking payment."
+      ? oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened
+        ? "I wanted to make sure you saw it. If it helps, I can resend the invoice or send it another way."
+        : "If possible, please take a look and let me know if anything is blocking payment."
       : "If you need anything from me, please let me know.";
     return [
       `Hi ${greetingName},`,
@@ -1659,7 +1667,9 @@
           ? `It is due ${oldestSentReminderDueLabel}.`
           : "I'm checking in on the latest invoice.";
     const nextStep = oldestSentReminder.isPastDue
-      ? "If possible, please take a look and let me know if anything is blocking payment."
+      ? oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened
+        ? "I wanted to make sure you saw it. If it helps, I can resend the invoice or send it another way."
+        : "If possible, please take a look and let me know if anything is blocking payment."
       : "If you need anything from me, please let me know.";
     return [
       `Hi ${recipientLabel},`,
@@ -1687,14 +1697,18 @@
           : "No tracked recipient yet",
         nextStepValue: canQuickSendReminderOldest
           ? oldestSentReminder.isPastDue
-            ? "Send reminder now"
+            ? oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened
+              ? "Re-send or confirm delivery"
+              : "Send reminder now"
             : "Review timing, then remind"
           : oldestSentReminder.customerName
             ? "Open sent invoices and add a recipient"
             : "Review this invoice",
         automationValue: `${reminderAutomationSettings.dueAfterDays}d first follow-up · ${reminderAutomationSettings.cooldownDays}d cooldown`,
         summary: oldestSentReminder.isPastDue
-          ? "This invoice is overdue and still has an open balance."
+          ? oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened
+            ? "This invoice is overdue, but it still has not been opened by the client."
+            : "This invoice is overdue and still has an open balance."
           : "This invoice is in the follow-up window and still has an open balance."
       }
     : null;
@@ -1808,12 +1822,16 @@
         toneClass: "border-blue-200 bg-blue-50 text-blue-950",
         eyebrow: "Billie next up",
         title: oldestSentReminder.isPastDue
-          ? `Follow up on ${oldestSentReminder.invoiceNumber || "this sent invoice"}`
+          ? oldestReminderHasTrackedDelivery && !oldestReminderOpened
+            ? `Re-send ${oldestSentReminder.invoiceNumber || "this sent invoice"}`
+            : `Follow up on ${oldestSentReminder.invoiceNumber || "this sent invoice"}`
           : oldestReminderHasTrackedDelivery && !oldestReminderOpened
             ? `Check delivery for ${oldestSentReminder.invoiceNumber || "this sent invoice"}`
           : `Check ${oldestSentReminder.invoiceNumber || "this sent invoice"}`,
         body: oldestSentReminder.isPastDue
-          ? "Payment is still open. Send the reminder now, then mark it paid if the money already arrived."
+          ? oldestReminderHasTrackedDelivery && !oldestReminderOpened
+            ? "This invoice is overdue, but it still has not been opened. Re-send it or confirm delivery before escalating into a payment reminder."
+            : "Payment is still open. Send the reminder now, then mark it paid if the money already arrived."
           : oldestReminderHasTrackedDelivery && !oldestReminderOpened
             ? "Delivery is tracked, but the invoice has not been opened yet. Confirm whether the client saw it before escalating into a reminder."
           : "Keep the send workflow moving before this invoice goes cold.",
@@ -1829,7 +1847,11 @@
           oldestSentRecipient ? `Recipient ${oldestSentRecipient}` : ""
         ].filter(Boolean),
         primaryLabel:
-          oldestReminderHasTrackedDelivery && !oldestReminderOpened
+          oldestSentReminder.isPastDue && oldestReminderHasTrackedDelivery && !oldestReminderOpened
+            ? actionId === oldestSentReminder.invoiceId
+              ? "Opening..."
+              : "Re-send invoice"
+            : oldestReminderHasTrackedDelivery && !oldestReminderOpened
             ? actionId === oldestSentReminder.invoiceId
               ? "Marking..."
               : "Mark opened"
@@ -1840,6 +1862,10 @@
               : "Show sent invoices",
         primaryDisabled: actionId === oldestSentReminder.invoiceId,
         onPrimary: () => {
+          if (oldestSentReminder.isPastDue && oldestReminderHasTrackedDelivery && !oldestReminderOpened) {
+            startSendComposer(oldestSentReminder);
+            return;
+          }
           if (oldestReminderHasTrackedDelivery && !oldestReminderOpened) {
             void handleMarkDeliveryOpened(oldestSentReminder.invoiceId);
             return;
@@ -3129,6 +3155,14 @@
                     };
                   }
                   if (invoice.status === "sent" && isPastDue) {
+                    if (hasDelivery && !deliveryOpened) {
+                      return {
+                        label: "Re-send or confirm delivery",
+                        detail: paymentLinkReady
+                          ? "This invoice is overdue, but it still has not been opened. Re-send it or confirm delivery before escalating into a payment reminder."
+                          : "This invoice is overdue and still unopened. Re-send it, confirm delivery, and tighten the payment handoff next."
+                      };
+                    }
                     return {
                       label: canQuickSendReminderOldest && oldestSentReminder?.invoiceId === invoice.invoiceId
                         ? "Send reminder now"
