@@ -7964,6 +7964,44 @@ test("manual export panel can create a hosted payment link for a saved invoice",
   }
 });
 
+test("manual payment link fallback explains when hosted billing is not configured", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-manual-payment-link-fallback-owner");
+  });
+  const page = await context.newPage();
+  try {
+    await page.route("**/api/invoices/*/payment-link", async (route) => {
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "Stripe invoice payments are not configured yet."
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Skylight repair");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("260");
+
+    await page.getByRole("button", { name: "Export" }).last().click();
+    await page.getByText("Save to library").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Save invoice" }).click();
+    await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Create hosted payment link" }).click();
+    await page
+      .getByText(
+        "Hosted payment links are not configured on this build yet. You can still share the client portal, copy the share pack, or send the invoice manually."
+      )
+      .waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual export panel can create a client portal link for a saved invoice", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

@@ -1777,7 +1777,12 @@ function ManualInvoiceCanvas() {
       setSaveStatus(nextPaymentLink ? "Hosted payment link ready" : "Hosted payment link unchanged");
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {
-      setPaymentLinkError(error?.message || "Couldn't create payment link.");
+      const message = String(error?.message || "Couldn't create payment link.");
+      setPaymentLinkError(
+        message.includes("Stripe invoice payments are not configured yet.")
+          ? "Hosted payment links are not configured on this build yet. You can still share the client portal, copy the share pack, or send the invoice manually."
+          : message
+      );
     } finally {
       setPaymentLinkBusy(false);
     }
@@ -3834,6 +3839,11 @@ function ManualInvoiceCanvas() {
                   </button>
                 ) : null}
               </div>
+              {paymentLinkError ? (
+                <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium leading-5 text-amber-900">
+                  {paymentLinkError}
+                </p>
+              ) : null}
             </section>
 
             <section className="space-y-2">
@@ -3865,6 +3875,9 @@ function ManualInvoiceCanvas() {
                 >
                   Open hosted payment link
                 </a>
+              ) : null}
+              {paymentLinkError ? (
+                <p className="text-xs font-medium leading-5 text-amber-700">{paymentLinkError}</p>
               ) : null}
             </section>
 
