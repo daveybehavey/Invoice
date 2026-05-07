@@ -719,6 +719,28 @@ test("intake Billie next-up guide updates from notes to draft-ready state", asyn
     await guide.getByRole("button", { name: "Build invoice" }).click();
     await guide.getByText("The draft is ready for the editor.").waitFor({ state: "visible" });
     await guide.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await guide.getByRole("button", { name: "Open Billie workspace" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("intake can hand off directly into manual Billie workspace", async () => {
+  useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await openIntake(page);
+    await page.getByRole("button", { name: "Build invoice" }).click();
+    await page.getByRole("button", { name: "Open Billie workspace" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Open Billie workspace" }).click();
+
+    await page.waitForURL(/\/manual\?tab=assistant&source=intake$/, { timeout: 10000 });
+    await page.getByText("Draft ready for Billie handoff from intake review.").waitFor({ state: "visible" });
+    await expectValueEquals(
+      page.locator('[data-testid="manual-billie-workspace"]').getByPlaceholder(/Ask Billie to refine wording/i),
+      "Refine the line item wording and notes so this invoice feels polished and client-ready. Keep numbers unchanged."
+    );
   } finally {
     await context.close();
   }

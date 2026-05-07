@@ -455,7 +455,13 @@ function ManualInvoiceCanvas() {
   useEffect(() => {
     if (searchParams.get("source") === "import") {
       setImportedDraftNotice("Imported draft ready for Billie review.");
+      return;
     }
+    if (searchParams.get("source") === "intake") {
+      setImportedDraftNotice("Draft ready for Billie handoff from intake review.");
+      return;
+    }
+    setImportedDraftNotice("");
   }, [searchParams]);
 
   useEffect(() => {

@@ -44,7 +44,8 @@
     onApplySavedWording,
     onApplySavedNotes,
     onBillieLineRefine,
-    onBillieNotesRefine
+    onBillieNotesRefine,
+    onOpenBillieWorkspace
   }) {
     const [activeBillieTarget, setActiveBillieTarget] = React.useState(null);
     const [showTransparencyComparison, setShowTransparencyComparison] = React.useState(false);
@@ -178,6 +179,16 @@
               >
                 Edit with Billie
               </button>
+              {onOpenBillieWorkspace ? (
+                <button
+                  type="button"
+                  className="nb-btn-secondary rounded-full px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:text-slate-300"
+                  onClick={onOpenBillieWorkspace}
+                  disabled={isTyping}
+                >
+                  Open Billie workspace
+                </button>
+              ) : null}
             </div>
           </div>
 

@@ -325,6 +325,8 @@ function AIIntake() {
   const legacyDraftStorageKey = "invoiceDraft";
   const draftStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? legacyDraftStorageKey;
+  const billieWorkspaceStorageKey =
+    requestIdentity.getScopedStorageKey?.("billieWorkspaceInstruction") ?? "billieWorkspaceInstruction";
   const legacyImportSeedStorageKey = "invoiceImportSeed";
   const importSeedStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceImportSeed") ?? legacyImportSeedStorageKey;
@@ -1696,6 +1698,44 @@ function AIIntake() {
     }
   };
 
+  const buildManualBillieHandoffInstruction = () => {
+    const lineItemCount = Array.isArray(finishedInvoice?.lineItems)
+      ? finishedInvoice.lineItems.filter((item) => typeof item?.description === "string" && item.description.trim()).length
+      : 0;
+    const hasNotes = typeof finishedInvoice?.notes === "string" && finishedInvoice.notes.trim().length > 0;
+    if (lineItemCount > 0 && hasNotes) {
+      return "Refine the line item wording and notes so this invoice feels polished and client-ready. Keep numbers unchanged.";
+    }
+    if (lineItemCount > 0) {
+      return "Refine the line item wording so this invoice feels polished and client-ready. Keep numbers unchanged.";
+    }
+    if (hasNotes) {
+      return "Refine the notes so this invoice feels polished and client-ready. Keep numbers unchanged.";
+    }
+    return "Refine the client-facing wording and presentation while keeping numbers unchanged.";
+  };
+
+  const handleOpenManualBillieWorkspace = () => {
+    if (!finishedInvoice) {
+      return;
+    }
+    try {
+      const draft = applyBusinessProfileToDraft(
+        buildDraftFromInvoice(finishedInvoice, pendingTaxRate ?? "0", lastTranscriptRef.current)
+      );
+      window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+      window.localStorage.setItem(
+        billieWorkspaceStorageKey,
+        buildManualBillieHandoffInstruction()
+      );
+      completeOnboardingStep("open_editor");
+      navigate("/manual?tab=assistant&source=intake");
+    } catch (error) {
+      console.error("Failed to seed Billie handoff draft", error);
+      appendAiMessage("Something went wrong while opening Billie workspace.");
+    }
+  };
+
   const handleLoadStarterSample = () => {
     setInputValue(SAMPLE_JOB_NOTES);
     setStarterGuideActive(true);
@@ -2265,6 +2305,11 @@ function AIIntake() {
             onClick: handleGenerateInvoice
           },
           {
+            id: "open-billie-workspace",
+            label: "Open Billie workspace",
+            onClick: handleOpenManualBillieWorkspace
+          },
+          {
             id: "ask-billie",
             label: "Ask Billie",
             onClick: () => focusInputWithValue("Update: ")
@@ -2782,6 +2827,7 @@ function AIIntake() {
                       onApplySavedNotes={handleApplySavedNotes}
                       onBillieLineRefine={refineBillieLineItem}
                       onBillieNotesRefine={refineBillieNotes}
+                      onOpenBillieWorkspace={canGenerateInvoice ? handleOpenManualBillieWorkspace : null}
                     />
                   );
                 }
