@@ -4581,6 +4581,7 @@ test("launcher shows invoice command center for drafts and follow-ups", async ()
       )
       .waitFor({ state: "visible" });
     await queue.getByText("$210.00", { exact: true }).waitFor({ state: "visible" });
+    await queue.getByRole("button", { name: "Open INV-OPS-DRAFT with Billie" }).waitFor({ state: "visible" });
 
     await queue.getByRole("button", { name: "Resume INV-OPS-DRAFT" }).click();
     await page.waitForURL(/\/manual$/, { timeout: 10000 });

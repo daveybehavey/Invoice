@@ -155,6 +155,7 @@ function LauncherOperationsQueueSection({
   busyInvoiceId,
   busyActionId,
   onResumeDraft,
+  onResumeWithBillie,
   onSendReminder,
   onMarkPaid,
   onInvoiceAgain,
@@ -300,6 +301,16 @@ function LauncherOperationsQueueSection({
                     disabled={isActionBusy}
                   >
                     {action.secondaryCta}
+                  </button>
+                ) : action.secondaryAction === "resume-with-billie" ? (
+                  <button
+                    type="button"
+                    className="nb-btn-secondary ml-2 mt-3 rounded-full px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label={action.secondaryAriaLabel || action.secondaryCta}
+                    onClick={() => onResumeWithBillie?.(action.invoiceId)}
+                    disabled={isActionBusy}
+                  >
+                    {isSecondaryBusy ? "Opening..." : action.secondaryCta}
                   </button>
                 ) : null}
               </div>

@@ -499,7 +499,11 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
       cta: "Resume draft",
       ariaLabel: `Resume ${latestDraft.invoiceNumber || "draft invoice"}`,
       action: "resume-draft",
-      invoiceId: latestDraft.invoiceId
+      invoiceId: latestDraft.invoiceId,
+      secondaryCta: "Open with Billie",
+      secondaryAction: "resume-with-billie",
+      secondaryAriaLabel: `Open ${latestDraft.invoiceNumber || "draft invoice"} with Billie`,
+      secondaryBusyId: `resume-billie:${latestDraft.invoiceId}`
     });
   }
   if (staleSent[0]) {
@@ -1677,6 +1681,7 @@ function Launcher() {
             busyInvoiceId={resumeDraftBusyId}
             busyActionId={operationsBusyActionId}
             onResumeDraft={handleResumeSavedDraft}
+            onResumeWithBillie={(invoiceId) => handleResumeSavedDraft(invoiceId, { openWithBillie: true })}
             onSendReminder={handleLauncherSendReminder}
             onMarkPaid={handleLauncherMarkPaid}
             onInvoiceAgain={handleLauncherInvoiceAgain}
