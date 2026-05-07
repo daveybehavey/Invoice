@@ -737,6 +737,16 @@ test("intake can hand off directly into manual Billie workspace", async () => {
 
     await page.waitForURL(/\/manual\?tab=assistant&source=intake$/, { timeout: 10000 });
     await page.getByText("Draft ready for Billie handoff from intake review.").waitFor({ state: "visible" });
+    await page.getByText("Continue from intake review").waitFor({ state: "visible" });
+    await page
+      .getByText(
+        "Billie already helped structure the draft. Use these starter actions to tighten wording and notes before you move into save, payment, or portal handoff."
+      )
+      .waitFor({ state: "visible" });
+    await page
+      .locator('[data-testid="manual-billie-workspace"]')
+      .getByRole("button", { name: "Polish intake draft" })
+      .waitFor({ state: "visible" });
     await expectValueEquals(
       page.locator('[data-testid="manual-billie-workspace"]').getByPlaceholder(/Ask Billie to refine wording/i),
       "Refine the line item wording and notes so this invoice feels polished and client-ready. Keep numbers unchanged."

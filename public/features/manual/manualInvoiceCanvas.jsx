@@ -417,6 +417,11 @@ function ManualInvoiceCanvas() {
   const hostedPaymentLinkUnavailable = accountPlan?.billing?.invoicePaymentAvailable === false;
   const hostedPaymentLinkUnavailableMessage =
     "Hosted payment links are not configured on this build yet. You can still share the client portal, copy the share pack, or send the invoice manually.";
+  const billieWorkspaceSource = searchParams.get("source") === "intake"
+    ? "intake"
+    : searchParams.get("source") === "import"
+      ? "import"
+      : "";
   const refreshOnboardingStatus = (sessionOverride) => {
     setOnboardingStatus(
       buildOnboardingStatus({
@@ -2160,28 +2165,53 @@ function ManualInvoiceCanvas() {
     });
   };
 
-  const billieWorkspaceActions = [
-    {
-      id: "formal-descriptions",
-      label: "Formal descriptions",
-      instruction: "Make the descriptions more formal."
-    },
-    {
-      id: "simpler-descriptions",
-      label: "Simpler wording",
-      instruction: "Make the descriptions simpler and clearer."
-    },
-    {
-      id: "stronger-descriptions",
-      label: "Stronger wording",
-      instruction: "Make the descriptions stronger and more decisive."
-    },
-    {
-      id: "refine-notes",
-      label: "Refine notes",
-      instruction: "Make the notes more professional."
-    }
-  ];
+  const billieWorkspaceActions =
+    billieWorkspaceSource === "intake"
+      ? [
+          {
+            id: "intake-polish",
+            label: "Polish intake draft",
+            instruction:
+              "Refine the line item wording and notes so this invoice feels polished and client-ready. Keep numbers unchanged."
+          },
+          {
+            id: "intake-simpler",
+            label: "Simpler wording",
+            instruction: "Make the descriptions and notes simpler and clearer."
+          },
+          {
+            id: "intake-client-ready",
+            label: "Client-ready tone",
+            instruction: "Make the invoice read more clearly for the client while keeping the same meaning."
+          },
+          {
+            id: "intake-refine-notes",
+            label: "Refine notes",
+            instruction: "Make the notes more professional."
+          }
+        ]
+      : [
+          {
+            id: "formal-descriptions",
+            label: "Formal descriptions",
+            instruction: "Make the descriptions more formal."
+          },
+          {
+            id: "simpler-descriptions",
+            label: "Simpler wording",
+            instruction: "Make the descriptions simpler and clearer."
+          },
+          {
+            id: "stronger-descriptions",
+            label: "Stronger wording",
+            instruction: "Make the descriptions stronger and more decisive."
+          },
+          {
+            id: "refine-notes",
+            label: "Refine notes",
+            instruction: "Make the notes more professional."
+          }
+        ];
 
   const isMobileInspectorOpen = inspectorOpen;
   const invoiceInteractionClass = isMobileInspectorOpen
@@ -2195,7 +2225,8 @@ function ManualInvoiceCanvas() {
   ];
   const activeMobileTabLabel =
     mobileInspectorTabs.find((tab) => tab.id === activeInspectorTab)?.label ?? "Tools";
-  const billieWorkspaceExpanded = activeInspectorTab !== "assistant" && !inspectorOpen;
+  const billieWorkspaceExpanded =
+    billieWorkspaceSource === "intake" || (activeInspectorTab !== "assistant" && !inspectorOpen);
 
   const refreshAuthSessionState = async (shouldApply = () => true) => {
     try {
@@ -2582,7 +2613,9 @@ function ManualInvoiceCanvas() {
                   Refine the invoice without leaving the draft.
                 </h2>
                 <p className="text-sm leading-6 text-slate-600">
-                  Ask Billie to polish wording and presentation while keeping money changes guarded.
+                  {billieWorkspaceSource === "intake"
+                    ? "Continue from intake review with Billie so the draft feels polished before you save, send, or share it."
+                    : "Ask Billie to polish wording and presentation while keeping money changes guarded."}
                 </p>
               </div>
             </div>
@@ -2600,6 +2633,15 @@ function ManualInvoiceCanvas() {
           </div>
           {billieWorkspaceExpanded ? (
             <>
+              {billieWorkspaceSource === "intake" ? (
+                <div className="mt-4 rounded-2xl border border-[#6993d2]/18 bg-white/72 px-4 py-3 text-sm text-slate-600">
+                  <p className="font-semibold text-slate-900">Continue from intake review</p>
+                  <p className="mt-1">
+                    Billie already helped structure the draft. Use these starter actions to tighten wording and notes
+                    before you move into save, payment, or portal handoff.
+                  </p>
+                </div>
+              ) : null}
               <div className="mt-4 flex flex-wrap gap-2">
                 {billieWorkspaceActions.map((action) => (
                   <button
@@ -2684,7 +2726,9 @@ function ManualInvoiceCanvas() {
                   </span>
                 ) : (
                   <span className="text-xs text-slate-500">
-                    {billieWorkspaceExpanded
+                    {billieWorkspaceSource === "intake"
+                      ? "Billie is carrying the draft forward from intake review. Keep the language client-ready here before you move deeper into operations."
+                      : billieWorkspaceExpanded
                       ? "Billie updates the draft live and keeps numbers unchanged unless you make an explicit money decision."
                       : "Billie tools are open. Use the detailed panel for history, previews, and undo."}
                   </span>
