@@ -992,6 +992,9 @@
       return;
     }
     const recipientEmail = String(options?.recipientEmail ?? "").trim().toLowerCase();
+    const isResend =
+      Boolean(options?.intent === "resend") ||
+      Boolean(invoice?.delivery?.recipientEmail && invoice?.delivery?.sentAt);
     if (!recipientEmail || !isValidEmail(recipientEmail)) {
       setError("Enter a valid recipient email.");
       return;
@@ -1023,10 +1026,19 @@
         )
       );
       if (payload?.mode === "provider") {
-        setDeliveryNotice(`Invoice sent to ${recipientEmail}. Delivery tracking is now active.`);
-      } else {
         setDeliveryNotice(
-          payload?.warning || `Send recorded for ${recipientEmail}. Configure an email provider to send automatically.`
+          isResend
+            ? `Invoice re-sent to ${recipientEmail}. Delivery tracking is now active.`
+            : `Invoice sent to ${recipientEmail}. Delivery tracking is now active.`
+        );
+      } else {
+        const fallbackNotice = isResend
+          ? `Re-send recorded for ${recipientEmail}.`
+          : `Send recorded for ${recipientEmail}.`;
+        setDeliveryNotice(
+          payload?.warning
+            ? `${fallbackNotice} ${payload.warning}`
+            : `${fallbackNotice} Configure an email provider to send automatically.`
         );
       }
       if (invoice.customerName) {

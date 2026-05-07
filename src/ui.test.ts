@@ -6638,6 +6638,75 @@ test("invoice library card highlights a missing client portal after the payment 
   }
 });
 
+test("invoice library resend flow reports a re-send notice for tracked delivery invoices", async () => {
+  const ownerId = "ui-library-resend-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Re-send Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-RESEND-1",
+          issueDate: "2026-05-05",
+          dueDate: "2026-05-20",
+          customerName: "Re-send Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Follow-up service call",
+              quantity: 1,
+              unitPrice: 180,
+              amount: 180
+            }
+          ],
+          subtotal: 180,
+          total: 180,
+          balanceDue: 180
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const invoiceId = seedPayload?.invoice?.invoiceId as string;
+
+  const firstSendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      recipientEmail: "resend@example.com"
+    }
+  });
+  assert.equal(firstSendResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page.locator("div").filter({ hasText: "INV-RESEND-1" }).first();
+    await card.getByRole("button", { name: "Re-send invoice" }).click();
+    await page
+      .getByText(/Invoice re-sent to resend@example\.com|Re-send recorded for resend@example\.com/)
+      .waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library filters cards by lifecycle status", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {
