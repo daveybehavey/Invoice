@@ -6409,6 +6409,88 @@ test("invoice library shows open pay link action when payment link exists", asyn
   }
 });
 
+test("invoice library can create a client portal and copy a saved invoice share pack", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-library-handoff-owner");
+    window["__copiedSharePack"] = "";
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          window["__copiedSharePack"] = text;
+        }
+      }
+    });
+  });
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-library-handoff-owner"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Portal Handoff Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LIB-HANDOFF-1",
+          issueDate: "2026-05-07",
+          dueDate: "2026-05-14",
+          customerName: "Portal Handoff Client",
+          currency: "USD",
+          paymentLinkUrl: "https://pay.example.com/invoice/INV-LIB-HANDOFF-1",
+          notes: "Please include the gate code on arrival.",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Fence repair visit",
+              quantity: 1,
+              unitPrice: 220,
+              amount: 220
+            }
+          ],
+          subtotal: 220,
+          total: 220,
+          balanceDue: 220,
+          status: "sent"
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("INV-LIB-HANDOFF-1").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Create client portal" }).click();
+    await page.getByText("Client portal is ready. Open it or include it in the share pack.").waitFor({
+      state: "visible"
+    });
+
+    const portalLink = page.getByRole("link", { name: "Open client portal" });
+    await portalLink.waitFor({ state: "visible" });
+    const portalHref = await portalLink.getAttribute("href");
+    assert.match(portalHref ?? "", /^https?:\/\/[^/]+\/portal\/[0-9a-f-]{36}\/.+$/);
+
+    await page.getByRole("button", { name: "Copy share pack" }).click();
+    await page.getByText("Share pack copied. Paste it into email or chat.").waitFor({ state: "visible" });
+
+    const copiedSharePack = await page.evaluate(() => window["__copiedSharePack"]);
+    assert.match(String(copiedSharePack ?? ""), /INV-LIB-HANDOFF-1/);
+    assert.match(String(copiedSharePack ?? ""), /Payment link: https:\/\/pay\.example\.com\/invoice\/INV-LIB-HANDOFF-1/);
+    assert.match(String(copiedSharePack ?? ""), /Client portal: https?:\/\/[^/]+\/portal\/[0-9a-f-]{36}\/.+/);
+  } finally {
+    await context.close();
+  }
+});
+
 test("saving a client remembers bill-to details and autofills later matching drafts", async () => {
   useMockResponses([structuredDuplicateDraft(), emptyAudit()]);
 

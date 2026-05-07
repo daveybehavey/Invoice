@@ -396,6 +396,7 @@
   const [reminderNotificationBusy, setReminderNotificationBusy] = useState(false);
   const [reminderNotificationNotice, setReminderNotificationNotice] = useState("");
   const [followUpNoteNotice, setFollowUpNoteNotice] = useState("");
+  const [handoffNotice, setHandoffNotice] = useState("");
   const undoTimeoutRef = useRef(null);
   const requiresSignIn = (authRequiredByPolicy || authRequiredError) && !authSession?.userId;
   const emailLinkProvider = Array.isArray(authProviders)
@@ -1920,6 +1921,87 @@
     }
   };
 
+  const buildLibraryClientPortalUrl = (invoice) => {
+    if (!invoice?.invoiceId || !invoice?.portalAccessToken) {
+      return "";
+    }
+    return `${window.location.origin}/portal/${invoice.invoiceId}/${encodeURIComponent(invoice.portalAccessToken)}`;
+  };
+
+  const buildLibrarySharePackText = (invoice) => {
+    if (!invoice?.invoiceId) {
+      return "";
+    }
+    const shareLines = [
+      `Invoice ${invoice.invoiceNumber || "Draft"}`,
+      invoice.customerName ? `Client: ${invoice.customerName}` : "",
+      Number.isFinite(invoice.total) ? `Total: ${formatMoney(invoice.total)}` : "",
+      getInvoiceDueDateValue(invoice) ? `Due date: ${getInvoiceDueDateValue(invoice)}` : "",
+      invoice.paymentLinkUrl ? `Payment link: ${invoice.paymentLinkUrl}` : "",
+      buildLibraryClientPortalUrl(invoice) ? `Client portal: ${buildLibraryClientPortalUrl(invoice)}` : "",
+      invoice.notes ? `Notes: ${invoice.notes}` : ""
+    ].filter(Boolean);
+    return shareLines.join("\n");
+  };
+
+  const handleCopyInvoiceSharePack = async (invoice) => {
+    const sharePackText = buildLibrarySharePackText(invoice);
+    if (!sharePackText) {
+      setHandoffNotice("No share pack is available for this invoice yet.");
+      return;
+    }
+    setHandoffNotice("");
+    try {
+      await navigator.clipboard?.writeText?.(sharePackText);
+      setHandoffNotice("Share pack copied. Paste it into email or chat.");
+    } catch (copyError) {
+      setHandoffNotice(copyError?.message || "Could not copy the share pack.");
+    }
+  };
+
+  const handleCreateClientPortal = async (invoice) => {
+    if (!invoice?.invoiceId) {
+      return;
+    }
+    setActionId(invoice.invoiceId);
+    setError("");
+    setHandoffNotice("");
+    try {
+      const payload = await requestJson(
+        `/api/invoices/${invoice.invoiceId}/client-portal-link`,
+        {
+          method: "POST"
+        },
+        "Failed to create the client portal."
+      );
+      const nextPortalToken =
+        payload?.invoice?.invoiceData?.finishedInvoice?.portalAccessToken ??
+        payload?.invoice?.portalAccessToken ??
+        "";
+      if (nextPortalToken) {
+        setInvoices((current) =>
+          current.map((entry) =>
+            entry.invoiceId === invoice.invoiceId
+              ? {
+                  ...entry,
+                  portalAccessToken: nextPortalToken
+                }
+              : entry
+          )
+        );
+      }
+      setHandoffNotice(
+        payload?.clientPortalUrl
+          ? "Client portal is ready. Open it or include it in the share pack."
+          : "Client portal created."
+      );
+    } catch (portalError) {
+      handleLibraryError(portalError, "Failed to create the client portal.");
+    } finally {
+      setActionId("");
+    }
+  };
+
   const toggleSelection = (invoiceId) => {
     setSelectedIds((prev) =>
       prev.includes(invoiceId) ? prev.filter((id) => id !== invoiceId) : [...prev, invoiceId]
@@ -2130,6 +2212,11 @@
         {deliveryNotice ? (
           <div className="nb-banner nb-banner--info mt-3">
             {deliveryNotice}
+          </div>
+        ) : null}
+        {handoffNotice ? (
+          <div className="nb-banner nb-banner--info mt-3">
+            {handoffNotice}
           </div>
         ) : null}
         <div className="nb-accent-panel nb-reveal-up mt-6">
@@ -2798,6 +2885,8 @@
                 const canInstantResend = Boolean(hasDelivery && isValidEmail(deliveryRecipient));
                 const paymentLinkReady =
                   typeof invoice?.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0;
+                const clientPortalUrl = buildLibraryClientPortalUrl(invoice);
+                const clientPortalReady = clientPortalUrl.length > 0;
                 const showSendComposer = sendComposer?.invoiceId === invoice.invoiceId;
                 const isDeleted = invoice.status === "deleted";
                 const isSelected = selectedIds.includes(invoice.invoiceId);
@@ -2991,6 +3080,17 @@
                               ? "Opened by client"
                               : "Reminder-ready"
                             : "Track a send first"
+                  },
+                  {
+                    label: "Portal",
+                    value:
+                      invoice.status === "deleted"
+                        ? "Restore first"
+                        : clientPortalReady
+                          ? "Client portal ready"
+                          : invoice.status === "draft"
+                            ? "Create after save"
+                            : "Create portal"
                   }
                 ];
                 return (
@@ -3080,7 +3180,7 @@
                             Send, payment, and follow-up in one card.
                           </p>
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                        <div className="mt-3 grid gap-2 sm:grid-cols-4">
                           {workflowStages.map((stage) => (
                             <div key={stage.label} className="rounded-2xl border border-white/80 bg-white px-3 py-2">
                               <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
@@ -3243,6 +3343,33 @@
                               Open hosted payment link
                             </a>
                           ) : null}
+                          {clientPortalReady ? (
+                            <a
+                              href={clientPortalUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="nb-btn-secondary inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm"
+                            >
+                              Open client portal
+                            </a>
+                          ) : (
+                            <button
+                              type="button"
+                              className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"
+                              onClick={() => void handleCreateClientPortal(invoice)}
+                              disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy}
+                            >
+                              {actionId === invoice.invoiceId ? "Creating portal..." : "Create client portal"}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"
+                            onClick={() => void handleCopyInvoiceSharePack(invoice)}
+                            disabled={isDeleting}
+                          >
+                            Copy share pack
+                          </button>
                           {recurringEntry ? (
                             <>
                               <label className="nb-subcard inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700">
