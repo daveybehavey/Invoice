@@ -400,6 +400,28 @@ function formatRecurringCadence(intervalDays) {
   return `${normalized}-day`;
 }
 
+function buildBillieWorkspaceStarterInstruction(finishedInvoice, defaultInstruction) {
+  const hasLineItems = Array.isArray(finishedInvoice?.lineItems)
+    ? finishedInvoice.lineItems.some(
+        (lineItem) => typeof lineItem?.description === "string" && lineItem.description.trim()
+      )
+    : false;
+  const hasNotes = typeof finishedInvoice?.notes === "string" && finishedInvoice.notes.trim().length > 0;
+  if (hasLineItems && hasNotes) {
+    return (
+      defaultInstruction ||
+      "Refine the invoice wording and notes so this saved draft feels polished and client-ready. Keep numbers unchanged."
+    );
+  }
+  if (hasLineItems) {
+    return "Refine the invoice wording so this saved draft feels polished and client-ready. Keep numbers unchanged.";
+  }
+  if (hasNotes) {
+    return "Refine the notes so this saved draft feels polished and client-ready. Keep numbers unchanged.";
+  }
+  return "Refine the client-facing wording and presentation while keeping numbers unchanged.";
+}
+
 function buildLauncherPostReminderNextStepNotice(invoice) {
   const paymentLinkReady = Boolean(String(invoice?.paymentLinkUrl ?? "").trim());
   const deliveryOpened = Boolean(invoice?.delivery?.openedAt) || invoice?.delivery?.status === "opened";
@@ -976,6 +998,8 @@ function Launcher() {
     hasStripePortal
   });
   const draftStorageKey = requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? "invoiceDraft";
+  const billieWorkspaceStorageKey =
+    requestIdentity.getScopedStorageKey?.("billieWorkspaceInstruction") ?? "billieWorkspaceInstruction";
   const [hasResumeDraft, setHasResumeDraft] = useState(false);
   const [showAlternateStarts, setShowAlternateStarts] = useState(false);
   const [showPlanActions, setShowPlanActions] = useState(false);
@@ -1277,7 +1301,7 @@ function Launcher() {
     };
   }, [authSession?.userId, savedWorkRefreshToken]);
 
-  const handleResumeSavedDraft = async (invoiceId) => {
+  const handleResumeSavedDraft = async (invoiceId, options = {}) => {
     if (!invoiceId || resumeDraftBusyId) {
       return;
     }
@@ -1300,7 +1324,20 @@ function Launcher() {
         savedInvoiceStatus: savedInvoice?.status ?? "draft"
       });
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
-      navigate("/manual");
+      if (options?.openWithBillie) {
+        try {
+          window.localStorage.setItem(
+            billieWorkspaceStorageKey,
+            buildBillieWorkspaceStarterInstruction(
+              finishedInvoice,
+              "Refine the invoice wording and notes so this saved draft feels polished and client-ready. Keep numbers unchanged."
+            )
+          );
+        } catch (_error) {
+          // Best-effort only.
+        }
+      }
+      navigate(options?.openWithBillie ? "/manual?tab=assistant&source=library" : "/manual");
     } catch (error) {
       setAuthError(error?.message || "Failed to open draft.");
     } finally {
@@ -1675,6 +1712,7 @@ function Launcher() {
             loading={draftRecoveryLoading}
             busyInvoiceId={resumeDraftBusyId}
             onResumeDraft={handleResumeSavedDraft}
+            onResumeWithBillie={(invoiceId) => handleResumeSavedDraft(invoiceId, { openWithBillie: true })}
             onOpenLibrary={() => navigate("/invoices")}
           />
 

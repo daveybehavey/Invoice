@@ -661,7 +661,14 @@ function LauncherSetupChecklist({ status, onContinueSetup }) {
   );
 }
 
-function LauncherDraftRecoverySection({ drafts, loading, busyInvoiceId, onResumeDraft, onOpenLibrary }) {
+function LauncherDraftRecoverySection({
+  drafts,
+  loading,
+  busyInvoiceId,
+  onResumeDraft,
+  onResumeWithBillie,
+  onOpenLibrary
+}) {
   if (loading || !Array.isArray(drafts) || drafts.length === 0) {
     return null;
   }
@@ -702,6 +709,15 @@ function LauncherDraftRecoverySection({ drafts, loading, busyInvoiceId, onResume
               disabled={busyInvoiceId === draft.invoiceId}
             >
               {busyInvoiceId === draft.invoiceId ? "Opening..." : "Resume"}
+            </button>
+            <button
+              type="button"
+              className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:text-slate-300"
+              aria-label={`Open ${draft.invoiceNumber || "draft invoice"} with Billie`}
+              onClick={() => onResumeWithBillie?.(draft.invoiceId)}
+              disabled={busyInvoiceId === draft.invoiceId}
+            >
+              {busyInvoiceId === draft.invoiceId ? "Opening..." : "Open with Billie"}
             </button>
           </div>
         ))}

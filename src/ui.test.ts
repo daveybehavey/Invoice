@@ -4663,6 +4663,68 @@ test("launcher starts a fresh repeat invoice from paid work", async () => {
   }
 });
 
+test("launcher draft recovery can reopen a saved draft in Billie workspace", async () => {
+  const ownerId = "ui-launcher-billie-draft-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Launcher Billie Draft Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LAUNCHER-BILLIE-DRAFT",
+          issueDate: "2026-03-12",
+          customerName: "Launcher Billie Draft Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "launcher-billie-draft-line-1",
+              type: "labor",
+              description: "Needs cleaner wording",
+              quantity: 1,
+              unitPrice: 95,
+              amount: 95
+            }
+          ],
+          notes: "Need stronger client-facing notes.",
+          subtotal: 95,
+          total: 95,
+          balanceDue: 95
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Open with Billie" }).first().click();
+
+    await page.waitForURL(/\/manual\?tab=assistant&source=library$/, { timeout: 10000 });
+    await page.getByText("Saved invoice reopened in Billie workspace.").waitFor({ state: "visible" });
+    await page.getByText("Continue from saved work").waitFor({ state: "visible" });
+    await page
+      .locator('[data-testid="manual-billie-workspace"]')
+      .getByRole("button", { name: "Polish reopened draft" })
+      .waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher repeat command center can start from saved memory for paid clients", async () => {
   const ownerId = "ui-repeat-launcher-memory-owner";
   const context = await browser.newContext();
