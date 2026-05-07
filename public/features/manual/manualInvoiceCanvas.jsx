@@ -417,11 +417,9 @@ function ManualInvoiceCanvas() {
   const hostedPaymentLinkUnavailable = accountPlan?.billing?.invoicePaymentAvailable === false;
   const hostedPaymentLinkUnavailableMessage =
     "Hosted payment links are not configured on this build yet. You can still share the client portal, copy the share pack, or send the invoice manually.";
-  const billieWorkspaceSource = searchParams.get("source") === "intake"
-    ? "intake"
-    : searchParams.get("source") === "import"
-      ? "import"
-      : "";
+  const billieWorkspaceSource = ["intake", "import", "library"].includes(searchParams.get("source") || "")
+    ? searchParams.get("source")
+    : "";
   const refreshOnboardingStatus = (sessionOverride) => {
     setOnboardingStatus(
       buildOnboardingStatus({
@@ -464,6 +462,10 @@ function ManualInvoiceCanvas() {
     }
     if (searchParams.get("source") === "intake") {
       setImportedDraftNotice("Draft ready for Billie handoff from intake review.");
+      return;
+    }
+    if (searchParams.get("source") === "library") {
+      setImportedDraftNotice("Saved invoice reopened in Billie workspace.");
       return;
     }
     setImportedDraftNotice("");
@@ -2190,7 +2192,31 @@ function ManualInvoiceCanvas() {
             instruction: "Make the notes more professional."
           }
         ]
-      : [
+      : billieWorkspaceSource === "library"
+        ? [
+            {
+              id: "library-polish",
+              label: "Polish reopened draft",
+              instruction:
+                "Refine the invoice wording and notes so this saved draft feels polished and client-ready. Keep numbers unchanged."
+            },
+            {
+              id: "library-simpler",
+              label: "Simpler wording",
+              instruction: "Make the wording simpler and clearer for the client."
+            },
+            {
+              id: "library-follow-up",
+              label: "Sharpen follow-up tone",
+              instruction: "Make the notes and invoice language feel clearer before I send or follow up."
+            },
+            {
+              id: "library-refine-notes",
+              label: "Refine notes",
+              instruction: "Make the notes more professional."
+            }
+          ]
+        : [
           {
             id: "formal-descriptions",
             label: "Formal descriptions",
@@ -2615,6 +2641,8 @@ function ManualInvoiceCanvas() {
                 <p className="text-sm leading-6 text-slate-600">
                   {billieWorkspaceSource === "intake"
                     ? "Continue from intake review with Billie so the draft feels polished before you save, send, or share it."
+                    : billieWorkspaceSource === "library"
+                      ? "Continue from saved work with Billie so the reopened draft feels polished before you send, remind, or reuse it."
                     : "Ask Billie to polish wording and presentation while keeping money changes guarded."}
                 </p>
               </div>
@@ -2639,6 +2667,14 @@ function ManualInvoiceCanvas() {
                   <p className="mt-1">
                     Billie already helped structure the draft. Use these starter actions to tighten wording and notes
                     before you move into save, payment, or portal handoff.
+                  </p>
+                </div>
+              ) : billieWorkspaceSource === "library" ? (
+                <div className="mt-4 rounded-2xl border border-[#6993d2]/18 bg-white/72 px-4 py-3 text-sm text-slate-600">
+                  <p className="font-semibold text-slate-900">Continue from saved work</p>
+                  <p className="mt-1">
+                    Billie reopened the draft with the saved invoice intact. Use these starter actions to tighten the
+                    client-facing language before you send, follow up, or reuse it.
                   </p>
                 </div>
               ) : null}
@@ -2728,6 +2764,8 @@ function ManualInvoiceCanvas() {
                   <span className="text-xs text-slate-500">
                     {billieWorkspaceSource === "intake"
                       ? "Billie is carrying the draft forward from intake review. Keep the language client-ready here before you move deeper into operations."
+                      : billieWorkspaceSource === "library"
+                        ? "Billie is carrying this saved invoice back into the workspace so you can tighten it before sending, reminding, or repeating the job."
                       : billieWorkspaceExpanded
                       ? "Billie updates the draft live and keeps numbers unchanged unless you make an explicit money decision."
                       : "Billie tools are open. Use the detailed panel for history, previews, and undo."}

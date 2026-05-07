@@ -756,6 +756,72 @@ test("intake can hand off directly into manual Billie workspace", async () => {
   }
 });
 
+test("library can reopen a saved invoice directly in Billie workspace", async () => {
+  const ownerId = "ui-library-billie-open-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Library Billie Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LIB-BILLIE-1",
+          issueDate: "2026-03-12",
+          customerName: "Library Billie Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "library-billie-line-1",
+              type: "labor",
+              description: "Rough maintenance wording",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          notes: "Need cleaner client-facing notes.",
+          subtotal: 120,
+          total: 120,
+          balanceDue: 120
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Open with Billie" }).first().click();
+
+    await page.waitForURL(/\/manual\?tab=assistant&source=library$/, { timeout: 10000 });
+    await page.getByText("Saved invoice reopened in Billie workspace.").waitFor({ state: "visible" });
+    await page.getByText("Continue from saved work").waitFor({ state: "visible" });
+    await page
+      .locator('[data-testid="manual-billie-workspace"]')
+      .getByRole("button", { name: "Polish reopened draft" })
+      .waitFor({ state: "visible" });
+    await expectValueEquals(
+      page.locator('[data-testid="manual-billie-workspace"]').getByPlaceholder(/Ask Billie to refine wording/i),
+      "Refine the invoice wording and notes so this saved draft feels polished and client-ready. Keep numbers unchanged."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("first invoice onboarding tracks progress across launcher, intake, and manual", async () => {
   useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
   const context = await browser.newContext();

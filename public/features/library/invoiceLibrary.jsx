@@ -895,7 +895,7 @@
       if (typeof options?.onLoaded === "function") {
         options.onLoaded(savedInvoice, draft);
       }
-      navigate("/manual");
+      navigate(options?.navigateTo || "/manual");
     } catch (openError) {
       handleLibraryError(openError, "Failed to open invoice.");
     } finally {
@@ -904,6 +904,34 @@
   };
 
   const handleOpen = (invoiceId) => openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`);
+  const handleOpenWithBillie = (invoiceId) =>
+    openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`, "GET", {}, {
+      onLoaded: (savedInvoice) => {
+        const finishedInvoice = savedInvoice?.invoiceData?.finishedInvoice ?? {};
+        const hasLineItems = Array.isArray(finishedInvoice?.lineItems)
+          ? finishedInvoice.lineItems.some(
+              (lineItem) => typeof lineItem?.description === "string" && lineItem.description.trim()
+            )
+          : false;
+        const hasNotes = typeof finishedInvoice?.notes === "string" && finishedInvoice.notes.trim().length > 0;
+        const starterInstruction =
+          hasLineItems && hasNotes
+            ? "Refine the invoice wording and notes so this saved draft feels polished and client-ready. Keep numbers unchanged."
+            : hasLineItems
+              ? "Refine the invoice wording so this saved draft feels polished and client-ready. Keep numbers unchanged."
+              : hasNotes
+                ? "Refine the notes so this saved draft feels polished and client-ready. Keep numbers unchanged."
+                : "Refine the client-facing wording and presentation while keeping numbers unchanged.";
+        try {
+          const billieWorkspaceStorageKey =
+            requestIdentity.getScopedStorageKey?.("billieWorkspaceInstruction") ?? "billieWorkspaceInstruction";
+          window.localStorage.setItem(billieWorkspaceStorageKey, starterInstruction);
+        } catch (_error) {
+          // Best-effort only.
+        }
+      },
+      navigateTo: "/manual?tab=assistant&source=library"
+    });
   const handleInvoiceAgain = (invoiceId, options = {}) =>
     openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`, "GET", {
       freshDraft: true,
@@ -3679,6 +3707,14 @@
                             disabled={actionId === invoice.invoiceId}
                           >
                             {actionId === invoice.invoiceId ? "Opening..." : "Open"}
+                          </button>
+                          <button
+                            type="button"
+                            className="nb-btn-secondary rounded-xl border-[#6993d2]/30 bg-[#f5f9ff] px-4 py-2 text-[#1d4f91] hover:border-[#6993d2]/45 hover:text-[#093064] disabled:cursor-not-allowed disabled:text-slate-300"
+                            onClick={() => handleOpenWithBillie(invoice.invoiceId)}
+                            disabled={actionId === invoice.invoiceId || isStatusBusy}
+                          >
+                            {actionId === invoice.invoiceId ? "Opening..." : "Open with Billie"}
                           </button>
                           <button
                             type="button"
