@@ -1938,8 +1938,9 @@
   return (
     <div className="nb-page nb-page--quiet min-h-screen">
       <main className="nb-page-shell nb-page-shell--medium max-w-5xl py-10">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
+        <div className="nb-surface nb-surface--elevated nb-hero-glow nb-reveal-up rounded-[34px] p-5 md:p-6">
+          <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+          <div className="max-w-2xl">
             <button
               type="button"
               className="nb-btn-ghost"
@@ -1947,9 +1948,12 @@
             >
               Back to launcher
             </button>
-            <h1 className="nb-section-title mt-3">Invoice Library</h1>
-            <p className="mt-1 text-sm text-slate-600">
-              Reopen saved work, follow up, and keep payments moving.
+            <div className="mt-4 inline-flex rounded-full border border-[#6993d2]/14 bg-white/82 px-3 py-1 shadow-sm">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[#5f8fd2]">Operations Hub</p>
+            </div>
+            <h1 className="nb-hero-title mt-4 text-[2.5rem] md:text-[3.5rem]">Invoice Library</h1>
+            <p className="mt-3 text-base leading-7 text-slate-600">
+              Reopen saved work, follow up with confidence, and keep repeat jobs and payments moving from one calm place.
             </p>
             <p className="nb-assistant-chip nb-assistant-chip--ready mt-2 inline-flex normal-case tracking-normal text-xs">
               <span className="nb-assistant-chip__dot" aria-hidden="true" />
@@ -2020,7 +2024,7 @@
               <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
             ) : null}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 md:max-w-[320px] md:justify-end">
               <div className="nb-toolbar">
                 <button
                   type="button"
@@ -2100,6 +2104,7 @@
             </button>
           </div>
         </div>
+        </div>
 
         {error ? (
           <div className="nb-banner nb-banner--danger mt-6">
@@ -2127,13 +2132,13 @@
             {deliveryNotice}
           </div>
         ) : null}
-        <div className="nb-surface nb-surface--muted mt-6 rounded-[26px] px-4 py-4 shadow-sm">
+        <div className="nb-surface nb-surface--muted mt-6 rounded-[30px] px-5 py-5 shadow-sm">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-1">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Reminder notifications
               </p>
-              <p className="text-sm text-slate-600">
+              <p className="text-base text-slate-600" style={{ fontFamily: "'Fraunces', serif" }}>
                 {reminderNotificationsSubtitle}
               </p>
             </div>

@@ -2317,7 +2317,7 @@ function ManualInvoiceCanvas() {
         ) : null}
         {onboardingStatus.visible || onboardingStatus.completionVisible ? (
           <section
-            className="nb-surface nb-surface--elevated mb-4 rounded-[30px] p-4 md:col-span-2 no-print"
+            className="nb-surface nb-surface--elevated nb-hero-glow nb-reveal-up mb-4 rounded-[34px] p-5 md:col-span-2 no-print"
             data-testid="manual-onboarding-section"
           >
             {onboardingStatus.completionVisible ? (
@@ -2327,7 +2327,7 @@ function ManualInvoiceCanvas() {
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
                       First invoice complete
                     </p>
-                    <p className="mt-1 text-lg font-semibold text-slate-900">
+                    <p className="mt-2 text-xl font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
                       You finished the first full NoteBill loop.
                     </p>
                     <p className="mt-1 text-sm leading-6 text-slate-600">
@@ -2355,7 +2355,7 @@ function ManualInvoiceCanvas() {
                 <div className="mt-4 grid gap-3 md:grid-cols-3">
                   <button
                     type="button"
-                    className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4 text-left"
+                    className="rounded-[24px] border border-emerald-100 bg-[linear-gradient(145deg,_rgba(236,253,245,0.92)_0%,_rgba(255,255,255,0.96)_100%)] p-4 text-left shadow-sm"
                     onClick={() => navigate("/settings/business?from=onboarding-complete")}
                   >
                     <p className="text-sm font-semibold text-slate-900">Branding</p>
@@ -2365,7 +2365,7 @@ function ManualInvoiceCanvas() {
                   </button>
                   <button
                     type="button"
-                    className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4 text-left"
+                    className="rounded-[24px] border border-emerald-100 bg-[linear-gradient(145deg,_rgba(236,253,245,0.92)_0%,_rgba(255,255,255,0.96)_100%)] p-4 text-left shadow-sm"
                     onClick={() => navigate("/settings/memory?from=onboarding-complete")}
                   >
                     <p className="text-sm font-semibold text-slate-900">Client memory</p>
@@ -2375,7 +2375,7 @@ function ManualInvoiceCanvas() {
                   </button>
                   <button
                     type="button"
-                    className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-4 text-left"
+                    className="rounded-[24px] border border-emerald-100 bg-[linear-gradient(145deg,_rgba(236,253,245,0.92)_0%,_rgba(255,255,255,0.96)_100%)] p-4 text-left shadow-sm"
                     onClick={() => navigate("/settings/services?from=onboarding-complete")}
                   >
                     <p className="text-sm font-semibold text-slate-900">Service catalog</p>
@@ -2392,7 +2392,7 @@ function ManualInvoiceCanvas() {
                     <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
                       {onboardingStatus.walkthroughActive ? "Guided walkthrough" : "First invoice progress"}
                     </p>
-                    <p className="mt-1 text-lg font-semibold text-slate-900">
+                    <p className="mt-2 text-xl font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
                       {onboardingStatus.completedCount} of {onboardingStatus.totalSteps} core steps complete
                     </p>
                     <p className="mt-1 text-sm leading-6 text-slate-600">
@@ -2437,7 +2437,7 @@ function ManualInvoiceCanvas() {
                 </div>
                 {onboardingContextCue ? (
                   <div
-                    className="mt-3 rounded-[24px] border border-[#6993d2]/18 bg-[#f7faff] px-4 py-4"
+                    className="mt-4 rounded-[26px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_#f7faff_0%,_#ffffff_56%,_#edf6ff_100%)] px-4 py-4 shadow-sm"
                     data-testid="manual-onboarding-next-cue"
                   >
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -2445,10 +2445,10 @@ function ManualInvoiceCanvas() {
                         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
                           {onboardingContextCue.eyebrow}
                         </p>
-                        <p className="mt-1 text-sm font-semibold text-slate-900">
+                        <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
                           {onboardingContextCue.title}
                         </p>
-                        <p className="mt-1 text-xs leading-5 text-slate-600">
+                        <p className="mt-2 text-sm leading-6 text-slate-600">
                           {onboardingContextCue.detail}
                         </p>
                       </div>
@@ -2504,7 +2504,7 @@ function ManualInvoiceCanvas() {
             </button>
             <button
               type="button"
-              className="inline-flex min-h-10 items-center justify-center rounded-full px-3 text-xs font-semibold text-slate-500 underline-offset-2 transition hover:bg-white/70 hover:text-slate-700 hover:underline"
+              className="inline-flex min-h-10 items-center justify-center rounded-full border border-white/70 bg-white/70 px-3 text-xs font-semibold text-slate-500 shadow-sm underline-offset-2 transition hover:bg-white/90 hover:text-slate-700 hover:underline"
               onClick={() => navigate("/help")}
             >
               Help center
@@ -2512,24 +2512,28 @@ function ManualInvoiceCanvas() {
           </div>
           <button
             type="button"
-            className="inline-flex min-h-10 items-center justify-center rounded-full px-3 text-xs font-semibold text-slate-500 underline-offset-2 transition hover:bg-white/70 hover:text-slate-700 hover:underline"
+            className="inline-flex min-h-10 items-center justify-center rounded-full border border-white/70 bg-white/70 px-3 text-xs font-semibold text-slate-500 shadow-sm underline-offset-2 transition hover:bg-white/90 hover:text-slate-700 hover:underline"
             onClick={() => navigate("/")}
           >
             {authSession?.email ? `Account: ${authSession.email}` : "Account: local mode"}
           </button>
         </div>
         <section
-          className="nb-assistant-panel mb-4 rounded-[30px] p-4 md:col-span-2 no-print"
+          className="nb-assistant-panel nb-hero-glow nb-reveal-up mb-4 rounded-[34px] p-5 md:col-span-2 no-print"
           data-testid="manual-billie-workspace"
         >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-2xl space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-                Work with Billie
-              </p>
+              <div className="inline-flex rounded-full border border-[#6993d2]/12 bg-white/76 px-3 py-1 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.26em] text-[#5f8fd2]">
+                  Work with Billie
+                </p>
+              </div>
               <div className="space-y-1">
-                <h2 className="text-lg font-semibold text-slate-900">Refine the invoice without leaving the draft.</h2>
-                <p className="text-sm text-slate-600">
+                <h2 className="text-2xl font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+                  Refine the invoice without leaving the draft.
+                </h2>
+                <p className="text-sm leading-6 text-slate-600">
                   Ask Billie to polish wording and presentation while keeping money changes guarded.
                 </p>
               </div>
@@ -2643,7 +2647,7 @@ function ManualInvoiceCanvas() {
         </section>
         {billieNextMoves.length > 0 ? (
           <section
-            className="mb-4 rounded-[28px] border border-[#6993d2]/18 bg-[#f7faff] p-4 md:col-span-2 no-print"
+            className="mb-4 rounded-[30px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_#f7faff_0%,_#ffffff_56%,_#edf6ff_100%)] p-5 md:col-span-2 no-print shadow-sm"
             data-testid="manual-billie-next-moves"
           >
             <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
@@ -2651,7 +2655,7 @@ function ManualInvoiceCanvas() {
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
                   Billie next moves
                 </p>
-                <p className="mt-1 text-sm text-slate-600">
+                <p className="mt-2 text-base text-slate-600" style={{ fontFamily: "'Fraunces', serif" }}>
                   Keep this draft moving with the next highest-value step.
                 </p>
               </div>
@@ -3700,7 +3704,7 @@ function ManualInvoiceCanvas() {
             </section>
 
             <section
-              className="rounded-2xl border border-[#6993d2]/18 bg-[#f7faff] p-4 no-print"
+              className="rounded-[30px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_#f7faff_0%,_#ffffff_56%,_#edf6ff_100%)] p-5 no-print shadow-sm"
               data-testid="manual-send-payment-handoff"
             >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -3708,10 +3712,10 @@ function ManualInvoiceCanvas() {
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
                     Send & payment handoff
                   </p>
-                  <h3 className="mt-1 text-sm font-semibold text-slate-900">
+                  <h3 className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
                     Make the customer handoff feel complete before you leave the editor.
                   </h3>
-                  <p className="mt-1 text-xs leading-5 text-slate-600">
+                  <p className="mt-2 text-sm leading-6 text-slate-600">
                     Billie keeps the handoff explicit: first make the invoice send-ready, then save it, then add the payment and portal steps you want.
                   </p>
                 </div>
