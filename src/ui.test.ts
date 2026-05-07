@@ -4718,6 +4718,17 @@ test("launcher shows a pro value pitch when one free save remains", async () => 
     }
   });
   assert.equal(seedResponse.status(), 200);
+  const seededInvoiceId = String((await seedResponse.json()).invoice?.invoiceId ?? "");
+  assert.ok(seededInvoiceId);
+  const sentResponse = await context.request.post(`${baseUrl}/api/invoices/${seededInvoiceId}/status`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      status: "sent"
+    }
+  });
+  assert.equal(sentResponse.status(), 200);
 
   const page = await context.newPage();
   try {
@@ -6270,6 +6281,66 @@ test("invoice library card surfaces a best next action for sent invoices", async
     const card = page.locator("div").filter({ hasText: "INV-CARD-NEXT-1" }).first();
     await card.getByText("Best next action").waitFor({ state: "visible" });
     await card.getByText("Open and add payment link").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library card highlights a missing client portal after the payment link is ready", async () => {
+  const ownerId = "ui-library-card-portal-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Portal Gap Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-CARD-PORTAL-1",
+          issueDate: "2026-05-02",
+          dueDate: "2026-05-22",
+          customerName: "Portal Gap Client",
+          currency: "USD",
+          paymentLinkUrl: "https://pay.example.com/invoice/INV-CARD-PORTAL-1",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Deck repair",
+              quantity: 1,
+              unitPrice: 180,
+              amount: 180
+            }
+          ],
+          subtotal: 180,
+          total: 180,
+          balanceDue: 180,
+          status: "sent"
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page.locator("div").filter({ hasText: "INV-CARD-PORTAL-1" }).first();
+    await card.getByText("Best next action").waitFor({ state: "visible" });
+    await card.getByText("Create client portal").waitFor({ state: "visible" });
+    await card
+      .getByText("The payment link is ready. Add the portal so the customer gets the full review-and-pay handoff.")
+      .waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

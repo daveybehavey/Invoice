@@ -1716,6 +1716,15 @@
     invoices
       .filter((invoice) => invoice?.status === "sent" && !String(invoice?.paymentLinkUrl ?? "").trim())
       .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
+  const sentWithoutPortalInvoice =
+    invoices
+      .filter(
+        (invoice) =>
+          invoice?.status === "sent" &&
+          String(invoice?.paymentLinkUrl ?? "").trim() &&
+          !String(invoice?.portalAccessToken ?? "").trim()
+      )
+      .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
   const paidRepeatCandidate =
     invoices
       .filter((invoice) => invoice?.status === "paid")
@@ -1781,6 +1790,30 @@
           actionId === sentWithoutPaymentLinkInvoice.invoiceId ? "Opening..." : "Open invoice",
         primaryDisabled: actionId === sentWithoutPaymentLinkInvoice.invoiceId,
         onPrimary: () => handleOpen(sentWithoutPaymentLinkInvoice.invoiceId),
+        secondaryLabel: "Show sent invoices",
+        secondaryDisabled: false,
+        onSecondary: () => {
+          setStatusFilter("sent");
+          setSelectedIds([]);
+        }
+      };
+    }
+    if (sentWithoutPortalInvoice) {
+      return {
+        toneClass: "border-cyan-200 bg-cyan-50 text-cyan-950",
+        eyebrow: "Billie next up",
+        title: `Create the portal for ${sentWithoutPortalInvoice.invoiceNumber || "this invoice"}`,
+        body: "The hosted payment link is already in place. Finish the handoff with a client portal so the customer can review details before paying.",
+        meta: [
+          sentWithoutPortalInvoice.customerName || "",
+          Number.isFinite(sentWithoutPortalInvoice.total)
+            ? `Total ${formatMoney(sentWithoutPortalInvoice.total)}`
+            : ""
+        ].filter(Boolean),
+        primaryLabel:
+          actionId === sentWithoutPortalInvoice.invoiceId ? "Creating portal..." : "Create client portal",
+        primaryDisabled: actionId === sentWithoutPortalInvoice.invoiceId,
+        onPrimary: () => void handleCreateClientPortal(sentWithoutPortalInvoice),
         secondaryLabel: "Show sent invoices",
         secondaryDisabled: false,
         onSecondary: () => {
@@ -3022,6 +3055,14 @@
                     return {
                       label: "Open and add payment link",
                       detail: "This invoice is already out. Tighten the handoff by adding a hosted payment link."
+                    };
+                  }
+                  if (invoice.status === "sent" && !clientPortalReady) {
+                    return {
+                      label: "Create client portal",
+                      detail: paymentLinkReady
+                        ? "The payment link is ready. Add the portal so the customer gets the full review-and-pay handoff."
+                        : "Once the draft is sent, add a client portal so the customer can review details in one place."
                     };
                   }
                   if (invoice.status === "sent") {
