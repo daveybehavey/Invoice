@@ -4561,6 +4561,107 @@ test("launcher starts a fresh repeat invoice from paid work", async () => {
   }
 });
 
+test("launcher repeat command center can start from saved memory for paid clients", async () => {
+  const ownerId = "ui-repeat-launcher-memory-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          name: "Repeat Client",
+          details: "Repeat Client\nNorth service gate",
+          defaultNotes: "Monthly maintenance visit. Payment due on receipt.",
+          recurringIntervalDays: 30,
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          description: "Quarterly drain maintenance",
+          qty: "2",
+          rate: "120",
+          clientName: "Repeat Client",
+          usageCount: 4,
+          updatedAt: "2026-04-21T12:00:00.000Z"
+        }
+      ])
+    );
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Repeat Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-OPS-PAID-MEM",
+          issueDate: "2026-03-12",
+          customerName: "Repeat Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "repeat-line-1",
+              type: "labor",
+              description: "Monthly maintenance visit",
+              quantity: 2,
+              unitPrice: 85,
+              amount: 170
+            }
+          ],
+          notes: "Use the north service gate.",
+          subtotal: 170,
+          total: 170,
+          balanceDue: 170
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const savePayload = await saveResponse.json();
+  await mutateStoredInvoice(savePayload?.invoice?.invoiceId, {
+    status: "paid",
+    updatedAt: "2026-04-18T12:00:00.000Z"
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+    await queue
+      .getByText("Saved monthly cadence and Quarterly drain maintenance memory are ready.")
+      .waitFor({ state: "visible" });
+    await queue.getByRole("button", { name: "Start from saved memory for Repeat Client" }).click();
+
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Repeat Client");
+    await expectValueEquals(
+      page.locator("tbody tr").first().getByPlaceholder("Description", { exact: true }),
+      "Quarterly drain maintenance"
+    );
+    await expectValueEquals(page.locator("tbody tr").first().getByPlaceholder("0", { exact: true }), "2");
+    await expectValueEquals(page.locator("tbody tr").first().getByPlaceholder("$0", { exact: true }), "120");
+    await expectValueEquals(
+      page.getByPlaceholder("Thank you for your business"),
+      "Monthly maintenance visit. Payment due on receipt."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher can start a fresh draft from repeat client memory", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

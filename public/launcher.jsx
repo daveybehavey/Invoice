@@ -112,7 +112,7 @@ const clientMemoryUtils = window.InvoiceClientMemory;
 if (!clientMemoryUtils) {
   throw new Error("Missing /utils/clientMemory.js load. Ensure it is loaded before /launcher.jsx.");
 }
-const { getClientMemory } = clientMemoryUtils;
+const { getClientMemory, getClientRecurringInterval } = clientMemoryUtils;
 const lineItemLibraryUtils = window.InvoiceLineItemLibrary;
 if (!lineItemLibraryUtils) {
   throw new Error("Missing /utils/lineItemLibrary.js load. Ensure it is loaded before /launcher.jsx.");
@@ -339,14 +339,79 @@ function buildRepeatWorkStarter(clientMemoryEntries, savedLineItems) {
   return candidates[0] ?? null;
 }
 
+function buildRepeatWorkStarterForClient(clientName, clientMemoryEntries, savedLineItems) {
+  const normalizedTarget = typeof clientName === "string" ? clientName.trim().toLowerCase() : "";
+  if (!normalizedTarget) {
+    return null;
+  }
+  return (
+    (Array.isArray(clientMemoryEntries) ? clientMemoryEntries : [])
+      .map((entry) => {
+        const normalizedName = typeof entry?.name === "string" ? entry.name.trim().toLowerCase() : "";
+        if (!normalizedName || normalizedName !== normalizedTarget) {
+          return null;
+        }
+        const matchingItems = (Array.isArray(savedLineItems) ? savedLineItems : [])
+          .filter((item) => typeof item?.clientName === "string" && item.clientName.trim().toLowerCase() === normalizedTarget)
+          .sort((left, right) => {
+            const usageDelta = Number(right?.usageCount ?? 0) - Number(left?.usageCount ?? 0);
+            if (usageDelta !== 0) {
+              return usageDelta;
+            }
+            return String(right?.updatedAt ?? "").localeCompare(String(left?.updatedAt ?? ""));
+          });
+        if (!matchingItems.length) {
+          return null;
+        }
+        return {
+          entry,
+          leadItem: matchingItems[0],
+          savedItemCount: matchingItems.length
+        };
+      })
+      .filter(Boolean)
+      .sort((left, right) => String(right.entry?.updatedAt ?? "").localeCompare(String(left.entry?.updatedAt ?? "")))[0] ?? null
+  );
+}
+
+function normalizeRecurringInterval(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 30;
+  }
+  const rounded = Math.round(parsed);
+  if (rounded < 1) {
+    return 30;
+  }
+  return Math.min(rounded, 365);
+}
+
+function formatRecurringCadence(intervalDays) {
+  const normalized = normalizeRecurringInterval(intervalDays);
+  if (normalized === 7) {
+    return "weekly";
+  }
+  if (normalized === 14) {
+    return "biweekly";
+  }
+  if (normalized === 30) {
+    return "monthly";
+  }
+  return `${normalized}-day`;
+}
+
 function pluralize(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
-function buildLauncherOperationsSummary(invoices, nowMs = Date.now()) {
+function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now()) {
   const activeInvoices = Array.isArray(invoices)
     ? invoices.filter((invoice) => invoice && invoice.status !== "deleted")
     : [];
+  const clientMemoryEntries = Array.isArray(options?.clientMemoryEntries) ? options.clientMemoryEntries : [];
+  const savedLineItems = Array.isArray(options?.savedLineItems) ? options.savedLineItems : [];
+  const resolveRecurringInterval =
+    typeof options?.getRecurringInterval === "function" ? options.getRecurringInterval : () => null;
   const byUpdatedDesc = (a, b) => toTimestamp(b.updatedAt) - toTimestamp(a.updatedAt);
   const drafts = activeInvoices.filter((invoice) => invoice.status === "draft").sort(byUpdatedDesc);
   const sent = activeInvoices.filter((invoice) => invoice.status === "sent").sort(byUpdatedDesc);
@@ -437,18 +502,40 @@ function buildLauncherOperationsSummary(invoices, nowMs = Date.now()) {
     });
   }
   if (repeatCandidate) {
+    const repeatMemoryStarter = buildRepeatWorkStarterForClient(
+      repeatCandidate.customerName ?? "",
+      clientMemoryEntries,
+      savedLineItems
+    );
+    const repeatRecurringInterval = resolveRecurringInterval(repeatCandidate.customerName ?? "");
+    const repeatRecurringLabel = repeatRecurringInterval ? formatRecurringCadence(repeatRecurringInterval) : "";
+    const repeatMemoryLabel = repeatMemoryStarter?.leadItem?.description || "";
+    let repeatDetail = `Start a fresh editable draft from ${
+      repeatCandidate.invoiceNumber || "a paid invoice"
+    }${repeatCandidate.customerName ? ` for ${repeatCandidate.customerName}` : ""}.`;
+    if (repeatRecurringLabel && repeatMemoryLabel) {
+      repeatDetail += ` Saved ${repeatRecurringLabel} cadence and ${repeatMemoryLabel} memory are ready.`;
+    } else if (repeatRecurringLabel) {
+      repeatDetail += ` Saved ${repeatRecurringLabel} cadence is ready for the next job.`;
+    } else if (repeatMemoryLabel) {
+      repeatDetail += ` Saved ${repeatMemoryLabel} memory is ready to prefill the next draft.`;
+    }
     actions.push({
       id: `invoice-again:${repeatCandidate.invoiceId}`,
       tone: "repeat",
       title: "Invoice a repeat client",
-      detail: `Start a fresh editable draft from ${
-        repeatCandidate.invoiceNumber || "a paid invoice"
-      }${repeatCandidate.customerName ? ` for ${repeatCandidate.customerName}` : ""}.`,
+      detail: repeatDetail,
       cta: "Invoice again",
       ariaLabel: `Invoice again from ${repeatCandidate.invoiceNumber || "paid invoice"}`,
       action: "invoice-again",
       busyId: `invoice-again:${repeatCandidate.invoiceId}`,
-      invoiceId: repeatCandidate.invoiceId
+      invoiceId: repeatCandidate.invoiceId,
+      secondaryCta: repeatMemoryStarter ? "Start from memory" : undefined,
+      secondaryAction: repeatMemoryStarter ? "start-from-memory" : undefined,
+      secondaryAriaLabel: repeatMemoryStarter
+        ? `Start from saved memory for ${repeatCandidate.customerName || "repeat client"}`
+        : undefined,
+      memoryClientName: repeatMemoryStarter?.entry?.name || ""
     });
   }
   if (paymentLinkInvoice?.paymentLinkUrl) {
@@ -852,7 +939,9 @@ function Launcher() {
   const [operationsNotice, setOperationsNotice] = useState("");
   const [operationsError, setOperationsError] = useState("");
   const [savedWorkRefreshToken, setSavedWorkRefreshToken] = useState(0);
-  const repeatWorkStarter = buildRepeatWorkStarter(getClientMemory?.() ?? [], getLineItemLibrary?.() ?? []);
+  const clientMemoryEntries = getClientMemory?.() ?? [];
+  const savedLineItems = getLineItemLibrary?.() ?? [];
+  const repeatWorkStarter = buildRepeatWorkStarter(clientMemoryEntries, savedLineItems);
   const primaryOption = (() => {
     const primaryAction = Array.isArray(operationsSummary?.actions) ? operationsSummary.actions[0] : null;
     if (primaryAction) {
@@ -955,6 +1044,49 @@ function Launcher() {
     }).catch(() => {});
     navigate("/manual");
   };
+  const handleStartFromMemoryForClient = (clientName, fallbackInvoiceId = "") => {
+    const specificStarter = buildRepeatWorkStarterForClient(clientName, getClientMemory?.() ?? [], getLineItemLibrary?.() ?? []);
+    if (!specificStarter?.entry || !specificStarter?.leadItem) {
+      if (fallbackInvoiceId) {
+        void handleLauncherInvoiceAgain(fallbackInvoiceId);
+        return;
+      }
+      navigate("/manual");
+      return;
+    }
+    const draft = {
+      billToDetails: specificStarter.entry.details || specificStarter.entry.name || "",
+      notes: specificStarter.entry.defaultNotes || "",
+      lineItems: [
+        {
+          id: `line-${Date.now()}`,
+          description: specificStarter.leadItem.description || "",
+          qty: specificStarter.leadItem.qty ?? "",
+          rate: specificStarter.leadItem.rate ?? ""
+        }
+      ],
+      savedInvoiceId: "",
+      savedInvoiceStatus: ""
+    };
+    window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
+    void apiFetch("/api/telemetry/revenue-signals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "client_memory_reused",
+        source: "launcher_command_center_repeat_memory"
+      })
+    }).catch(() => {});
+    void apiFetch("/api/telemetry/revenue-signals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "service_memory_reused",
+        source: "launcher_command_center_repeat_memory"
+      })
+    }).catch(() => {});
+    navigate("/manual");
+  };
   const quickStartOptions = options
     .filter((option) => option.key === "scratchpad" || option.key === "import" || option.key === "manual")
     .concat(
@@ -1033,7 +1165,13 @@ function Launcher() {
         }
         if (!response.ok) {
           setDraftRecoveryItems([]);
-          setOperationsSummary(buildLauncherOperationsSummary([]));
+          setOperationsSummary(
+            buildLauncherOperationsSummary([], {
+              clientMemoryEntries,
+              savedLineItems,
+              getRecurringInterval: getClientRecurringInterval
+            })
+          );
           return;
         }
         const payload = await response.json();
@@ -1050,13 +1188,25 @@ function Launcher() {
                 updatedLabel: formatUpdatedLabel(invoice.updatedAt)
               }));
         setDraftRecoveryItems(drafts);
-        setOperationsSummary(buildLauncherOperationsSummary(invoices));
+        setOperationsSummary(
+          buildLauncherOperationsSummary(invoices, {
+            clientMemoryEntries,
+            savedLineItems,
+            getRecurringInterval: getClientRecurringInterval
+          })
+        );
       } catch (_error) {
         if (!active) {
           return;
         }
         setDraftRecoveryItems([]);
-        setOperationsSummary(buildLauncherOperationsSummary([]));
+        setOperationsSummary(
+          buildLauncherOperationsSummary([], {
+            clientMemoryEntries,
+            savedLineItems,
+            getRecurringInterval: getClientRecurringInterval
+          })
+        );
       } finally {
         if (active) {
           setDraftRecoveryLoading(false);
@@ -1424,6 +1574,7 @@ function Launcher() {
             onSendReminder={handleLauncherSendReminder}
             onMarkPaid={handleLauncherMarkPaid}
             onInvoiceAgain={handleLauncherInvoiceAgain}
+            onStartFromMemory={handleStartFromMemoryForClient}
             onOpenLibrary={() => navigate("/invoices")}
             onStartInvoice={() => navigate("/ai-intake")}
           />

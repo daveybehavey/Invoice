@@ -158,6 +158,7 @@ function LauncherOperationsQueueSection({
   onSendReminder,
   onMarkPaid,
   onInvoiceAgain,
+  onStartFromMemory,
   onOpenLibrary,
   onStartInvoice
 }) {
@@ -289,6 +290,16 @@ function LauncherOperationsQueueSection({
                     disabled={isActionBusy}
                   >
                     {isSecondaryBusy ? "Saving..." : action.secondaryCta}
+                  </button>
+                ) : action.secondaryAction === "start-from-memory" ? (
+                  <button
+                    type="button"
+                    className="nb-btn-secondary ml-2 mt-3 rounded-full px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label={action.secondaryAriaLabel || action.secondaryCta}
+                    onClick={() => onStartFromMemory?.(action.memoryClientName, action.invoiceId)}
+                    disabled={isActionBusy}
+                  >
+                    {action.secondaryCta}
                   </button>
                 ) : null}
               </div>
