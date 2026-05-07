@@ -1436,6 +1436,9 @@
       if (hasDelivery && !deliveryOpened) {
         return "Past due and still unopened. Re-send it or confirm delivery before sending a payment reminder.";
       }
+      if (hasDelivery && deliveryOpened) {
+        return "Past due and already opened. Send a focused reminder, or mark paid if the payment already arrived.";
+      }
       return "Past due. Follow up, or mark paid if the payment already arrived.";
     }
     if (invoice?.status === "sent" && hasDelivery) {
@@ -1604,6 +1607,8 @@
     ? oldestSentReminder.isPastDue
       ? oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened
         ? "Best next step: re-send it or confirm delivery before sending a payment reminder."
+        : oldestSentReminderHasTrackedDelivery && oldestSentReminderOpened
+          ? "Best next step: send a focused reminder now."
         : "Best next step: send a reminder now."
       : oldestSentReminder.daysSinceUpdate >= 21
         ? "Best next step: send a short check-in, then open the repeat invoice if this becomes routine."
@@ -1702,6 +1707,8 @@
           ? oldestSentReminder.isPastDue
             ? oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened
               ? "Re-send or confirm delivery"
+              : oldestSentReminderHasTrackedDelivery && oldestSentReminderOpened
+                ? "Send focused reminder"
               : "Send reminder now"
             : "Review timing, then remind"
           : oldestSentReminder.customerName
@@ -1711,6 +1718,8 @@
         summary: oldestSentReminder.isPastDue
           ? oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened
             ? "This invoice is overdue, but it still has not been opened by the client."
+            : oldestSentReminderHasTrackedDelivery && oldestSentReminderOpened
+              ? "This invoice is overdue and has already been opened by the client."
             : "This invoice is overdue and still has an open balance."
           : "This invoice is in the follow-up window and still has an open balance."
       }
@@ -1827,6 +1836,8 @@
         title: oldestSentReminder.isPastDue
           ? oldestReminderHasTrackedDelivery && !oldestReminderOpened
             ? `Re-send ${oldestSentReminder.invoiceNumber || "this sent invoice"}`
+            : oldestReminderHasTrackedDelivery && oldestReminderOpened
+              ? `Nudge ${oldestSentReminder.invoiceNumber || "this sent invoice"}`
             : `Follow up on ${oldestSentReminder.invoiceNumber || "this sent invoice"}`
           : oldestReminderHasTrackedDelivery && !oldestReminderOpened
             ? `Check delivery for ${oldestSentReminder.invoiceNumber || "this sent invoice"}`
@@ -1834,6 +1845,8 @@
         body: oldestSentReminder.isPastDue
           ? oldestReminderHasTrackedDelivery && !oldestReminderOpened
             ? "This invoice is overdue, but it still has not been opened. Re-send it or confirm delivery before escalating into a payment reminder."
+            : oldestReminderHasTrackedDelivery && oldestReminderOpened
+              ? "The invoice has already been opened and payment is still outstanding. Send a focused reminder now, then mark it paid if the money already arrived."
             : "Payment is still open. Send the reminder now, then mark it paid if the money already arrived."
           : oldestReminderHasTrackedDelivery && !oldestReminderOpened
             ? "Delivery is tracked, but the invoice has not been opened yet. Confirm whether the client saw it before escalating into a reminder."
@@ -3196,6 +3209,14 @@
                           : "This invoice is overdue and still unopened. Re-send it, confirm delivery, and tighten the payment handoff next."
                       };
                     }
+                    if (hasDelivery && deliveryOpened) {
+                      return {
+                        label: "Send focused reminder",
+                        detail: paymentLinkReady
+                          ? "The client already opened this overdue invoice. Send a direct reminder and keep the hosted payment path handy."
+                          : "The client already opened this overdue invoice. Send a direct reminder, then tighten the payment handoff."
+                      };
+                    }
                     return {
                       label: canQuickSendReminderOldest && oldestSentReminder?.invoiceId === invoice.invoiceId
                         ? "Send reminder now"
@@ -3275,8 +3296,10 @@
                       invoice.status === "paid"
                         ? "No follow-up needed"
                         : isPastDue
-                          ? hasDelivery && !deliveryOpened
-                            ? "Overdue unopened"
+                        ? hasDelivery && !deliveryOpened
+                          ? "Overdue unopened"
+                          : hasDelivery && deliveryOpened
+                            ? "Opened overdue"
                             : "Past due follow-up"
                           : hasDelivery
                             ? deliveryOpened
