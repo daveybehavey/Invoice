@@ -1503,7 +1503,7 @@
     const amountLabel = formatMoney(balanceDue);
     if (status === "paid") {
       return {
-        label: "Paid in full",
+        label: "Paid and closed",
         className: "nb-chip nb-chip--success normal-case tracking-normal"
       };
     }
@@ -1535,7 +1535,7 @@
       return "Restore to edit, export, or send again.";
     }
     if (invoice?.status === "paid") {
-      return "Paid. Use Invoice again for similar work.";
+      return "Paid and closed. Reuse it for the next similar job or set a cadence.";
     }
     if (invoice?.status === "sent" && isPastDue) {
       if (hasDelivery && !deliveryOpened) {
@@ -2116,7 +2116,7 @@
         toneClass: "border-slate-200 bg-slate-50 text-slate-950",
         eyebrow: "Billie next up",
         title: `Start another invoice for ${paidRepeatCandidate.customerName || "a repeat client"}`,
-        body: "Paid work is one of the strongest repeat signals. Open a fresh draft and reuse what already worked.",
+        body: "Paid work is one of the strongest repeat signals. Open a fresh draft, reuse what already worked, and keep the next job moving faster.",
         meta: [
           paidRepeatCandidate.invoiceNumber || "",
           Number.isFinite(paidRepeatCandidate.total)
@@ -3324,7 +3324,7 @@
                   if (invoice.status === "paid") {
                     return {
                       label: "Invoice this client again",
-                      detail: "Paid work is the best repeat-work baseline for a fresh draft."
+                      detail: "This invoice is fully cleared. Reuse it as the baseline for the next similar job or set recurring cadence."
                     };
                   }
                   if (invoice.status === "sent" && isPastDue) {
@@ -3421,7 +3421,7 @@
                     label: "Follow-up",
                     value:
                       invoice.status === "paid"
-                        ? "No follow-up needed"
+                        ? "Closed out"
                         : isPastDue
                         ? hasDelivery && !deliveryOpened
                           ? "Overdue unopened"
@@ -3439,6 +3439,10 @@
                     value:
                       invoice.status === "deleted"
                         ? "Restore first"
+                        : invoice.status === "paid"
+                          ? clientPortalReady
+                            ? "Share-ready record"
+                            : "Optional after payment"
                         : clientPortalReady
                           ? "Review portal ready"
                           : invoice.status === "draft"

@@ -6505,8 +6505,8 @@ test("invoice library supports sent and paid status actions", async () => {
     await card.getByRole("button", { name: "Mark paid" }).click();
     await card.locator("span.rounded-full", { hasText: "paid" }).waitFor({ state: "visible" });
     await card.getByText("Paid invoice", { exact: true }).waitFor({ state: "visible" });
-    await card.getByText("Paid in full").waitFor({ state: "visible" });
-    await card.getByText("Next: Paid. Use Invoice again for similar work.").waitFor({ state: "visible" });
+    await card.getByText("Paid and closed").waitFor({ state: "visible" });
+    await card.getByText("Next: Paid and closed. Reuse it for the next similar job or set a cadence.").waitFor({ state: "visible" });
 
     const listResponse = await context.request.get(`${baseUrl}/api/invoices`, {
       headers: {
