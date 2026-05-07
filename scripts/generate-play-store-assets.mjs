@@ -7,6 +7,39 @@ const outputDir = path.resolve("marketing", "play-store");
 const screenshotWidth = 540;
 const screenshotHeight = 960;
 const screenshotScale = 2;
+const rawScreenshotPrefix = "__raw__";
+const screenshotDecorations = {
+  "phone-01-launcher.png": {
+    eyebrow: "Start fast",
+    title: "Turn rough notes into invoices",
+    body: "Begin with what happened, then let Billie shape the first clean draft."
+  },
+  "phone-02-ai-intake.png": {
+    eyebrow: "Guided intake",
+    title: "Start with Billie, not a blank invoice",
+    body: "Paste rough job notes and keep the first invoice moving step by step."
+  },
+  "phone-03-manual-editor.png": {
+    eyebrow: "Customer handoff",
+    title: "Finish send, payment, and portal steps clearly",
+    body: "Keep the money handoff explicit before you leave the editor."
+  },
+  "phone-04-invoice-library.png": {
+    eyebrow: "Follow-ups",
+    title: "See the next best action instantly",
+    body: "Track reminders, payment status, and repeat work from one calm hub."
+  },
+  "phone-05-help-center.png": {
+    eyebrow: "Built-in support",
+    title: "Help is already inside the app",
+    body: "Guide new users without sending them off to hunt through docs."
+  },
+  "phone-06-import.png": {
+    eyebrow: "Import old work",
+    title: "Bring in older invoice files and notes",
+    body: "Use PDFs, text, and images as a faster starting point for the next draft."
+  }
+};
 
 const accountPlanPayload = {
   tier: "pro",
@@ -280,6 +313,196 @@ async function routeCommon(page, options = {}) {
   });
 }
 
+function buildRawScreenshotPath(filename) {
+  return path.join(outputDir, `${rawScreenshotPrefix}${filename}`);
+}
+
+async function decoratePhoneScreenshot(browser, filename) {
+  const decoration = screenshotDecorations[filename];
+  if (!decoration) {
+    return;
+  }
+  const rawPath = buildRawScreenshotPath(filename);
+  const imageUrl = await fileToDataUrl(rawPath, "image/png");
+  const iconUrl = await fileToDataUrl(appIconPath, "image/png");
+  const finalPath = path.join(outputDir, filename);
+  const context = await browser.newContext({
+    viewport: { width: 1080, height: 1920 },
+    deviceScaleFactor: 1,
+    colorScheme: "light"
+  });
+  const page = await context.newPage();
+  try {
+    await page.setContent(
+      `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <style>
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              width: 1080px;
+              height: 1920px;
+              overflow: hidden;
+              font-family: "Manrope", "Segoe UI", Arial, sans-serif;
+              background:
+                radial-gradient(circle at top left, rgba(185, 215, 246, 0.92), rgba(238, 244, 251, 0) 34%),
+                radial-gradient(circle at top right, rgba(243, 194, 125, 0.18), rgba(238, 244, 251, 0) 20%),
+                linear-gradient(180deg, #f8fbff 0%, #edf4fd 58%, #f6f9ff 100%);
+              color: #13284a;
+            }
+            .canvas {
+              position: relative;
+              width: 1080px;
+              height: 1920px;
+              padding: 56px 42px 48px;
+            }
+            .header {
+              position: relative;
+              z-index: 2;
+              padding: 8px 6px 30px;
+            }
+            .brand-row {
+              display: flex;
+              align-items: center;
+              gap: 14px;
+              margin-bottom: 24px;
+            }
+            .brand-row img {
+              width: 46px;
+              height: 46px;
+              border-radius: 14px;
+              box-shadow: 0 18px 34px rgba(8, 47, 99, 0.14);
+            }
+            .brand-row span {
+              display: inline-flex;
+              padding: 10px 18px;
+              border-radius: 999px;
+              border: 1px solid rgba(105, 147, 210, 0.18);
+              background: rgba(255, 255, 255, 0.82);
+              color: #0b2d5c;
+              font-size: 18px;
+              font-weight: 800;
+              letter-spacing: 0.16em;
+              text-transform: uppercase;
+            }
+            .eyebrow {
+              display: inline-flex;
+              align-items: center;
+              padding: 10px 16px;
+              border-radius: 999px;
+              background: rgba(9, 48, 100, 0.08);
+              color: #5f8fd2;
+              font-size: 18px;
+              font-weight: 800;
+              letter-spacing: 0.18em;
+              text-transform: uppercase;
+            }
+            h1 {
+              margin: 20px 0 0;
+              max-width: 880px;
+              font-family: "Fraunces", Georgia, serif;
+              font-size: 72px;
+              line-height: 0.94;
+              letter-spacing: -0.055em;
+              color: #13203d;
+            }
+            p {
+              margin: 20px 0 0;
+              max-width: 850px;
+              font-size: 29px;
+              line-height: 1.42;
+              color: #4a6185;
+            }
+            .frame-wrap {
+              position: absolute;
+              left: 42px;
+              right: 42px;
+              bottom: 48px;
+              top: 346px;
+              display: flex;
+              align-items: flex-start;
+              justify-content: center;
+            }
+            .frame-shadow {
+              position: absolute;
+              inset: 18px 18px -12px;
+              border-radius: 54px;
+              background: radial-gradient(circle at top, rgba(8, 47, 99, 0.12), rgba(8, 47, 99, 0) 68%);
+              filter: blur(20px);
+            }
+            .frame {
+              position: relative;
+              width: 100%;
+              height: 100%;
+              padding: 18px;
+              border-radius: 54px;
+              background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(247,250,255,0.88));
+              border: 1px solid rgba(105, 147, 210, 0.18);
+              box-shadow: 0 34px 100px rgba(8, 47, 99, 0.12);
+            }
+            .screen {
+              width: 100%;
+              height: 100%;
+              border-radius: 40px;
+              overflow: hidden;
+              background: #ffffff;
+            }
+            .screen img {
+              display: block;
+              width: 100%;
+              height: 100%;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="canvas">
+            <section class="header">
+              <div class="brand-row">
+                <img src="${iconUrl}" alt="NoteBill icon" />
+                <span>NoteBill</span>
+              </div>
+              <div class="eyebrow">${decoration.eyebrow}</div>
+              <h1>${decoration.title}</h1>
+              <p>${decoration.body}</p>
+            </section>
+            <div class="frame-wrap">
+              <div class="frame-shadow"></div>
+              <div class="frame">
+                <div class="screen">
+                  <img src="${imageUrl}" alt="${decoration.title}" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </body>
+      </html>
+      `,
+      { waitUntil: "load" }
+    );
+    await page.screenshot({ path: finalPath });
+  } finally {
+    await context.close();
+  }
+}
+
+async function decorateAllPhoneScreenshots(browser) {
+  for (const filename of Object.keys(screenshotDecorations)) {
+    await decoratePhoneScreenshot(browser, filename);
+  }
+}
+
+async function cleanupRawScreenshots() {
+  const filenames = Object.keys(screenshotDecorations).map((filename) => buildRawScreenshotPath(filename));
+  await Promise.all(
+    filenames.map((filename) =>
+      fs.rm(filename, { force: true }).catch(() => {})
+    )
+  );
+}
+
 async function captureLauncher(browser) {
   const context = await browser.newContext(buildContextOptions());
   await context.addInitScript(seedDemoIdentity);
@@ -294,7 +517,7 @@ async function captureLauncher(browser) {
     }).catch(() => {});
     await page.waitForTimeout(400);
     await page.screenshot({
-      path: path.join(outputDir, "phone-01-launcher.png"),
+      path: buildRawScreenshotPath("phone-01-launcher.png"),
       fullPage: false
     });
   } finally {
@@ -309,8 +532,8 @@ async function captureAiIntake(browser) {
   try {
     await routeCommon(page);
     await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
-    await page.getByText("Paste your notes").waitFor({ state: "visible" });
     const notesInput = page.locator("textarea").first();
+    await notesInput.waitFor({ state: "visible" });
     await notesInput.fill(
       [
         "April 17 service visit for North Shore Fitness.",
@@ -331,7 +554,7 @@ async function captureAiIntake(browser) {
     });
     await page.waitForTimeout(300);
     await page.screenshot({
-      path: path.join(outputDir, "phone-02-ai-intake.png"),
+      path: buildRawScreenshotPath("phone-02-ai-intake.png"),
       fullPage: false
     });
   } finally {
@@ -370,7 +593,7 @@ async function captureManual(browser) {
     });
     await page.waitForTimeout(300);
     await page.screenshot({
-      path: path.join(outputDir, "phone-03-manual-editor.png"),
+      path: buildRawScreenshotPath("phone-03-manual-editor.png"),
       fullPage: false
     });
   } finally {
@@ -392,7 +615,7 @@ async function captureLibrary(browser) {
     });
     await page.waitForTimeout(300);
     await page.screenshot({
-      path: path.join(outputDir, "phone-04-invoice-library.png"),
+      path: buildRawScreenshotPath("phone-04-invoice-library.png"),
       fullPage: false
     });
   } finally {
@@ -411,7 +634,7 @@ async function captureHelpCenter(browser) {
     await page.evaluate(() => window.scrollBy({ top: -120, behavior: "instant" }));
     await page.waitForTimeout(300);
     await page.screenshot({
-      path: path.join(outputDir, "phone-05-help-center.png"),
+      path: buildRawScreenshotPath("phone-05-help-center.png"),
       fullPage: false
     });
   } finally {
@@ -430,7 +653,7 @@ async function captureImport(browser) {
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
     await page.waitForTimeout(300);
     await page.screenshot({
-      path: path.join(outputDir, "phone-06-import.png"),
+      path: buildRawScreenshotPath("phone-06-import.png"),
       fullPage: false
     });
   } finally {
@@ -446,9 +669,9 @@ async function copyBrandAssets() {
 
 async function createFeatureGraphic(browser) {
   const featureGraphicPath = path.join(outputDir, "feature-graphic-1024x500.png");
-  const screenshotOne = await fileToDataUrl(path.join(outputDir, "phone-02-ai-intake.png"), "image/png");
-  const screenshotTwo = await fileToDataUrl(path.join(outputDir, "phone-03-manual-editor.png"), "image/png");
-  const screenshotThree = await fileToDataUrl(path.join(outputDir, "phone-04-invoice-library.png"), "image/png");
+  const screenshotOne = await fileToDataUrl(buildRawScreenshotPath("phone-02-ai-intake.png"), "image/png");
+  const screenshotTwo = await fileToDataUrl(buildRawScreenshotPath("phone-03-manual-editor.png"), "image/png");
+  const screenshotThree = await fileToDataUrl(buildRawScreenshotPath("phone-04-invoice-library.png"), "image/png");
   const iconUrl = await fileToDataUrl(appIconPath, "image/png");
 
   const context = await browser.newContext({
@@ -704,8 +927,10 @@ async function main() {
     await captureLibrary(browser);
     await captureHelpCenter(browser);
     await captureImport(browser);
+    await decorateAllPhoneScreenshots(browser);
     await createFeatureGraphic(browser);
     await writeManifest();
+    await cleanupRawScreenshots();
   } finally {
     await browser.close();
   }
