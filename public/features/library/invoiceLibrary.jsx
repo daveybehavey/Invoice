@@ -1735,6 +1735,16 @@
         return !(delivery?.recipientEmail && delivery?.sentAt);
       })
       .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
+  const sentTrackedUnopenedInvoice =
+    invoices
+      .filter((invoice) => {
+        if (invoice?.status !== "sent") {
+          return false;
+        }
+        const delivery = invoice?.delivery ?? null;
+        return Boolean(delivery?.recipientEmail && delivery?.sentAt && delivery?.status !== "opened");
+      })
+      .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
   const paidRepeatCandidate =
     invoices
       .filter((invoice) => invoice?.status === "paid")
@@ -1766,15 +1776,46 @@
         }
       };
     }
+    if (sentTrackedUnopenedInvoice) {
+      return {
+        toneClass: "border-sky-200 bg-sky-50 text-sky-950",
+        eyebrow: "Billie next up",
+        title: `Check delivery for ${sentTrackedUnopenedInvoice.invoiceNumber || "this invoice"}`,
+        body: "Delivery is recorded, but the invoice has not been opened yet. Confirm the client saw it before you escalate into a reminder or resend.",
+        meta: [
+          sentTrackedUnopenedInvoice.customerName || "",
+          Number.isFinite(sentTrackedUnopenedInvoice.total)
+            ? `Total ${formatMoney(sentTrackedUnopenedInvoice.total)}`
+            : ""
+        ].filter(Boolean),
+        primaryLabel: actionId === sentTrackedUnopenedInvoice.invoiceId ? "Marking..." : "Mark opened",
+        primaryDisabled: actionId === sentTrackedUnopenedInvoice.invoiceId,
+        onPrimary: () => void handleMarkDeliveryOpened(sentTrackedUnopenedInvoice.invoiceId),
+        secondaryLabel: "Show sent invoices",
+        secondaryDisabled: false,
+        onSecondary: () => {
+          setStatusFilter("sent");
+          setSelectedIds([]);
+        }
+      };
+    }
     if (oldestSentReminder) {
+      const oldestReminderOpened = oldestSentReminder?.delivery?.status === "opened";
+      const oldestReminderHasTrackedDelivery = Boolean(
+        oldestSentReminder?.delivery?.recipientEmail && oldestSentReminder?.delivery?.sentAt
+      );
       return {
         toneClass: "border-blue-200 bg-blue-50 text-blue-950",
         eyebrow: "Billie next up",
         title: oldestSentReminder.isPastDue
           ? `Follow up on ${oldestSentReminder.invoiceNumber || "this sent invoice"}`
+          : oldestReminderHasTrackedDelivery && !oldestReminderOpened
+            ? `Check delivery for ${oldestSentReminder.invoiceNumber || "this sent invoice"}`
           : `Check ${oldestSentReminder.invoiceNumber || "this sent invoice"}`,
         body: oldestSentReminder.isPastDue
           ? "Payment is still open. Send the reminder now, then mark it paid if the money already arrived."
+          : oldestReminderHasTrackedDelivery && !oldestReminderOpened
+            ? "Delivery is tracked, but the invoice has not been opened yet. Confirm whether the client saw it before escalating into a reminder."
           : "Keep the send workflow moving before this invoice goes cold.",
         meta: [
           oldestSentReminderDueLabel
@@ -1788,13 +1829,21 @@
           oldestSentRecipient ? `Recipient ${oldestSentRecipient}` : ""
         ].filter(Boolean),
         primaryLabel:
-          canQuickSendReminderOldest && actionId === oldestSentReminder.invoiceId
+          oldestReminderHasTrackedDelivery && !oldestReminderOpened
+            ? actionId === oldestSentReminder.invoiceId
+              ? "Marking..."
+              : "Mark opened"
+            : canQuickSendReminderOldest && actionId === oldestSentReminder.invoiceId
             ? "Sending..."
             : canQuickSendReminderOldest
               ? "Send reminder"
               : "Show sent invoices",
-        primaryDisabled: canQuickSendReminderOldest && actionId === oldestSentReminder.invoiceId,
+        primaryDisabled: actionId === oldestSentReminder.invoiceId,
         onPrimary: () => {
+          if (oldestReminderHasTrackedDelivery && !oldestReminderOpened) {
+            void handleMarkDeliveryOpened(oldestSentReminder.invoiceId);
+            return;
+          }
           if (canQuickSendReminderOldest) {
             void handleSendReminder(oldestSentReminder);
             return;
@@ -3089,6 +3138,12 @@
                         : "The invoice is overdue. Follow up first, then consider adding a hosted payment link."
                     };
                   }
+                  if (invoice.status === "sent" && hasDelivery && !deliveryOpened) {
+                    return {
+                      label: "Check delivery first",
+                      detail: "This invoice is tracked but still unopened. Confirm the client saw it before you escalate into a reminder."
+                    };
+                  }
                   if (invoice.status === "sent" && !paymentLinkReady) {
                     return {
                       label: "Open and add payment link",
@@ -3157,7 +3212,7 @@
                           : hasDelivery
                             ? deliveryOpened
                               ? "Opened by client"
-                              : "Reminder-ready"
+                              : "Awaiting open"
                             : "Track a send first"
                   },
                   {

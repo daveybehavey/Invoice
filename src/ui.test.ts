@@ -5825,6 +5825,79 @@ test("invoice library send action records delivery and supports mark opened", as
   }
 });
 
+test("invoice library card distinguishes tracked but unopened delivery", async () => {
+  const ownerId = "ui-send-unopened-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Tracked Unopened Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-UNOPENED-1",
+          issueDate: "2026-05-01",
+          dueDate: "2026-05-20",
+          customerName: "Tracked Unopened Client",
+          currency: "USD",
+          paymentLinkUrl: "https://pay.example.com/invoice/INV-UNOPENED-1",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Appliance repair",
+              quantity: 1,
+              unitPrice: 175,
+              amount: 175
+            }
+          ],
+          subtotal: 175,
+          total: 175,
+          balanceDue: 175
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const invoiceId = String((await saveResponse.json()).invoice?.invoiceId ?? "");
+  assert.ok(invoiceId);
+
+  const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      recipientEmail: "tracked-unopened@example.com"
+    }
+  });
+  assert.equal(sendResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page.locator("div").filter({ hasText: "INV-UNOPENED-1" }).first();
+    await card.getByText("Best next action").waitFor({ state: "visible" });
+    await card.getByText("Check delivery first").waitFor({ state: "visible" });
+    await card
+      .getByText("This invoice is tracked but still unopened. Confirm the client saw it before you escalate into a reminder.")
+      .waitFor({ state: "visible" });
+    await card.getByText("Awaiting open").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library Billie next-up guide prioritizes follow-up work", async () => {
   const ownerId = "ui-library-next-up-owner";
   const context = await browser.newContext();
