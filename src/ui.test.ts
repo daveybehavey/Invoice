@@ -4662,6 +4662,169 @@ test("launcher repeat command center can start from saved memory for paid client
   }
 });
 
+test("launcher follow-up card prefers delivery review for overdue unopened invoices", async () => {
+  const ownerId = "ui-launcher-overdue-unopened-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Overdue Unopened Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LAUNCHER-OVERDUE-UNOPENED",
+          issueDate: "2026-03-12",
+          dueDate: "2026-03-20",
+          customerName: "Overdue Unopened Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "launcher-overdue-line-1",
+              type: "labor",
+              description: "Drain inspection",
+              quantity: 1,
+              unitPrice: 170,
+              amount: 170
+            }
+          ],
+          subtotal: 170,
+          total: 170,
+          balanceDue: 170
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const savePayload = await saveResponse.json();
+  const sendResponse = await context.request.post(
+    `${baseUrl}/api/invoices/${savePayload?.invoice?.invoiceId}/send`,
+    {
+      headers: {
+        "x-invoice-user-id": ownerId
+      },
+      data: {
+        recipientEmail: "overdue-unopened-launcher@example.com"
+      }
+    }
+  );
+  assert.equal(sendResponse.status(), 200);
+  await mutateStoredInvoice(savePayload?.invoice?.invoiceId, {
+    status: "sent",
+    updatedAt: "2026-04-01T12:00:00.000Z"
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+    await queue.getByText("Re-send or confirm delivery").waitFor({ state: "visible" });
+    await queue
+      .getByText(
+        "The client still has not opened it. Re-send it or confirm delivery before escalating into a payment reminder."
+      )
+      .waitFor({ state: "visible" });
+    await queue.getByRole("button", { name: "Review delivery" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher follow-up card prefers focused reminder for overdue opened invoices", async () => {
+  const ownerId = "ui-launcher-overdue-opened-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Overdue Opened Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LAUNCHER-OVERDUE-OPENED",
+          issueDate: "2026-03-12",
+          dueDate: "2026-03-20",
+          customerName: "Overdue Opened Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "launcher-opened-line-1",
+              type: "labor",
+              description: "Maintenance visit",
+              quantity: 1,
+              unitPrice: 245,
+              amount: 245
+            }
+          ],
+          subtotal: 245,
+          total: 245,
+          balanceDue: 245
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const savePayload = await saveResponse.json();
+  const sendResponse = await context.request.post(
+    `${baseUrl}/api/invoices/${savePayload?.invoice?.invoiceId}/send`,
+    {
+      headers: {
+        "x-invoice-user-id": ownerId
+      },
+      data: {
+        recipientEmail: "overdue-opened-launcher@example.com"
+      }
+    }
+  );
+  assert.equal(sendResponse.status(), 200);
+  await mutateStoredInvoice(savePayload?.invoice?.invoiceId, {
+    status: "sent",
+    updatedAt: "2026-04-01T12:00:00.000Z",
+    delivery: {
+      recipientEmail: "overdue-opened-launcher@example.com",
+      sentAt: "2026-04-01T12:00:00.000Z",
+      openedAt: "2026-04-02T12:00:00.000Z",
+      status: "opened",
+      mode: "tracked"
+    }
+  });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+    await queue.getByText("Send focused reminder").waitFor({ state: "visible" });
+    await queue
+      .getByText("The client already opened it, so a focused reminder is the best next step.")
+      .waitFor({ state: "visible" });
+    await queue.getByRole("button", { name: "Send reminder for INV-LAUNCHER-OVERDUE-OPENED" }).waitFor({
+      state: "visible"
+    });
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher can start a fresh draft from repeat client memory", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

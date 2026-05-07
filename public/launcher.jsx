@@ -462,27 +462,60 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
   }
   if (staleSent[0]) {
     const { invoice, daysSinceUpdate, dueDateValue, isPastDue } = staleSent[0];
-    const reminderRecipient = invoice.delivery?.recipientEmail ?? "";
+    const delivery = invoice?.delivery ?? null;
+    const reminderRecipient = delivery?.recipientEmail ?? "";
+    const hasTrackedDelivery = Boolean(delivery?.recipientEmail) && Boolean(delivery?.sentAt);
+    const deliveryOpened = Boolean(delivery?.openedAt) || delivery?.status === "opened";
     const canSendReminder = reminderRecipient.trim().length > 0;
     const dueDateLabel = formatUpdatedLabel(dueDateValue);
     const openBalanceLabel = formatMoneyLabel(getInvoiceOpenBalance(invoice));
-    const followUpDetail =
+    const overdueLabel =
       isPastDue && dueDateLabel
         ? `${invoice.invoiceNumber || "Sent invoice"} was due ${dueDateLabel}.`
         : `${invoice.invoiceNumber || "Sent invoice"} has been open for ${daysSinceUpdate} days.`;
+    let followUpTitle = "Follow up on sent invoice";
+    let followUpDetail = `${overdueLabel} Open balance: ${openBalanceLabel}.`;
+    let followUpCta = canSendReminder ? "Send reminder" : "Review follow-ups";
+    let followUpAction = canSendReminder ? "send-reminder" : "open-library";
+    let followUpBusyId = canSendReminder ? `reminder:${invoice.invoiceId}` : undefined;
+    let followUpAriaLabel = canSendReminder
+      ? `Send reminder for ${invoice.invoiceNumber || "sent invoice"}`
+      : undefined;
+    if (!hasTrackedDelivery) {
+      followUpTitle = "Track delivery for sent invoice";
+      followUpDetail = `${overdueLabel} Delivery is not being tracked yet, so reminders and payment follow-up still have weaker context.`;
+      followUpCta = "Review send flow";
+      followUpAction = "open-library";
+      followUpBusyId = undefined;
+      followUpAriaLabel = undefined;
+    } else if (isPastDue && !deliveryOpened) {
+      followUpTitle = "Re-send or confirm delivery";
+      followUpDetail = `${overdueLabel} The client still has not opened it. Re-send it or confirm delivery before escalating into a payment reminder.`;
+      followUpCta = "Review delivery";
+      followUpAction = "open-library";
+      followUpBusyId = undefined;
+      followUpAriaLabel = undefined;
+    } else if (isPastDue && deliveryOpened) {
+      followUpTitle = "Send focused reminder";
+      followUpDetail = `${overdueLabel} The client already opened it, so a focused reminder is the best next step.`;
+      followUpCta = canSendReminder ? "Send focused reminder" : "Review follow-ups";
+      followUpAction = canSendReminder ? "send-reminder" : "open-library";
+      followUpBusyId = canSendReminder ? `reminder:${invoice.invoiceId}` : undefined;
+      followUpAriaLabel = canSendReminder
+        ? `Send reminder for ${invoice.invoiceNumber || "sent invoice"}`
+        : undefined;
+    } else if (canSendReminder) {
+      followUpDetail = `${overdueLabel} Open balance: ${openBalanceLabel}. Last sent to ${reminderRecipient}.`;
+    }
     actions.push({
       id: `follow-up:${invoice.invoiceId}`,
       tone: "follow-up",
-      title: "Follow up on sent invoice",
-      detail: `${followUpDetail} Open balance: ${openBalanceLabel}.${
-        canSendReminder ? ` Last sent to ${reminderRecipient}.` : ""
-      }`,
-      cta: canSendReminder ? "Send reminder" : "Review follow-ups",
-      ariaLabel: canSendReminder
-        ? `Send reminder for ${invoice.invoiceNumber || "sent invoice"}`
-        : undefined,
-      action: canSendReminder ? "send-reminder" : "open-library",
-      busyId: canSendReminder ? `reminder:${invoice.invoiceId}` : undefined,
+      title: followUpTitle,
+      detail: followUpDetail,
+      cta: followUpCta,
+      ariaLabel: followUpAriaLabel,
+      action: followUpAction,
+      busyId: followUpBusyId,
       secondaryCta: "Mark paid",
       secondaryAction: "mark-paid",
       secondaryAriaLabel: `Mark ${invoice.invoiceNumber || "sent invoice"} paid`,
