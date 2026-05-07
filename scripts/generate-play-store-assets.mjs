@@ -357,18 +357,19 @@ async function decoratePhoneScreenshot(browser, filename) {
               position: relative;
               width: 1080px;
               height: 1920px;
-              padding: 56px 42px 48px;
+              padding: 52px 42px 46px;
             }
             .header {
               position: relative;
               z-index: 2;
-              padding: 8px 6px 30px;
+              padding: 8px 6px 18px;
+              min-height: 420px;
             }
             .brand-row {
               display: flex;
               align-items: center;
               gap: 14px;
-              margin-bottom: 24px;
+              margin-bottom: 20px;
             }
             .brand-row img {
               width: 46px;
@@ -391,29 +392,29 @@ async function decoratePhoneScreenshot(browser, filename) {
             .eyebrow {
               display: inline-flex;
               align-items: center;
-              padding: 10px 16px;
+              padding: 9px 15px;
               border-radius: 999px;
               background: rgba(9, 48, 100, 0.08);
               color: #5f8fd2;
-              font-size: 18px;
+              font-size: 17px;
               font-weight: 800;
               letter-spacing: 0.18em;
               text-transform: uppercase;
             }
             h1 {
-              margin: 20px 0 0;
-              max-width: 880px;
+              margin: 18px 0 0;
+              max-width: 820px;
               font-family: "Fraunces", Georgia, serif;
-              font-size: 72px;
-              line-height: 0.94;
+              font-size: 64px;
+              line-height: 0.93;
               letter-spacing: -0.055em;
               color: #13203d;
             }
             p {
-              margin: 20px 0 0;
-              max-width: 850px;
-              font-size: 29px;
-              line-height: 1.42;
+              margin: 18px 0 0;
+              max-width: 760px;
+              font-size: 24px;
+              line-height: 1.4;
               color: #4a6185;
             }
             .frame-wrap {
@@ -421,7 +422,7 @@ async function decoratePhoneScreenshot(browser, filename) {
               left: 42px;
               right: 42px;
               bottom: 48px;
-              top: 346px;
+              top: 432px;
               display: flex;
               align-items: flex-start;
               justify-content: center;
@@ -437,8 +438,8 @@ async function decoratePhoneScreenshot(browser, filename) {
               position: relative;
               width: 100%;
               height: 100%;
-              padding: 18px;
-              border-radius: 54px;
+              padding: 16px;
+              border-radius: 50px;
               background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(247,250,255,0.88));
               border: 1px solid rgba(105, 147, 210, 0.18);
               box-shadow: 0 34px 100px rgba(8, 47, 99, 0.12);
@@ -446,7 +447,7 @@ async function decoratePhoneScreenshot(browser, filename) {
             .screen {
               width: 100%;
               height: 100%;
-              border-radius: 40px;
+              border-radius: 36px;
               overflow: hidden;
               background: #ffffff;
             }
