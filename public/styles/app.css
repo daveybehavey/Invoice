@@ -458,6 +458,46 @@
   .nb-toolbar .is-idle:hover {
     color: var(--nb-text-primary);
   }
+
+  .nb-accent-panel {
+    @apply rounded-[26px] border p-4 md:p-5;
+    border-color: rgba(105, 147, 210, 0.2);
+    background:
+      radial-gradient(circle at top left, rgba(185, 215, 246, 0.44), rgba(255, 255, 255, 0) 36%),
+      linear-gradient(155deg, rgba(247, 250, 255, 0.98) 0%, rgba(255, 255, 255, 0.96) 58%, rgba(238, 246, 255, 0.92) 100%);
+    box-shadow: 0 24px 64px rgba(8, 47, 99, 0.08);
+  }
+
+  .nb-metric-card {
+    @apply rounded-[22px] border px-3 py-3;
+    border-color: rgba(8, 47, 99, 0.08);
+    background: rgba(255, 255, 255, 0.82);
+    box-shadow: 0 14px 34px rgba(8, 47, 99, 0.05);
+    backdrop-filter: blur(12px);
+  }
+
+  .nb-glass-list {
+    @apply rounded-[24px] border p-3;
+    border-color: rgba(8, 47, 99, 0.08);
+    background: rgba(255, 255, 255, 0.72);
+    box-shadow: 0 18px 46px rgba(8, 47, 99, 0.05);
+    backdrop-filter: blur(16px);
+  }
+
+  .nb-section-chip {
+    @apply inline-flex rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.26em];
+    border-color: rgba(105, 147, 210, 0.14);
+    background: rgba(255, 255, 255, 0.86);
+    color: #5f8fd2;
+    box-shadow: 0 10px 24px rgba(8, 47, 99, 0.05);
+  }
+
+  .nb-modal-backdrop {
+    background:
+      radial-gradient(circle at top, rgba(185, 215, 246, 0.18), rgba(15, 23, 42, 0) 24%),
+      rgba(15, 23, 42, 0.48);
+    backdrop-filter: blur(10px);
+  }
 }
 
 .typing-dot {

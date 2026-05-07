@@ -2132,14 +2132,15 @@
             {deliveryNotice}
           </div>
         ) : null}
-        <div className="nb-surface nb-surface--muted mt-6 rounded-[30px] px-5 py-5 shadow-sm">
+        <div className="nb-accent-panel nb-reveal-up mt-6">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Reminder notifications
-              </p>
-              <p className="text-base text-slate-600" style={{ fontFamily: "'Fraunces', serif" }}>
+              <div className="nb-section-chip">Reminder notifications</div>
+              <p className="mt-3 text-lg text-slate-600" style={{ fontFamily: "'Fraunces', serif" }}>
                 {reminderNotificationsSubtitle}
+              </p>
+              <p className="text-xs leading-5 text-slate-500">
+                Keep browser nudges available when you want a light reminder layer outside the library.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -2161,7 +2162,7 @@
               </button>
             </div>
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
             <span className="rounded-full bg-blue-50 px-2 py-1 font-semibold text-blue-800">
               {reminderNotificationSettings.enabled ? "Enabled" : "Off"}
             </span>
@@ -2172,7 +2173,7 @@
             ) : null}
           </div>
           {oldestSentReminder ? (
-            <p className="mt-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-[11px] leading-5 text-slate-600">
+            <p className="mt-3 rounded-2xl border border-slate-200 bg-white/88 px-3 py-2 text-[11px] leading-5 text-slate-600 shadow-sm">
               <span className="font-semibold text-slate-700">Preview:</span>{" "}
               {reminderNotePreviewText || buildReminderNotificationPreview()}
             </p>
@@ -2303,9 +2304,22 @@
             </div>
         ) : null}
         {showSentFollowUpReminder ? (
-          <div className="nb-banner nb-banner--info mt-6">
-            <p className="text-sm font-semibold text-blue-900">Follow-up queue</p>
-            <p className="mt-1 text-sm text-blue-900">
+          <div className="nb-accent-panel nb-reveal-up mt-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="nb-section-chip">Follow-up queue</div>
+                <p className="mt-3 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+                  Keep outstanding invoices moving without second-guessing the next nudge.
+                </p>
+              </div>
+              {followUpPlan ? (
+                <div className="nb-metric-card min-w-[180px]">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Plan summary</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">{followUpPlan.summary}</p>
+                </div>
+              ) : null}
+            </div>
+            <p className="mt-2 text-sm text-slate-600">
               {sentFollowUpInvoices.length === 1
                 ? oldestSentReminder?.isPastDue
                   ? "1 sent invoice is past due."
@@ -2315,18 +2329,18 @@
                   : `${sentFollowUpInvoices.length} sent invoices are waiting on follow-up.`}
             </p>
             {smartFollowUpSuggestion ? (
-              <p className="mt-2 rounded-xl border border-blue-200 bg-white/80 px-3 py-2 text-xs font-medium text-blue-900">
+              <p className="mt-3 rounded-2xl border border-blue-200/70 bg-white/88 px-3 py-2 text-xs font-medium text-blue-900 shadow-sm">
                 {smartFollowUpSuggestion}
               </p>
             ) : null}
             {oldestSentReminder ? (
-              <p className="mt-2 rounded-xl border border-blue-100 bg-white/70 px-3 py-2 text-xs text-blue-900">
+              <p className="mt-3 rounded-2xl border border-blue-100/80 bg-white/84 px-3 py-2 text-xs leading-5 text-blue-900 shadow-sm">
                 {buildFollowUpNoteText()}
               </p>
             ) : null}
             {followUpPlan ? (
               <div
-                className="mt-3 rounded-[22px] border border-blue-200 bg-white/75 p-3"
+                className="nb-glass-list mt-4"
                 data-testid="library-follow-up-plan"
               >
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
@@ -2336,25 +2350,25 @@
                   <p className="text-xs text-blue-800">{followUpPlan.summary}</p>
                 </div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-4">
-                  <div className="rounded-2xl border border-blue-100 bg-white px-3 py-2">
+                  <div className="nb-metric-card">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                       Urgency
                     </p>
                     <p className="mt-1 text-xs font-semibold text-slate-800">{followUpPlan.urgencyValue}</p>
                   </div>
-                  <div className="rounded-2xl border border-blue-100 bg-white px-3 py-2">
+                  <div className="nb-metric-card">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                       Delivery
                     </p>
                     <p className="mt-1 text-xs font-semibold text-slate-800">{followUpPlan.deliveryValue}</p>
                   </div>
-                  <div className="rounded-2xl border border-blue-100 bg-white px-3 py-2">
+                  <div className="nb-metric-card">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                       Next step
                     </p>
                     <p className="mt-1 text-xs font-semibold text-slate-800">{followUpPlan.nextStepValue}</p>
                   </div>
-                  <div className="rounded-2xl border border-blue-100 bg-white px-3 py-2">
+                  <div className="nb-metric-card">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                       Automation
                     </p>
@@ -2363,7 +2377,7 @@
                 </div>
               </div>
             ) : null}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-4 flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
@@ -2438,7 +2452,7 @@
               ) : null}
               {followUpNoteNotice ? <p className="text-xs font-medium text-blue-900">{followUpNoteNotice}</p> : null}
             </div>
-            <div className="nb-subcard mt-3 space-y-3">
+            <div className="nb-glass-list mt-4 space-y-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                   Reminder automation
@@ -2982,7 +2996,7 @@
                 return (
                   <div
                     key={invoice.invoiceId}
-                    className="nb-surface rounded-[28px] p-5"
+                    className="nb-surface nb-surface--elevated nb-reveal-up rounded-[28px] p-5"
                   >
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <div className="flex items-start gap-3">
@@ -3029,7 +3043,7 @@
                           <p className="mt-2 text-xs leading-5 text-slate-500">
                             <span className="font-semibold text-slate-600">Next:</span> {nextActionHint}
                           </p>
-                          <div className="mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+                          <div className="mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3 py-3 shadow-sm">
                             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                               Best next action
                             </p>

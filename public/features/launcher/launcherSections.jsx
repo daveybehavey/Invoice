@@ -35,20 +35,21 @@ function LauncherAccountStrip({
         ? "nb-usage-meter--warning"
         : "";
   return (
-    <div className="nb-surface nb-surface--muted mt-5 flex flex-col gap-3 rounded-[24px] px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+    <div className="nb-accent-panel nb-reveal-up mt-5 flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-slate-700">
+        <div className="nb-section-chip">Account</div>
+        <p className="mt-3 text-base font-semibold text-slate-800">
           {authSession?.email ? `Signed in as ${authSession.email}` : "Not signed in (local mode)"}
         </p>
         {planSummary ? (
-          <p className={`text-xs ${planAtLimit ? "text-amber-700" : "text-slate-500"}`}>{planSummary}</p>
+          <p className={`mt-1 text-xs ${planAtLimit ? "text-amber-700" : "text-slate-500"}`}>{planSummary}</p>
         ) : null}
         {planWarning && !planAtLimit ? (
           <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
         ) : null}
-        {planPitch ? <p className="mt-1 text-xs text-slate-500">{planPitch}</p> : null}
+        {planPitch ? <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-500">{planPitch}</p> : null}
         {planUsage?.finite ? (
-          <div className={`nb-usage-meter mt-2 ${usageToneClass}`}>
+          <div className={`nb-usage-meter mt-3 max-w-xl ${usageToneClass}`}>
             <div className="nb-usage-meter__row">
               <span className="nb-usage-meter__label">{planUsage.progressLabel}</span>
               <span className="nb-usage-meter__remaining">{planUsage.remainingLabel}</span>
@@ -96,7 +97,10 @@ function LauncherAccountStrip({
         )}
       </div>
       {showPlanActions ? (
-        <div id="launcher-plan-actions" className="mt-1 flex w-full flex-wrap items-center gap-2 sm:justify-end">
+        <div
+          id="launcher-plan-actions"
+          className="nb-glass-list mt-1 flex w-full flex-wrap items-center gap-2 sm:justify-end"
+        >
           {showUpgradeAction ? (
             useStripeUpgradeAction ? (
               <button
@@ -879,15 +883,25 @@ function LauncherAlternateStartsSection({ showAlternateStarts, quickStartOptions
   return (
     <section
       id="alternate-start-options"
-      className="nb-surface mt-5 rounded-[28px] p-5 md:p-6"
+      className="nb-accent-panel nb-reveal-up mt-5"
     >
-      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Other starting points</p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="nb-section-chip">Other starts</div>
+          <p className="mt-3 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+            Different routes when the default path is not the right fit.
+          </p>
+        </div>
+        <p className="max-w-md text-xs leading-5 text-slate-500">
+          Use these when you already have source material, want a clean blank invoice, or need a more manual route.
+        </p>
+      </div>
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         {quickStartOptions.map((option) => (
           <button
             key={option.key}
             type="button"
-            className="nb-subcard rounded-[24px] bg-slate-50/90 p-4 text-left transition hover:-translate-y-0.5 hover:border-[#6993d2]/40 hover:bg-white"
+            className="nb-subcard rounded-[24px] border-white/75 bg-white/84 p-4 text-left transition hover:-translate-y-0.5 hover:border-[#6993d2]/40 hover:bg-white"
             onClick={option.onClick}
             disabled={option.disabled}
           >
@@ -903,20 +917,22 @@ function LauncherAlternateStartsSection({ showAlternateStarts, quickStartOptions
           </button>
         ))}
       </div>
-      <p className="mt-3 text-xs text-slate-500">
-        Use these when you already have a file or want a blank invoice from scratch.
-      </p>
     </section>
   );
 }
 
 function LauncherManageSection({ showManageOptions, onToggleManageOptions, manageOptions }) {
   return (
-    <section className="nb-surface mt-5 rounded-[28px] p-5 md:p-6">
-      <div className="flex items-center justify-between gap-2">
+    <section className="nb-accent-panel nb-reveal-up mt-5">
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Manage</p>
-          <p className="mt-1 text-sm text-slate-600">Library, branding, and memory tools you use less often.</p>
+          <div className="nb-section-chip">Manage</div>
+          <p className="mt-3 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+            Brand, memory, and library tools in one quieter zone.
+          </p>
+          <p className="mt-1 text-sm leading-6 text-slate-600">
+            These are the lower-frequency controls that still matter once the main invoicing path is humming.
+          </p>
         </div>
         <button
           type="button"
@@ -931,10 +947,10 @@ function LauncherManageSection({ showManageOptions, onToggleManageOptions, manag
       {showManageOptions ? (
         <div id="launcher-manage-options" className="mt-4 grid gap-3 md:grid-cols-2">
           {manageOptions.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            className="nb-subcard rounded-[22px] bg-slate-50/90 p-4 text-left text-sm font-semibold text-slate-700 transition hover:border-[#6993d2]/40 hover:bg-white"
+            <button
+              key={option.key}
+              type="button"
+              className="nb-subcard rounded-[22px] border-white/75 bg-white/84 p-4 text-left text-sm font-semibold text-slate-700 transition hover:border-[#6993d2]/40 hover:bg-white"
               onClick={option.onClick}
               disabled={option.disabled}
             >
@@ -984,16 +1000,21 @@ function LauncherAuthModal({
   const emailLinkReady = emailLinkProvider ? emailLinkProvider.available : true;
   const googleReady = Boolean(googleProvider?.available);
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 px-4">
-      <div className="nb-surface nb-surface--elevated w-full max-w-sm rounded-[28px] p-5">
-        <h2 className="text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+    <div className="nb-modal-backdrop fixed inset-0 z-40 flex items-center justify-center px-4">
+      <div className="nb-surface nb-surface--elevated nb-hero-glow w-full max-w-md rounded-[30px] p-5 md:p-6">
+        <div className="nb-section-chip">Account access</div>
+        <h2 className="mt-4 text-2xl font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
           Sign in
         </h2>
-        <p className="mt-1 text-sm text-slate-600">
+        <p className="mt-2 text-sm leading-6 text-slate-600">
           Keep saved work tied to your email with whichever sign-in path is ready for this build.
         </p>
-        {authReturnPathLabel ? <p className="mt-2 text-xs font-semibold text-[#093064]">{authReturnPathLabel}</p> : null}
-        <div className="mt-4 space-y-2" data-testid="launcher-auth-provider-list">
+        {authReturnPathLabel ? (
+          <p className="mt-3 rounded-2xl border border-[#6993d2]/16 bg-[#f7faff] px-3 py-2 text-xs font-semibold text-[#093064]">
+            {authReturnPathLabel}
+          </p>
+        ) : null}
+        <div className="mt-5 space-y-2" data-testid="launcher-auth-provider-list">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Sign-in methods</p>
           {authProvidersBusy ? (
             <p className="text-xs text-slate-500">Checking available sign-in methods...</p>
@@ -1011,7 +1032,7 @@ function LauncherAuthModal({
                     ? "Needs setup"
                     : "Planned next";
                 return (
-                  <div key={provider.id} className={`rounded-xl border px-3 py-3 ${toneClass}`}>
+                  <div key={provider.id} className={`rounded-[20px] border px-3 py-3 ${toneClass}`}>
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-slate-900">{provider.label}</p>
@@ -1030,7 +1051,7 @@ function LauncherAuthModal({
           ) : null}
         </div>
         {googleProvider ? (
-          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
+          <div className="nb-glass-list mt-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="text-sm font-semibold text-slate-900">Google Sign-In</p>
@@ -1054,7 +1075,7 @@ function LauncherAuthModal({
             </div>
           </div>
         ) : null}
-        <label className="mt-4 block text-sm font-semibold text-slate-700" htmlFor="launcher-auth-email">
+        <label className="mt-5 block text-sm font-semibold text-slate-700" htmlFor="launcher-auth-email">
           Email link sign-in
         </label>
         <p className="mt-1 text-xs leading-5 text-slate-500">
