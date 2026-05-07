@@ -1,5 +1,5 @@
 NoteBill Play Store asset pack
-Generated from: http://127.0.0.1:3011
+Generated from: http://127.0.0.1:3000
 
 Files:
 - app-icon-512.png

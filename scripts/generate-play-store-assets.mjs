@@ -287,17 +287,12 @@ async function captureLauncher(browser) {
   try {
     await routeCommon(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
-    const firstInvoiceGuide = page.locator('[data-testid="launcher-first-invoice-guide"]');
-    const startSection = page.getByText("Start here").first();
-    if ((await firstInvoiceGuide.count()) > 0) {
-      await firstInvoiceGuide.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
-    } else {
-      await startSection.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {});
-    }
+    await page.getByText("Turn rough notes into a client-ready invoice.").waitFor({ state: "visible" });
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
     await page.getByText("Internal diagnostics").evaluate((element) => {
       element.style.display = "none";
     }).catch(() => {});
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(400);
     await page.screenshot({
       path: path.join(outputDir, "phone-01-launcher.png"),
       fullPage: false
@@ -314,6 +309,7 @@ async function captureAiIntake(browser) {
   try {
     await routeCommon(page);
     await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
+    await page.getByText("Paste your notes").waitFor({ state: "visible" });
     const notesInput = page.locator("textarea").first();
     await notesInput.fill(
       [
@@ -324,6 +320,16 @@ async function captureAiIntake(browser) {
         "Need invoice sent to megan@oakpine.example."
       ].join("\n")
     );
+    await notesInput.blur();
+    await page.locator('[data-testid="intake-onboarding-section"]').evaluate((element) => {
+      const top = element.getBoundingClientRect().top + window.scrollY - 24;
+      window.scrollTo({ top: Math.max(top, 0), behavior: "instant" });
+      const mobileComposer = document.querySelector(".nb-billie-composer");
+      if (mobileComposer instanceof HTMLElement) {
+        mobileComposer.style.display = "none";
+      }
+    });
+    await page.waitForTimeout(300);
     await page.screenshot({
       path: path.join(outputDir, "phone-02-ai-intake.png"),
       fullPage: false
@@ -353,8 +359,16 @@ async function captureManual(browser) {
   try {
     await routeCommon(page);
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.locator('[data-testid="manual-send-payment-handoff"]').scrollIntoViewIfNeeded();
-    await page.waitForTimeout(250);
+    await page.getByText("Send & payment handoff").waitFor({ state: "visible" });
+    await page.locator('[data-testid="manual-send-payment-handoff"]').evaluate((element) => {
+      const top = element.getBoundingClientRect().top + window.scrollY - 24;
+      window.scrollTo({ top: Math.max(top, 0), behavior: "instant" });
+      const mobileToolbar = document.querySelector(".fixed.bottom-0.left-0.right-0.z-40");
+      if (mobileToolbar instanceof HTMLElement) {
+        mobileToolbar.style.display = "none";
+      }
+    });
+    await page.waitForTimeout(300);
     await page.screenshot({
       path: path.join(outputDir, "phone-03-manual-editor.png"),
       fullPage: false
@@ -371,8 +385,12 @@ async function captureLibrary(browser) {
   try {
     await routeCommon(page, { invoicesPayload: libraryInvoicesPayload });
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    await page.locator('[data-testid="library-billie-next-up"]').scrollIntoViewIfNeeded();
-    await page.waitForTimeout(250);
+    await page.getByText("Billie next up").waitFor({ state: "visible" });
+    await page.locator('[data-testid="library-billie-next-up"]').evaluate((element) => {
+      const top = element.getBoundingClientRect().top + window.scrollY - 24;
+      window.scrollTo({ top: Math.max(top, 0), behavior: "instant" });
+    });
+    await page.waitForTimeout(300);
     await page.screenshot({
       path: path.join(outputDir, "phone-04-invoice-library.png"),
       fullPage: false
@@ -390,7 +408,8 @@ async function captureHelpCenter(browser) {
     await routeCommon(page);
     await page.goto(`${baseUrl}/help`, { waitUntil: "networkidle" });
     await page.locator('[data-testid="help-center-quick-starts"]').scrollIntoViewIfNeeded();
-    await page.waitForTimeout(250);
+    await page.evaluate(() => window.scrollBy({ top: -120, behavior: "instant" }));
+    await page.waitForTimeout(300);
     await page.screenshot({
       path: path.join(outputDir, "phone-05-help-center.png"),
       fullPage: false
@@ -407,6 +426,9 @@ async function captureImport(browser) {
   try {
     await routeCommon(page);
     await page.goto(`${baseUrl}/import`, { waitUntil: "networkidle" });
+    await page.getByText("Upload old invoice files or photo notes").waitFor({ state: "visible" });
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    await page.waitForTimeout(300);
     await page.screenshot({
       path: path.join(outputDir, "phone-06-import.png"),
       fullPage: false
