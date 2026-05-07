@@ -2954,6 +2954,11 @@
                 const clientPortalUrl = buildLibraryClientPortalUrl(invoice);
                 const clientPortalReady = clientPortalUrl.length > 0;
                 const showSendComposer = sendComposer?.invoiceId === invoice.invoiceId;
+                const sendComposerNextStep = !paymentLinkReady
+                  ? "After tracking the send, add a hosted payment link so the invoice is easier to pay."
+                  : !clientPortalReady
+                    ? "After tracking the send, create the client portal so the customer gets the full review-and-pay handoff."
+                    : "After tracking the send, watch for opens and follow up only if the client needs another copy.";
                 const isDeleted = invoice.status === "deleted";
                 const isSelected = selectedIds.includes(invoice.invoiceId);
                 const isStatusBusy = statusActionId.startsWith(`${invoice.invoiceId}:`);
@@ -3581,6 +3586,9 @@
                         </p>
                         <p className="mt-1 text-xs text-slate-500">
                           Sending records this invoice as sent, updates delivery tracking, and remembers the recipient for this client.
+                        </p>
+                        <p className="mt-2 rounded-2xl border border-blue-100/80 bg-white/90 px-3 py-2 text-xs leading-5 text-blue-900 shadow-sm">
+                          {sendComposerNextStep}
                         </p>
                         {sendComposer?.prefilledFrom === "client_memory" ? (
                           <p className="mt-1 text-xs text-emerald-700">

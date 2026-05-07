@@ -5975,6 +5975,78 @@ test("invoice library Billie next-up guide highlights missing tracked delivery f
   }
 });
 
+test("invoice library send composer explains the next handoff step after tracking delivery", async () => {
+  const ownerId = "ui-send-next-step-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Send Next Step Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-SEND-NEXT-1",
+          issueDate: "2026-05-01",
+          dueDate: "2026-05-14",
+          customerName: "Send Next Step Client",
+          currency: "USD",
+          paymentLinkUrl: "https://pay.example.com/invoice/INV-SEND-NEXT-1",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Cabinet repair",
+              quantity: 1,
+              unitPrice: 190,
+              amount: 190
+            }
+          ],
+          subtotal: 190,
+          total: 190,
+          balanceDue: 190
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const invoiceId = String((await saveResponse.json()).invoice?.invoiceId ?? "");
+  assert.ok(invoiceId);
+
+  const sentResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/status`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      status: "sent"
+    }
+  });
+  assert.equal(sentResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Send invoice INV-SEND-NEXT-1" }).click();
+    await page
+      .getByText(
+        "After tracking the send, create the client portal so the customer gets the full review-and-pay handoff."
+      )
+      .waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library prefills send recipient from client memory", async () => {
   const ownerId = "ui-send-memory-owner";
   const context = await browser.newContext();
