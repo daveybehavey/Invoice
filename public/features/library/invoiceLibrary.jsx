@@ -1425,7 +1425,7 @@
       className: "nb-chip nb-chip--soft normal-case tracking-normal"
     };
   };
-  const getInvoiceNextActionHint = ({ invoice, hasDelivery, isPastDue }) => {
+  const getInvoiceNextActionHint = ({ invoice, hasDelivery, isPastDue, deliveryOpened }) => {
     if (invoice?.status === "deleted") {
       return "Restore to edit, export, or send again.";
     }
@@ -1433,6 +1433,9 @@
       return "Paid. Use Invoice again for similar work.";
     }
     if (invoice?.status === "sent" && isPastDue) {
+      if (hasDelivery && !deliveryOpened) {
+        return "Past due and still unopened. Re-send it or confirm delivery before sending a payment reminder.";
+      }
       return "Past due. Follow up, or mark paid if the payment already arrived.";
     }
     if (invoice?.status === "sent" && hasDelivery) {
@@ -2628,7 +2631,15 @@
                     : "Open repeat invoice"}
                 </button>
               ) : null}
-              {canQuickSendReminderOldest ? (
+              {oldestSentReminder.isPastDue && oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened ? (
+                <button
+                  type="button"
+                  className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
+                  onClick={() => startSendComposer(oldestSentReminder)}
+                >
+                  Open send flow
+                </button>
+              ) : canQuickSendReminderOldest ? (
                 <button
                   type="button"
                   className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 disabled:cursor-not-allowed disabled:text-blue-400"
@@ -2636,6 +2647,16 @@
                   disabled={actionId === oldestSentReminder.invoiceId}
                 >
                   {actionId === oldestSentReminder.invoiceId ? "Sending..." : "Send reminder"}
+                </button>
+              ) : null}
+              {oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened ? (
+                <button
+                  type="button"
+                  className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 disabled:cursor-not-allowed disabled:text-blue-400"
+                  onClick={() => void handleMarkDeliveryOpened(oldestSentReminder.invoiceId)}
+                  disabled={actionId === oldestSentReminder.invoiceId}
+                >
+                  {actionId === oldestSentReminder.invoiceId ? "Marking..." : "Mark opened"}
                 </button>
               ) : null}
               {oldestSentReminder ? (
@@ -3045,7 +3066,12 @@
                 const showMarkSent = invoice.status === "draft" || invoice.status === "paid";
                 const showMarkPaid = invoice.status === "sent";
                 const showMarkDraft = invoice.status === "sent" || invoice.status === "paid";
-                const nextActionHint = getInvoiceNextActionHint({ invoice, hasDelivery, isPastDue });
+                const nextActionHint = getInvoiceNextActionHint({
+                  invoice,
+                  hasDelivery,
+                  isPastDue,
+                  deliveryOpened
+                });
                 const repeatWorkflow = (() => {
                   if (isDeleted || showTrash) {
                     return null;
@@ -3242,7 +3268,9 @@
                       invoice.status === "paid"
                         ? "No follow-up needed"
                         : isPastDue
-                          ? "Past due follow-up"
+                          ? hasDelivery && !deliveryOpened
+                            ? "Overdue unopened"
+                            : "Past due follow-up"
                           : hasDelivery
                             ? deliveryOpened
                               ? "Opened by client"
