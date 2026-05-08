@@ -7909,6 +7909,125 @@ test("client workspace shows saved services and can start from memory", async ()
   }
 });
 
+test("operator dashboard surfaces open balance, recurring work, and repeat-ready clients", async () => {
+  const ownerId = "ui-operator-dashboard-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          name: "Dashboard Client",
+          details: "Dashboard Client\n88 Summary Rd",
+          recipientEmail: "billing@dashboard-client.example",
+          defaultNotes: "Monthly service plan",
+          recurringIntervalDays: 30,
+          updatedAt: "2026-05-08T18:00:00.000Z"
+        }
+      ])
+    );
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          description: "Monthly service plan",
+          qty: "1",
+          rate: "140",
+          clientName: "Dashboard Client",
+          usageCount: 2,
+          updatedAt: "2026-05-08T18:00:00.000Z"
+        }
+      ])
+    );
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Dashboard Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DASH-1",
+          issueDate: "2026-05-08",
+          dueDate: "2026-05-15",
+          customerName: "Dashboard Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "dashboard-line-1",
+              type: "labor",
+              description: "Monthly service plan",
+              quantity: 1,
+              unitPrice: 140,
+              amount: 140
+            }
+          ],
+          subtotal: 140,
+          total: 140,
+          balanceDue: 140
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const savePayload = await saveResponse.json();
+  const invoiceId = savePayload?.invoice?.invoiceId;
+  assert.equal(typeof invoiceId, "string");
+
+  const statusResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/status`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      status: "sent"
+    }
+  });
+  assert.equal(statusResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.addInitScript(
+      ({ initOwnerId, recurringInvoiceId }) => {
+        window.localStorage.setItem(
+          `invoiceRecurringSchedules::owner:${initOwnerId}`,
+          JSON.stringify({
+            entries: {
+              [recurringInvoiceId]: {
+                intervalDays: 30,
+                nextDueAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString()
+              }
+            }
+          })
+        );
+      },
+      { initOwnerId: ownerId, recurringInvoiceId: invoiceId }
+    );
+    await page.goto(`${baseUrl}/dashboard`, { waitUntil: "networkidle" });
+    await page.getByTestId("operator-dashboard-page").waitFor({ state: "visible" });
+    await page.getByTestId("operator-dashboard-followups").getByText("INV-DASH-1").waitFor({
+      state: "visible"
+    });
+    await page.getByTestId("operator-dashboard-recurring").getByText("Dashboard Client").waitFor({
+      state: "visible"
+    });
+    await page.getByTestId("operator-dashboard-repeat-ready").getByText("Dashboard Client").waitFor({
+      state: "visible"
+    });
+    await page.getByText("$140.00").first().waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library supports sent and paid status actions", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

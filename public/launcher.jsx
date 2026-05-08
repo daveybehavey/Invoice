@@ -67,6 +67,13 @@ if (!clientWorkspaceFeatureUtils) {
   );
 }
 const { ClientWorkspacePage } = clientWorkspaceFeatureUtils;
+const operatorDashboardFeatureUtils = window.InvoiceOperatorDashboardFeature;
+if (!operatorDashboardFeatureUtils) {
+  throw new Error(
+    "Missing /features/settings/operatorDashboard.jsx load. Ensure it is loaded before /launcher.jsx."
+  );
+}
+const { OperatorDashboardPage } = operatorDashboardFeatureUtils;
 
 const manualCanvasUtils = window.InvoiceManualCanvas;
 if (!manualCanvasUtils) {
@@ -2707,6 +2714,7 @@ function App() {
         <Route path="/settings/memory" element={<ClientMemorySettings />} />
         <Route path="/settings/services" element={<ServiceCatalogSettings />} />
         <Route path="/clients" element={<ClientWorkspacePage />} />
+        <Route path="/dashboard" element={<OperatorDashboardPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/help" element={<HelpCenterPage />} />
         <Route path="/support" element={<SupportPage />} />
