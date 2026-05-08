@@ -341,6 +341,7 @@ function AIIntake() {
   const [billingNotice, setBillingNotice] = useState(null);
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState("");
+  const [importStudioContext, setImportStudioContext] = useState(null);
   const [messages, setMessages] = useState(initialIntakeMessages);
   const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -402,6 +403,31 @@ function AIIntake() {
   const [voiceNoteError, setVoiceNoteError] = useState("");
   const [voiceNoteNotice, setVoiceNoteNotice] = useState("");
   const audioUploadInputRef = useRef(null);
+  const formatImportStudioPreview = (value) => {
+    const normalized = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+    if (!normalized) {
+      return "";
+    }
+    return normalized.length > 320 ? `${normalized.slice(0, 320).trimEnd()}…` : normalized;
+  };
+  const applyImportStudioSourceToInput = () => {
+    const sourceText =
+      typeof importStudioContext?.sourceText === "string" ? importStudioContext.sourceText.trim() : "";
+    if (!sourceText) {
+      return;
+    }
+    const prefill = `Use this imported source text to clean up anything the draft missed or left uncertain:\n\n${sourceText}`;
+    setInputValue(prefill);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        const input = document.getElementById("ai-intake-input");
+        if (input instanceof HTMLTextAreaElement) {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      });
+    }
+  };
   const refreshOnboardingStatus = (sessionOverride) => {
     setOnboardingStatus(
       buildOnboardingStatus({
@@ -1972,6 +1998,16 @@ function AIIntake() {
     const nextSeedFollowUp = payload?.needsFollowUp ? payload.followUp ?? null : null;
     const nextSeedInvoice = payload?.needsFollowUp ? null : payload?.invoice ?? null;
     const nextSeedQuality = payload?.qualityGate ?? null;
+    setImportStudioContext({
+      fileName,
+      sourceText: seedTranscript,
+      preview: formatImportStudioPreview(seedTranscript),
+      openDecisionCount: nextOpenDecisions.length,
+      assumptionCount: nextAssumptions.length,
+      unparsedCount: nextUnparsedLines.length,
+      qualityBlockerCount: nextSeedQuality?.blockerCount ?? 0,
+      needsFollowUp: Boolean(payload?.needsFollowUp)
+    });
     const seedReadiness = evaluateResponseReadiness({
       followUp: nextSeedFollowUp,
       finishedInvoice: nextSeedInvoice,
@@ -2591,6 +2627,77 @@ function AIIntake() {
                       </div>
                     ))}
                   </div>
+                </div>
+              ) : null}
+
+              {importStudioContext ? (
+                <div
+                  className="nb-surface nb-surface--elevated rounded-[30px] border-[#6993d2]/18 bg-[linear-gradient(145deg,_#f8fbff_0%,_#ffffff_55%,_#edf6ff_100%)] p-5"
+                  data-testid="import-cleanup-studio"
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="max-w-3xl">
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                        Import cleanup studio
+                      </p>
+                      <p className="mt-2 text-lg font-semibold text-[#093064]" style={{ fontFamily: "'Fraunces', serif" }}>
+                        Keep the original import close while you clean up what Billie could not settle automatically.
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-slate-600">
+                        NoteBill already pulled this file into review. Use the source text, unresolved decisions, and missing lines together instead of starting over.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
+                        onClick={applyImportStudioSourceToInput}
+                      >
+                        Use source in chat
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                    {importStudioContext.fileName ? (
+                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1 font-semibold text-slate-700">
+                        {importStudioContext.fileName}
+                      </span>
+                    ) : null}
+                    <span className="rounded-full border border-[#6993d2]/20 bg-[#f6f9ff] px-3 py-1 font-semibold text-[#093064]">
+                      {importStudioContext.openDecisionCount} decision{importStudioContext.openDecisionCount === 1 ? "" : "s"}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 font-semibold text-slate-700">
+                      {importStudioContext.unparsedCount} uncaptured line{importStudioContext.unparsedCount === 1 ? "" : "s"}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 font-semibold text-slate-700">
+                      {importStudioContext.assumptionCount} assumption{importStudioContext.assumptionCount === 1 ? "" : "s"}
+                    </span>
+                    {importStudioContext.qualityBlockerCount > 0 ? (
+                      <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 font-semibold text-amber-800">
+                        {importStudioContext.qualityBlockerCount} quality blocker{importStudioContext.qualityBlockerCount === 1 ? "" : "s"}
+                      </span>
+                    ) : null}
+                    {importStudioContext.needsFollowUp ? (
+                      <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 font-semibold text-amber-800">
+                        Missing money details need a reply
+                      </span>
+                    ) : null}
+                  </div>
+                  {importStudioContext.preview ? (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white/88 p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                          Imported source preview
+                        </p>
+                        <p className="text-[11px] font-medium text-slate-500">
+                          Original text stays available for cleanup
+                        </p>
+                      </div>
+                      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                        {importStudioContext.preview}
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 

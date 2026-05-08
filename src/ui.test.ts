@@ -1928,6 +1928,76 @@ test("manual import cleanup card seeds Billie from stored import source text", a
   }
 });
 
+test("import cleanup studio surfaces seeded source context in intake", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem(
+      "invoiceImportSeed",
+      JSON.stringify({
+        fileName: "legacy-notes.txt",
+        notes: "Client said to keep the wording simple.",
+        sourceText:
+          "Legacy invoice: Jan 30 faucet repair, 2 hours at $80/hr for Mike Johnson. Cabinet adjustment maybe charge.",
+        payload: {
+          needsFollowUp: false,
+          followUp: null,
+          structuredInvoice: {
+            customerName: "Mike Johnson",
+            workSessions: [
+              {
+                date: "Jan 30",
+                tasks: [{ description: "Faucet repair", hours: 2, rate: 80, amount: 160 }]
+              }
+            ],
+            materials: []
+          },
+          invoice: {
+            currency: "USD",
+            lineItems: [
+              {
+                type: "labor",
+                description: "Kitchen faucet repair service",
+                quantity: 2,
+                unitPrice: 80,
+                amount: 160
+              }
+            ],
+            notes: "Thank you for your business."
+          },
+          openDecisions: [
+            {
+              kind: "billing",
+              prompt: "Bill cabinet adjustment?",
+              sourceSnippet: "Cabinet adjustment maybe charge."
+            }
+          ],
+          assumptions: ["Assumed faucet repair was labor."],
+          unparsedLines: ["Cabinet adjustment maybe charge."],
+          qualityGate: { blockerCount: 1 },
+          auditStatus: null
+        }
+      })
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
+    const studio = page.getByTestId("import-cleanup-studio");
+    await studio.waitFor({ state: "visible" });
+    await studio.getByText("legacy-notes.txt").waitFor({ state: "visible" });
+    await studio.getByText("1 decision").waitFor({ state: "visible" });
+    await studio.getByText("1 uncaptured line").waitFor({ state: "visible" });
+    await studio.getByText("1 quality blocker").waitFor({ state: "visible" });
+    await studio.getByRole("button", { name: "Use source in chat" }).click();
+    await expectValueContains(
+      page.locator("#ai-intake-input"),
+      "Legacy invoice: Jan 30 faucet repair, 2 hours at $80/hr for Mike Johnson."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("import screen shows pre-limit warning when one free save remains", async () => {
   process.env.INVOICE_DEFAULT_PLAN = "free";
   process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "2";
