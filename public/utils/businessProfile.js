@@ -55,13 +55,44 @@
     return trimmed.length > 0 ? trimmed : null;
   };
 
+  const normalizeBusinessRegistration = (value, index = 0) => {
+    const entry = value && typeof value === "object" ? value : {};
+    const label = normalizeText(entry.label).replace(/\n+/g, " ").trim();
+    const number = normalizeText(entry.value ?? entry.number).replace(/\n+/g, " ").trim();
+    const countryCode = typeof entry.countryCode === "string" ? entry.countryCode.trim().slice(0, 2).toUpperCase() : "";
+    const regionCode = typeof entry.regionCode === "string" ? entry.regionCode.trim().slice(0, 16).toUpperCase() : "";
+    const kind = typeof entry.kind === "string" ? entry.kind.trim().toLowerCase() : "other";
+    const system = typeof entry.system === "string" ? entry.system.trim() : "";
+    const visible = entry.visible !== false;
+    if (!label && !number) {
+      return null;
+    }
+    return {
+      id: typeof entry.id === "string" && entry.id.trim() ? entry.id.trim() : `registration-${index + 1}`,
+      kind: kind || "other",
+      system,
+      label: label || "Registration",
+      value: number,
+      countryCode,
+      regionCode,
+      visible
+    };
+  };
+
+  const normalizeBusinessRegistrations = (value) =>
+    (Array.isArray(value) ? value : [])
+      .map((entry, index) => normalizeBusinessRegistration(entry, index))
+      .filter(Boolean);
+
   const normalizeBusinessProfile = (value) => {
     const profile = value && typeof value === "object" ? value : {};
     return {
       fromDetails: normalizeText(profile.fromDetails),
       accentColor: normalizeAccentColor(profile.accentColor ?? DEFAULT_ACCENT_COLOR),
       stylePreset: normalizeStylePreset(profile.stylePreset),
-      logoUrl: normalizeLogoUrl(profile.logoUrl)
+      logoUrl: normalizeLogoUrl(profile.logoUrl),
+      businessRegistrations: normalizeBusinessRegistrations(profile.businessRegistrations),
+      registrationBlockVisible: profile.registrationBlockVisible !== false
     };
   };
 
@@ -150,6 +181,17 @@
       nextDraft.logoUrl = profile.logoUrl;
     } else {
       nextDraft.logoUrl = normalizeLogoUrl(nextDraft.logoUrl);
+    }
+
+    const draftRegistrations = normalizeBusinessRegistrations(nextDraft.businessRegistrations);
+    if (draftRegistrations.length === 0 && profile.businessRegistrations.length > 0) {
+      nextDraft.businessRegistrations = profile.businessRegistrations;
+    } else {
+      nextDraft.businessRegistrations = draftRegistrations;
+    }
+
+    if (typeof nextDraft.registrationBlockVisible !== "boolean") {
+      nextDraft.registrationBlockVisible = profile.registrationBlockVisible;
     }
 
     return nextDraft;

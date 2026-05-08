@@ -386,6 +386,14 @@ function ManualInvoiceCanvas() {
   const [fromDetails, setFromDetails] = useState(
     () => initialDraft?.fromDetails ?? seededDraft?.fromDetails ?? ""
   );
+  const [businessRegistrations, setBusinessRegistrations] = useState(
+    () => initialDraft?.businessRegistrations ?? seededDraft?.businessRegistrations ?? []
+  );
+  const [registrationBlockVisible, setRegistrationBlockVisible] = useState(() =>
+    typeof initialDraft?.registrationBlockVisible === "boolean"
+      ? initialDraft.registrationBlockVisible
+      : seededDraft?.registrationBlockVisible !== false
+  );
   const [billToDetails, setBillToDetails] = useState(() => initialDraft?.billToDetails ?? "");
   const [notes, setNotes] = useState(() => initialDraft?.notes ?? "");
   const [paymentLinkUrl, setPaymentLinkUrl] = useState(() => initialDraft?.paymentLinkUrl ?? "");
@@ -748,6 +756,8 @@ function ManualInvoiceCanvas() {
     invoiceDate,
     dueDate,
     fromDetails,
+    businessRegistrations,
+    registrationBlockVisible,
     billToDetails,
     notes,
     paymentLinkUrl,
@@ -1464,6 +1474,11 @@ function ManualInvoiceCanvas() {
       payload: {
         invoice: editableResult.invoice,
         fromDetails: fromDetails?.trim() || undefined,
+        businessRegistrations:
+          businessRegistrations.filter((entry) => entry?.label?.trim() || entry?.value?.trim()).length > 0
+            ? businessRegistrations
+            : undefined,
+        registrationBlockVisible,
         billToDetails: billToDetails?.trim() || undefined,
         accentColor,
         stylePreset,
@@ -1556,6 +1571,8 @@ function ManualInvoiceCanvas() {
       invoiceDate,
       dueDate,
       fromDetails,
+      businessRegistrations,
+      registrationBlockVisible,
       billToDetails,
       notes,
       paymentLinkUrl,
@@ -3707,6 +3724,30 @@ function ManualInvoiceCanvas() {
               </div>
             </section>
 
+            {registrationBlockVisible &&
+            businessRegistrations.some((entry) => entry?.visible !== false && String(entry?.value ?? "").trim()) ? (
+              <section className="space-y-2" data-testid="manual-business-registrations-section">
+                <div className="flex items-center justify-between gap-3">
+                  <p className={`${activePreset.textClass} ${activePreset.labelClass}`}>Registrations</p>
+                  <span className="rounded-full border px-2.5 py-1 text-[11px] font-semibold" style={accentGhostButtonStyle}>
+                    Bottom left
+                  </span>
+                </div>
+                <div className="max-w-md rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3">
+                  <div className={`space-y-1 ${activePreset.textClass}`}>
+                    {businessRegistrations
+                      .filter((entry) => entry?.visible !== false && String(entry?.value ?? "").trim())
+                      .map((entry) => (
+                        <p key={entry.id} className="text-slate-700">
+                          <span className="font-semibold text-slate-800">{entry.label || "Registration"}:</span>{" "}
+                          {entry.value}
+                        </p>
+                      ))}
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
             <section
               className={`space-y-2 rounded-2xl transition-colors duration-500 ${
                 billieChangeHighlight.notes ? "bg-emerald-50/40" : ""
@@ -4138,6 +4179,8 @@ function ManualInvoiceCanvas() {
             onLogoRemove={handleLogoRemove}
             onLogoVisibilityChange={setLogoVisible}
             onNotesVisibilityChange={setNotesVisible}
+            registrationBlockVisible={registrationBlockVisible}
+            onRegistrationBlockVisibilityChange={setRegistrationBlockVisible}
             onHeaderLayoutChange={setHeaderLayout}
             onSpacingDensityChange={setSpacingDensity}
             stylePreset={stylePreset}
@@ -4259,6 +4302,8 @@ function ManualInvoiceCanvas() {
                 onLogoRemove={handleLogoRemove}
                 onLogoVisibilityChange={setLogoVisible}
                 onNotesVisibilityChange={setNotesVisible}
+                registrationBlockVisible={registrationBlockVisible}
+                onRegistrationBlockVisibilityChange={setRegistrationBlockVisible}
                 onHeaderLayoutChange={setHeaderLayout}
                 onSpacingDensityChange={setSpacingDensity}
                 stylePreset={stylePreset}

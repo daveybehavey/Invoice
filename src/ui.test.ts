@@ -4035,6 +4035,58 @@ test("manual billie can hide and show notes locally and export preserves visibil
   }
 });
 
+test("manual invoice can show and hide saved business registrations", async () => {
+  const ownerId = "ui-business-registrations-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceBusinessProfile::owner:${initOwnerId}`,
+      JSON.stringify({
+        fromDetails: "Acme Plumbing\n123 Main St",
+        businessRegistrations: [
+          {
+            id: "reg-1",
+            label: "Business number",
+            value: "123456789BC0001",
+            visible: true,
+            countryCode: "CA",
+            regionCode: "BC",
+            kind: "business",
+            system: "ca_bn"
+          },
+          {
+            id: "reg-2",
+            label: "GST / HST number",
+            value: "123456789RT0001",
+            visible: true,
+            countryCode: "CA",
+            kind: "tax",
+            system: "ca_gst_hst"
+          }
+        ],
+        registrationBlockVisible: true
+      })
+    );
+  }, ownerId);
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const section = page.getByTestId("manual-business-registrations-section");
+    await section.waitFor({ state: "visible" });
+    await section.getByText("Business number: 123456789BC0001").waitFor({ state: "visible" });
+    await section.getByText("GST / HST number: 123456789RT0001").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Hide registration block on invoice" }).click();
+    await section.waitFor({ state: "hidden" });
+
+    await page.getByRole("button", { name: "Show registration block on invoice" }).click();
+    await section.waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("business identity defaults prefill new manual drafts", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();

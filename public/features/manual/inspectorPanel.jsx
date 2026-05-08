@@ -164,6 +164,8 @@ function InspectorPanel({
   onLogoRemove,
   onLogoVisibilityChange,
   onNotesVisibilityChange,
+  registrationBlockVisible,
+  onRegistrationBlockVisibilityChange,
   onHeaderLayoutChange,
   onSpacingDensityChange,
   onTaxRateChange,
@@ -1540,6 +1542,27 @@ function InspectorPanel({
                   {notesVisible
                     ? "Notes are visible on the invoice."
                     : "Notes are hidden from the invoice."}
+                </p>
+              </div>
+              <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Registrations block</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Show or hide business and tax IDs on the invoice. Hidden automatically when no IDs are saved.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="text-sm font-semibold text-slate-600"
+                  aria-label={registrationBlockVisible ? "Hide registration block on invoice" : "Show registration block on invoice"}
+                  onClick={() => onRegistrationBlockVisibilityChange?.(!registrationBlockVisible)}
+                >
+                  {registrationBlockVisible ? "Hide on invoice" : "Show on invoice"}
+                </button>
+                <p className="text-xs text-slate-500">
+                  {registrationBlockVisible
+                    ? "Registration IDs are visible on the invoice when present."
+                    : "Registration IDs stay saved but are hidden from the invoice."}
                 </p>
               </div>
             </div>

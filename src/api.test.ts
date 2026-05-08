@@ -2307,6 +2307,60 @@ test("export-pdf accepts hidden notes requests", async () => {
   assert.ok(response.body.byteLength > 200);
 });
 
+test("export-pdf accepts business registration blocks", async () => {
+  const response = await request(app)
+    .post("/api/invoices/export-pdf")
+    .buffer(true)
+    .parse((res, callback) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      res.on("end", () => callback(null, Buffer.concat(chunks)));
+    })
+    .send({
+      invoice: {
+        invoiceNumber: "INV-1005A",
+        issueDate: "2026-02-27",
+        customerName: "Mike Johnson",
+        currency: "USD",
+        lineItems: [
+          {
+            id: "line-1",
+            type: "labor",
+            description: "Faucet repair",
+            quantity: 2,
+            unitPrice: 80,
+            amount: 160
+          }
+        ],
+        subtotal: 160,
+        total: 160,
+        balanceDue: 160
+      },
+      fromDetails: "Acme Plumbing\n123 Main St",
+      businessRegistrations: [
+        {
+          label: "Business number",
+          value: "123456789BC0001",
+          visible: true
+        },
+        {
+          label: "GST / HST number",
+          value: "123456789RT0001",
+          visible: true
+        }
+      ],
+      registrationBlockVisible: true,
+      billToDetails: "Mike Johnson\n1423 Pine St",
+      accentColor: "#093064",
+      stylePreset: "default"
+    });
+
+  assert.equal(response.status, 200);
+  assert.match(String(response.headers["content-type"]), /^application\/pdf/);
+  assert.ok(Buffer.isBuffer(response.body));
+  assert.ok(response.body.byteLength > 200);
+});
+
 test("export-pdf rejects invalid payment link urls", async () => {
   const response = await request(app).post("/api/invoices/export-pdf").send({
     invoice: {

@@ -224,6 +224,21 @@ export const ApplyDecisionRequestSchema = z.object({
 export const InvoicePdfExportRequestSchema = z.object({
   invoice: FinishedInvoiceSchema,
   fromDetails: OptionalString,
+  businessRegistrations: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        kind: OptionalString,
+        system: OptionalString,
+        label: OptionalString,
+        value: OptionalString,
+        countryCode: OptionalString,
+        regionCode: OptionalString,
+        visible: z.boolean().optional()
+      })
+    )
+    .optional(),
+  registrationBlockVisible: z.boolean().optional(),
   billToDetails: OptionalString,
   accentColor: OptionalString,
   stylePreset: OptionalString,

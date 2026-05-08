@@ -4,6 +4,12 @@ import type { FinishedInvoice, InvoiceLineItem } from "../models/invoice.js";
 type InvoicePdfInput = {
   invoice: FinishedInvoice;
   fromDetails?: string;
+  businessRegistrations?: Array<{
+    label?: string;
+    value?: string;
+    visible?: boolean;
+  }>;
+  registrationBlockVisible?: boolean;
   billToDetails?: string;
   accentColor?: string;
   stylePreset?: string;
@@ -77,6 +83,10 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
   renderPartyBlocks(state, { fromLines, billToLines, styleScale });
   renderLineItemsSection(state, { invoice: input.invoice, styleScale });
   renderTotalsPanel(state, { invoice: input.invoice, styleScale });
+  renderBusinessRegistrations(state, {
+    registrations: input.businessRegistrations ?? [],
+    registrationBlockVisible: input.registrationBlockVisible
+  });
   if (input.notesVisible !== false) {
     renderNotes(state, { notes: input.invoice.notes ?? "", styleScale });
   }
@@ -713,6 +723,59 @@ function renderNotes(
     y -= 12 * spacingScale;
   }
   state.cursorY = y - 8 * spacingScale;
+}
+
+function renderBusinessRegistrations(
+  state: PdfRenderState,
+  options: {
+    registrations: Array<{ label?: string; value?: string; visible?: boolean }>;
+    registrationBlockVisible?: boolean;
+  }
+): void {
+  if (options.registrationBlockVisible === false) {
+    return;
+  }
+  const registrationLines = (Array.isArray(options.registrations) ? options.registrations : [])
+    .filter((entry) => entry?.visible !== false)
+    .map((entry) => {
+      const label = String(entry?.label ?? "").trim();
+      const value = String(entry?.value ?? "").trim();
+      if (!label && !value) {
+        return "";
+      }
+      return `${label || "Registration"}: ${value}`;
+    })
+    .filter(Boolean)
+    .slice(0, 6);
+  if (registrationLines.length === 0) {
+    return;
+  }
+
+  const sectionHeight = 30 + registrationLines.length * 12;
+  ensureVerticalSpace(state, sectionHeight + 10 * state.spacingScale, true);
+  drawSectionTitle(state, "Registrations");
+  state.page.drawRectangle({
+    x: PAGE_MARGIN_X,
+    y: state.cursorY - (registrationLines.length * 12 + 16) * state.spacingScale,
+    width: CONTENT_WIDTH * 0.56,
+    height: (registrationLines.length * 12 + 16) * state.spacingScale,
+    borderColor: SLATE_200,
+    borderWidth: 1,
+    color: SURFACE
+  });
+
+  let y = state.cursorY - 12 * state.spacingScale;
+  for (const line of registrationLines) {
+    state.page.drawText(line, {
+      x: PAGE_MARGIN_X + 10,
+      y,
+      size: 10,
+      font: state.regularFont,
+      color: SLATE_700
+    });
+    y -= 12 * state.spacingScale;
+  }
+  state.cursorY = y - 8 * state.spacingScale;
 }
 
 function renderPaymentLink(

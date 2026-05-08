@@ -128,6 +128,47 @@
     };
   };
 
+  const REGISTRATION_PRESETS = [
+    {
+      id: "ca_bn",
+      label: "Canada business number",
+      valueLabel: "Business number",
+      kind: "business",
+      system: "ca_bn",
+      countryCode: "CA",
+      regionCode: ""
+    },
+    {
+      id: "ca_gst_hst",
+      label: "GST / HST number",
+      valueLabel: "GST/HST number",
+      kind: "tax",
+      system: "ca_gst_hst",
+      countryCode: "CA",
+      regionCode: ""
+    },
+    {
+      id: "ca_bc_pst",
+      label: "BC PST number",
+      valueLabel: "PST number",
+      kind: "tax",
+      system: "ca_pst_bc",
+      countryCode: "CA",
+      regionCode: "BC"
+    }
+  ];
+
+  const createRegistrationEntry = (preset) => ({
+    id: `registration-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    kind: preset?.kind ?? "other",
+    system: preset?.system ?? "custom",
+    label: preset?.valueLabel ?? "Registration",
+    value: "",
+    countryCode: preset?.countryCode ?? "",
+    regionCode: preset?.regionCode ?? "",
+    visible: true
+  });
+
   function SetupContinuationBanner({ title, body }) {
     return (
       <div className="nb-banner nb-banner--success mt-4 rounded-[22px] px-4 py-3">
@@ -165,6 +206,8 @@
     const [accentColor, setAccentColor] = useState(DEFAULT_ACCENT_COLOR);
     const [stylePreset, setStylePreset] = useState("default");
     const [logoUrl, setLogoUrl] = useState(null);
+    const [businessRegistrations, setBusinessRegistrations] = useState([]);
+    const [registrationBlockVisible, setRegistrationBlockVisible] = useState(true);
     const [status, setStatus] = useState("");
     const [error, setError] = useState("");
 
@@ -195,6 +238,8 @@
       setAccentColor(normalizeAccentColor(profile.accentColor ?? DEFAULT_ACCENT_COLOR));
       setStylePreset(profile.stylePreset ?? "default");
       setLogoUrl(profile.logoUrl ?? null);
+      setBusinessRegistrations(Array.isArray(profile.businessRegistrations) ? profile.businessRegistrations : []);
+      setRegistrationBlockVisible(profile.registrationBlockVisible !== false);
     }, []);
 
     const activePreset = STYLE_PRESETS[stylePreset] ?? STYLE_PRESETS.default;
@@ -210,13 +255,17 @@
           fromDetails,
           accentColor,
           stylePreset,
-          logoUrl
+          logoUrl,
+          businessRegistrations,
+          registrationBlockVisible
         });
         markSetupStep("setup_branding");
         setFromDetails(profile.fromDetails);
         setAccentColor(profile.accentColor);
         setStylePreset(profile.stylePreset);
         setLogoUrl(profile.logoUrl);
+        setBusinessRegistrations(profile.businessRegistrations ?? []);
+        setRegistrationBlockVisible(profile.registrationBlockVisible !== false);
         setStatus("Business identity saved.");
         setError("");
       } catch (_error) {
@@ -231,8 +280,24 @@
       setAccentColor(resetProfile.accentColor);
       setStylePreset(resetProfile.stylePreset);
       setLogoUrl(resetProfile.logoUrl);
+      setBusinessRegistrations(resetProfile.businessRegistrations ?? []);
+      setRegistrationBlockVisible(resetProfile.registrationBlockVisible !== false);
       setStatus("Defaults reset.");
       setError("");
+    };
+
+    const updateRegistration = (registrationId, field, value) => {
+      setBusinessRegistrations((prev) =>
+        prev.map((entry) => (entry.id === registrationId ? { ...entry, [field]: value } : entry))
+      );
+    };
+
+    const handleAddRegistration = (preset = null) => {
+      setBusinessRegistrations((prev) => [...prev, createRegistrationEntry(preset)]);
+    };
+
+    const handleRemoveRegistration = (registrationId) => {
+      setBusinessRegistrations((prev) => prev.filter((entry) => entry.id !== registrationId));
     };
 
     const handleLogoChange = async (event) => {
@@ -369,6 +434,115 @@
                 ) : null}
               </div>
 
+              <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/70 p-4">
+                <div className="space-y-1">
+                  <label className="text-sm font-semibold text-slate-900">Registrations & tax IDs</label>
+                  <p className="text-xs text-slate-500">
+                    Add any business or tax registration numbers you want available on invoices. This works for Canada and international users.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {REGISTRATION_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                      onClick={() => handleAddRegistration(preset)}
+                    >
+                      Add {preset.label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                    onClick={() => handleAddRegistration(null)}
+                  >
+                    Add custom
+                  </button>
+                </div>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={registrationBlockVisible}
+                    onChange={(event) => setRegistrationBlockVisible(event.target.checked)}
+                  />
+                  Show registrations on invoices when present
+                </label>
+                {businessRegistrations.length > 0 ? (
+                  <div className="space-y-3">
+                    {businessRegistrations.map((entry) => (
+                      <div key={entry.id} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <label className="space-y-1 text-xs font-semibold text-slate-600">
+                            Label
+                            <input
+                              type="text"
+                              className="nb-input w-full rounded-xl px-3 py-2 text-sm"
+                              value={entry.label ?? ""}
+                              onChange={(event) => updateRegistration(entry.id, "label", event.target.value)}
+                              placeholder="GST number"
+                            />
+                          </label>
+                          <label className="space-y-1 text-xs font-semibold text-slate-600">
+                            Number
+                            <input
+                              type="text"
+                              className="nb-input w-full rounded-xl px-3 py-2 text-sm"
+                              value={entry.value ?? ""}
+                              onChange={(event) => updateRegistration(entry.id, "value", event.target.value)}
+                              placeholder="123456789RT0001"
+                            />
+                          </label>
+                          <label className="space-y-1 text-xs font-semibold text-slate-600">
+                            Country
+                            <input
+                              type="text"
+                              className="nb-input w-full rounded-xl px-3 py-2 text-sm"
+                              value={entry.countryCode ?? ""}
+                              onChange={(event) => updateRegistration(entry.id, "countryCode", event.target.value.toUpperCase())}
+                              placeholder="CA"
+                              maxLength={2}
+                            />
+                          </label>
+                          <label className="space-y-1 text-xs font-semibold text-slate-600">
+                            Region / province
+                            <input
+                              type="text"
+                              className="nb-input w-full rounded-xl px-3 py-2 text-sm"
+                              value={entry.regionCode ?? ""}
+                              onChange={(event) => updateRegistration(entry.id, "regionCode", event.target.value.toUpperCase())}
+                              placeholder="BC"
+                              maxLength={16}
+                            />
+                          </label>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                          <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                            <input
+                              type="checkbox"
+                              checked={entry.visible !== false}
+                              onChange={(event) => updateRegistration(entry.id, "visible", event.target.checked)}
+                            />
+                            Visible on invoice
+                          </label>
+                          <button
+                            type="button"
+                            className="text-xs font-semibold text-slate-500"
+                            onClick={() => handleRemoveRegistration(entry.id)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    No registrations added yet. Add only the IDs you actually need, then hide the whole block any time.
+                  </p>
+                )}
+              </div>
+
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 <button
                   type="button"
@@ -416,6 +590,20 @@
                     {fromDetails.trim() || "Your business details will appear here."}
                   </p>
                 </div>
+                {registrationBlockVisible && businessRegistrations.some((entry) => entry.visible !== false && entry.value?.trim()) ? (
+                  <div className="rounded-lg border border-slate-200 bg-white/80 p-3">
+                    <p className={`text-xs uppercase tracking-[0.2em] ${activePreset.labelClass}`}>Registrations</p>
+                    <div className="mt-1 space-y-1 text-sm text-slate-700">
+                      {businessRegistrations
+                        .filter((entry) => entry.visible !== false && entry.value?.trim())
+                        .map((entry) => (
+                          <p key={entry.id}>
+                            <span className="font-semibold">{entry.label}:</span> {entry.value}
+                          </p>
+                        ))}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="rounded-lg border border-slate-200 bg-white/80 p-3">
                   <p className="text-xs text-slate-500">Accent sample</p>
                   <div
