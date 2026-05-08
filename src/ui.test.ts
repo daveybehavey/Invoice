@@ -5247,6 +5247,15 @@ test("launcher due-soon recurring work can start from saved memory", async () =>
     );
     await expectValueEquals(page.locator("tbody tr").first().getByPlaceholder("0", { exact: true }), "1");
     await expectValueEquals(page.locator("tbody tr").first().getByPlaceholder("$0", { exact: true }), "210");
+    const advancedSchedule = await page.evaluate((storageOwnerId) => {
+      const raw = window.localStorage.getItem(`invoiceRecurringSchedules::owner:${storageOwnerId}`);
+      if (!raw) {
+        return "";
+      }
+      const parsed = JSON.parse(raw);
+      return parsed?.entries ? Object.values(parsed.entries)[0]?.nextDueAt ?? "" : "";
+    }, ownerId);
+    assert.notEqual(advancedSchedule, nextDueAt);
   } finally {
     await context.close();
   }

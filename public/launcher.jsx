@@ -340,6 +340,14 @@ function readRecurringSchedules(storageKey) {
   }
 }
 
+function writeRecurringSchedules(storageKey, entries) {
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify({ entries }));
+  } catch (_error) {
+    // Best-effort only.
+  }
+}
+
 function buildRepeatWorkStarter(clientMemoryEntries, savedLineItems) {
   const memoryEntries = Array.isArray(clientMemoryEntries) ? clientMemoryEntries : [];
   const items = Array.isArray(savedLineItems) ? savedLineItems : [];
@@ -1293,6 +1301,22 @@ function Launcher() {
         source: "launcher_command_center_repeat_memory"
       })
     }).catch(() => {});
+    if (fallbackInvoiceId) {
+      const recurringEntries = readRecurringSchedules(recurringStorageKey);
+      const recurringEntry = recurringEntries[fallbackInvoiceId];
+      if (recurringEntry) {
+        const nextEntries = {
+          ...recurringEntries,
+          [fallbackInvoiceId]: {
+            ...recurringEntry,
+            nextDueAt: new Date(
+              Date.now() + normalizeRecurringInterval(recurringEntry.intervalDays) * 24 * 60 * 60 * 1000
+            ).toISOString()
+          }
+        };
+        writeRecurringSchedules(recurringStorageKey, nextEntries);
+      }
+    }
     navigate("/manual");
   };
   const quickStartOptions = options
