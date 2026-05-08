@@ -1873,6 +1873,56 @@ test("previewing document text lets the user review before building", async () =
     await page.getByRole("button", { name: "Open Billie review" }).click();
 
     await page.waitForURL(/\/manual\?tab=assistant&source=import$/, { timeout: 10000 });
+    await page.getByTestId("manual-import-cleanup-card").waitFor({ state: "visible" });
+    await page.getByText("notes.txt").waitFor({ state: "visible" });
+    await page.getByText(/Jan 30 faucet repair, 2 hours at \$80\/hr for Mike Johnson\./).waitFor({
+      state: "visible"
+    });
+    await page.getByRole("button", { name: "Use source text in Billie" }).click();
+    await page.getByText("Billie loaded the imported source text for cleanup.").waitFor({ state: "visible" });
+    const storedInstruction = await page.evaluate(() => {
+      const match = Object.keys(window.localStorage).find((key) => key.includes("billieWorkspaceInstruction"));
+      return match ? window.localStorage.getItem(match) : "";
+    });
+    assert.match(String(storedInstruction || ""), /Jan 30 faucet repair/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual import cleanup card seeds Billie from stored import source text", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem(
+      "invoiceDraft",
+      JSON.stringify({
+        invoiceNumber: "INV-IMPORT-SEED-1",
+        invoiceDate: "2026-03-10",
+        fromDetails: "Acme Plumbing",
+        billToDetails: "Mike Johnson",
+        notes: "Imported draft notes.",
+        taxRate: "0",
+        lineItems: [{ id: "line-1", description: "Faucet repair", qty: "2", rate: "80" }],
+        importSourceFileName: "notes.txt",
+        importSourceText: "Jan 30 faucet repair, 2 hours at $80/hr for Mike Johnson."
+      })
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual?tab=assistant&source=import`, { waitUntil: "networkidle" });
+    await page.getByTestId("manual-import-cleanup-card").waitFor({ state: "visible" });
+    await page.getByText("notes.txt").waitFor({ state: "visible" });
+    await page.getByText(/Jan 30 faucet repair, 2 hours at \$80\/hr for Mike Johnson\./).waitFor({
+      state: "visible"
+    });
+    await page.getByRole("button", { name: "Use source text in Billie" }).click();
+    await page.getByText("Billie loaded the imported source text for cleanup.").waitFor({ state: "visible" });
+    const storedInstruction = await page.evaluate(() => {
+      const match = Object.keys(window.localStorage).find((key) => key.includes("billieWorkspaceInstruction"));
+      return match ? window.localStorage.getItem(match) : "";
+    });
+    assert.match(String(storedInstruction || ""), /Jan 30 faucet repair/);
   } finally {
     await context.close();
   }

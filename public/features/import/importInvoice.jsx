@@ -415,7 +415,11 @@ function ImportInvoice() {
       throw new Error("Import parsed, but no invoice data was returned.");
     }
     const draft = applyBusinessProfileToDraft(
-      buildDraftFromFinishedInvoice(payload.invoice, { taxRate: "0" })
+      buildDraftFromFinishedInvoice(payload.invoice, {
+        taxRate: "0",
+        importSourceText: options.sourceText ?? "",
+        importSourceFileName: options.fileName ?? ""
+      })
     );
     window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
     navigate(openBillieCleanup ? "/manual?tab=assistant&source=import" : "/manual");

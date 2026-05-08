@@ -206,6 +206,10 @@
             : issueDate || today,
       dueDate: !useFreshDraft && typeof invoice?.dueDate === "string" ? invoice.dueDate.slice(0, 10) : "",
       fromDetails: "",
+      importSourceText:
+        typeof options.importSourceText === "string" ? options.importSourceText.trim() : "",
+      importSourceFileName:
+        typeof options.importSourceFileName === "string" ? options.importSourceFileName.trim() : "",
       billToDetails: invoice?.customerName ?? "",
       notes: invoice?.notes ?? "",
       paymentLinkUrl: invoice?.paymentLinkUrl ?? "",

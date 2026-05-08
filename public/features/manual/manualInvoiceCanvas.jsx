@@ -386,6 +386,8 @@ function ManualInvoiceCanvas() {
   const [fromDetails, setFromDetails] = useState(
     () => initialDraft?.fromDetails ?? seededDraft?.fromDetails ?? ""
   );
+  const [importSourceText] = useState(() => initialDraft?.importSourceText ?? "");
+  const [importSourceFileName] = useState(() => initialDraft?.importSourceFileName ?? "");
   const [businessRegistrations, setBusinessRegistrations] = useState(
     () => initialDraft?.businessRegistrations ?? seededDraft?.businessRegistrations ?? []
   );
@@ -479,6 +481,13 @@ function ManualInvoiceCanvas() {
   const [sharePackBusy, setSharePackBusy] = useState(false);
   const [sharePackNotice, setSharePackNotice] = useState("");
   const [sharePackPreview, setSharePackPreview] = useState("");
+  const importSourcePreview = useMemo(() => {
+    const trimmed = String(importSourceText ?? "").trim();
+    if (!trimmed) {
+      return "";
+    }
+    return trimmed.length > 420 ? `${trimmed.slice(0, 420).trimEnd()}…` : trimmed;
+  }, [importSourceText]);
   const receiptCaptureInputRef = useRef(null);
   const voiceNoteInputRef = useRef(null);
   const [assistantWorkspaceRuntime, setAssistantWorkspaceRuntime] = useState({
@@ -493,6 +502,17 @@ function ManualInvoiceCanvas() {
     timingSummary: ""
   });
   const [billieChangeHighlight, setBillieChangeHighlight] = useState(EMPTY_BILLIE_CHANGE_HIGHLIGHT);
+  const handleUseImportSourceInBillie = () => {
+    if (!String(importSourceText ?? "").trim()) {
+      return;
+    }
+    setBillieWorkspaceInstruction(
+      `Use this imported source text to clean up the current invoice draft. Keep money and quantities explicit, and only improve wording or structure unless I ask for more.\n\nImported source:\n${importSourceText.trim()}`
+    );
+    setActiveInspectorTab("assistant");
+    setInspectorOpen(true);
+    setTimedDraftStatus("Billie loaded the imported source text for cleanup.");
+  };
   const handleSaveFavoriteLayoutStudio = () => {
     const nextFavorite = {
       stylePreset,
@@ -2503,6 +2523,51 @@ function ManualInvoiceCanvas() {
           <div className="nb-banner nb-banner--success mb-4 text-sm font-medium md:col-span-2">
             {importedDraftNotice}
           </div>
+        ) : null}
+        {searchParams.get("source") === "import" && importSourcePreview ? (
+          <section
+            className="nb-surface nb-surface--elevated mb-4 rounded-[28px] p-4 md:col-span-2 no-print"
+            data-testid="manual-import-cleanup-card"
+          >
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                  Import cleanup
+                </p>
+                <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+                  Keep the original imported text close while you clean up the draft.
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  Billie can use the imported source text as reference, so cleanup stays grounded in the original file instead of only the generated draft.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="nb-btn-primary rounded-full px-4 py-2 text-sm"
+                  style={accentButtonStyle}
+                  onClick={handleUseImportSourceInBillie}
+                >
+                  Use source text in Billie
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                  Imported source
+                </p>
+                {importSourceFileName ? (
+                  <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                    {importSourceFileName}
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                {importSourcePreview}
+              </p>
+            </div>
+          </section>
         ) : null}
         {onboardingStatus.visible || onboardingStatus.completionVisible ? (
           <section
