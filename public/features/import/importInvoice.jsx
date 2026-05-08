@@ -242,6 +242,81 @@ function ImportInvoice() {
     };
   };
 
+  const renderLineItemPreviewCard = ({ tone }) => {
+    if (!hasReviewedText) {
+      return null;
+    }
+    const isAmber = tone === "amber";
+    const borderClass = isAmber ? "border-amber-200" : "border-sky-200";
+    const textClass = isAmber ? "text-amber-700" : "text-sky-800";
+    const bodyTextClass = isAmber ? "text-amber-800" : "text-sky-900";
+    const buttonClass = isAmber
+      ? "rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800 hover:border-amber-300 disabled:cursor-not-allowed disabled:text-amber-400"
+      : "rounded-full border border-sky-200 bg-white px-3 py-1 text-xs font-semibold text-sky-900 hover:border-sky-300 disabled:cursor-not-allowed disabled:text-sky-400";
+    const itemBorderClass = isAmber ? "border-amber-100 bg-amber-50" : "border-sky-100 bg-sky-50";
+    const chipClass = isAmber
+      ? "rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-700"
+      : "rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-sky-700";
+    return (
+      <div className={`nb-subcard ${borderClass} bg-white px-3 py-3`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className={`text-xs font-semibold uppercase tracking-wide ${textClass}`}>
+              Preview likely invoice structure
+            </p>
+            <p className={`text-xs ${bodyTextClass}`}>
+              Billie can preview likely line items before you build the draft.
+            </p>
+          </div>
+          <button
+            type="button"
+            className={buttonClass}
+            onClick={handlePreviewLineItems}
+            disabled={isPreviewingLineItems || isExtracting || isUploading}
+          >
+            {isPreviewingLineItems
+              ? "Previewing..."
+              : lineItemPreview
+                ? "Re-preview line items"
+                : "Preview line items"}
+          </button>
+        </div>
+        {lineItemPreview?.title ? (
+          <div className="mt-3 space-y-2">
+            <div className={`flex items-center justify-between gap-2 text-xs ${bodyTextClass}`}>
+              <span>{lineItemPreview.title}</span>
+              <span>
+                {lineItemPreview.itemCount} item
+                {lineItemPreview.itemCount === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="space-y-2">
+              {lineItemPreview.items.map((item) => (
+                <div key={item.id} className={`rounded-xl border px-3 py-2 ${itemBorderClass}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className={`text-sm font-semibold ${isAmber ? "text-amber-950" : "text-sky-950"}`}>{item.label}</p>
+                    <span className={chipClass}>{item.kind}</span>
+                  </div>
+                  {item.meta ? <p className={`mt-1 text-xs ${bodyTextClass}`}>{item.meta}</p> : null}
+                </div>
+              ))}
+            </div>
+            {lineItemPreview.hasMore ? (
+              <p className={`text-xs ${bodyTextClass}`}>
+                Showing the first 5 likely items. Build the draft to review everything in the editor.
+              </p>
+            ) : null}
+            {lineItemPreview.followUpMessage ? (
+              <p className={`text-xs font-medium ${isAmber ? "text-amber-900" : "text-sky-950"}`}>
+                {lineItemPreview.followUpMessage}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
   useEffect(() => {
     const notice = readBillingNoticeFromUrl();
     if (notice) {
@@ -878,71 +953,7 @@ function ImportInvoice() {
                   Click Extract text, then review before building the draft.
                 </p>
               )}
-              {hasReviewedText ? (
-                <div className="nb-subcard border-amber-200 bg-white px-3 py-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-                        Photo to line items
-                      </p>
-                      <p className="text-xs text-amber-800">
-                        Billie can preview likely line items before you build the draft.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800 hover:border-amber-300 disabled:cursor-not-allowed disabled:text-amber-400"
-                      onClick={handlePreviewLineItems}
-                      disabled={isPreviewingLineItems || isExtracting || isUploading}
-                    >
-                      {isPreviewingLineItems
-                        ? "Previewing..."
-                        : lineItemPreview
-                          ? "Re-preview line items"
-                          : "Preview line items"}
-                    </button>
-                  </div>
-                  {lineItemPreview?.title ? (
-                    <div className="mt-3 space-y-2">
-                      <div className="flex items-center justify-between gap-2 text-xs text-amber-800">
-                        <span>{lineItemPreview.title}</span>
-                        <span>
-                          {lineItemPreview.itemCount} item
-                          {lineItemPreview.itemCount === 1 ? "" : "s"}
-                        </span>
-                      </div>
-                      <div className="space-y-2">
-                        {lineItemPreview.items.map((item) => (
-                          <div
-                            key={item.id}
-                            className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2"
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-sm font-semibold text-amber-950">{item.label}</p>
-                              <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-700">
-                                {item.kind}
-                              </span>
-                            </div>
-                            {item.meta ? (
-                              <p className="mt-1 text-xs text-amber-800">{item.meta}</p>
-                            ) : null}
-                          </div>
-                        ))}
-                      </div>
-                      {lineItemPreview.hasMore ? (
-                        <p className="text-xs text-amber-800">
-                          Showing the first 5 likely items. Build the draft to review everything in the editor.
-                        </p>
-                      ) : null}
-                      {lineItemPreview.followUpMessage ? (
-                        <p className="text-xs font-medium text-amber-900">
-                          {lineItemPreview.followUpMessage}
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
+              {renderLineItemPreviewCard({ tone: "amber" })}
               {requiresLowConfidenceConfirm ? (
                 <label className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
                   <input
@@ -1016,6 +1027,7 @@ function ImportInvoice() {
                   {isExtracting ? "Previewing..." : reviewedText ? "Re-preview extracted text" : "Preview extracted text"}
                 </button>
               </div>
+              {renderLineItemPreviewCard({ tone: "sky" })}
             </div>
           ) : null}
 
