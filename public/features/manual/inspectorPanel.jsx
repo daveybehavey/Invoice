@@ -402,6 +402,11 @@ function InspectorPanel({
     onSpacingDensityChange?.(recipe.spacingDensity);
     onAccentColorChange?.(recipe.accentColor);
   };
+  const resetLayoutStudio = () => {
+    applyLayoutStudioRecipe(LAYOUT_STUDIO_RECIPES[0]);
+    onLogoVisibilityChange?.(true);
+    onNotesVisibilityChange?.(true);
+  };
 
   useEffect(() => {
     if (!previewTemplateId) {
@@ -1204,6 +1209,22 @@ function InspectorPanel({
                       {activeSpacingLabel} spacing
                     </span>
                   </div>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                    onClick={() => setPreviewTemplateId(stylePreset || "default")}
+                  >
+                    Preview current look
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                    onClick={resetLayoutStudio}
+                  >
+                    Reset to classic
+                  </button>
                 </div>
               </div>
               <div className="space-y-3">

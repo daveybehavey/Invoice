@@ -3854,6 +3854,32 @@ test("manual layout studio recipes apply grouped style controls quickly", async 
   }
 });
 
+test("manual layout studio can reset back to classic send-ready", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Premium handoff" }).click();
+    await page.locator("[data-header-layout='centered']").first().waitFor({ state: "visible" });
+    await page.locator("[data-spacing-density='airy']").first().waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Reset to classic" }).click();
+
+    await page.locator("[data-header-layout='split']").first().waitFor({ state: "visible" });
+    await page.locator("[data-spacing-density='balanced']").first().waitFor({ state: "visible" });
+    await page.waitForFunction(
+      () =>
+        document.body.innerText.includes("Classic template") &&
+        document.body.innerText.includes("Split header") &&
+        document.body.innerText.includes("Standard spacing"),
+      undefined,
+      { timeout: 10000 }
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual billie can change spacing density locally and export preserves the selected density", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
