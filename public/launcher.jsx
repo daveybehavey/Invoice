@@ -643,6 +643,12 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
     const recurringIsDueNow = nextRecurringCandidate.nextDueMs <= nowMs;
     const recurringIsSoon =
       !recurringIsDueNow && nextRecurringCandidate.nextDueMs - nowMs <= RECURRING_SOON_WINDOW_MS;
+    const recurringMemoryStarter = buildRepeatWorkStarterForClient(
+      nextRecurringCandidate.customerName ?? "",
+      clientMemoryEntries,
+      savedLineItems
+    );
+    const recurringMemoryLabel = recurringMemoryStarter?.leadItem?.description || "";
     actions.push({
       id: `recurring:${nextRecurringCandidate.invoiceId}`,
       tone: recurringIsDueNow ? "repeat-due" : recurringIsSoon ? "repeat-soon" : "repeat",
@@ -658,15 +664,27 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
         : recurringIsSoon
           ? `${nextRecurringCandidate.invoiceNumber || "Draft invoice"}${
               nextRecurringCandidate.customerName ? ` for ${nextRecurringCandidate.customerName}` : ""
-            } is next due${dueLabel ? ` ${dueLabel}` : " soon"}. Start it early so the repeat job is ready before it lands on you.`
+            } is next due${dueLabel ? ` ${dueLabel}` : " soon"}. Start it early so the repeat job is ready before it lands on you.${
+              recurringMemoryLabel ? ` Saved ${recurringMemoryLabel} memory is ready too.` : ""
+            }`
           : `${nextRecurringCandidate.invoiceNumber || "Draft invoice"}${
               nextRecurringCandidate.customerName ? ` for ${nextRecurringCandidate.customerName}` : ""
-            } is next due${dueLabel ? ` ${dueLabel}` : " soon"}. Open it early if you want a head start.`,
+            } is next due${dueLabel ? ` ${dueLabel}` : " soon"}. Open it early if you want a head start.${
+              recurringMemoryLabel ? ` Saved ${recurringMemoryLabel} memory is ready too.` : ""
+            }`,
       cta: recurringIsDueNow ? "Open repeat invoice" : recurringIsSoon ? "Prep repeat invoice" : "Start early",
       ariaLabel: `Open repeat invoice from ${nextRecurringCandidate.invoiceNumber || "saved invoice"}`,
       action: "invoice-again",
       busyId: `invoice-again:${nextRecurringCandidate.invoiceId}`,
-      invoiceId: nextRecurringCandidate.invoiceId
+      invoiceId: nextRecurringCandidate.invoiceId,
+      secondaryCta: recurringMemoryStarter ? "Start from memory" : undefined,
+      secondaryAction: recurringMemoryStarter ? "start-from-memory" : undefined,
+      secondaryAriaLabel: recurringMemoryStarter
+        ? `Start upcoming repeat invoice from saved memory for ${
+            nextRecurringCandidate.customerName || "repeat client"
+          }`
+        : undefined,
+      memoryClientName: recurringMemoryStarter?.entry?.name || ""
     });
   }
   if (repeatCandidate) {

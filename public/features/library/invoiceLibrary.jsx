@@ -1928,6 +1928,13 @@
   const paidRepeatRecurringLabel = paidRepeatRecurringInterval
     ? formatRecurringCadence(paidRepeatRecurringInterval)
     : "";
+  const recurringMemoryStarter = nextRecurringCandidate
+    ? buildClientMemoryStarterForInvoice(
+        nextRecurringCandidate,
+        getClientMemory(),
+        getLineItemLibrary()
+      )
+    : null;
   const libraryGuide = (() => {
     if (showTrash || requiresSignIn) {
       return null;
@@ -2132,12 +2139,14 @@
           handleInvoiceAgain(nextRecurringCandidate.invoiceId, {
             onLoaded: () => advanceRecurringSchedule(nextRecurringCandidate.invoiceId)
           }),
-        secondaryLabel: "Show draft invoices",
-        secondaryDisabled: false,
-        onSecondary: () => {
-          setStatusFilter("draft");
-          setSelectedIds([]);
-        }
+        secondaryLabel: recurringMemoryStarter ? "Start from saved memory" : "Show draft invoices",
+        secondaryDisabled: recurringMemoryStarter ? actionId === nextRecurringCandidate.invoiceId : false,
+        onSecondary: recurringMemoryStarter
+          ? () => handleStartFromClientMemory(nextRecurringCandidate)
+          : () => {
+              setStatusFilter("draft");
+              setSelectedIds([]);
+            }
       };
     }
     if (oldestStaleDraft || latestDraftInvoice) {

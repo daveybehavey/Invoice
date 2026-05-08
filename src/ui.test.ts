@@ -4877,6 +4877,126 @@ test("launcher command center distinguishes recurring work due soon", async () =
   }
 });
 
+test("launcher due-soon recurring work can start from saved memory", async () => {
+  const ownerId = "ui-launcher-recurring-soon-memory-owner";
+  const nextDueAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          name: "Recurring Soon Memory Client",
+          details: "Recurring Soon Memory Client\n55 Repeat Ave",
+          defaultNotes: "Use the saved recurring checklist before sending.",
+          updatedAt: "2026-05-02T12:00:00.000Z"
+        }
+      ])
+    );
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          description: "Quarterly filter replacement",
+          qty: "1",
+          rate: "210",
+          clientName: "Recurring Soon Memory Client",
+          usageCount: 5,
+          updatedAt: "2026-05-03T12:00:00.000Z"
+        }
+      ])
+    );
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Recurring Soon Memory Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LAUNCHER-RECUR-SOON-MEM",
+          issueDate: "2026-03-01",
+          customerName: "Recurring Soon Memory Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "launcher-recurring-soon-memory-line-1",
+              type: "labor",
+              description: "Previous recurring visit",
+              quantity: 1,
+              unitPrice: 140,
+              amount: 140
+            }
+          ],
+          subtotal: 140,
+          total: 140,
+          balanceDue: 140
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const savePayload = await saveResponse.json();
+  const recurringInvoiceId = savePayload?.invoice?.invoiceId as string;
+  await mutateStoredInvoice(recurringInvoiceId, {
+    status: "paid",
+    updatedAt: "2026-03-18T12:00:00.000Z"
+  });
+
+  await context.addInitScript(
+    ({ initOwnerId, nextDueAtValue, invoiceId }) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+      window.localStorage.setItem(
+        `invoiceRecurringSchedules::owner:${initOwnerId}`,
+        JSON.stringify({
+          entries: {
+            [invoiceId]: {
+              intervalDays: 30,
+              nextDueAt: nextDueAtValue
+            }
+          }
+        })
+      );
+    },
+    {
+      initOwnerId: ownerId,
+      nextDueAtValue: nextDueAt,
+      invoiceId: recurringInvoiceId
+    }
+  );
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+    await queue.getByText("Saved Quarterly filter replacement memory is ready too.").waitFor({ state: "visible" });
+    await queue
+      .getByRole("button", { name: "Start upcoming repeat invoice from saved memory for Recurring Soon Memory Client" })
+      .click();
+
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Recurring Soon Memory Client");
+    await expectValueContains(page.getByPlaceholder("Client Name"), "55 Repeat Ave");
+    await expectValueEquals(
+      page.locator("tbody tr").first().getByPlaceholder("Description", { exact: true }),
+      "Quarterly filter replacement"
+    );
+    await expectValueEquals(page.locator("tbody tr").first().getByPlaceholder("0", { exact: true }), "1");
+    await expectValueEquals(page.locator("tbody tr").first().getByPlaceholder("$0", { exact: true }), "210");
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher draft recovery can reopen a saved draft in Billie workspace", async () => {
   const ownerId = "ui-launcher-billie-draft-owner";
   const context = await browser.newContext();
@@ -6387,6 +6507,121 @@ test("invoice library distinguishes recurring work due soon", async () => {
     await page.getByTestId("library-billie-next-up").getByRole("button", { name: "Open repeat invoice" }).click();
     await page.waitForURL(/\/manual$/, { timeout: 15000 });
     await expectValueContains(page.getByPlaceholder("Client Name"), "Recurring Soon Library Client");
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library due-soon recurring work can start from saved memory", async () => {
+  const ownerId = "ui-library-recurring-soon-memory-owner";
+  const nextDueAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          name: "Recurring Soon Library Memory Client",
+          details: "Recurring Soon Library Memory Client\n700 Service Loop",
+          defaultNotes: "Bring the same recurring parts bundle.",
+          updatedAt: "2026-05-01T12:00:00.000Z"
+        }
+      ])
+    );
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          description: "Semiannual rooftop inspection",
+          qty: "2",
+          rate: "165",
+          clientName: "Recurring Soon Library Memory Client",
+          usageCount: 4,
+          updatedAt: "2026-05-03T12:00:00.000Z"
+        }
+      ])
+    );
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Recurring Soon Library Memory Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-RECUR-SOON-LIB-MEM",
+          issueDate: "2026-03-01",
+          customerName: "Recurring Soon Library Memory Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "recur-soon-lib-memory-line-1",
+              type: "labor",
+              description: "Previous roof visit",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          subtotal: 120,
+          total: 120,
+          balanceDue: 120
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const savePayload = await saveResponse.json();
+  const invoiceId = savePayload?.invoice?.invoiceId as string;
+  await mutateStoredInvoice(invoiceId, {
+    status: "paid",
+    updatedAt: "2026-03-18T12:00:00.000Z"
+  });
+
+  await context.addInitScript(
+    ({ initOwnerId, initInvoiceId, initNextDueAt }) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+      window.localStorage.setItem(
+        `invoiceRecurringSchedules::owner:${initOwnerId}`,
+        JSON.stringify({
+          entries: {
+            [initInvoiceId]: {
+              intervalDays: 30,
+              nextDueAt: initNextDueAt
+            }
+          }
+        })
+      );
+    },
+    { initOwnerId: ownerId, initInvoiceId: invoiceId, initNextDueAt: nextDueAt }
+  );
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByTestId("library-billie-next-up").getByRole("button", { name: "Start from saved memory" }).click();
+    await page.waitForURL(/\/manual$/, { timeout: 15000 });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Recurring Soon Library Memory Client");
+    await expectValueContains(page.getByPlaceholder("Client Name"), "700 Service Loop");
+    await expectValueEquals(
+      page.locator("tbody tr").first().getByPlaceholder("Description", { exact: true }),
+      "Semiannual rooftop inspection"
+    );
+    await expectValueEquals(page.locator("tbody tr").first().getByPlaceholder("0", { exact: true }), "2");
+    await expectValueEquals(page.locator("tbody tr").first().getByPlaceholder("$0", { exact: true }), "165");
+    await expectValueEquals(
+      page.getByPlaceholder("Thank you for your business"),
+      "Bring the same recurring parts bundle."
+    );
   } finally {
     await context.close();
   }
