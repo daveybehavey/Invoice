@@ -64,6 +64,35 @@
     { id: "split", label: "Split" },
     { id: "centered", label: "Centered" }
   ];
+  const LAYOUT_STUDIO_RECIPES = [
+    {
+      id: "classic-send-ready",
+      label: "Classic send-ready",
+      description: "Balanced spacing and a steady header for most invoices.",
+      stylePreset: "default",
+      headerLayout: "split",
+      spacingDensity: "balanced",
+      accentColor: "#093064"
+    },
+    {
+      id: "field-estimate",
+      label: "Field estimate",
+      description: "Tighter spacing and a centered header when you want a faster mobile-ready draft.",
+      stylePreset: "compact",
+      headerLayout: "centered",
+      spacingDensity: "tight",
+      accentColor: "#111827"
+    },
+    {
+      id: "premium-handoff",
+      label: "Premium handoff",
+      description: "Airier spacing and a stronger visual presence for polished customer-facing sends.",
+      stylePreset: "spacious",
+      headerLayout: "centered",
+      spacingDensity: "airy",
+      accentColor: "#6993D2"
+    }
+  ];
 
   const manualAssistantHelpers = window.InvoiceManualAssistantHelpers;
   if (!manualAssistantHelpers) {
@@ -252,6 +281,11 @@ function InspectorPanel({
   const styleOptions = STYLE_OPTIONS;
   const toneOptions = ["Formal", "Neutral", "Friendly"];
   const accentSwatches = ["#093064", "#6993D2", "#ACCCF0", "#1d4ed8", "#be123c", "#111827"];
+  const activeStyleOption = styleOptions.find((option) => option.id === stylePreset) ?? styleOptions[0] ?? null;
+  const activeHeaderLayoutLabel =
+    HEADER_LAYOUT_OPTIONS.find((option) => option.id === headerLayout)?.label ?? "Split";
+  const activeSpacingLabel =
+    SPACING_DENSITY_OPTIONS.find((option) => option.id === spacingDensity)?.label ?? "Standard";
   const accent = buildAccentPalette(accentColor);
   const accentButtonStyle = {
     backgroundColor: accent.primary,
@@ -358,6 +392,15 @@ function InspectorPanel({
     onSpacingDensityChange?.(undoState.style.spacingDensity);
     onTaxRateChange?.(undoState.style.taxRate);
     onDiscountAmountChange?.(undoState.style.discountAmount);
+  };
+  const applyLayoutStudioRecipe = (recipe) => {
+    if (!recipe) {
+      return;
+    }
+    onStylePresetChange?.(recipe.stylePreset);
+    onHeaderLayoutChange?.(recipe.headerLayout);
+    onSpacingDensityChange?.(recipe.spacingDensity);
+    onAccentColorChange?.(recipe.accentColor);
   };
 
   useEffect(() => {
@@ -1139,8 +1182,89 @@ function InspectorPanel({
         <div className={`flex-1 overflow-y-auto px-4 py-5 text-sm text-slate-600 ${hideInternalTabs ? "pt-4" : ""}`}>
           {activeTab === "style" ? (
             <div className="space-y-4">
+              <div className="rounded-2xl border border-slate-200 bg-[radial-gradient(circle_at_top_left,rgba(105,147,210,0.16),transparent_56%),linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                  Layout Studio Lite
+                </p>
+                <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
+                  <div className="max-w-[22rem] space-y-2">
+                    <p className="text-lg font-semibold text-slate-900">Make the invoice feel more like your work.</p>
+                    <p className="text-xs leading-5 text-slate-600">
+                      Start with a recipe, then fine-tune the template, accent, header, spacing, logo, and notes.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-[11px] font-semibold">
+                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700">
+                      {activeStyleOption?.label || "Classic"} template
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700">
+                      {activeHeaderLayoutLabel} header
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-700">
+                      {activeSpacingLabel} spacing
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Quick recipes</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    One tap applies a full layout direction so you do not have to tweak each control manually.
+                  </p>
+                </div>
+                <div className="grid gap-3">
+                  {LAYOUT_STUDIO_RECIPES.map((recipe) => {
+                    const isRecipeActive =
+                      stylePreset === recipe.stylePreset &&
+                      headerLayout === recipe.headerLayout &&
+                      spacingDensity === recipe.spacingDensity &&
+                      String(accentColor || "").toLowerCase() === recipe.accentColor.toLowerCase();
+                    return (
+                      <button
+                        key={recipe.id}
+                        type="button"
+                        className={`rounded-2xl border p-3 text-left transition ${
+                          isRecipeActive
+                            ? "shadow-sm"
+                            : "border-slate-200 bg-white/88 hover:border-slate-300"
+                        }`}
+                        style={isRecipeActive ? { borderColor: accent.border, backgroundColor: accent.soft } : undefined}
+                        onClick={() => applyLayoutStudioRecipe(recipe)}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900">{recipe.label}</p>
+                            <p className="mt-1 text-xs leading-5 text-slate-500">{recipe.description}</p>
+                          </div>
+                          {isRecipeActive ? (
+                            <span
+                              className="rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                              style={accentGhostButtonStyle}
+                            >
+                              Active
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-slate-500">
+                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">
+                            {(STYLE_PRESETS[recipe.stylePreset]?.label || recipe.stylePreset)} template
+                          </span>
+                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">
+                            {(HEADER_LAYOUT_OPTIONS.find((option) => option.id === recipe.headerLayout)?.label || recipe.headerLayout)} header
+                          </span>
+                          <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1">
+                            {(SPACING_DENSITY_PRESETS[recipe.spacingDensity]?.label || recipe.spacingDensity)} spacing
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">Templates</p>
+                <p className="mt-1 text-xs text-slate-500">Pick the base invoice personality before fine-tuning the layout.</p>
                 <div className="mt-3 grid gap-3">
                   {styleOptions.map((option) => {
                     const preview = templatePreviews[option.id] ?? templatePreviews.default;

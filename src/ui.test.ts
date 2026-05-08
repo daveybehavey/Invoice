@@ -3831,6 +3831,29 @@ test("manual billie can switch header layout locally and export preserves the se
   }
 });
 
+test("manual layout studio recipes apply grouped style controls quickly", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByText("Layout Studio Lite").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Premium handoff" }).click();
+
+    await page.locator("[data-header-layout='centered']").first().waitFor({ state: "visible" });
+    await page.locator("[data-spacing-density='airy']").first().waitFor({ state: "visible" });
+    await page.waitForFunction(
+      () =>
+        document.body.innerText.includes("Bold template") &&
+        document.body.innerText.includes("Centered header") &&
+        document.body.innerText.includes("Airy spacing"),
+      undefined,
+      { timeout: 10000 }
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual billie can change spacing density locally and export preserves the selected density", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
