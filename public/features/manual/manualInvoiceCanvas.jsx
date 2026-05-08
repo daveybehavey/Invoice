@@ -1591,6 +1591,8 @@ function ManualInvoiceCanvas() {
       invoiceDate,
       dueDate,
       fromDetails,
+      importSourceText,
+      importSourceFileName,
       businessRegistrations,
       registrationBlockVisible,
       billToDetails,
