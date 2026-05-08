@@ -1053,6 +1053,30 @@ test("daily scratchpad saves a note and moves it into the manual invoice draft",
   }
 });
 
+test("daily scratchpad can hand a note off to Billie intake", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await openDailyScratchpad(page);
+    await scratchpadNoteEditor(page).fill("Installed replacement filter and checked pressure.");
+    await page
+      .getByPlaceholder("Tags, comma separated: client, job, materials")
+      .fill("hvac, urgent");
+    await page.getByRole("button", { name: "Save note" }).click();
+    await page.getByRole("button", { name: "Open with Billie" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Open with Billie" }).click();
+    await page.waitForURL(/\/ai-intake$/, { timeout: 10000 });
+    await page.getByTestId("scratchpad-seed-notice").waitFor({ state: "visible" });
+    await page.getByText("Scratchpad note loaded with tags: #hvac, #urgent").waitFor({ state: "visible" });
+    await expectValueContains(
+      page.locator("#ai-intake-input"),
+      "Installed replacement filter and checked pressure."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("daily scratchpad transcribes a voice note into the note editor", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();

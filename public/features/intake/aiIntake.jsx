@@ -330,6 +330,9 @@ function AIIntake() {
   const legacyImportSeedStorageKey = "invoiceImportSeed";
   const importSeedStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceImportSeed") ?? legacyImportSeedStorageKey;
+  const legacyScratchpadSeedStorageKey = "invoiceScratchpadSeed";
+  const scratchpadSeedStorageKey =
+    requestIdentity.getScopedStorageKey?.("invoiceScratchpadSeed") ?? legacyScratchpadSeedStorageKey;
   const legacyLaborRateStorageKey = "invoiceLastLaborRate";
   const laborRateStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceLastLaborRate") ?? legacyLaborRateStorageKey;
@@ -342,6 +345,7 @@ function AIIntake() {
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState("");
   const [importStudioContext, setImportStudioContext] = useState(null);
+  const [scratchpadSeedNotice, setScratchpadSeedNotice] = useState("");
   const [messages, setMessages] = useState(initialIntakeMessages);
   const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -2090,6 +2094,30 @@ function AIIntake() {
   }, [importSeedStorageKey, legacyImportSeedStorageKey]);
 
   useEffect(() => {
+    const seedFromScoped = readDraftFromStorage(scratchpadSeedStorageKey);
+    const seedFromLegacy =
+      !seedFromScoped && scratchpadSeedStorageKey !== legacyScratchpadSeedStorageKey
+        ? readDraftFromStorage(legacyScratchpadSeedStorageKey)
+        : null;
+    const seed = seedFromScoped ?? seedFromLegacy;
+    if (!seed || inputValue.trim() || messages.length > initialIntakeMessages.length) {
+      return;
+    }
+    const nextText = typeof seed?.text === "string" ? seed.text.trim() : "";
+    if (!nextText) {
+      return;
+    }
+    const seedTags = Array.isArray(seed?.tags) ? seed.tags.filter((tag) => typeof tag === "string" && tag.trim()) : [];
+    setInputValue(nextText);
+    setScratchpadSeedNotice(
+      seedTags.length > 0
+        ? `Scratchpad note loaded with tags: ${seedTags.map((tag) => `#${tag}`).join(", ")}`
+        : "Scratchpad note loaded into Billie intake."
+    );
+    window.localStorage.removeItem(seedFromScoped ? scratchpadSeedStorageKey : legacyScratchpadSeedStorageKey);
+  }, [scratchpadSeedStorageKey, legacyScratchpadSeedStorageKey, inputValue, messages.length]);
+
+  useEffect(() => {
     if (hasReviewCard && !hasAutoCollapsedRef.current) {
       setAssumptionsCollapsed(true);
       hasAutoCollapsedRef.current = true;
@@ -2698,6 +2726,21 @@ function AIIntake() {
                       </p>
                     </div>
                   ) : null}
+                </div>
+              ) : null}
+
+              {scratchpadSeedNotice ? (
+                <div
+                  className="nb-surface rounded-[28px] border border-emerald-200 bg-emerald-50/80 p-4"
+                  data-testid="scratchpad-seed-notice"
+                >
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                    Scratchpad handoff
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-emerald-950">{scratchpadSeedNotice}</p>
+                  <p className="mt-1 text-sm leading-6 text-emerald-900">
+                    Review the rough note below, then press Build invoice when you want Billie to structure it.
+                  </p>
                 </div>
               ) : null}
 

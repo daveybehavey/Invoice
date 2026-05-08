@@ -95,6 +95,8 @@
     const navigate = useNavigate();
     const draftStorageKey =
       requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? "invoiceDraft";
+    const scratchpadSeedStorageKey =
+      requestIdentity.getScopedStorageKey?.("invoiceScratchpadSeed") ?? "invoiceScratchpadSeed";
     const scratchpadStorageKey =
       requestIdentity.getScopedStorageKey?.("invoiceScratchpad") ?? "invoiceScratchpad";
     const voiceUploadInputRef = useRef(null);
@@ -249,6 +251,26 @@
       }
     };
 
+    const handleUseNoteWithBillie = (note) => {
+      if (!note?.text) {
+        return;
+      }
+      setBusyId(note.id);
+      try {
+        const seed = {
+          text: note.text,
+          tags: Array.isArray(note.tags) ? note.tags : [],
+          createdAt: note.createdAt || new Date().toISOString()
+        };
+        window.localStorage.setItem(scratchpadSeedStorageKey, JSON.stringify(seed));
+        trackRevenueSignal("scratchpad_note_used_in_invoice", "scratchpad_billie_start");
+        flashStatus("Loaded into Billie intake.");
+        navigate("/ai-intake");
+      } finally {
+        setBusyId("");
+      }
+    };
+
     const handleClearAll = () => {
       persistNotes([]);
       flashStatus("Cleared scratchpad.");
@@ -322,6 +344,14 @@
                     disabled={!latestNote}
                   >
                     Start invoice from latest note
+                  </button>
+                  <button
+                    type="button"
+                    className="nb-btn-secondary rounded-full px-4 py-2 disabled:opacity-60"
+                    onClick={() => latestNote && handleUseNoteWithBillie(latestNote)}
+                    disabled={!latestNote}
+                  >
+                    Open latest with Billie
                   </button>
                 </div>
                 <input
@@ -425,6 +455,14 @@
                           disabled={busyId === note.id}
                         >
                           {busyId === note.id ? "Opening..." : "Use in invoice"}
+                        </button>
+                        <button
+                          type="button"
+                          className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm disabled:opacity-60"
+                          onClick={() => handleUseNoteWithBillie(note)}
+                          disabled={busyId === note.id}
+                        >
+                          {busyId === note.id ? "Opening..." : "Open with Billie"}
                         </button>
                         <button
                           type="button"
