@@ -6812,6 +6812,122 @@ test("invoice library due-soon recurring work can start from saved memory", asyn
   }
 });
 
+test("invoice library repeat-work banner can start recurring work from saved memory", async () => {
+  const ownerId = "ui-library-recurring-banner-memory-owner";
+  const nextDueAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          name: "Recurring Banner Memory Client",
+          details: "Recurring Banner Memory Client\n108 Banner Way",
+          defaultNotes: "Use the repeat checklist from the banner flow.",
+          updatedAt: "2026-05-01T12:00:00.000Z"
+        }
+      ])
+    );
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          description: "Seasonal maintenance visit",
+          qty: "1",
+          rate: "175",
+          clientName: "Recurring Banner Memory Client",
+          usageCount: 3,
+          updatedAt: "2026-05-03T12:00:00.000Z"
+        }
+      ])
+    );
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Recurring Banner Memory Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-RECUR-BANNER-MEM",
+          issueDate: "2026-03-01",
+          customerName: "Recurring Banner Memory Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "recur-banner-line-1",
+              type: "labor",
+              description: "Last recurring banner visit",
+              quantity: 1,
+              unitPrice: 140,
+              amount: 140
+            }
+          ],
+          subtotal: 140,
+          total: 140,
+          balanceDue: 140
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const savePayload = await saveResponse.json();
+  const invoiceId = savePayload?.invoice?.invoiceId as string;
+  await mutateStoredInvoice(invoiceId, {
+    status: "paid",
+    updatedAt: "2026-03-18T12:00:00.000Z"
+  });
+
+  await context.addInitScript(
+    ({ initOwnerId, initInvoiceId, initNextDueAt }) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+      window.localStorage.setItem(
+        `invoiceRecurringSchedules::owner:${initOwnerId}`,
+        JSON.stringify({
+          entries: {
+            [initInvoiceId]: {
+              intervalDays: 30,
+              nextDueAt: initNextDueAt
+            }
+          }
+        })
+      );
+    },
+    { initOwnerId: ownerId, initInvoiceId: invoiceId, initNextDueAt: nextDueAt }
+  );
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const repeatBanner = page.locator("div").filter({ hasText: "Repeat work" }).first();
+    await repeatBanner
+      .getByText("Saved Seasonal maintenance visit memory is ready for Recurring Banner Memory Client.")
+      .waitFor({ state: "visible" });
+    await repeatBanner
+      .getByRole("button", { name: "Start recurring invoice from saved memory for Recurring Banner Memory Client" })
+      .click();
+
+    await page.waitForURL(/\/manual$/, { timeout: 15000 });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Recurring Banner Memory Client");
+    await expectValueContains(page.getByPlaceholder("Client Name"), "108 Banner Way");
+    await expectValueEquals(
+      page.locator("tbody tr").first().getByPlaceholder("Description", { exact: true }),
+      "Seasonal maintenance visit"
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library shows draft recovery inbox for stale draft invoices", async () => {
   const ownerId = `ui-library-draft-recovery-owner-${Date.now()}`;
   const dayMs = 24 * 60 * 60 * 1000;

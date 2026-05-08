@@ -2726,6 +2726,12 @@
                   ? `Next recurring invoice is due ${formatDate(nextRecurringCandidate.recurringEntry?.nextDueAt)}.`
                   : "Recurring schedules are active."}
             </p>
+            {nextRecurringCandidate && recurringMemoryStarter?.leadItem ? (
+              <p className="mt-2 text-xs text-indigo-800">
+                Saved {recurringMemoryStarter.leadItem.description} memory is ready for{" "}
+                {nextRecurringCandidate.customerName || "this repeat client"}.
+              </p>
+            ) : null}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {nextRecurringCandidate ? (
                 <button
@@ -2741,6 +2747,19 @@
                   {actionId === nextRecurringCandidate.invoiceId
                     ? "Opening..."
                     : "Open repeat invoice"}
+                </button>
+              ) : null}
+              {nextRecurringCandidate && recurringMemoryStarter ? (
+                <button
+                  type="button"
+                  className="rounded-xl border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-900 shadow-sm transition hover:border-indigo-400 disabled:cursor-not-allowed disabled:text-indigo-400"
+                  onClick={() => handleStartFromClientMemory(nextRecurringCandidate)}
+                  disabled={actionId === nextRecurringCandidate.invoiceId}
+                  aria-label={`Start recurring invoice from saved memory for ${
+                    nextRecurringCandidate.customerName || "repeat client"
+                  }`}
+                >
+                  {actionId === nextRecurringCandidate.invoiceId ? "Opening..." : "Start from saved memory"}
                 </button>
               ) : null}
               {nextRecurringCandidate ? (
