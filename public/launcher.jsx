@@ -479,6 +479,8 @@ function pluralize(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+const RECURRING_SOON_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now()) {
   const activeInvoices = Array.isArray(invoices)
     ? invoices.filter((invoice) => invoice && invoice.status !== "deleted")
@@ -511,6 +513,9 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
     .filter(Boolean)
     .sort((left, right) => left.nextDueMs - right.nextDueMs);
   const dueRecurringInvoices = recurringReminderInvoices.filter((invoice) => invoice.nextDueMs <= nowMs);
+  const upcomingRecurringInvoices = recurringReminderInvoices.filter(
+    (invoice) => invoice.nextDueMs > nowMs && invoice.nextDueMs - nowMs <= RECURRING_SOON_WINDOW_MS
+  );
   const nextRecurringCandidate = (dueRecurringInvoices[0] ?? recurringReminderInvoices[0]) || null;
   const staleSent = unpaidSent
     .map((invoice) => {
@@ -636,18 +641,28 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
   if (nextRecurringCandidate) {
     const dueLabel = formatUpdatedLabel(nextRecurringCandidate.recurringEntry?.nextDueAt);
     const recurringIsDueNow = nextRecurringCandidate.nextDueMs <= nowMs;
+    const recurringIsSoon =
+      !recurringIsDueNow && nextRecurringCandidate.nextDueMs - nowMs <= RECURRING_SOON_WINDOW_MS;
     actions.push({
       id: `recurring:${nextRecurringCandidate.invoiceId}`,
-      tone: recurringIsDueNow ? "repeat-due" : "repeat",
-      title: recurringIsDueNow ? "Recurring invoice due now" : "Recurring invoice coming up",
+      tone: recurringIsDueNow ? "repeat-due" : recurringIsSoon ? "repeat-soon" : "repeat",
+      title: recurringIsDueNow
+        ? "Recurring invoice due now"
+        : recurringIsSoon
+          ? "Recurring invoice due soon"
+          : "Recurring invoice coming up",
       detail: recurringIsDueNow
         ? `${nextRecurringCandidate.invoiceNumber || "Draft invoice"}${
             nextRecurringCandidate.customerName ? ` for ${nextRecurringCandidate.customerName}` : ""
           } is due${dueLabel ? ` ${dueLabel}` : " soon"}. Reopen it now so the repeat job keeps moving.`
-        : `${nextRecurringCandidate.invoiceNumber || "Draft invoice"}${
-            nextRecurringCandidate.customerName ? ` for ${nextRecurringCandidate.customerName}` : ""
-          } is next due${dueLabel ? ` ${dueLabel}` : " soon"}. Open it early if you want a head start.`,
-      cta: recurringIsDueNow ? "Open repeat invoice" : "Start early",
+        : recurringIsSoon
+          ? `${nextRecurringCandidate.invoiceNumber || "Draft invoice"}${
+              nextRecurringCandidate.customerName ? ` for ${nextRecurringCandidate.customerName}` : ""
+            } is next due${dueLabel ? ` ${dueLabel}` : " soon"}. Start it early so the repeat job is ready before it lands on you.`
+          : `${nextRecurringCandidate.invoiceNumber || "Draft invoice"}${
+              nextRecurringCandidate.customerName ? ` for ${nextRecurringCandidate.customerName}` : ""
+            } is next due${dueLabel ? ` ${dueLabel}` : " soon"}. Open it early if you want a head start.`,
+      cta: recurringIsDueNow ? "Open repeat invoice" : recurringIsSoon ? "Prep repeat invoice" : "Start early",
       ariaLabel: `Open repeat invoice from ${nextRecurringCandidate.invoiceNumber || "saved invoice"}`,
       action: "invoice-again",
       busyId: `invoice-again:${nextRecurringCandidate.invoiceId}`,
@@ -705,12 +720,16 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
   const actionRank = {
     "follow-up": 0,
     "repeat-due": 1,
-    draft: 2,
-    payment: 3,
-    repeat: 4,
-    sent: 5
+    "repeat-soon": 2,
+    draft: 3,
+    payment: 4,
+    repeat: 5,
+    sent: 6
   };
   const recurringDueCount = dueRecurringInvoices.length;
+  const recurringSoonCount = upcomingRecurringInvoices.length;
+  const nextRecurringSoon = upcomingRecurringInvoices[0] ?? null;
+  const nextRecurringSoonLabel = formatUpdatedLabel(nextRecurringSoon?.recurringEntry?.nextDueAt);
   return {
     hasInvoices: activeInvoices.length > 0,
     invoiceCount: activeInvoices.length,
@@ -719,6 +738,7 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
     paidCount: paid.length,
     staleSentCount: staleSent.length,
     recurringDueCount,
+    recurringSoonCount,
     openBalance,
     openBalanceLabel: formatMoneyLabel(openBalance),
     headline:
@@ -726,6 +746,12 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
         ? `${staleSent.length === 1 ? "1 invoice needs" : `${staleSent.length} invoices need`} follow-up.`
         : recurringDueCount > 0
           ? `${recurringDueCount === 1 ? "1 recurring invoice is due now." : `${recurringDueCount} recurring invoices are due now.`}`
+        : recurringSoonCount > 0
+          ? `${
+              recurringSoonCount === 1
+                ? `1 recurring invoice is due soon${nextRecurringSoonLabel ? ` on ${nextRecurringSoonLabel}` : ""}.`
+                : `${recurringSoonCount} recurring invoices are due soon.`
+            }`
         : unpaidSent.length > 0
           ? `${formatMoneyLabel(openBalance)} open across ${pluralize(unpaidSent.length, "sent invoice")}.`
           : drafts.length > 0
