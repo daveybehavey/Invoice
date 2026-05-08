@@ -170,6 +170,7 @@ function LauncherOperationsQueueSection({
   const actionToneClass = {
     draft: "border-blue-200 bg-blue-50 text-blue-950",
     "follow-up": "border-amber-200 bg-amber-50 text-amber-950",
+    "repeat-due": "border-violet-200 bg-violet-50 text-violet-950",
     sent: "border-sky-200 bg-sky-50 text-sky-950",
     repeat: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-950",
     payment: "border-emerald-200 bg-emerald-50 text-emerald-950"

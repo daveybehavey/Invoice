@@ -4758,7 +4758,8 @@ test("launcher command center surfaces due recurring invoices", async () => {
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     const queue = page.locator("section").filter({ hasText: "Invoice command center" });
-    await queue.getByText("Open recurring invoice").waitFor({ state: "visible" });
+    await queue.getByText("1 recurring invoice is due now.").waitFor({ state: "visible" });
+    await queue.getByText("Recurring invoice due now").waitFor({ state: "visible" });
     await queue
       .getByText("INV-LAUNCHER-RECUR for Launcher Recurring Client is due Mar 20, 2026. Reopen it now so the repeat job keeps moving.")
       .waitFor({ state: "visible" });

@@ -638,8 +638,8 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
     const recurringIsDueNow = nextRecurringCandidate.nextDueMs <= nowMs;
     actions.push({
       id: `recurring:${nextRecurringCandidate.invoiceId}`,
-      tone: "repeat",
-      title: recurringIsDueNow ? "Open recurring invoice" : "Recurring invoice coming up",
+      tone: recurringIsDueNow ? "repeat-due" : "repeat",
+      title: recurringIsDueNow ? "Recurring invoice due now" : "Recurring invoice coming up",
       detail: recurringIsDueNow
         ? `${nextRecurringCandidate.invoiceNumber || "Draft invoice"}${
             nextRecurringCandidate.customerName ? ` for ${nextRecurringCandidate.customerName}` : ""
@@ -704,11 +704,13 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
   }
   const actionRank = {
     "follow-up": 0,
-    draft: 1,
-    payment: 2,
-    repeat: 3,
-    sent: 4
+    "repeat-due": 1,
+    draft: 2,
+    payment: 3,
+    repeat: 4,
+    sent: 5
   };
+  const recurringDueCount = dueRecurringInvoices.length;
   return {
     hasInvoices: activeInvoices.length > 0,
     invoiceCount: activeInvoices.length,
@@ -716,11 +718,14 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
     sentCount: sent.length,
     paidCount: paid.length,
     staleSentCount: staleSent.length,
+    recurringDueCount,
     openBalance,
     openBalanceLabel: formatMoneyLabel(openBalance),
     headline:
       staleSent.length > 0
         ? `${staleSent.length === 1 ? "1 invoice needs" : `${staleSent.length} invoices need`} follow-up.`
+        : recurringDueCount > 0
+          ? `${recurringDueCount === 1 ? "1 recurring invoice is due now." : `${recurringDueCount} recurring invoices are due now.`}`
         : unpaidSent.length > 0
           ? `${formatMoneyLabel(openBalance)} open across ${pluralize(unpaidSent.length, "sent invoice")}.`
           : drafts.length > 0
