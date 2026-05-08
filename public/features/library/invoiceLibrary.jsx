@@ -1935,6 +1935,7 @@
         getLineItemLibrary()
       )
     : null;
+  const recurringMemoryLabel = recurringMemoryStarter?.leadItem?.description || "";
   const libraryGuide = (() => {
     if (showTrash || requiresSignIn) {
       return null;
@@ -2121,9 +2122,13 @@
         eyebrow: "Billie next up",
         title: recurringIsDueNow ? "Start the next repeat invoice" : "Prep the next repeat invoice",
         body: recurringIsDueNow
-          ? "Recurring work is ready now. Open the next invoice and keep the repeat job moving."
+          ? `Recurring work is ready now. Open the next invoice and keep the repeat job moving${
+              recurringMemoryLabel ? `, or start fresh from saved memory with ${recurringMemoryLabel}` : ""
+            }.`
           : recurringIsDueSoon
-            ? "A repeat job is due soon. Open it early so the next visit is already lined up."
+            ? `A repeat job is due soon. Open it early so the next visit is already lined up${
+                recurringMemoryLabel ? `, or start fresh from saved memory with ${recurringMemoryLabel}` : ""
+              }.`
             : "A repeat job is coming up soon. Open it now if you want a head start.",
         meta: [
           nextRecurringCandidate.invoiceNumber || "Draft invoice",
@@ -3329,8 +3334,12 @@
                       : "Needs client";
                   const nextStepValue = recurringEntry
                     ? recurringDueCount > 0 && nextRecurringCandidate?.invoiceId === invoice.invoiceId
-                      ? "Open repeat invoice"
-                      : "Keep schedule active"
+                      ? repeatMemoryStarter
+                        ? "Open repeat invoice or start from memory"
+                        : "Open repeat invoice"
+                      : repeatMemoryStarter
+                        ? "Keep schedule active + memory ready"
+                        : "Keep schedule active"
                     : rememberedRecurringLabel
                       ? "Reuse saved cadence"
                       : repeatMemoryStarter

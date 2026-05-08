@@ -660,7 +660,9 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
       detail: recurringIsDueNow
         ? `${nextRecurringCandidate.invoiceNumber || "Draft invoice"}${
             nextRecurringCandidate.customerName ? ` for ${nextRecurringCandidate.customerName}` : ""
-          } is due${dueLabel ? ` ${dueLabel}` : " soon"}. Reopen it now so the repeat job keeps moving.`
+          } is due${dueLabel ? ` ${dueLabel}` : " soon"}. Reopen it now so the repeat job keeps moving.${
+            recurringMemoryLabel ? ` Saved ${recurringMemoryLabel} memory is ready too.` : ""
+          }`
         : recurringIsSoon
           ? `${nextRecurringCandidate.invoiceNumber || "Draft invoice"}${
               nextRecurringCandidate.customerName ? ` for ${nextRecurringCandidate.customerName}` : ""
