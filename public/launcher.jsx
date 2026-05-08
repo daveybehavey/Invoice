@@ -60,6 +60,13 @@ if (!businessIdentityFeatureUtils) {
 }
 
 const { BusinessIdentitySettings, ClientMemorySettings, ServiceCatalogSettings } = businessIdentityFeatureUtils;
+const clientWorkspaceFeatureUtils = window.InvoiceClientWorkspaceFeature;
+if (!clientWorkspaceFeatureUtils) {
+  throw new Error(
+    "Missing /features/settings/clientWorkspace.jsx load. Ensure it is loaded before /launcher.jsx."
+  );
+}
+const { ClientWorkspacePage } = clientWorkspaceFeatureUtils;
 
 const manualCanvasUtils = window.InvoiceManualCanvas;
 if (!manualCanvasUtils) {
@@ -2699,6 +2706,7 @@ function App() {
         <Route path="/settings/business" element={<BusinessIdentitySettings />} />
         <Route path="/settings/memory" element={<ClientMemorySettings />} />
         <Route path="/settings/services" element={<ServiceCatalogSettings />} />
+        <Route path="/clients" element={<ClientWorkspacePage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/help" element={<HelpCenterPage />} />
         <Route path="/support" element={<SupportPage />} />

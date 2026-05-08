@@ -166,6 +166,7 @@ const spaRoutes = [
   "/settings/business",
   "/settings/memory",
   "/settings/services",
+  "/clients",
   "/portal",
   "/privacy",
   "/help",

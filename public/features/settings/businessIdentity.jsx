@@ -806,19 +806,30 @@
                   Clear anything that feels stale, private, or no longer useful.
                 </p>
               </div>
-              {clientMemory.length > 0 ? (
-                <button
-                  type="button"
-                  className={`min-h-11 w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto ${
-                    clearArmed
-                      ? "bg-rose-600 text-white"
-                      : "border border-rose-200 bg-white text-rose-700"
-                  }`}
-                  onClick={handleClearAll}
-                >
-                  {clearArmed ? "Confirm clear all" : "Clear all remembered clients"}
-                </button>
-              ) : null}
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                {clientMemory.length > 0 ? (
+                  <button
+                    type="button"
+                    className="nb-btn-secondary w-full sm:w-auto"
+                    onClick={() => navigate(`/clients?client=${encodeURIComponent(clientMemory[0].name)}`)}
+                  >
+                    Open client workspace
+                  </button>
+                ) : null}
+                {clientMemory.length > 0 ? (
+                  <button
+                    type="button"
+                    className={`min-h-11 w-full rounded-full px-4 py-2 text-sm font-semibold sm:w-auto ${
+                      clearArmed
+                        ? "bg-rose-600 text-white"
+                        : "border border-rose-200 bg-white text-rose-700"
+                    }`}
+                    onClick={handleClearAll}
+                  >
+                    {clearArmed ? "Confirm clear all" : "Clear all remembered clients"}
+                  </button>
+                ) : null}
+              </div>
             </div>
 
             {status ? <p className="mt-3 text-sm font-semibold text-[#093064]">{status}</p> : null}
@@ -866,6 +877,14 @@
                           aria-label={`Delete remembered client ${entry.name}`}
                         >
                           Delete
+                        </button>
+                        <button
+                          type="button"
+                          className="min-h-10 w-full rounded-full border border-[#6993d2]/20 bg-[#edf5ff] px-3 py-1.5 text-xs font-semibold text-[#093064] sm:w-auto"
+                          onClick={() => navigate(`/clients?client=${encodeURIComponent(entry.name)}`)}
+                          aria-label={`Open workspace for ${entry.name}`}
+                        >
+                          Open workspace
                         </button>
                       </div>
 

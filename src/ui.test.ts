@@ -7813,6 +7813,102 @@ test("invoice library can start a fresh draft from saved client memory", async (
   }
 });
 
+test("client workspace shows saved services and can start from memory", async () => {
+  const ownerId = "ui-client-workspace-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          name: "Workspace Client",
+          details: "Workspace Client\n123 Front St",
+          recipientEmail: "billing@workspace-client.example",
+          defaultNotes: "Monthly service visit",
+          recurringIntervalDays: 30,
+          updatedAt: "2026-05-08T18:00:00.000Z"
+        }
+      ])
+    );
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          description: "Quarterly HVAC tune-up",
+          qty: "1",
+          rate: "225",
+          clientName: "Workspace Client",
+          usageCount: 3,
+          updatedAt: "2026-05-08T18:00:00.000Z"
+        }
+      ])
+    );
+  }, ownerId);
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Workspace Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-WORKSPACE-1",
+          issueDate: "2026-05-08",
+          dueDate: "2026-05-15",
+          customerName: "Workspace Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "workspace-line-1",
+              type: "labor",
+              description: "Quarterly HVAC tune-up",
+              quantity: 1,
+              unitPrice: 225,
+              amount: 225
+            }
+          ],
+          subtotal: 225,
+          total: 225,
+          balanceDue: 225
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/clients?client=${encodeURIComponent("Workspace Client")}`, {
+      waitUntil: "networkidle"
+    });
+    await page.getByTestId("client-workspace-page").waitFor({ state: "visible" });
+    await page.getByRole("heading", { name: "Workspace Client" }).waitFor({ state: "visible" });
+    await page.getByTestId("client-workspace-services").getByText("Quarterly HVAC tune-up").waitFor({
+      state: "visible"
+    });
+    await page.getByTestId("client-workspace-history").getByText("INV-WORKSPACE-1").waitFor({
+      state: "visible"
+    });
+
+    await page.getByRole("button", { name: "Start from memory" }).click();
+    await page.waitForURL(/\/manual$/, { timeout: 15000 });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Workspace Client");
+    await expectValueContains(
+      page.locator('input[placeholder="Description"]:visible').first(),
+      "Quarterly HVAC tune-up"
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library supports sent and paid status actions", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

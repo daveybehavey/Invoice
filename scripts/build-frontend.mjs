@@ -66,7 +66,9 @@ async function collectFiles(directory, extension) {
       files.push(...(await collectFiles(absolutePath, extension)));
       continue;
     }
-    if (entry.isFile() && absolutePath.endsWith(extension)) {
+    // Windows can surface moved OneDrive-backed files as reparse points.
+    // Node can still read them normally, but Dirent.isFile() may return false.
+    if (!entry.isDirectory() && absolutePath.endsWith(extension)) {
       files.push(absolutePath);
     }
   }
