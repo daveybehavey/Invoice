@@ -6304,6 +6304,94 @@ test("invoice library recurring reminder opens invoice-again for the next due in
   }
 });
 
+test("invoice library distinguishes recurring work due soon", async () => {
+  const ownerId = "ui-library-recurring-soon-owner";
+  const nextDueAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Recurring Soon Library Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-RECUR-SOON-LIB",
+          issueDate: "2026-03-01",
+          customerName: "Recurring Soon Library Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "recur-soon-lib-line-1",
+              type: "labor",
+              description: "Upcoming recurring library visit",
+              quantity: 1,
+              unitPrice: 132,
+              amount: 132
+            }
+          ],
+          subtotal: 132,
+          total: 132,
+          balanceDue: 132
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const savePayload = await saveResponse.json();
+  const invoiceId = savePayload?.invoice?.invoiceId as string;
+  await mutateStoredInvoice(invoiceId, {
+    status: "paid",
+    updatedAt: "2026-03-18T12:00:00.000Z"
+  });
+
+  await context.addInitScript(
+    ({ initOwnerId, initInvoiceId, initNextDueAt }) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+      window.localStorage.setItem(
+        `invoiceRecurringSchedules::owner:${initOwnerId}`,
+        JSON.stringify({
+          entries: {
+            [initInvoiceId]: {
+              intervalDays: 30,
+              nextDueAt: initNextDueAt
+            }
+          }
+        })
+      );
+    },
+    { initOwnerId: ownerId, initInvoiceId: invoiceId, initNextDueAt: nextDueAt }
+  );
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("Repeat work", { exact: true }).waitFor({ state: "visible" });
+    await page.waitForFunction(() => document.body.innerText.includes("1 recurring invoice is due soon"), undefined, {
+      timeout: 10000
+    });
+    await page.getByText("Prep the next repeat invoice").waitFor({ state: "visible" });
+    await page.getByText("A repeat job is due soon. Open it early so the next visit is already lined up.").waitFor({
+      state: "visible"
+    });
+    await page.getByTestId("library-billie-next-up").getByRole("button", { name: "Open repeat invoice" }).click();
+    await page.waitForURL(/\/manual$/, { timeout: 15000 });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Recurring Soon Library Client");
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library shows draft recovery inbox for stale draft invoices", async () => {
   const ownerId = `ui-library-draft-recovery-owner-${Date.now()}`;
   const dayMs = 24 * 60 * 60 * 1000;

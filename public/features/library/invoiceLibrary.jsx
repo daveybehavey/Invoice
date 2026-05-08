@@ -107,6 +107,7 @@
     }
   ];
   const recurringDayMs = 24 * 60 * 60 * 1000;
+  const recurringSoonWindowMs = 7 * recurringDayMs;
 
   const normalizeRecurringInterval = (value) => {
     const parsed = Number(value);
@@ -1666,6 +1667,10 @@
     (invoice) => invoice.nextDueMs <= nowMs
   );
   const recurringDueCount = dueRecurringInvoices.length;
+  const upcomingRecurringInvoices = recurringReminderInvoices.filter(
+    (invoice) => invoice.nextDueMs > nowMs && invoice.nextDueMs - nowMs <= recurringSoonWindowMs
+  );
+  const recurringSoonCount = upcomingRecurringInvoices.length;
   const nextRecurringCandidate = (dueRecurringInvoices[0] ?? recurringReminderInvoices[0]) || null;
   const showRecurringReminder =
     !requiresSignIn &&
@@ -2099,13 +2104,20 @@
       };
     }
     if (nextRecurringCandidate) {
+      const recurringIsDueNow = nextRecurringCandidate.nextDueMs <= nowMs;
+      const recurringIsDueSoon =
+        !recurringIsDueNow && nextRecurringCandidate.nextDueMs - nowMs <= recurringSoonWindowMs;
       return {
-        toneClass: "border-indigo-200 bg-indigo-50 text-indigo-950",
+        toneClass: recurringIsDueSoon
+          ? "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-950"
+          : "border-indigo-200 bg-indigo-50 text-indigo-950",
         eyebrow: "Billie next up",
-        title: "Start the next repeat invoice",
-        body: recurringDueCount > 0
+        title: recurringIsDueNow ? "Start the next repeat invoice" : "Prep the next repeat invoice",
+        body: recurringIsDueNow
           ? "Recurring work is ready now. Open the next invoice and keep the repeat job moving."
-          : "A repeat job is coming up soon. Open it now if you want a head start.",
+          : recurringIsDueSoon
+            ? "A repeat job is due soon. Open it early so the next visit is already lined up."
+            : "A repeat job is coming up soon. Open it now if you want a head start.",
         meta: [
           nextRecurringCandidate.invoiceNumber || "Draft invoice",
           nextRecurringCandidate.customerName || "",
@@ -2685,13 +2697,17 @@
           </div>
         ) : null}
         {showRecurringReminder ? (
-          <div className="nb-banner mt-6 border-indigo-200 bg-indigo-50 text-indigo-900">
+        <div className="nb-banner mt-6 border-indigo-200 bg-indigo-50 text-indigo-900">
             <p className="text-sm font-semibold text-indigo-900">Repeat work</p>
             <p className="mt-1 text-sm text-indigo-900">
               {recurringDueCount > 0
                 ? recurringDueCount === 1
                   ? "1 recurring invoice is ready."
                   : `${recurringDueCount} recurring invoices are due.`
+                : recurringSoonCount > 0
+                  ? recurringSoonCount === 1
+                    ? `1 recurring invoice is due soon on ${formatDate(nextRecurringCandidate.recurringEntry?.nextDueAt)}.`
+                    : `${recurringSoonCount} recurring invoices are due soon.`
                 : nextRecurringCandidate
                   ? `Next recurring invoice is due ${formatDate(nextRecurringCandidate.recurringEntry?.nextDueAt)}.`
                   : "Recurring schedules are active."}
