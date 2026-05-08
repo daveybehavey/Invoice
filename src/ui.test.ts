@@ -3880,6 +3880,40 @@ test("manual layout studio can reset back to classic send-ready", async () => {
   }
 });
 
+test("manual layout studio can save and reapply a favorite look", async () => {
+  const ownerId = "ui-layout-studio-favorite-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Premium handoff" }).click();
+    await page.getByRole("button", { name: "Save current look" }).click();
+    await page.getByText("Saved this invoice look as your favorite layout.").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Classic send-ready" }).click();
+    await page.locator("[data-header-layout='split']").first().waitFor({ state: "visible" });
+    await page.locator("[data-spacing-density='balanced']").first().waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Apply favorite" }).click();
+    await page.locator("[data-header-layout='centered']").first().waitFor({ state: "visible" });
+    await page.locator("[data-spacing-density='airy']").first().waitFor({ state: "visible" });
+    await page.getByText("Applied your saved favorite invoice look.").waitFor({ state: "visible" });
+    await page.waitForFunction(
+      () =>
+        document.body.innerText.includes("Bold template") &&
+        document.body.innerText.includes("Centered header") &&
+        document.body.innerText.includes("Airy spacing"),
+      undefined,
+      { timeout: 10000 }
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual billie can change spacing density locally and export preserves the selected density", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();

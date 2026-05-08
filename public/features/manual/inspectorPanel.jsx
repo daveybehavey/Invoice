@@ -175,6 +175,10 @@ function InspectorPanel({
   onStylePresetChange,
   accentColor,
   onAccentColorChange,
+  savedLayoutStudioFavorite,
+  onSaveLayoutStudioFavorite,
+  onApplyLayoutStudioFavorite,
+  onClearLayoutStudioFavorite,
   onPrint,
   onDownloadPdf,
   onSaveInvoice,
@@ -286,6 +290,15 @@ function InspectorPanel({
     HEADER_LAYOUT_OPTIONS.find((option) => option.id === headerLayout)?.label ?? "Split";
   const activeSpacingLabel =
     SPACING_DENSITY_OPTIONS.find((option) => option.id === spacingDensity)?.label ?? "Standard";
+  const favoriteStyleOption = savedLayoutStudioFavorite
+    ? styleOptions.find((option) => option.id === savedLayoutStudioFavorite.stylePreset) ?? null
+    : null;
+  const favoriteHeaderLayoutLabel = savedLayoutStudioFavorite
+    ? HEADER_LAYOUT_OPTIONS.find((option) => option.id === savedLayoutStudioFavorite.headerLayout)?.label ?? "Split"
+    : "";
+  const favoriteSpacingLabel = savedLayoutStudioFavorite
+    ? SPACING_DENSITY_OPTIONS.find((option) => option.id === savedLayoutStudioFavorite.spacingDensity)?.label ?? "Standard"
+    : "";
   const accent = buildAccentPalette(accentColor);
   const accentButtonStyle = {
     backgroundColor: accent.primary,
@@ -1282,6 +1295,56 @@ function InspectorPanel({
                     );
                   })}
                 </div>
+              </div>
+              <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Favorite look</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Save one preferred invoice look so you can come back to it fast.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                    onClick={onSaveLayoutStudioFavorite}
+                  >
+                    Save current look
+                  </button>
+                </div>
+                {savedLayoutStudioFavorite ? (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2 text-[11px] font-semibold">
+                      <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-700">
+                        {favoriteStyleOption?.label || "Classic"} template
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-700">
+                        {favoriteHeaderLayoutLabel} header
+                      </span>
+                      <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-700">
+                        {favoriteSpacingLabel} spacing
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                        onClick={onApplyLayoutStudioFavorite}
+                      >
+                        Apply favorite
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                        onClick={onClearLayoutStudioFavorite}
+                      >
+                        Clear saved favorite
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">No saved favorite yet. Save one after you land on a look you want to reuse.</p>
+                )}
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-900">Templates</p>

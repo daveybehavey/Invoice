@@ -106,6 +106,8 @@
   }
   const { readBillingNoticeFromUrl } = billingActions;
   const billieWorkspaceStorageKey = requestIdentity.getScopedStorageKey?.("billieWorkspaceInstruction") ?? "billieWorkspaceInstruction";
+  const favoriteLayoutStudioStorageKey =
+    requestIdentity.getScopedStorageKey?.("invoiceFavoriteLayoutStudio") ?? "invoiceFavoriteLayoutStudio";
   const readBillieWorkspaceInstruction = () => {
     try {
       const raw = window.localStorage.getItem(billieWorkspaceStorageKey);
@@ -117,6 +119,40 @@
   const writeBillieWorkspaceInstruction = (value) => {
     try {
       window.localStorage.setItem(billieWorkspaceStorageKey, value);
+    } catch (_error) {
+      // Best-effort only.
+    }
+  };
+  const readFavoriteLayoutStudio = () => {
+    try {
+      const raw = window.localStorage.getItem(favoriteLayoutStudioStorageKey);
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+      return {
+        stylePreset: typeof parsed.stylePreset === "string" ? parsed.stylePreset : "default",
+        headerLayout: parsed.headerLayout === "centered" ? "centered" : "split",
+        spacingDensity:
+          parsed.spacingDensity === "tight" || parsed.spacingDensity === "airy" ? parsed.spacingDensity : "balanced",
+        accentColor: normalizeAccentColor(parsed.accentColor ?? DEFAULT_ACCENT_COLOR),
+        logoVisible: parsed.logoVisible !== false,
+        notesVisible: parsed.notesVisible !== false
+      };
+    } catch (_error) {
+      return null;
+    }
+  };
+  const writeFavoriteLayoutStudio = (value) => {
+    try {
+      if (!value) {
+        window.localStorage.removeItem(favoriteLayoutStudioStorageKey);
+        return;
+      }
+      window.localStorage.setItem(favoriteLayoutStudioStorageKey, JSON.stringify(value));
     } catch (_error) {
       // Best-effort only.
     }
@@ -377,6 +413,7 @@ function ManualInvoiceCanvas() {
   const [activeInspectorTab, setActiveInspectorTab] = useState(() =>
     searchParams.get("tab") === "assistant" ? "assistant" : "style"
   );
+  const [savedFavoriteLayoutStudio, setSavedFavoriteLayoutStudio] = useState(() => readFavoriteLayoutStudio());
   const [draftStatus, setDraftStatus] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -448,6 +485,36 @@ function ManualInvoiceCanvas() {
     timingSummary: ""
   });
   const [billieChangeHighlight, setBillieChangeHighlight] = useState(EMPTY_BILLIE_CHANGE_HIGHLIGHT);
+  const handleSaveFavoriteLayoutStudio = () => {
+    const nextFavorite = {
+      stylePreset,
+      headerLayout,
+      spacingDensity,
+      accentColor,
+      logoVisible,
+      notesVisible
+    };
+    writeFavoriteLayoutStudio(nextFavorite);
+    setSavedFavoriteLayoutStudio(nextFavorite);
+    setDraftStatus("Saved this invoice look as your favorite layout.");
+  };
+  const handleApplyFavoriteLayoutStudio = () => {
+    if (!savedFavoriteLayoutStudio) {
+      return;
+    }
+    setStylePreset(savedFavoriteLayoutStudio.stylePreset);
+    setHeaderLayout(savedFavoriteLayoutStudio.headerLayout);
+    setSpacingDensity(savedFavoriteLayoutStudio.spacingDensity);
+    setAccentColor(savedFavoriteLayoutStudio.accentColor);
+    setLogoVisible(savedFavoriteLayoutStudio.logoVisible !== false);
+    setNotesVisible(savedFavoriteLayoutStudio.notesVisible !== false);
+    setDraftStatus("Applied your saved favorite invoice look.");
+  };
+  const handleClearFavoriteLayoutStudio = () => {
+    writeFavoriteLayoutStudio(null);
+    setSavedFavoriteLayoutStudio(null);
+    setDraftStatus("Cleared your saved favorite invoice look.");
+  };
   const emailLinkSaveProvider = Array.isArray(saveAuthProviders)
     ? saveAuthProviders.find((provider) => provider?.id === "email_link")
     : null;
@@ -4077,6 +4144,10 @@ function ManualInvoiceCanvas() {
             onStylePresetChange={setStylePreset}
             accentColor={accentColor}
             onAccentColorChange={handleAccentColorChange}
+            savedLayoutStudioFavorite={savedFavoriteLayoutStudio}
+            onSaveLayoutStudioFavorite={handleSaveFavoriteLayoutStudio}
+            onApplyLayoutStudioFavorite={handleApplyFavoriteLayoutStudio}
+            onClearLayoutStudioFavorite={handleClearFavoriteLayoutStudio}
             taxRate={taxRate}
             onTaxRateChange={setTaxRate}
             discountAmount={discountAmount}
@@ -4194,6 +4265,10 @@ function ManualInvoiceCanvas() {
                 onStylePresetChange={setStylePreset}
                 accentColor={accentColor}
                 onAccentColorChange={handleAccentColorChange}
+                savedLayoutStudioFavorite={savedFavoriteLayoutStudio}
+                onSaveLayoutStudioFavorite={handleSaveFavoriteLayoutStudio}
+                onApplyLayoutStudioFavorite={handleApplyFavoriteLayoutStudio}
+                onClearLayoutStudioFavorite={handleClearFavoriteLayoutStudio}
                 taxRate={taxRate}
                 onTaxRateChange={setTaxRate}
                 discountAmount={discountAmount}
