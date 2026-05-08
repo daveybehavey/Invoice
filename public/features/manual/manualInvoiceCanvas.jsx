@@ -2298,6 +2298,32 @@ function ManualInvoiceCanvas() {
             instruction: "Make the notes more professional."
           }
         ]
+      : billieWorkspaceSource === "import"
+        ? [
+            {
+              id: "import-cleanup",
+              label: "Clean imported draft",
+              instruction:
+                "Use the imported source text to clean up the invoice wording and notes while keeping numbers unchanged."
+            },
+            {
+              id: "import-client-ready",
+              label: "Client-ready tone",
+              instruction:
+                "Make this imported draft read clearly for the client while keeping the same meaning and numbers."
+            },
+            {
+              id: "import-structure",
+              label: "Tighten structure",
+              instruction:
+                "Tighten the wording and structure of this imported draft without changing quantities, rates, or totals."
+            },
+            {
+              id: "import-refine-notes",
+              label: "Refine notes",
+              instruction: "Make the imported notes more professional."
+            }
+          ]
       : billieWorkspaceSource === "library"
         ? [
             {
@@ -2358,7 +2384,8 @@ function ManualInvoiceCanvas() {
   const activeMobileTabLabel =
     mobileInspectorTabs.find((tab) => tab.id === activeInspectorTab)?.label ?? "Tools";
   const billieWorkspaceExpanded =
-    billieWorkspaceSource === "intake" || (activeInspectorTab !== "assistant" && !inspectorOpen);
+    (billieWorkspaceSource === "intake" || billieWorkspaceSource === "import") ||
+    (activeInspectorTab !== "assistant" && !inspectorOpen);
 
   const refreshAuthSessionState = async (shouldApply = () => true) => {
     try {
@@ -2820,6 +2847,14 @@ function ManualInvoiceCanvas() {
                     before you move into save, payment, or portal handoff.
                   </p>
                 </div>
+              ) : billieWorkspaceSource === "import" ? (
+                <div className="mt-4 rounded-2xl border border-[#6993d2]/18 bg-white/72 px-4 py-3 text-sm text-slate-600">
+                  <p className="font-semibold text-slate-900">Continue from imported source</p>
+                  <p className="mt-1">
+                    Billie can clean up the imported draft while you keep the original source text close for reference.
+                    Use these starter actions to tighten wording before you save, send, or reuse it.
+                  </p>
+                </div>
               ) : billieWorkspaceSource === "library" ? (
                 <div className="mt-4 rounded-2xl border border-[#6993d2]/18 bg-white/72 px-4 py-3 text-sm text-slate-600">
                   <p className="font-semibold text-slate-900">Continue from saved work</p>
@@ -2915,6 +2950,8 @@ function ManualInvoiceCanvas() {
                   <span className="text-xs text-slate-500">
                     {billieWorkspaceSource === "intake"
                       ? "Billie is carrying the draft forward from intake review. Keep the language client-ready here before you move deeper into operations."
+                      : billieWorkspaceSource === "import"
+                        ? "Billie is carrying this imported draft with the original source nearby so cleanup stays grounded before you save or send."
                       : billieWorkspaceSource === "library"
                         ? "Billie is carrying this saved invoice back into the workspace so you can tighten it before sending, reminding, or repeating the job."
                       : billieWorkspaceExpanded
