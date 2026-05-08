@@ -4664,6 +4664,117 @@ test("launcher starts a fresh repeat invoice from paid work", async () => {
   }
 });
 
+test("launcher command center surfaces due recurring invoices", async () => {
+  const ownerId = "ui-launcher-recurring-owner";
+  const context = await browser.newContext();
+  await context.addInitScript(
+    ({ initOwnerId, recurringNextDueAt, recurringInvoiceId }) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+      window.localStorage.setItem(
+        `invoiceRecurringSchedules::owner:${initOwnerId}`,
+        JSON.stringify({
+          entries: {
+            [recurringInvoiceId]: {
+              intervalDays: 30,
+              nextDueAt: recurringNextDueAt
+            }
+          }
+        })
+      );
+    },
+    {
+      initOwnerId: ownerId,
+      recurringNextDueAt: "2026-03-20T00:00:00.000Z",
+      recurringInvoiceId: "placeholder"
+    }
+  );
+
+  const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Launcher Recurring Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LAUNCHER-RECUR",
+          issueDate: "2026-03-01",
+          customerName: "Launcher Recurring Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "launcher-recurring-line-1",
+              type: "labor",
+              description: "Recurring launcher baseline",
+              quantity: 1,
+              unitPrice: 125,
+              amount: 125
+            }
+          ],
+          subtotal: 125,
+          total: 125,
+          balanceDue: 125
+        }
+      }
+    }
+  });
+  assert.equal(saveResponse.status(), 200);
+  const savePayload = await saveResponse.json();
+  const recurringInvoiceId = savePayload?.invoice?.invoiceId as string;
+  await mutateStoredInvoice(recurringInvoiceId, {
+    status: "paid",
+    updatedAt: "2026-03-18T12:00:00.000Z"
+  });
+
+  await context.addInitScript(
+    ({ initOwnerId, nextDueAt, invoiceId }) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+      window.localStorage.setItem(
+        `invoiceRecurringSchedules::owner:${initOwnerId}`,
+        JSON.stringify({
+          entries: {
+            [invoiceId]: {
+              intervalDays: 30,
+              nextDueAt
+            }
+          }
+        })
+      );
+    },
+    {
+      initOwnerId: ownerId,
+      nextDueAt: "2026-03-20T00:00:00.000Z",
+      invoiceId: recurringInvoiceId
+    }
+  );
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+    await queue.getByText("Open recurring invoice").waitFor({ state: "visible" });
+    await queue
+      .getByText("INV-LAUNCHER-RECUR for Launcher Recurring Client is due Mar 20, 2026. Reopen it now so the repeat job keeps moving.")
+      .waitFor({ state: "visible" });
+    await queue.getByRole("button", { name: "Open repeat invoice from INV-LAUNCHER-RECUR" }).click();
+
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Launcher Recurring Client");
+    await expectValueContains(
+      page.locator('input[placeholder="Description"]:visible').first(),
+      "Recurring launcher baseline"
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher draft recovery can reopen a saved draft in Billie workspace", async () => {
   const ownerId = "ui-launcher-billie-draft-owner";
   const context = await browser.newContext();

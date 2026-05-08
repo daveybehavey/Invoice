@@ -307,6 +307,39 @@ function formatMoneyLabel(value) {
   }).format(amount);
 }
 
+function parseRecurringTimestamp(value) {
+  const parsed = Date.parse(value ?? "");
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+function readRecurringSchedules(storageKey) {
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw);
+    const entries =
+      parsed && typeof parsed === "object" && parsed.entries && typeof parsed.entries === "object"
+        ? parsed.entries
+        : {};
+    return Object.entries(entries).reduce((nextEntries, [invoiceId, entry]) => {
+      if (!invoiceId || !entry || typeof entry !== "object") {
+        return nextEntries;
+      }
+      const intervalDays = normalizeRecurringInterval(entry.intervalDays);
+      const nextDueAt = new Date(parseRecurringTimestamp(entry.nextDueAt)).toISOString();
+      nextEntries[invoiceId] = {
+        intervalDays,
+        nextDueAt
+      };
+      return nextEntries;
+    }, {});
+  } catch (_error) {
+    return {};
+  }
+}
+
 function buildRepeatWorkStarter(clientMemoryEntries, savedLineItems) {
   const memoryEntries = Array.isArray(clientMemoryEntries) ? clientMemoryEntries : [];
   const items = Array.isArray(savedLineItems) ? savedLineItems : [];
@@ -452,6 +485,10 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
     : [];
   const clientMemoryEntries = Array.isArray(options?.clientMemoryEntries) ? options.clientMemoryEntries : [];
   const savedLineItems = Array.isArray(options?.savedLineItems) ? options.savedLineItems : [];
+  const recurringSchedulesByInvoiceId =
+    options?.recurringSchedulesByInvoiceId && typeof options.recurringSchedulesByInvoiceId === "object"
+      ? options.recurringSchedulesByInvoiceId
+      : {};
   const resolveRecurringInterval =
     typeof options?.getRecurringInterval === "function" ? options.getRecurringInterval : () => null;
   const byUpdatedDesc = (a, b) => toTimestamp(b.updatedAt) - toTimestamp(a.updatedAt);
@@ -459,6 +496,22 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
   const sent = activeInvoices.filter((invoice) => invoice.status === "sent").sort(byUpdatedDesc);
   const unpaidSent = sent.filter((invoice) => getInvoiceOpenBalance(invoice) > 0);
   const paid = activeInvoices.filter((invoice) => invoice.status === "paid").sort(byUpdatedDesc);
+  const recurringReminderInvoices = activeInvoices
+    .map((invoice) => {
+      const recurringEntry = recurringSchedulesByInvoiceId[invoice.invoiceId];
+      if (!recurringEntry) {
+        return null;
+      }
+      return {
+        ...invoice,
+        recurringEntry,
+        nextDueMs: parseRecurringTimestamp(recurringEntry.nextDueAt)
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.nextDueMs - right.nextDueMs);
+  const dueRecurringInvoices = recurringReminderInvoices.filter((invoice) => invoice.nextDueMs <= nowMs);
+  const nextRecurringCandidate = (dueRecurringInvoices[0] ?? recurringReminderInvoices[0]) || null;
   const staleSent = unpaidSent
     .map((invoice) => {
       const dueDateValue = getInvoiceDueDateValue(invoice);
@@ -578,6 +631,27 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
       } payment tracking. Open balance: ${formatMoneyLabel(openBalance)}.`,
       cta: "Open sent work",
       action: "open-library"
+    });
+  }
+  if (nextRecurringCandidate) {
+    const dueLabel = formatUpdatedLabel(nextRecurringCandidate.recurringEntry?.nextDueAt);
+    const recurringIsDueNow = nextRecurringCandidate.nextDueMs <= nowMs;
+    actions.push({
+      id: `recurring:${nextRecurringCandidate.invoiceId}`,
+      tone: "repeat",
+      title: recurringIsDueNow ? "Open recurring invoice" : "Recurring invoice coming up",
+      detail: recurringIsDueNow
+        ? `${nextRecurringCandidate.invoiceNumber || "Draft invoice"}${
+            nextRecurringCandidate.customerName ? ` for ${nextRecurringCandidate.customerName}` : ""
+          } is due${dueLabel ? ` ${dueLabel}` : " soon"}. Reopen it now so the repeat job keeps moving.`
+        : `${nextRecurringCandidate.invoiceNumber || "Draft invoice"}${
+            nextRecurringCandidate.customerName ? ` for ${nextRecurringCandidate.customerName}` : ""
+          } is next due${dueLabel ? ` ${dueLabel}` : " soon"}. Open it early if you want a head start.`,
+      cta: recurringIsDueNow ? "Open repeat invoice" : "Start early",
+      ariaLabel: `Open repeat invoice from ${nextRecurringCandidate.invoiceNumber || "saved invoice"}`,
+      action: "invoice-again",
+      busyId: `invoice-again:${nextRecurringCandidate.invoiceId}`,
+      invoiceId: nextRecurringCandidate.invoiceId
     });
   }
   if (repeatCandidate) {
@@ -1004,6 +1078,8 @@ function Launcher() {
   const draftStorageKey = requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? "invoiceDraft";
   const billieWorkspaceStorageKey =
     requestIdentity.getScopedStorageKey?.("billieWorkspaceInstruction") ?? "billieWorkspaceInstruction";
+  const recurringStorageKey =
+    requestIdentity.getScopedStorageKey?.("invoiceRecurringSchedules") ?? "invoiceRecurringSchedules";
   const [hasResumeDraft, setHasResumeDraft] = useState(false);
   const [showAlternateStarts, setShowAlternateStarts] = useState(false);
   const [showPlanActions, setShowPlanActions] = useState(false);
@@ -1250,6 +1326,7 @@ function Launcher() {
             buildLauncherOperationsSummary([], {
               clientMemoryEntries,
               savedLineItems,
+              recurringSchedulesByInvoiceId: readRecurringSchedules(recurringStorageKey),
               getRecurringInterval: getClientRecurringInterval
             })
           );
@@ -1273,6 +1350,7 @@ function Launcher() {
           buildLauncherOperationsSummary(invoices, {
             clientMemoryEntries,
             savedLineItems,
+            recurringSchedulesByInvoiceId: readRecurringSchedules(recurringStorageKey),
             getRecurringInterval: getClientRecurringInterval
           })
         );
@@ -1285,6 +1363,7 @@ function Launcher() {
           buildLauncherOperationsSummary([], {
             clientMemoryEntries,
             savedLineItems,
+            recurringSchedulesByInvoiceId: readRecurringSchedules(recurringStorageKey),
             getRecurringInterval: getClientRecurringInterval
           })
         );
