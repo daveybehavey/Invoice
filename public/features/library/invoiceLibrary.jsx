@@ -262,7 +262,13 @@
         result[invoiceId] = {
           intervalDays,
           nextDueAt,
-          autoSendEnabled: Boolean(entry.autoSendEnabled)
+          autoSendEnabled: Boolean(entry.autoSendEnabled),
+          lastAutoSendAt:
+            typeof entry.lastAutoSendAt === "string" && entry.lastAutoSendAt.trim()
+              ? entry.lastAutoSendAt
+              : "",
+          lastAutoSendRecipient:
+            typeof entry.lastAutoSendRecipient === "string" ? entry.lastAutoSendRecipient.trim().toLowerCase() : ""
         };
         return result;
       }, {});
@@ -681,6 +687,40 @@
       enabled
         ? "Recurring auto-send is armed. NoteBill will keep the cadence and recipient visible so you can trust the next step."
         : "Recurring auto-send is paused for now."
+    );
+  };
+
+  const runRecurringAutoSend = async (invoice) => {
+    if (!invoice?.invoiceId) {
+      return;
+    }
+    const recurringEntry = recurringSchedules[invoice.invoiceId];
+    if (!recurringEntry?.autoSendEnabled) {
+      setError("Arm recurring auto-send before running it.");
+      return;
+    }
+    const recipientEmail = getRecurringAutoSendRecipient(invoice, clientMemoryEntries);
+    if (!recipientEmail) {
+      setError("Recurring auto-send needs a remembered recipient email.");
+      return;
+    }
+    setError("");
+    await handleSendInvoice(invoice, { recipientEmail });
+    const nextDueAt = new Date(
+      Date.now() + normalizeRecurringInterval(recurringEntry.intervalDays) * recurringDayMs
+    ).toISOString();
+    persistRecurringSchedules({
+      ...recurringSchedules,
+      [invoice.invoiceId]: {
+        ...recurringEntry,
+        nextDueAt,
+        autoSendEnabled: true,
+        lastAutoSendAt: new Date().toISOString(),
+        lastAutoSendRecipient: recipientEmail
+      }
+    });
+    setDeliveryNotice(
+      `Recurring send run for ${recipientEmail}. Next due ${formatDate(nextDueAt)}. Watch delivery before nudging again.`
     );
   };
 
@@ -3760,6 +3800,14 @@
                         Auto-send armed{recurringAutoSendRecipient ? ` for ${recurringAutoSendRecipient}` : ""}.
                       </p>
                     ) : null}
+                    {recurringEntry?.lastAutoSendAt ? (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Last recurring send {formatUpdatedLabel(recurringEntry.lastAutoSendAt)}
+                        {recurringEntry.lastAutoSendRecipient
+                          ? ` to ${recurringEntry.lastAutoSendRecipient}`
+                          : ""}.
+                      </p>
+                    ) : null}
                     {!isDeleted && !showTrash ? (
                       <div className="mt-4 rounded-[24px] border border-[#6993d2]/18 bg-[#f7faff] px-4 py-3">
                         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
@@ -4052,6 +4100,22 @@
                               >
                                 {recurringAutoSendEnabled ? "Pause auto-send" : "Arm auto-send"}
                               </button>
+                              {recurringAutoSendEnabled ? (
+                                <button
+                                  type="button"
+                                  className="rounded-xl border border-emerald-300 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+                                  onClick={() => void runRecurringAutoSend(invoice)}
+                                  disabled={
+                                    actionId === invoice.invoiceId ||
+                                    isDeleting ||
+                                    isStatusBusy ||
+                                    !recurringAutoSendRecipient
+                                  }
+                                  aria-label={`Run recurring auto-send for ${invoice.invoiceNumber || "Draft invoice"}`}
+                                >
+                                  Run auto-send now
+                                </button>
+                              ) : null}
                               {!recurringAutoSendRecipient ? (
                                 <p className="text-xs text-slate-500">
                                   Auto-send needs a remembered recipient email for this client.

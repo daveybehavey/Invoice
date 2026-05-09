@@ -346,7 +346,13 @@ function readRecurringSchedules(storageKey) {
       nextEntries[invoiceId] = {
         intervalDays,
         nextDueAt,
-        autoSendEnabled: Boolean(entry.autoSendEnabled)
+        autoSendEnabled: Boolean(entry.autoSendEnabled),
+        lastAutoSendAt:
+          typeof entry.lastAutoSendAt === "string" && entry.lastAutoSendAt.trim()
+            ? entry.lastAutoSendAt
+            : "",
+        lastAutoSendRecipient:
+          typeof entry.lastAutoSendRecipient === "string" ? entry.lastAutoSendRecipient.trim().toLowerCase() : ""
       };
       return nextEntries;
     }, {});
