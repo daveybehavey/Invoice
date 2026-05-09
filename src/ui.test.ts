@@ -8163,13 +8163,84 @@ test("client workspace shows saved services and can start from memory", async ()
       state: "visible"
     });
 
-    await page.getByRole("button", { name: "Start from memory" }).click();
+    await page.getByTestId("client-workspace-primary-action").click();
     await page.waitForURL(/\/manual$/, { timeout: 15000 });
     await expectValueContains(page.getByPlaceholder("Client Name"), "Workspace Client");
     await expectValueContains(
       page.locator('input[placeholder="Description"]:visible').first(),
       "Quarterly HVAC tune-up"
     );
+  } finally {
+    await context.close();
+  }
+});
+
+test("client workspace gives estimates a safer next action", async () => {
+  const ownerId = "ui-client-workspace-estimate-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          name: "Estimate Workspace Client",
+          details: "Estimate Workspace Client\n55 Quote Rd",
+          recipientEmail: "billing@estimate-workspace.example",
+          updatedAt: "2026-05-09T18:00:00.000Z"
+        }
+      ])
+    );
+  }, ownerId);
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Estimate Workspace Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          documentType: "estimate",
+          invoiceNumber: "EST-WORKSPACE-1",
+          issueDate: "2026-05-09",
+          dueDate: "2026-05-16",
+          customerName: "Estimate Workspace Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "estimate-workspace-line-1",
+              type: "labor",
+              description: "Planning visit",
+              quantity: 1,
+              unitPrice: 180,
+              amount: 180
+            }
+          ],
+          subtotal: 180,
+          total: 180,
+          balanceDue: 180
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/clients?client=${encodeURIComponent("Estimate Workspace Client")}`, {
+      waitUntil: "networkidle"
+    });
+    await page.getByTestId("client-workspace-page").waitFor({ state: "visible" });
+    await page
+      .getByTestId("client-workspace-history")
+      .getByRole("button", { name: "Open library" })
+      .waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

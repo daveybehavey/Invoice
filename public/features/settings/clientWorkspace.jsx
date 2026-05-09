@@ -66,6 +66,11 @@
     const balance = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? total);
     return Number.isFinite(total) && Number.isFinite(balance) && balance > 0 && balance < total;
   };
+  const getInvoiceOpenBalance = (invoice) => {
+    const total = Number(invoice?.total ?? invoice?.invoiceData?.finishedInvoice?.total ?? 0);
+    const balance = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? total);
+    return Number.isFinite(balance) ? Math.max(balance, 0) : 0;
+  };
 
   const formatRecurringCadence = (intervalDays) => {
     const days = Number(intervalDays);
@@ -222,21 +227,21 @@
       setStatus("");
     };
 
-    const handleStartFromMemory = () => {
-      if (!selectedMemoryEntry) {
+    const handleStartFromMemory = (memoryEntry = selectedMemoryEntry, serviceEntry = leadService) => {
+      if (!memoryEntry) {
         navigate("/manual");
         return;
       }
       const draft = {
-        billToDetails: selectedMemoryEntry.details || selectedMemoryEntry.name || "",
-        notes: selectedMemoryEntry.defaultNotes || "",
-        lineItems: leadService
+        billToDetails: memoryEntry.details || memoryEntry.name || "",
+        notes: memoryEntry.defaultNotes || "",
+        lineItems: serviceEntry
           ? [
               {
                 id: `line-${Date.now()}`,
-                description: leadService.description || "",
-                qty: leadService.qty ?? "",
-                rate: leadService.rate ?? ""
+                description: serviceEntry.description || "",
+                qty: serviceEntry.qty ?? "",
+                rate: serviceEntry.rate ?? ""
               }
             ]
           : [],
@@ -244,19 +249,19 @@
         savedInvoiceStatus: ""
       };
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
-      setStatus(`Started a fresh draft for ${selectedMemoryEntry.name}.`);
+      setStatus(`Started a fresh draft for ${memoryEntry.name}.`);
       navigate("/manual");
     };
 
-    const handleOpenLatestWithBillie = () => {
-      if (!latestInvoice?.invoiceData?.finishedInvoice) {
+    const handleOpenInvoiceWithBillie = (invoice = latestInvoice) => {
+      if (!invoice?.invoiceData?.finishedInvoice) {
         return;
       }
-      const finishedInvoice = latestInvoice.invoiceData.finishedInvoice;
+      const finishedInvoice = invoice.invoiceData.finishedInvoice;
       const draft = buildDraftFromFinishedInvoice(finishedInvoice, {
         taxRate: "0",
-        savedInvoiceId: latestInvoice.invoiceId ?? "",
-        savedInvoiceStatus: latestInvoice.status ?? ""
+        savedInvoiceId: invoice.invoiceId ?? "",
+        savedInvoiceStatus: invoice.status ?? ""
       });
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
       window.localStorage.setItem(
@@ -266,12 +271,12 @@
       navigate("/manual?tab=assistant&source=library");
     };
 
-    const handleInvoiceAgain = () => {
-      if (!latestInvoice?.invoiceData?.finishedInvoice) {
+    const handleInvoiceAgain = (invoice = latestInvoice) => {
+      if (!invoice?.invoiceData?.finishedInvoice) {
         navigate("/manual");
         return;
       }
-      const draft = buildDraftFromFinishedInvoice(latestInvoice.invoiceData.finishedInvoice, {
+      const draft = buildDraftFromFinishedInvoice(invoice.invoiceData.finishedInvoice, {
         freshDraft: true,
         savedInvoiceId: "",
         savedInvoiceStatus: ""
@@ -279,6 +284,73 @@
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
       navigate("/manual");
     };
+
+    const bestNextMove = useMemo(() => {
+      if (!selectedClientName) {
+        return null;
+      }
+      if (latestInvoice && getInvoiceDocumentType(latestInvoice) === "estimate") {
+        return {
+          eyebrow: "Estimate follow-through",
+          title: "Reopen the estimate before turning it into billable work",
+          body:
+            "Keep the estimate as the planning document until the work is approved. Reopen it with Billie first, then convert it from the library when the money workflow is ready.",
+          primaryLabel: "Open latest with Billie",
+          onPrimary: () => handleOpenInvoiceWithBillie(latestInvoice),
+          secondaryLabel: "Open library",
+          onSecondary: () => navigate("/invoices")
+        };
+      }
+      if (latestInvoice && hasPartialPayment(latestInvoice)) {
+        return {
+          eyebrow: "Balance still open",
+          title: `Collect the remaining ${formatMoney(getInvoiceOpenBalance(latestInvoice))}`,
+          body:
+            "This client has already paid part of the invoice. Reopen it with Billie or jump into the library before the follow-up loses context.",
+          primaryLabel: "Open latest with Billie",
+          onPrimary: () => handleOpenInvoiceWithBillie(latestInvoice),
+          secondaryLabel: "Open library",
+          onSecondary: () => navigate("/invoices")
+        };
+      }
+      if (latestInvoice?.status === "sent" && getInvoiceOpenBalance(latestInvoice) > 0) {
+        return {
+          eyebrow: "Payment follow-through",
+          title: `Follow up on ${latestInvoice.invoiceNumber || "the open invoice"}`,
+          body:
+            "The invoice is still outstanding. Jump back into the saved draft or the library ops flow while the next step is still obvious.",
+          primaryLabel: "Open latest with Billie",
+          onPrimary: () => handleOpenInvoiceWithBillie(latestInvoice),
+          secondaryLabel: "Open library",
+          onSecondary: () => navigate("/invoices")
+        };
+      }
+      if (selectedMemoryEntry || leadService) {
+        return {
+          eyebrow: "Repeat-work momentum",
+          title: leadService
+            ? `Start from ${leadService.description}`
+            : `Start the next invoice for ${selectedClientName}`,
+          body:
+            "NoteBill already knows enough about this client to skip the blank page. Start from memory first, then only adjust what changed.",
+          primaryLabel: selectedMemoryEntry ? "Start from memory" : "Invoice again",
+          onPrimary: () =>
+            selectedMemoryEntry ? handleStartFromMemory(selectedMemoryEntry, leadService) : handleInvoiceAgain(latestInvoice),
+          secondaryLabel: latestInvoice ? "Open latest with Billie" : "Review memory",
+          onSecondary: () => (latestInvoice ? handleOpenInvoiceWithBillie(latestInvoice) : navigate("/settings/memory"))
+        };
+      }
+      return {
+        eyebrow: "Start clean",
+        title: "Use the latest saved job as the baseline",
+        body:
+          "There is not much remembered setup yet, so the safest next move is to reuse the latest saved work and tune it from there.",
+        primaryLabel: latestInvoice ? "Invoice again" : "Start invoice",
+        onPrimary: () => (latestInvoice ? handleInvoiceAgain(latestInvoice) : navigate("/manual")),
+        secondaryLabel: "Review memory",
+        onSecondary: () => navigate("/settings/memory")
+      };
+    }, [selectedClientName, latestInvoice, selectedMemoryEntry, leadService, navigate]);
 
     return (
       <div className="nb-page nb-page--quiet min-h-screen">
@@ -422,8 +494,12 @@
                     </section>
 
                     <section className="nb-surface nb-surface--muted rounded-[26px] p-5 md:rounded-[30px] md:p-6">
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Best next move</p>
-                      <h3 className="mt-2 text-lg font-semibold text-slate-900">How we’d start the next job</h3>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                        {bestNextMove?.eyebrow || "Best next move"}
+                      </p>
+                      <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                        {bestNextMove?.title || "How we'd start the next job"}
+                      </h3>
                       <div className="mt-4 space-y-3">
                         <div className="rounded-[22px] border border-white/80 bg-white/85 p-4">
                           <p className="text-sm font-semibold text-slate-900">
@@ -437,14 +513,32 @@
                               : "No saved service bundle yet, so the next invoice should start from memory or the latest invoice."}
                           </p>
                         </div>
-                        {latestInvoice ? (
-                          <button type="button" className="nb-btn-secondary w-full justify-center" onClick={handleOpenLatestWithBillie}>
-                            Open latest with Billie
+                        <div className="rounded-[22px] border border-white/80 bg-white/85 p-4">
+                          <p className="text-sm font-semibold text-slate-900">
+                            {bestNextMove?.title || "Start with the most reusable client context"}
+                          </p>
+                          <p className="mt-2 text-xs leading-5 text-slate-600">
+                            {bestNextMove?.body ||
+                              "Use the client's latest saved work, memory, and Billie guidance together instead of starting from scratch."}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="nb-btn-primary w-full justify-center"
+                          onClick={bestNextMove?.onPrimary}
+                          data-testid="client-workspace-primary-action"
+                        >
+                          {bestNextMove?.primaryLabel || "Start next step"}
+                        </button>
+                        {bestNextMove?.secondaryLabel ? (
+                          <button
+                            type="button"
+                            className="nb-btn-secondary w-full justify-center"
+                            onClick={bestNextMove.onSecondary}
+                          >
+                            {bestNextMove.secondaryLabel}
                           </button>
                         ) : null}
-                        <button type="button" className="nb-btn-secondary w-full justify-center" onClick={handleInvoiceAgain}>
-                          Invoice again
-                        </button>
                       </div>
                     </section>
                   </div>
@@ -516,6 +610,32 @@
                                     {formatMoney(Number(invoice.total || invoice.invoiceData?.finishedInvoice?.total || 0))}
                                   </StatusChip>
                                 </div>
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  className="nb-btn-secondary"
+                                  onClick={() => handleOpenInvoiceWithBillie(invoice)}
+                                >
+                                  Open with Billie
+                                </button>
+                                {getInvoiceDocumentType(invoice) === "estimate" ? (
+                                  <button
+                                    type="button"
+                                    className="nb-btn-secondary"
+                                    onClick={() => navigate("/invoices")}
+                                  >
+                                    Open library
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="nb-btn-secondary"
+                                    onClick={() => handleInvoiceAgain(invoice)}
+                                  >
+                                    Invoice again
+                                  </button>
+                                )}
                               </div>
                             </article>
                           ))
