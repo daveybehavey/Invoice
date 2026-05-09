@@ -2022,6 +2022,52 @@ test("import cleanup studio surfaces seeded source context in intake", async () 
   }
 });
 
+test("import cleanup studio can use uncaptured lines in chat", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-import-studio-unparsed-owner");
+    window.localStorage.setItem(
+      "invoiceImportSeed::owner:ui-import-studio-unparsed-owner",
+      JSON.stringify({
+        fileName: "legacy-estimate.txt",
+        notes: "Imported estimate with a missed deposit line.",
+        sourceText: "Deposit 50% upfront. Remaining on completion.",
+        payload: {
+          needsFollowUp: true,
+          followUp: {
+            question: "What amount should the deposit be?",
+            kind: "labor_pricing"
+          },
+          structuredInvoice: {
+            customerName: "Legacy Client",
+            workSessions: [],
+            materials: []
+          },
+          openDecisions: [],
+          assumptions: [],
+          unparsedLines: ["Deposit 50% upfront."],
+          qualityGate: { blockerCount: 1 },
+          auditStatus: null
+        }
+      })
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
+    const studio = page.getByTestId("import-cleanup-studio");
+    await studio.waitFor({ state: "visible" });
+    await studio.getByText("Deposit 50% upfront.", { exact: true }).waitFor({ state: "visible" });
+    await studio.getByRole("button", { name: "Use uncaptured lines" }).click();
+    await expectValueContains(
+      page.locator("#ai-intake-input"),
+      "Use these uncaptured imported lines to finish the cleanup"
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("import screen shows pre-limit warning when one free save remains", async () => {
   process.env.INVOICE_DEFAULT_PLAN = "free";
   process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "2";

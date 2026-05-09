@@ -432,6 +432,27 @@ function AIIntake() {
       });
     }
   };
+  const applyImportStudioUnparsedToInput = () => {
+    const missingLines = Array.isArray(unparsedLines)
+      ? unparsedLines.map((item) => String(item ?? "").trim()).filter(Boolean)
+      : [];
+    if (missingLines.length === 0) {
+      return;
+    }
+    const prefill = `Use these uncaptured imported lines to finish the cleanup:\n\n${missingLines
+      .map((line) => `- ${line}`)
+      .join("\n")}`;
+    setInputValue(prefill);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        const input = document.getElementById("ai-intake-input");
+        if (input instanceof HTMLTextAreaElement) {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      });
+    }
+  };
   const refreshOnboardingStatus = (sessionOverride) => {
     setOnboardingStatus(
       buildOnboardingStatus({
@@ -2683,6 +2704,15 @@ function AIIntake() {
                       >
                         Use source in chat
                       </button>
+                      {unparsedItems.length > 0 ? (
+                        <button
+                          type="button"
+                          className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
+                          onClick={applyImportStudioUnparsedToInput}
+                        >
+                          Use uncaptured lines
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2 text-xs">
@@ -2724,6 +2754,28 @@ function AIIntake() {
                       <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">
                         {importStudioContext.preview}
                       </p>
+                    </div>
+                  ) : null}
+                  {unparsedItems.length > 0 ? (
+                    <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
+                          Uncaptured lines
+                        </p>
+                        <p className="text-[11px] font-medium text-amber-800">
+                          These lines still need cleanup attention
+                        </p>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {unparsedItems.slice(0, 4).map((item) => (
+                          <p
+                            key={item.id}
+                            className="rounded-xl border border-amber-100 bg-white/85 px-3 py-2 text-sm leading-6 text-slate-700"
+                          >
+                            {item.text}
+                          </p>
+                        ))}
+                      </div>
                     </div>
                   ) : null}
                 </div>
