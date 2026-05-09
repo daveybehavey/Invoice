@@ -8540,6 +8540,8 @@ test("manual editor can record a partial payment and update the remaining balanc
     await page.getByRole("button", { name: "Record payment" }).click();
     await page.getByText("Partially paid: $75.00 remaining").waitFor({ state: "visible" });
     await page.getByText("$25.00 received").waitFor({ state: "visible" });
+    await page.getByText("Payment progress", { exact: false }).waitFor({ state: "visible" });
+    await page.getByText("$25.00 recorded").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

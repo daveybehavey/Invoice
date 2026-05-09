@@ -1115,6 +1115,11 @@ function InspectorPanel({
   const previewAmountPaid = Number.isFinite(previewData?.amountPaid)
     ? previewData.amountPaid
     : Math.max(0, previewTotal - previewBalanceDue);
+  const previewPaymentsTotal = previewPaymentRecords.reduce((sum, payment) => {
+    const amount = Number(payment?.amount ?? 0);
+    return sum + (Number.isFinite(amount) ? Math.max(amount, 0) : 0);
+  }, 0);
+  const previewLatestPayment = previewPaymentRecords[0] ?? null;
   const hasClientDetails = Boolean(previewData?.billToDetails?.trim());
   const hasBillableLineItem = parsedLineItems.some(
     (item) => !item.placeholder && item.description?.trim() && Number.isFinite(item.amount) && item.amount > 0
@@ -2192,6 +2197,30 @@ function InspectorPanel({
                   {paymentRecordBusy ? "Recording..." : "Record payment"}
                 </button>
                 {paymentRecordError ? <p className="text-xs text-rose-600">{paymentRecordError}</p> : null}
+                <div className="rounded-lg border border-slate-200 bg-white/90 px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-900">Payment progress</p>
+                    <span className="nb-chip nb-chip--soft normal-case tracking-normal text-[11px]">
+                      {formatPreviewMoney(previewPaymentsTotal)} recorded
+                    </span>
+                  </div>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    <div className="rounded-md bg-slate-50 px-2 py-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Paid</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">{formatPreviewMoney(previewPaymentsTotal)}</p>
+                    </div>
+                    <div className="rounded-md bg-slate-50 px-2 py-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Remaining</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">{formatPreviewMoney(previewBalanceDue)}</p>
+                    </div>
+                    <div className="rounded-md bg-slate-50 px-2 py-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Latest</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">
+                        {previewLatestPayment ? formatPreviewMoney(Number(previewLatestPayment.amount ?? 0)) : "None"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
                 {previewPaymentRecords.length > 0 ? (
                   <div className="space-y-2">
                     {previewPaymentRecords.map((payment) => (
