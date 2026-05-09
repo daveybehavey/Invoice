@@ -2065,6 +2065,10 @@
   const paidRepeatRecurringLabel = paidRepeatRecurringInterval
     ? formatRecurringCadence(paidRepeatRecurringInterval)
     : "";
+  const latestEstimateInvoice =
+    invoices
+      .filter((invoice) => invoice?.status !== "deleted" && getDocumentType(invoice) === "estimate")
+      .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
   const recurringMemoryStarter = nextRecurringCandidate
     ? buildClientMemoryStarterForInvoice(
         nextRecurringCandidate,
@@ -2246,6 +2250,29 @@
           setStatusFilter("sent");
           setSelectedIds([]);
         }
+      };
+    }
+    if (latestEstimateInvoice) {
+      return {
+        toneClass: "border-emerald-200 bg-emerald-50 text-emerald-950",
+        eyebrow: "Billie next up",
+        title: `Turn ${latestEstimateInvoice.invoiceNumber || "this estimate"} into billable work`,
+        body:
+          "Estimates are planning documents until the job gets approved. Reopen it with Billie or convert it from the library when the estimate becomes real work.",
+        meta: [
+          latestEstimateInvoice.customerName || "",
+          Number.isFinite(latestEstimateInvoice.total)
+            ? `Total ${formatMoney(latestEstimateInvoice.total)}`
+            : ""
+        ].filter(Boolean),
+        primaryLabel:
+          actionId === latestEstimateInvoice.invoiceId ? "Converting..." : "Convert to invoice",
+        primaryDisabled: actionId === latestEstimateInvoice.invoiceId,
+        onPrimary: () => void handleConvertEstimateToInvoice(latestEstimateInvoice.invoiceId),
+        secondaryLabel:
+          actionId === latestEstimateInvoice.invoiceId ? "Opening..." : "Open with Billie",
+        secondaryDisabled: actionId === latestEstimateInvoice.invoiceId,
+        onSecondary: () => handleOpenWithBillie(latestEstimateInvoice.invoiceId)
       };
     }
     if (nextRecurringCandidate) {

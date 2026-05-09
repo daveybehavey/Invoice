@@ -8597,6 +8597,10 @@ test("invoice library can convert a saved estimate into a draft invoice", async 
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page
+      .getByTestId("library-billie-next-up")
+      .getByText("Turn EST-CONVERT-1 into billable work")
+      .waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Convert to invoice" }).click();
     await page.getByRole("button", { name: "Send invoice EST-CONVERT-1" }).waitFor({ state: "visible" });
   } finally {
