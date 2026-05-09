@@ -2068,6 +2068,62 @@ test("import cleanup studio can use uncaptured lines in chat", async () => {
   }
 });
 
+test("import cleanup studio can use unresolved decisions in chat", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-import-studio-decisions-owner");
+    window.localStorage.setItem(
+      "invoiceImportSeed::owner:ui-import-studio-decisions-owner",
+      JSON.stringify({
+        fileName: "legacy-decision-notes.txt",
+        notes: "Imported job with two unresolved billing choices.",
+        sourceText: "Charge travel time? Add disposal fee?",
+        payload: {
+          needsFollowUp: false,
+          structuredInvoice: {
+            customerName: "Legacy Client",
+            workSessions: [],
+            materials: []
+          },
+          openDecisions: [
+            {
+              kind: "billing",
+              prompt: "Should travel time be billed separately?",
+              sourceSnippet: "Travel time maybe charge separately."
+            },
+            {
+              kind: "materials",
+              prompt: "Should disposal be added as a separate fee?",
+              sourceSnippet: "Disposal maybe separate."
+            }
+          ],
+          assumptions: [],
+          unparsedLines: [],
+          qualityGate: { blockerCount: 0 },
+          auditStatus: null
+        }
+      })
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
+    const studio = page.getByTestId("import-cleanup-studio");
+    await studio.waitFor({ state: "visible" });
+    await studio
+      .getByText("Should travel time be billed separately?", { exact: true })
+      .waitFor({ state: "visible" });
+    await studio.getByRole("button", { name: "Use decisions in chat" }).click();
+    await expectValueContains(
+      page.locator("#ai-intake-input"),
+      "Use these unresolved imported decisions to finish the cleanup"
+    );
+    await expectValueContains(page.locator("#ai-intake-input"), "Should travel time be billed separately?");
+  } finally {
+    await context.close();
+  }
+});
+
 test("import screen shows pre-limit warning when one free save remains", async () => {
   process.env.INVOICE_DEFAULT_PLAN = "free";
   process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "2";

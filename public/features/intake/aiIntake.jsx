@@ -453,6 +453,29 @@ function AIIntake() {
       });
     }
   };
+  const applyImportStudioDecisionsToInput = () => {
+    const openDecisionPrompts = Array.isArray(visibleDecisionSource)
+      ? visibleDecisionSource
+          .map((item) => String(item?.prompt ?? item?.text ?? "").trim())
+          .filter(Boolean)
+      : [];
+    if (openDecisionPrompts.length === 0) {
+      return;
+    }
+    const prefill = `Use these unresolved imported decisions to finish the cleanup:\n\n${openDecisionPrompts
+      .map((line) => `- ${line}`)
+      .join("\n")}`;
+    setInputValue(prefill);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        const input = document.getElementById("ai-intake-input");
+        if (input instanceof HTMLTextAreaElement) {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      });
+    }
+  };
   const refreshOnboardingStatus = (sessionOverride) => {
     setOnboardingStatus(
       buildOnboardingStatus({
@@ -2704,6 +2727,15 @@ function AIIntake() {
                       >
                         Use source in chat
                       </button>
+                      {visibleDecisionSource.length > 0 ? (
+                        <button
+                          type="button"
+                          className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
+                          onClick={applyImportStudioDecisionsToInput}
+                        >
+                          Use decisions in chat
+                        </button>
+                      ) : null}
                       {unparsedItems.length > 0 ? (
                         <button
                           type="button"
@@ -2754,6 +2786,28 @@ function AIIntake() {
                       <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">
                         {importStudioContext.preview}
                       </p>
+                    </div>
+                  ) : null}
+                  {visibleDecisionSource.length > 0 ? (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white/88 p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                          Unresolved decisions
+                        </p>
+                        <p className="text-[11px] font-medium text-slate-500">
+                          Pull these straight into Billie when the import needs a clear answer.
+                        </p>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {visibleDecisionSource.slice(0, 4).map((item) => (
+                          <p
+                            key={item.id}
+                            className="rounded-xl border border-slate-200 bg-slate-50/90 px-3 py-2 text-sm leading-6 text-slate-700"
+                          >
+                            {item.prompt || item.text}
+                          </p>
+                        ))}
+                      </div>
                     </div>
                   ) : null}
                   {unparsedItems.length > 0 ? (
