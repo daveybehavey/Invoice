@@ -345,7 +345,8 @@ function readRecurringSchedules(storageKey) {
       const nextDueAt = new Date(parseRecurringTimestamp(entry.nextDueAt)).toISOString();
       nextEntries[invoiceId] = {
         intervalDays,
-        nextDueAt
+        nextDueAt,
+        autoSendEnabled: Boolean(entry.autoSendEnabled)
       };
       return nextEntries;
     }, {});

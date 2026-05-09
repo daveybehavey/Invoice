@@ -6553,6 +6553,75 @@ test("invoice library supports recurring monthly reminders with pause", async ()
   }
 });
 
+test("invoice library can arm recurring auto-send when a client recipient is remembered", async () => {
+  const ownerId = "ui-recurring-auto-send-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          name: "Recurring Auto Client",
+          details: "Recurring Auto Client\n77 Queue St",
+          recipientEmail: "auto-send@example.com",
+          updatedAt: "2026-05-09T18:00:00.000Z"
+        }
+      ])
+    );
+  }, ownerId);
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Recurring Auto Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-RECUR-AUTO-1",
+          issueDate: "2026-05-09",
+          customerName: "Recurring Auto Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "recur-auto-line-1",
+              type: "labor",
+              description: "Monthly maintenance",
+              quantity: 1,
+              unitPrice: 95,
+              amount: 95
+            }
+          ],
+          subtotal: 95,
+          total: 95,
+          balanceDue: 95
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("INV-RECUR-AUTO-1", { exact: true }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Set monthly recurring for INV-RECUR-AUTO-1" }).click();
+    await page.getByRole("button", { name: "Arm auto-send for INV-RECUR-AUTO-1" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Arm auto-send for INV-RECUR-AUTO-1" }).click();
+    await page.getByText("Auto-send armed for auto-send@example.com.").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Pause auto-send for INV-RECUR-AUTO-1" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library suggests remembered recurring cadence for repeat clients", async () => {
   const ownerId = "ui-recurring-memory-owner";
   const context = await browser.newContext();

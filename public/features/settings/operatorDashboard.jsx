@@ -70,7 +70,18 @@
         return {};
       }
       const parsed = JSON.parse(raw);
-      return parsed?.entries && typeof parsed.entries === "object" ? parsed.entries : {};
+      const entries = parsed?.entries && typeof parsed.entries === "object" ? parsed.entries : {};
+      return Object.entries(entries).reduce((result, [invoiceId, entry]) => {
+        if (!invoiceId || !entry || typeof entry !== "object") {
+          return result;
+        }
+        result[invoiceId] = {
+          intervalDays: Number(entry.intervalDays ?? 30) || 30,
+          nextDueAt: typeof entry.nextDueAt === "string" ? entry.nextDueAt : "",
+          autoSendEnabled: Boolean(entry.autoSendEnabled)
+        };
+        return result;
+      }, {});
     } catch (_error) {
       return {};
     }

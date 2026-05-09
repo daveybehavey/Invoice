@@ -230,6 +230,18 @@
     };
   };
 
+  const getRecurringAutoSendRecipient = (invoice, clientMemoryEntries = []) => {
+    const rememberedRecipient =
+      (Array.isArray(clientMemoryEntries) ? clientMemoryEntries : []).find(
+        (entry) =>
+          normalizeLookupText(entry?.name) ===
+          normalizeLookupText(invoice?.customerName ?? invoice?.invoiceData?.finishedInvoice?.customerName ?? "")
+      )?.recipientEmail ?? "";
+    const deliveryRecipient = invoice?.delivery?.recipientEmail ?? "";
+    const nextRecipient = String(rememberedRecipient || deliveryRecipient).trim().toLowerCase();
+    return isValidEmail(nextRecipient) ? nextRecipient : "";
+  };
+
   const readRecurringSchedules = (storageKey) => {
     if (typeof window === "undefined") {
       return {};
@@ -249,7 +261,8 @@
         const nextDueAt = new Date(parseRecurringTimestamp(entry.nextDueAt)).toISOString();
         result[invoiceId] = {
           intervalDays,
-          nextDueAt
+          nextDueAt,
+          autoSendEnabled: Boolean(entry.autoSendEnabled)
         };
         return result;
       }, {});
@@ -587,7 +600,11 @@
       ...recurringSchedules,
       [invoiceId]: {
         intervalDays: normalizedInterval,
-        nextDueAt
+        nextDueAt,
+        autoSendEnabled:
+          typeof options?.autoSendEnabled === "boolean"
+            ? options.autoSendEnabled
+            : Boolean(recurringSchedules[invoiceId]?.autoSendEnabled)
       }
     });
     void apiFetch("/api/telemetry/revenue-signals", {
@@ -642,9 +659,29 @@
       ...recurringSchedules,
       [invoiceId]: {
         intervalDays,
-        nextDueAt
+        nextDueAt,
+        autoSendEnabled: Boolean(existing.autoSendEnabled)
       }
     });
+  };
+
+  const toggleRecurringAutoSend = (invoiceId, enabled) => {
+    const existing = recurringSchedules[invoiceId];
+    if (!existing) {
+      return;
+    }
+    persistRecurringSchedules({
+      ...recurringSchedules,
+      [invoiceId]: {
+        ...existing,
+        autoSendEnabled: Boolean(enabled)
+      }
+    });
+    setDeliveryNotice(
+      enabled
+        ? "Recurring auto-send is armed. NoteBill will keep the cadence and recipient visible so you can trust the next step."
+        : "Recurring auto-send is paused for now."
+    );
   };
 
   const clearUndoToast = () => {
@@ -3331,6 +3368,10 @@
                 const lifecycleLabel = getInvoiceLifecycleLabel(invoice);
                 const recurringEntry = recurringSchedulesByInvoiceId[invoice.invoiceId] ?? null;
                 const isEstimateDocument = getDocumentType(invoice) === "estimate";
+                const recurringAutoSendRecipient = recurringEntry
+                  ? getRecurringAutoSendRecipient(invoice, getClientMemory())
+                  : "";
+                const recurringAutoSendEnabled = Boolean(recurringEntry?.autoSendEnabled);
                 const recurringIntervalLabel = recurringEntry
                   ? formatRecurringCadence(recurringEntry.intervalDays)
                   : "";
@@ -3714,6 +3755,11 @@
                     {recurringEntry ? (
                       <p className="mt-3 text-xs text-slate-600">Next due {recurringNextDue || "soon"}</p>
                     ) : null}
+                    {recurringEntry && recurringAutoSendEnabled ? (
+                      <p className="mt-1 text-xs font-semibold text-emerald-700">
+                        Auto-send armed{recurringAutoSendRecipient ? ` for ${recurringAutoSendRecipient}` : ""}.
+                      </p>
+                    ) : null}
                     {!isDeleted && !showTrash ? (
                       <div className="mt-4 rounded-[24px] border border-[#6993d2]/18 bg-[#f7faff] px-4 py-3">
                         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
@@ -3990,6 +4036,27 @@
                               >
                                 Pause recurring
                               </button>
+                              <button
+                                type="button"
+                                className="nb-btn-secondary rounded-xl border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-900 disabled:cursor-not-allowed disabled:text-emerald-300"
+                                onClick={() => toggleRecurringAutoSend(invoice.invoiceId, !recurringAutoSendEnabled)}
+                                disabled={
+                                  actionId === invoice.invoiceId ||
+                                  isDeleting ||
+                                  isStatusBusy ||
+                                  !recurringAutoSendRecipient
+                                }
+                                aria-label={`${
+                                  recurringAutoSendEnabled ? "Pause auto-send" : "Arm auto-send"
+                                } for ${invoice.invoiceNumber || "Draft invoice"}`}
+                              >
+                                {recurringAutoSendEnabled ? "Pause auto-send" : "Arm auto-send"}
+                              </button>
+                              {!recurringAutoSendRecipient ? (
+                                <p className="text-xs text-slate-500">
+                                  Auto-send needs a remembered recipient email for this client.
+                                </p>
+                              ) : null}
                             </>
                           ) : !isEstimateDocument ? (
                             <>
