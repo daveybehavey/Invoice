@@ -78,6 +78,15 @@
 
   const getInvoiceClientName = (invoice) =>
     String(invoice?.customerName ?? invoice?.invoiceData?.finishedInvoice?.customerName ?? "").trim();
+  const getInvoiceDocumentType = (invoice) =>
+    invoice?.documentType === "estimate" || invoice?.invoiceData?.finishedInvoice?.documentType === "estimate"
+      ? "estimate"
+      : "invoice";
+  const hasPartialPayment = (invoice) => {
+    const total = Number(invoice?.total ?? invoice?.invoiceData?.finishedInvoice?.total ?? 0);
+    const balance = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? total);
+    return Number.isFinite(total) && Number.isFinite(balance) && balance > 0 && balance < total;
+  };
 
   function OperatorDashboardPage() {
     const navigate = useNavigate();
@@ -121,9 +130,19 @@
     const savedServices = getLineItemLibrary();
     const recurringEntries = readRecurringSchedules(recurringStorageKey);
     const activeInvoices = savedInvoices.filter((invoice) => invoice && invoice.status !== "deleted");
+    const estimateInvoices = activeInvoices.filter((invoice) => getInvoiceDocumentType(invoice) === "estimate");
     const sentInvoices = activeInvoices.filter((invoice) => invoice.status === "sent");
     const paidInvoices = activeInvoices.filter((invoice) => invoice.status === "paid");
+    const partiallyPaidInvoices = sentInvoices.filter((invoice) => hasPartialPayment(invoice));
     const totalOpenBalance = sentInvoices.reduce((total, invoice) => {
+      const amount = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? 0);
+      return total + (Number.isFinite(amount) ? Math.max(amount, 0) : 0);
+    }, 0);
+    const overdueOpenBalance = sentInvoices.reduce((total, invoice) => {
+      const dueMs = parseDueDate(invoice?.dueDate ?? invoice?.invoiceData?.finishedInvoice?.dueDate ?? "");
+      if (!Number.isFinite(dueMs) || dueMs > Date.now()) {
+        return total;
+      }
       const amount = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? 0);
       return total + (Number.isFinite(amount) ? Math.max(amount, 0) : 0);
     }, 0);
@@ -233,12 +252,15 @@
             {error ? <p className="mt-4 text-sm font-semibold text-rose-600">{error}</p> : null}
           </section>
 
-          <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {[
               ["Open balance", totalOpenBalance > 0 ? formatMoney(totalOpenBalance) : "0"],
+              ["Overdue balance", overdueOpenBalance > 0 ? formatMoney(overdueOpenBalance) : "0"],
+              ["Partial payments", partiallyPaidInvoices.length],
               ["Recurring due now", dueNowCount],
               ["Recurring due soon", dueSoonCount],
-              ["Paid invoices", paidInvoices.length]
+              ["Paid invoices", paidInvoices.length],
+              ["Saved estimates", estimateInvoices.length]
             ].map(([label, value]) => (
               <div key={label} className="nb-subcard bg-white/90 p-4 text-center">
                 <p className="text-xl font-semibold text-[#093064]">{value}</p>

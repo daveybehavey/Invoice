@@ -57,6 +57,15 @@
   const normalizeName = (value) => (typeof value === "string" ? value.trim().toLocaleLowerCase() : "");
   const getInvoiceClientName = (invoice) =>
     String(invoice?.customerName ?? invoice?.invoiceData?.finishedInvoice?.customerName ?? "").trim();
+  const getInvoiceDocumentType = (invoice) =>
+    invoice?.documentType === "estimate" || invoice?.invoiceData?.finishedInvoice?.documentType === "estimate"
+      ? "estimate"
+      : "invoice";
+  const hasPartialPayment = (invoice) => {
+    const total = Number(invoice?.total ?? invoice?.invoiceData?.finishedInvoice?.total ?? 0);
+    const balance = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? total);
+    return Number.isFinite(total) && Number.isFinite(balance) && balance > 0 && balance < total;
+  };
 
   const formatRecurringCadence = (intervalDays) => {
     const days = Number(intervalDays);
@@ -200,6 +209,8 @@
     const paidCount = clientInvoices.filter((invoice) => invoice?.status === "paid").length;
     const sentCount = clientInvoices.filter((invoice) => invoice?.status === "sent").length;
     const draftCount = clientInvoices.filter((invoice) => invoice?.status === "draft").length;
+    const estimateCount = clientInvoices.filter((invoice) => getInvoiceDocumentType(invoice) === "estimate").length;
+    const partialPaymentCount = clientInvoices.filter((invoice) => hasPartialPayment(invoice)).length;
     const openBalance = sumOpenBalance(clientInvoices.filter((invoice) => invoice?.status === "sent"));
     const leadService = clientServices[0] ?? null;
     const cadenceLabel = formatRecurringCadence(selectedMemoryEntry?.recurringIntervalDays);
@@ -356,9 +367,11 @@
 
               {selectedClientName ? (
                 <>
-                  <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {[
                       ["Saved invoices", clientInvoices.length],
+                      ["Estimates", estimateCount],
+                      ["Partial payments", partialPaymentCount],
                       ["Paid", paidCount],
                       ["Sent", sentCount],
                       ["Open balance", openBalance > 0 ? formatMoney(openBalance) : "0"]
@@ -493,6 +506,9 @@
                                   </p>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
+                                  {getInvoiceDocumentType(invoice) === "estimate" ? (
+                                    <StatusChip tone="soft">estimate</StatusChip>
+                                  ) : null}
                                   <StatusChip tone={invoice.status === "paid" ? "success" : invoice.status === "sent" ? "warning" : "soft"}>
                                     {invoice.status || "draft"}
                                   </StatusChip>
