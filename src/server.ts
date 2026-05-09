@@ -18,6 +18,8 @@ import {
   InvoiceEditRequestSchema,
   InvoicePdfExportRequestSchema,
   LaborPricingFollowUpRequestSchema,
+  RecordPaymentRequestSchema,
+  RemovePaymentRequestSchema,
   SaveInvoiceRequestSchema,
   UpdateInvoiceStatusRequestSchema
 } from "./models/invoice.js";
@@ -1497,6 +1499,30 @@ app.post("/api/invoices/:id/status", async (req: Request, res: Response, next: N
   }
 });
 
+app.post("/api/invoices/:id/record-payment", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invoiceId = z.string().uuid().parse(req.params.id);
+    const parsedRequest = RecordPaymentRequestSchema.parse(req.body);
+    const ownerId = getRequestOwnerId(req);
+    const invoice = await recordSavedInvoicePayment({ invoiceId, ownerId, ...parsedRequest });
+    res.json({ invoice });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/invoices/:id/remove-payment", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invoiceId = z.string().uuid().parse(req.params.id);
+    const parsedRequest = RemovePaymentRequestSchema.parse(req.body);
+    const ownerId = getRequestOwnerId(req);
+    const invoice = await removeSavedInvoicePayment({ invoiceId, ownerId, paymentId: parsedRequest.paymentId });
+    res.json({ invoice });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/invoices/:id/restore", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const invoiceId = z.string().uuid().parse(req.params.id);
@@ -1878,6 +1904,99 @@ async function markSavedInvoicePaidFromStripePayment(input: {
   if (savedInvoice.status !== "paid") {
     await savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "paid", input.ownerId);
   }
+}
+
+function roundCurrencyAmount(value: number): number {
+  return Math.max(0, Number(value.toFixed(2)));
+}
+
+function calculateInvoiceBalance(total: number, paymentRecords: Array<{ amount?: number }>): number {
+  const amountPaid = paymentRecords.reduce((sum, record) => sum + Number(record?.amount ?? 0), 0);
+  return roundCurrencyAmount(total - amountPaid);
+}
+
+async function recordSavedInvoicePayment(input: {
+  invoiceId: string;
+  ownerId: string;
+  amount: number;
+  paidAt?: string;
+  note?: string;
+}): Promise<SavedInvoice> {
+  const savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(input.invoiceId, input.ownerId);
+  if (savedInvoice.status === "deleted") {
+    throw new HttpStatusError(400, "Restore this invoice before recording a payment.");
+  }
+  if (savedInvoice.invoiceData.finishedInvoice.documentType === "estimate") {
+    throw new HttpStatusError(400, "Convert this estimate into an invoice before recording payment.");
+  }
+  const currentInvoice = savedInvoice.invoiceData.finishedInvoice;
+  const nextPaymentRecords = [
+    ...(currentInvoice.paymentRecords ?? []),
+    {
+      id: randomUUID(),
+      amount: input.amount,
+      paidAt: input.paidAt?.trim() || new Date().toISOString().slice(0, 10),
+      note: input.note?.trim() || undefined
+    }
+  ];
+  const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
+  const nextBalanceDue = calculateInvoiceBalance(invoiceTotal, nextPaymentRecords);
+  let nextInvoice = await savedInvoiceRepository.saveInvoiceDocument({
+    ownerId: input.ownerId,
+    invoiceId: input.invoiceId,
+    sourceType: savedInvoice.sourceType,
+    invoiceData: {
+      ...savedInvoice.invoiceData,
+      finishedInvoice: {
+        ...currentInvoice,
+        balanceDue: nextBalanceDue,
+        paymentRecords: nextPaymentRecords
+      }
+    }
+  });
+  if (nextBalanceDue <= 0 && savedInvoice.status !== "paid") {
+    nextInvoice = await savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "paid", input.ownerId);
+  } else if (nextBalanceDue > 0 && savedInvoice.status === "draft") {
+    nextInvoice = await savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "sent", input.ownerId);
+  }
+  return nextInvoice;
+}
+
+async function removeSavedInvoicePayment(input: {
+  invoiceId: string;
+  ownerId: string;
+  paymentId: string;
+}): Promise<SavedInvoice> {
+  const savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(input.invoiceId, input.ownerId);
+  if (savedInvoice.status === "deleted") {
+    throw new HttpStatusError(400, "Restore this invoice before editing payments.");
+  }
+  const currentInvoice = savedInvoice.invoiceData.finishedInvoice;
+  const nextPaymentRecords = (currentInvoice.paymentRecords ?? []).filter(
+    (payment) => payment.id !== input.paymentId
+  );
+  if (nextPaymentRecords.length === (currentInvoice.paymentRecords ?? []).length) {
+    throw new HttpStatusError(404, "Payment record not found.");
+  }
+  const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
+  const nextBalanceDue = calculateInvoiceBalance(invoiceTotal, nextPaymentRecords);
+  let nextInvoice = await savedInvoiceRepository.saveInvoiceDocument({
+    ownerId: input.ownerId,
+    invoiceId: input.invoiceId,
+    sourceType: savedInvoice.sourceType,
+    invoiceData: {
+      ...savedInvoice.invoiceData,
+      finishedInvoice: {
+        ...currentInvoice,
+        balanceDue: nextBalanceDue,
+        paymentRecords: nextPaymentRecords
+      }
+    }
+  });
+  if (savedInvoice.status === "paid" && nextBalanceDue > 0) {
+    nextInvoice = await savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "sent", input.ownerId);
+  }
+  return nextInvoice;
 }
 
 function evaluatePersistenceMigrationStatus(

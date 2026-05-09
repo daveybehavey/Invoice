@@ -8055,6 +8055,33 @@ test("manual editor can save an estimate and show it as an estimate in the libra
   }
 });
 
+test("manual editor can record a partial payment and update the remaining balance", async () => {
+  const ownerId = "ui-partial-payment-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Progress invoice");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("100");
+
+    await page.getByRole("button", { name: "Export" }).last().click();
+    await page.getByText("Save to library").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Save invoice" }).click();
+    await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
+
+    await page.getByLabel("Amount", { exact: true }).fill("25");
+    await page.getByRole("button", { name: "Record payment" }).click();
+    await page.getByText("Partially paid: $75.00 remaining").waitFor({ state: "visible" });
+    await page.getByText("$25.00 received").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library supports sent and paid status actions", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

@@ -1529,8 +1529,10 @@
     }
     return "Draft invoice";
   };
-  const getPaymentStatusView = ({ status, balanceDue, isPastDue }) => {
+  const getPaymentStatusView = ({ status, balanceDue, total, isPastDue }) => {
     const amountLabel = formatMoney(balanceDue);
+    const hasPartialPayment =
+      Number.isFinite(total) && Number.isFinite(balanceDue) && balanceDue > 0 && balanceDue < total;
     if (status === "paid") {
       return {
         label: "Paid and closed",
@@ -1545,13 +1547,13 @@
     }
     if (status === "sent" && isPastDue) {
       return {
-        label: `Past due: ${amountLabel}`,
+        label: hasPartialPayment ? `Past due: ${amountLabel} remaining` : `Past due: ${amountLabel}`,
         className: "nb-chip nb-chip--warning normal-case tracking-normal"
       };
     }
     if (status === "sent") {
       return {
-        label: `Open balance: ${amountLabel}`,
+        label: hasPartialPayment ? `Partially paid: ${amountLabel} left` : `Open balance: ${amountLabel}`,
         className: "nb-chip nb-chip--info normal-case tracking-normal"
       };
     }
@@ -3266,6 +3268,7 @@
                 const paymentStatusView = getPaymentStatusView({
                   status: invoice.status,
                   balanceDue,
+                  total: Number(invoice?.total ?? 0),
                   isPastDue
                 });
                 const lifecycleLabel = getInvoiceLifecycleLabel(invoice);

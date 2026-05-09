@@ -160,6 +160,7 @@ function InspectorPanel({
   taxRate,
   discountAmount,
   paymentLinkUrl,
+  paymentRecords = [],
   onLogoChange,
   onLogoRemove,
   onLogoVisibilityChange,
@@ -172,6 +173,8 @@ function InspectorPanel({
   onDiscountAmountChange,
   onPaymentLinkChange,
   onGeneratePaymentLink,
+  onRecordPayment,
+  onRemovePayment,
   onUpdateLineItemValues,
   stylePreset,
   onStylePresetChange,
@@ -191,6 +194,8 @@ function InspectorPanel({
   saveAuthHint,
   paymentLinkBusy,
   paymentLinkError,
+  paymentRecordBusy,
+  paymentRecordError,
   accountPlan,
   onSaveAuthRetry,
   onGoToLauncherSignIn,
@@ -233,6 +238,9 @@ function InspectorPanel({
   const [showPrintActions, setShowPrintActions] = useState(false);
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingError, setBillingError] = useState("");
+  const [paymentAmountInput, setPaymentAmountInput] = useState("");
+  const [paymentDateInput, setPaymentDateInput] = useState(() => new Date().toISOString().slice(0, 10));
+  const [paymentNoteInput, setPaymentNoteInput] = useState("");
   const previewCloseButtonRef = useRef(null);
   const previewFocusReturnRef = useRef(null);
   const assistantRequestIdRef = useRef(0);
@@ -431,6 +439,19 @@ function InspectorPanel({
     applyLayoutStudioRecipe(LAYOUT_STUDIO_RECIPES[0]);
     onLogoVisibilityChange?.(true);
     onNotesVisibilityChange?.(true);
+  };
+  const handleRecordPaymentSubmit = async () => {
+    const amount = Number.parseFloat(paymentAmountInput);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return;
+    }
+    await onRecordPayment?.({
+      amount,
+      paidAt: paymentDateInput || undefined,
+      note: paymentNoteInput.trim() || undefined
+    });
+    setPaymentAmountInput("");
+    setPaymentNoteInput("");
   };
 
   useEffect(() => {
@@ -1089,6 +1110,11 @@ function InspectorPanel({
   const previewBillToDetails = previewData?.billToDetails?.trim() || "Add client details";
   const previewNotes = previewData?.notes?.trim() || "Add payment terms or a note.";
   const previewPaymentLink = previewData?.paymentLinkUrl?.trim() || "";
+  const previewPaymentRecords = Array.isArray(previewData?.paymentRecords) ? previewData.paymentRecords : paymentRecords;
+  const previewBalanceDue = Number.isFinite(previewData?.balanceDue) ? previewData.balanceDue : previewTotal;
+  const previewAmountPaid = Number.isFinite(previewData?.amountPaid)
+    ? previewData.amountPaid
+    : Math.max(0, previewTotal - previewBalanceDue);
   const hasClientDetails = Boolean(previewData?.billToDetails?.trim());
   const hasBillableLineItem = parsedLineItems.some(
     (item) => !item.placeholder && item.description?.trim() && Number.isFinite(item.amount) && item.amount > 0
@@ -1124,11 +1150,17 @@ function InspectorPanel({
     }
   ];
   const paymentStateLabel =
-    invoiceStatus === "paid" ? "Paid in full" : `Open balance: ${formatPreviewMoney(previewTotal)}`;
+    invoiceStatus === "paid"
+      ? "Paid in full"
+      : previewAmountPaid > 0 && previewBalanceDue > 0
+        ? `Partially paid: ${formatPreviewMoney(previewBalanceDue)} remaining`
+        : `Open balance: ${formatPreviewMoney(previewBalanceDue)}`;
   const paymentStateClass =
     invoiceStatus === "paid"
       ? "nb-chip nb-chip--success normal-case tracking-normal"
-      : "nb-chip nb-chip--warning normal-case tracking-normal";
+      : previewAmountPaid > 0 && previewBalanceDue > 0
+        ? "nb-chip nb-chip--info normal-case tracking-normal"
+        : "nb-chip nb-chip--warning normal-case tracking-normal";
 
   useEffect(() => {
     const requestId = assistantCommandRequest?.id;
@@ -2088,6 +2120,102 @@ function InspectorPanel({
                   ) : null}
                 </div>
                 {statusUpdateError ? <p className="text-xs text-rose-600">{statusUpdateError}</p> : null}
+              </div>
+            ) : null}
+            {savedInvoiceId && documentType !== "estimate" ? (
+              <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Recorded payments</p>
+                    <p className="text-xs text-slate-500">
+                      Log partial payments here so the remaining balance stays honest.
+                    </p>
+                  </div>
+                  <span className="nb-chip nb-chip--soft normal-case tracking-normal text-[11px]">
+                    {formatPreviewMoney(previewAmountPaid)} received
+                  </span>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      Amount
+                    </span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                      placeholder="0.00"
+                      value={paymentAmountInput}
+                      onChange={(event) => setPaymentAmountInput(event.target.value)}
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      Paid on
+                    </span>
+                    <input
+                      type="date"
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                      value={paymentDateInput}
+                      onChange={(event) => setPaymentDateInput(event.target.value)}
+                    />
+                  </label>
+                </div>
+                <label className="space-y-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                    Note
+                  </span>
+                  <input
+                    type="text"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+                    placeholder="Deposit, milestone 1, cash, e-transfer..."
+                    value={paymentNoteInput}
+                    onChange={(event) => setPaymentNoteInput(event.target.value)}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="w-full rounded-lg px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                  style={accentButtonStyle}
+                  onClick={handleRecordPaymentSubmit}
+                  disabled={paymentRecordBusy || !paymentAmountInput.trim()}
+                >
+                  {paymentRecordBusy ? "Recording..." : "Record payment"}
+                </button>
+                {paymentRecordError ? <p className="text-xs text-rose-600">{paymentRecordError}</p> : null}
+                {previewPaymentRecords.length > 0 ? (
+                  <div className="space-y-2">
+                    {previewPaymentRecords.map((payment) => (
+                      <div
+                        key={payment.id}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-900">
+                            {formatPreviewMoney(payment.amount)}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {payment.paidAt?.trim() || "Recorded payment"}
+                            {payment.note?.trim() ? ` · ${payment.note.trim()}` : ""}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => onRemovePayment?.(payment.id)}
+                          disabled={paymentRecordBusy}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    No payments recorded yet. Add deposits or milestone payments as they arrive.
+                  </p>
+                )}
               </div>
             ) : null}
             {savedInvoiceId ? (

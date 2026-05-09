@@ -402,6 +402,9 @@ function ManualInvoiceCanvas() {
   const [billToDetails, setBillToDetails] = useState(() => initialDraft?.billToDetails ?? "");
   const [notes, setNotes] = useState(() => initialDraft?.notes ?? "");
   const [paymentLinkUrl, setPaymentLinkUrl] = useState(() => initialDraft?.paymentLinkUrl ?? "");
+  const [paymentRecords, setPaymentRecords] = useState(() =>
+    Array.isArray(initialDraft?.paymentRecords) ? initialDraft.paymentRecords : []
+  );
   const [taxRate, setTaxRate] = useState(() => initialDraft?.taxRate ?? "0");
   const [discountAmount, setDiscountAmount] = useState(() =>
     initialDraft?.discountAmount === undefined ? "0" : String(initialDraft.discountAmount)
@@ -442,6 +445,8 @@ function ManualInvoiceCanvas() {
   const [statusUpdateError, setStatusUpdateError] = useState("");
   const [paymentLinkBusy, setPaymentLinkBusy] = useState(false);
   const [paymentLinkError, setPaymentLinkError] = useState("");
+  const [paymentRecordBusy, setPaymentRecordBusy] = useState(false);
+  const [paymentRecordError, setPaymentRecordError] = useState("");
   const [portalAccessToken, setPortalAccessToken] = useState(() => initialDraft?.portalAccessToken ?? "");
   const [clientPortalBusy, setClientPortalBusy] = useState(false);
   const [clientPortalError, setClientPortalError] = useState("");
@@ -774,6 +779,8 @@ function ManualInvoiceCanvas() {
   const discountedSubtotal = Math.max(0, subtotal - effectiveDiscountAmount);
   const taxAmount = discountedSubtotal * (parseNumber(taxRate) / 100);
   const total = discountedSubtotal + taxAmount;
+  const amountPaid = paymentRecords.reduce((sum, record) => sum + parseNumber(record?.amount), 0);
+  const balanceDue = Math.max(0, Number((total - amountPaid).toFixed(2)));
   const previewData = {
     documentType,
     invoiceNumber,
@@ -785,11 +792,14 @@ function ManualInvoiceCanvas() {
     billToDetails,
     notes,
     paymentLinkUrl,
+    paymentRecords,
+    amountPaid,
     taxRate,
     discountAmount: effectiveDiscountAmount,
     subtotal,
     taxAmount,
     total,
+    balanceDue,
     lineItems,
     logoUrl,
     logoVisible,
@@ -1455,7 +1465,8 @@ function ManualInvoiceCanvas() {
       discountAmount: effectiveDiscountAmount,
       subtotal,
       total,
-      balanceDue: total
+      balanceDue,
+      paymentRecords
     };
     return { invoice };
   };
@@ -1486,7 +1497,8 @@ function ManualInvoiceCanvas() {
       discountAmount: effectiveDiscountAmount,
       subtotal,
       total,
-      balanceDue: total
+      balanceDue,
+      paymentRecords
     };
     return { invoice };
   };
@@ -1605,6 +1617,7 @@ function ManualInvoiceCanvas() {
       billToDetails,
       notes,
       paymentLinkUrl,
+      paymentRecords,
       portalAccessToken,
       taxRate,
       discountAmount,
@@ -1667,6 +1680,7 @@ function ManualInvoiceCanvas() {
     billToDetails,
     notes,
     paymentLinkUrl,
+    paymentRecords,
     taxRate,
     discountAmount,
     lineItems,
@@ -1811,6 +1825,7 @@ function ManualInvoiceCanvas() {
         setSavedInvoiceId(nextId);
       }
       setSavedInvoiceStatus(payload?.invoice?.status ?? "draft");
+      setPaymentRecords(payload?.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? paymentRecords);
       setPortalAccessToken(payload?.invoice?.invoiceData?.finishedInvoice?.portalAccessToken ?? portalAccessToken);
       setClientMemoryList(
         rememberClientDetails(billToDetails, {
@@ -1867,6 +1882,7 @@ function ManualInvoiceCanvas() {
       }
       const appliedStatus = payload?.invoice?.status ?? nextStatus;
       setSavedInvoiceStatus(appliedStatus);
+      setPaymentRecords(payload?.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? paymentRecords);
       setSaveStatus(
         appliedStatus === "paid" ? "Marked paid" : appliedStatus === "sent" ? "Marked sent" : "Marked draft"
       );
@@ -1915,6 +1931,72 @@ function ManualInvoiceCanvas() {
       );
     } finally {
       setPaymentLinkBusy(false);
+    }
+  };
+
+  const handleRecordPayment = async ({ amount, paidAt, note }) => {
+    if (!savedInvoiceId) {
+      setPaymentRecordError("Save invoice first to record a payment.");
+      return;
+    }
+    setPaymentRecordBusy(true);
+    setPaymentRecordError("");
+    setSaveError("");
+    try {
+      const response = await apiFetch(`/api/invoices/${savedInvoiceId}/record-payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount, paidAt, note })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const requestError = new Error(payload?.error || "Couldn't record payment.");
+        requestError.status = response.status;
+        throw requestError;
+      }
+      setPaymentRecords(payload?.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? []);
+      setSavedInvoiceStatus(payload?.invoice?.status ?? savedInvoiceStatus);
+      setSaveStatus(
+        payload?.invoice?.status === "paid"
+          ? "Payment recorded. Invoice is now paid."
+          : "Payment recorded"
+      );
+      window.setTimeout(() => setSaveStatus(""), 1500);
+    } catch (error) {
+      setPaymentRecordError(error?.message || "Couldn't record payment.");
+    } finally {
+      setPaymentRecordBusy(false);
+    }
+  };
+
+  const handleRemovePayment = async (paymentId) => {
+    if (!savedInvoiceId) {
+      setPaymentRecordError("Save invoice first to edit recorded payments.");
+      return;
+    }
+    setPaymentRecordBusy(true);
+    setPaymentRecordError("");
+    setSaveError("");
+    try {
+      const response = await apiFetch(`/api/invoices/${savedInvoiceId}/remove-payment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentId })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const requestError = new Error(payload?.error || "Couldn't remove payment.");
+        requestError.status = response.status;
+        throw requestError;
+      }
+      setPaymentRecords(payload?.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? []);
+      setSavedInvoiceStatus(payload?.invoice?.status ?? savedInvoiceStatus);
+      setSaveStatus("Payment removed");
+      window.setTimeout(() => setSaveStatus(""), 1500);
+    } catch (error) {
+      setPaymentRecordError(error?.message || "Couldn't remove payment.");
+    } finally {
+      setPaymentRecordBusy(false);
     }
   };
 
@@ -4335,8 +4417,11 @@ function ManualInvoiceCanvas() {
             discountAmount={discountAmount}
             onDiscountAmountChange={setDiscountAmount}
             paymentLinkUrl={paymentLinkUrl}
+            paymentRecords={paymentRecords}
             onPaymentLinkChange={setPaymentLinkUrl}
             onGeneratePaymentLink={handleGeneratePaymentLink}
+            onRecordPayment={handleRecordPayment}
+            onRemovePayment={handleRemovePayment}
             onUpdateLineItemValues={handleUpdateLineItemValues}
             onPrint={handlePrint}
             onDownloadPdf={handleDownloadPdf}
@@ -4348,6 +4433,8 @@ function ManualInvoiceCanvas() {
             saveAuthHint={saveAuthHint}
             paymentLinkBusy={paymentLinkBusy}
             paymentLinkError={paymentLinkError}
+            paymentRecordBusy={paymentRecordBusy}
+            paymentRecordError={paymentRecordError}
             accountPlan={accountPlan}
             onSaveAuthRetry={handleSaveAuthRetry}
             onGoToLauncherSignIn={() => {
@@ -4459,8 +4546,11 @@ function ManualInvoiceCanvas() {
                 discountAmount={discountAmount}
                 onDiscountAmountChange={setDiscountAmount}
                 paymentLinkUrl={paymentLinkUrl}
+                paymentRecords={paymentRecords}
                 onPaymentLinkChange={setPaymentLinkUrl}
                 onGeneratePaymentLink={handleGeneratePaymentLink}
+                onRecordPayment={handleRecordPayment}
+                onRemovePayment={handleRemovePayment}
                 onUpdateLineItemValues={handleUpdateLineItemValues}
                 onPrint={handlePrint}
                 onDownloadPdf={handleDownloadPdf}
@@ -4472,6 +4562,8 @@ function ManualInvoiceCanvas() {
                 saveAuthHint={saveAuthHint}
                 paymentLinkBusy={paymentLinkBusy}
                 paymentLinkError={paymentLinkError}
+                paymentRecordBusy={paymentRecordBusy}
+                paymentRecordError={paymentRecordError}
                 accountPlan={accountPlan}
                 onSaveAuthRetry={handleSaveAuthRetry}
                 onGoToLauncherSignIn={() => {

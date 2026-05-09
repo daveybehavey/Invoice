@@ -124,6 +124,13 @@ export const InvoiceAuditSchema = z.object({
   unparsedLines: z.array(z.string()).default([])
 });
 
+export const PaymentRecordSchema = z.object({
+  id: z.string().min(1),
+  amount: PositiveNumber,
+  paidAt: OptionalString,
+  note: OptionalString
+});
+
 export const FinishedInvoiceSchema = z.object({
   documentType: InvoiceDocumentTypeSchema,
   invoiceNumber: OptionalString,
@@ -141,7 +148,18 @@ export const FinishedInvoiceSchema = z.object({
   discountReason: OptionalString,
   subtotal: OptionalNumber,
   total: OptionalNumber,
-  balanceDue: OptionalNumber
+  balanceDue: OptionalNumber,
+  paymentRecords: z.array(PaymentRecordSchema).default([])
+});
+
+export const RecordPaymentRequestSchema = z.object({
+  amount: PositiveNumber,
+  paidAt: OptionalString,
+  note: OptionalString
+});
+
+export const RemovePaymentRequestSchema = z.object({
+  paymentId: z.string().min(1)
 });
 
 export const ChangeLineWordingRequestSchema = z.object({
@@ -314,6 +332,7 @@ export type Task = z.infer<typeof TaskSchema>;
 export type Material = z.infer<typeof MaterialSchema>;
 export type FinishedInvoice = z.infer<typeof FinishedInvoiceSchema>;
 export type InvoiceLineItem = z.infer<typeof InvoiceLineItemSchema>;
+export type PaymentRecord = z.infer<typeof PaymentRecordSchema>;
 export type InvoiceDocumentType = z.infer<typeof InvoiceDocumentTypeSchema>;
 export type LaborPricingChoice = z.infer<typeof LaborPricingChoiceSchema>;
 export type SavedInvoice = z.infer<typeof SavedInvoiceSchema>;
