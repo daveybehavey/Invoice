@@ -160,6 +160,7 @@
     return {
       ...currentInvoice,
       ...updatedInvoice,
+      documentType: finishedInvoice.documentType ?? updatedInvoice?.documentType ?? currentInvoice.documentType,
       invoiceNumber:
         finishedInvoice.invoiceNumber ??
         structuredInvoice.invoiceNumber ??
@@ -1034,6 +1035,62 @@
       handleLibraryError(statusError, "Failed to update invoice status.");
     } finally {
       setStatusActionId("");
+    }
+  };
+
+  const handleConvertEstimateToInvoice = async (invoiceId) => {
+    setActionId(invoiceId);
+    setError("");
+    setDeliveryNotice("");
+    try {
+      const currentInvoice = invoices.find((invoice) => invoice.invoiceId === invoiceId) ?? null;
+      const payload = await requestJson(`/api/invoices/${invoiceId}`, undefined, "Failed to load estimate.");
+      const savedInvoice = payload?.invoice;
+      const invoiceData = savedInvoice?.invoiceData;
+      const finishedInvoice = invoiceData?.finishedInvoice;
+      if (!savedInvoice?.invoiceId || !invoiceData || !finishedInvoice) {
+        throw new Error("Saved estimate data is incomplete.");
+      }
+      if (finishedInvoice.documentType !== "estimate") {
+        throw new Error("This saved document is already an invoice.");
+      }
+      const savePayload = await requestJson(
+        "/api/invoices/save",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            confirmSave: true,
+            invoiceId: savedInvoice.invoiceId,
+            sourceType: savedInvoice.sourceType,
+            invoiceData: {
+              ...invoiceData,
+              finishedInvoice: {
+                ...finishedInvoice,
+                documentType: "invoice"
+              }
+            }
+          })
+        },
+        "Failed to convert estimate."
+      );
+      const updatedInvoice = savePayload?.invoice;
+      if (updatedInvoice?.invoiceId) {
+        setInvoices((prev) =>
+          prev.map((invoice) =>
+            invoice.invoiceId === updatedInvoice.invoiceId
+              ? mergeUpdatedInvoiceMetadata(invoice, updatedInvoice)
+              : invoice
+          )
+        );
+        setDeliveryNotice(
+          `Converted ${updatedInvoice.invoiceNumber || "the estimate"} into a draft invoice. Next: open it, confirm payment terms, and send when ready.`
+        );
+      }
+    } catch (convertError) {
+      handleLibraryError(convertError, "Failed to convert estimate.");
+    } finally {
+      setActionId("");
     }
   };
 
@@ -3273,6 +3330,7 @@
                 });
                 const lifecycleLabel = getInvoiceLifecycleLabel(invoice);
                 const recurringEntry = recurringSchedulesByInvoiceId[invoice.invoiceId] ?? null;
+                const isEstimateDocument = getDocumentType(invoice) === "estimate";
                 const recurringIntervalLabel = recurringEntry
                   ? formatRecurringCadence(recurringEntry.intervalDays)
                   : "";
@@ -3786,6 +3844,16 @@
                           >
                             Invoice again
                           </button>
+                          {isEstimateDocument ? (
+                            <button
+                              type="button"
+                              className="nb-btn-secondary rounded-xl border-emerald-200 bg-emerald-50 px-4 py-2 text-emerald-900 hover:border-emerald-300 disabled:cursor-not-allowed disabled:text-emerald-300"
+                              onClick={() => void handleConvertEstimateToInvoice(invoice.invoiceId)}
+                              disabled={actionId === invoice.invoiceId || isStatusBusy || isDeleting}
+                            >
+                              {actionId === invoice.invoiceId ? "Converting..." : "Convert to invoice"}
+                            </button>
+                          ) : null}
                           {repeatMemoryStarter ? (
                             <button
                               type="button"
@@ -3797,6 +3865,8 @@
                               Start from saved memory
                             </button>
                           ) : null}
+                          {!isEstimateDocument ? (
+                            <>
                           <button
                             type="button"
                             className="nb-btn-secondary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:text-slate-300"
@@ -3862,9 +3932,11 @@
                             onClick={() => void handleCopyInvoiceSharePack(invoice)}
                             disabled={isDeleting}
                           >
-                            Copy share pack
-                          </button>
-                          {recurringEntry ? (
+                              Copy share pack
+                            </button>
+                            </>
+                          ) : null}
+                          {!isEstimateDocument && recurringEntry ? (
                             <>
                               <label className="nb-subcard inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700">
                                 Cadence
@@ -3919,7 +3991,7 @@
                                 Pause recurring
                               </button>
                             </>
-                          ) : (
+                          ) : !isEstimateDocument ? (
                             <>
                               {rememberedRecurringInterval ? (
                                 <button
@@ -3946,7 +4018,7 @@
                                 Set monthly recurring
                               </button>
                             </>
-                          )}
+                          ) : null}
                           {showMarkSent ? (
                             <button
                               type="button"

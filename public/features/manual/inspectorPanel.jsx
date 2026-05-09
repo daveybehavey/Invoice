@@ -2073,7 +2073,7 @@ function InspectorPanel({
                 </div>
               ) : null}
             </div>
-            {savedInvoiceId ? (
+            {savedInvoiceId && documentType !== "estimate" ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-slate-900">Invoice status</p>
@@ -2120,6 +2120,14 @@ function InspectorPanel({
                   ) : null}
                 </div>
                 {statusUpdateError ? <p className="text-xs text-rose-600">{statusUpdateError}</p> : null}
+              </div>
+            ) : null}
+            {savedInvoiceId && documentType === "estimate" ? (
+              <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                <p className="text-sm font-semibold text-slate-900">Estimate mode</p>
+                <p className="text-xs leading-5 text-slate-500">
+                  Estimates stay outside the send, payment, and status workflow until you convert them into invoices.
+                </p>
               </div>
             ) : null}
             {savedInvoiceId && documentType !== "estimate" ? (

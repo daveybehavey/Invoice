@@ -8082,6 +8082,62 @@ test("manual editor can record a partial payment and update the remaining balanc
   }
 });
 
+test("invoice library can convert a saved estimate into a draft invoice", async () => {
+  const ownerId = "ui-convert-estimate-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          invoiceNumber: "EST-CONVERT-1",
+          customerName: "Estimate Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          documentType: "estimate",
+          invoiceNumber: "EST-CONVERT-1",
+          issueDate: "2026-05-09",
+          customerName: "Estimate Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "estimate-line-1",
+              type: "labor",
+              description: "Planning and scope",
+              quantity: 1,
+              unitPrice: 400,
+              amount: 400
+            }
+          ],
+          subtotal: 400,
+          total: 400,
+          balanceDue: 400
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Convert to invoice" }).click();
+    await page.getByRole("button", { name: "Send invoice EST-CONVERT-1" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library supports sent and paid status actions", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {
