@@ -2124,6 +2124,55 @@ test("import cleanup studio can use unresolved decisions in chat", async () => {
   }
 });
 
+test("import cleanup studio can use assumptions and blockers in chat", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-import-studio-assumptions-owner");
+    window.localStorage.setItem(
+      "invoiceImportSeed::owner:ui-import-studio-assumptions-owner",
+      JSON.stringify({
+        fileName: "legacy-blocked-import.txt",
+        notes: "Imported job with assumptions and blocker warnings.",
+        sourceText: "Assume labor is for plumbing. Missing disposal fee detail.",
+        payload: {
+          needsFollowUp: false,
+          structuredInvoice: {
+            customerName: "Legacy Assumption Client",
+            workSessions: [],
+            materials: []
+          },
+          openDecisions: [],
+          assumptions: ["Assumed plumbing labor was the main service."],
+          unparsedLines: [],
+          qualityGate: {
+            blockerCount: 1,
+            blockers: [{ code: "missing_fee", message: "Missing disposal fee detail." }]
+          },
+          auditStatus: null
+        }
+      })
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
+    const studio = page.getByTestId("import-cleanup-studio");
+    await studio.waitFor({ state: "visible" });
+    await studio.getByRole("button", { name: "Use assumptions in chat" }).click();
+    await expectValueContains(
+      page.locator("#ai-intake-input"),
+      "Use these imported assumptions to double-check the cleanup"
+    );
+    await studio.getByRole("button", { name: "Use blockers in chat" }).click();
+    await expectValueContains(
+      page.locator("#ai-intake-input"),
+      "Use these quality blockers to finish the import cleanup"
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("import screen shows pre-limit warning when one free save remains", async () => {
   process.env.INVOICE_DEFAULT_PLAN = "free";
   process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "2";
@@ -8360,6 +8409,83 @@ test("operator dashboard surfaces open balance, recurring work, and repeat-ready
       state: "visible"
     });
     await page.getByText("$140.00").first().waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("operator dashboard surfaces estimate and action lanes", async () => {
+  const ownerId = "ui-operator-dashboard-lanes-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${initOwnerId}`,
+      JSON.stringify([
+        {
+          name: "Estimate Dashboard Client",
+          details: "Estimate Dashboard Client\n11 Quote Rd",
+          recipientEmail: "billing@estimate-dashboard.example",
+          updatedAt: "2026-05-09T18:00:00.000Z"
+        }
+      ])
+    );
+  }, ownerId);
+
+  const estimateResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: { "x-invoice-user-id": ownerId },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "Estimate Dashboard Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          documentType: "estimate",
+          invoiceNumber: "EST-DASH-1",
+          issueDate: "2026-05-09",
+          customerName: "Estimate Dashboard Client",
+          currency: "USD",
+          lineItems: [{ id: "est-dash-1", type: "labor", description: "Planning visit", quantity: 1, unitPrice: 200, amount: 200 }],
+          subtotal: 200,
+          total: 200,
+          balanceDue: 200
+        }
+      }
+    }
+  });
+  assert.equal(estimateResponse.status(), 200);
+
+  const partialResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: { "x-invoice-user-id": ownerId },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "Estimate Dashboard Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          invoiceNumber: "INV-DASH-PARTIAL-1",
+          issueDate: "2026-05-09",
+          dueDate: "2026-05-16",
+          customerName: "Estimate Dashboard Client",
+          currency: "USD",
+          lineItems: [{ id: "inv-dash-1", type: "labor", description: "Repair visit", quantity: 1, unitPrice: 300, amount: 300 }],
+          subtotal: 300,
+          total: 300,
+          balanceDue: 120,
+          paymentRecords: [{ id: "payment-1", amount: 180, recordedAt: "2026-05-09", note: "Deposit" }]
+        }
+      }
+    }
+  });
+  assert.equal(partialResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/dashboard`, { waitUntil: "networkidle" });
+    await page.getByTestId("operator-dashboard-best-lane").waitFor({ state: "visible" });
+    await page.getByTestId("operator-dashboard-estimates").getByText("EST-DASH-1").waitFor({ state: "visible" });
+    await page.getByTestId("operator-dashboard-partials").waitFor({ state: "visible" });
+    await page.getByText("Partial payments", { exact: false }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

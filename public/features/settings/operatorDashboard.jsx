@@ -104,6 +104,10 @@
     const balance = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? total);
     return Number.isFinite(total) && Number.isFinite(balance) && balance > 0 && balance < total;
   };
+  const getInvoiceBalance = (invoice) => {
+    const amount = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? 0);
+    return Number.isFinite(amount) ? Math.max(amount, 0) : 0;
+  };
 
   function OperatorDashboardPage() {
     const navigate = useNavigate();
@@ -150,7 +154,7 @@
     const estimateInvoices = activeInvoices.filter((invoice) => getInvoiceDocumentType(invoice) === "estimate");
     const sentInvoices = activeInvoices.filter((invoice) => invoice.status === "sent");
     const paidInvoices = activeInvoices.filter((invoice) => invoice.status === "paid");
-    const partiallyPaidInvoices = sentInvoices.filter((invoice) => hasPartialPayment(invoice));
+    const partiallyPaidInvoices = activeInvoices.filter((invoice) => hasPartialPayment(invoice));
     const totalOpenBalance = sentInvoices.reduce((total, invoice) => {
       const amount = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? 0);
       return total + (Number.isFinite(amount) ? Math.max(amount, 0) : 0);
@@ -212,6 +216,9 @@
 
     const dueNowCount = recurringWork.filter((entry) => entry.dueNow).length;
     const dueSoonCount = recurringWork.filter((entry) => entry.dueSoon).length;
+    const topEstimate = estimateInvoices[0] ?? null;
+    const topPartialPayment = partiallyPaidInvoices[0] ?? null;
+    const topRecurring = recurringWork[0] ?? null;
 
     const repeatReadyClients = useMemo(() => {
       return clientMemory
@@ -237,6 +244,80 @@
         .sort((left, right) => right.readinessScore - left.readinessScore || right.matchingInvoices.length - left.matchingInvoices.length)
         .slice(0, 4);
     }, [activeInvoices, clientMemory, savedServices]);
+
+    const bestLane = useMemo(() => {
+      const topFollowUp = urgentFollowUps[0]?.invoice ?? null;
+      if (topFollowUp) {
+        return {
+          eyebrow: "Collections lane",
+          title: `Follow up on ${topFollowUp.invoiceNumber || "the oldest open invoice"}`,
+          body:
+            "Open balances are still the most important thing on the board. Jump into the library ops flow before this invoice gets any staler.",
+          primaryLabel: "Open library",
+          onPrimary: () => navigate("/invoices"),
+          secondaryLabel: getInvoiceClientName(topFollowUp) ? "Open client workspace" : "",
+          onSecondary: () =>
+            getInvoiceClientName(topFollowUp)
+              ? navigate(`/clients?client=${encodeURIComponent(getInvoiceClientName(topFollowUp))}`)
+              : undefined
+        };
+      }
+      if (topPartialPayment) {
+        return {
+          eyebrow: "Partial payment lane",
+          title: `Close out ${topPartialPayment.invoiceNumber || "the partial invoice"}`,
+          body:
+            "A client has already paid part of the balance. Reopen that client workflow now so the remaining collection stays clear and low-friction.",
+          primaryLabel: "Open client workspace",
+          onPrimary: () =>
+            navigate(`/clients?client=${encodeURIComponent(getInvoiceClientName(topPartialPayment) || "")}`),
+          secondaryLabel: "Open library",
+          onSecondary: () => navigate("/invoices")
+        };
+      }
+      if (topEstimate) {
+        return {
+          eyebrow: "Estimate lane",
+          title: `Keep ${topEstimate.invoiceNumber || "the estimate"} moving`,
+          body:
+            "Estimates should stay visible until they either turn into work or get replaced. Reopen the client context before that planning work goes cold.",
+          primaryLabel: "Open client workspace",
+          onPrimary: () => navigate(`/clients?client=${encodeURIComponent(getInvoiceClientName(topEstimate) || "")}`),
+          secondaryLabel: "Open library",
+          onSecondary: () => navigate("/invoices")
+        };
+      }
+      if (topRecurring) {
+        return {
+          eyebrow: "Recurring lane",
+          title: topRecurring.dueNow ? "Recurring work is due now" : "Recurring work is coming up soon",
+          body:
+            "Recurring jobs are the easiest place to create operator momentum. Open the library while the cadence and saved memory are already lined up.",
+          primaryLabel: "Open library",
+          onPrimary: () => navigate("/invoices"),
+          secondaryLabel: topRecurring.invoice ? "Open client workspace" : "",
+          onSecondary: () =>
+            topRecurring.invoice
+              ? navigate(`/clients?client=${encodeURIComponent(getInvoiceClientName(topRecurring.invoice) || "")}`)
+              : undefined
+        };
+      }
+      const repeatReady = repeatReadyClients[0]?.entry ?? null;
+      return {
+        eyebrow: "Momentum lane",
+        title: repeatReady ? `Start the next job for ${repeatReady.name}` : "Keep building repeat-ready clients",
+        body: repeatReady
+          ? "Client memory and saved services are ready. Use that leverage while it stays easy."
+          : "As invoices, services, and memory fill in, this dashboard will start surfacing faster next moves here.",
+        primaryLabel: repeatReady ? "Open client workspace" : "Open clients",
+        onPrimary: () =>
+          repeatReady
+            ? navigate(`/clients?client=${encodeURIComponent(repeatReady.name)}`)
+            : navigate("/clients"),
+        secondaryLabel: "Open library",
+        onSecondary: () => navigate("/invoices")
+      };
+    }, [estimateInvoices, navigate, partiallyPaidInvoices, recurringWork, repeatReadyClients, urgentFollowUps]);
 
     return (
       <div className="nb-page nb-page--quiet min-h-screen">
@@ -286,6 +367,30 @@
                 </p>
               </div>
             ))}
+          </section>
+
+          <section className="nb-surface nb-surface--muted mt-5 rounded-[26px] p-5 md:rounded-[30px] md:p-6" data-testid="operator-dashboard-best-lane">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                  {bestLane.eyebrow}
+                </p>
+                <h2 className="mt-2 text-xl font-semibold text-slate-900 md:text-2xl">
+                  {bestLane.title}
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">{bestLane.body}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className="nb-btn-primary" onClick={bestLane.onPrimary}>
+                  {bestLane.primaryLabel}
+                </button>
+                {bestLane.secondaryLabel ? (
+                  <button type="button" className="nb-btn-secondary" onClick={bestLane.onSecondary}>
+                    {bestLane.secondaryLabel}
+                  </button>
+                ) : null}
+              </div>
+            </div>
           </section>
 
           <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
@@ -423,6 +528,94 @@
               )}
             </div>
           </section>
+
+          <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_1fr]">
+            <section className="nb-surface rounded-[26px] p-5 md:rounded-[30px] md:p-6" data-testid="operator-dashboard-estimates">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Estimate watch</p>
+                  <h2 className="mt-2 text-lg font-semibold text-slate-900">Planning work that still needs a decision</h2>
+                </div>
+                <StatusChip tone="soft">{estimateInvoices.length} saved</StatusChip>
+              </div>
+              <div className="mt-4 space-y-3">
+                {estimateInvoices.length > 0 ? (
+                  estimateInvoices.slice(0, 3).map((invoice) => (
+                    <button
+                      key={invoice.invoiceId}
+                      type="button"
+                      className="w-full rounded-[22px] border border-slate-100 bg-white/85 p-4 text-left transition hover:border-[#6993d2]/18"
+                      onClick={() =>
+                        navigate(`/clients?client=${encodeURIComponent(getInvoiceClientName(invoice) || "")}`)
+                      }
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">
+                            {invoice.invoiceNumber || "Saved estimate"} · {getInvoiceClientName(invoice) || "Client"}
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-slate-500">
+                            {invoice.dueDate ? `Target ${invoice.dueDate}` : "No target date yet"} · {formatMoney(Number(invoice.total || invoice.invoiceData?.finishedInvoice?.total || 0))}
+                          </p>
+                        </div>
+                        <StatusChip tone="soft">estimate</StatusChip>
+                      </div>
+                    </button>
+                  ))
+                ) : (
+                  <div className="rounded-[22px] border border-slate-100 bg-white/75 p-4">
+                    <p className="text-sm font-semibold text-slate-900">No saved estimates yet.</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Once quotes start landing, this lane will keep them from going stale.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="nb-surface rounded-[26px] p-5 md:rounded-[30px] md:p-6" data-testid="operator-dashboard-partials">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Partial payments</p>
+                  <h2 className="mt-2 text-lg font-semibold text-slate-900">Balances that are close to closing</h2>
+                </div>
+                <StatusChip tone="soft">{partiallyPaidInvoices.length} open</StatusChip>
+              </div>
+              <div className="mt-4 space-y-3">
+                {partiallyPaidInvoices.length > 0 ? (
+                  partiallyPaidInvoices.slice(0, 3).map((invoice) => (
+                    <button
+                      key={invoice.invoiceId}
+                      type="button"
+                      className="w-full rounded-[22px] border border-slate-100 bg-white/85 p-4 text-left transition hover:border-[#6993d2]/18"
+                      onClick={() =>
+                        navigate(`/clients?client=${encodeURIComponent(getInvoiceClientName(invoice) || "")}`)
+                      }
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">
+                            {invoice.invoiceNumber || "Saved invoice"} · {getInvoiceClientName(invoice) || "Client"}
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-slate-500">
+                            Remaining balance {formatMoney(getInvoiceBalance(invoice))}
+                          </p>
+                        </div>
+                        <StatusChip tone="warning">partial</StatusChip>
+                      </div>
+                    </button>
+                  ))
+                ) : (
+                  <div className="rounded-[22px] border border-slate-100 bg-white/75 p-4">
+                    <p className="text-sm font-semibold text-slate-900">No partial balances right now.</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      When a client pays part of an invoice, this lane will keep the remaining balance visible.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
         </main>
       </div>
     );

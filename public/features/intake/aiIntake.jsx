@@ -476,6 +476,48 @@ function AIIntake() {
       });
     }
   };
+  const applyImportStudioAssumptionsToInput = () => {
+    const draftAssumptions = Array.isArray(auditAssumptionItems)
+      ? auditAssumptionItems.map((item) => String(item?.text ?? "").trim()).filter(Boolean)
+      : [];
+    if (draftAssumptions.length === 0) {
+      return;
+    }
+    const prefill = `Use these imported assumptions to double-check the cleanup and tell me what still needs confirmation:\n\n${draftAssumptions
+      .map((line) => `- ${line}`)
+      .join("\n")}`;
+    setInputValue(prefill);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        const input = document.getElementById("ai-intake-input");
+        if (input instanceof HTMLTextAreaElement) {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      });
+    }
+  };
+  const applyImportStudioBlockersToInput = () => {
+    const blockerLines = Array.isArray(outputQuality?.blockers)
+      ? outputQuality.blockers.map((item) => String(item?.message ?? "").trim()).filter(Boolean)
+      : [];
+    if (blockerLines.length === 0) {
+      return;
+    }
+    const prefill = `Use these quality blockers to finish the import cleanup before I build the final draft:\n\n${blockerLines
+      .map((line) => `- ${line}`)
+      .join("\n")}`;
+    setInputValue(prefill);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        const input = document.getElementById("ai-intake-input");
+        if (input instanceof HTMLTextAreaElement) {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      });
+    }
+  };
   const refreshOnboardingStatus = (sessionOverride) => {
     setOnboardingStatus(
       buildOnboardingStatus({
@@ -2745,6 +2787,24 @@ function AIIntake() {
                           Use uncaptured lines
                         </button>
                       ) : null}
+                      {auditAssumptionItems.length > 0 ? (
+                        <button
+                          type="button"
+                          className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
+                          onClick={applyImportStudioAssumptionsToInput}
+                        >
+                          Use assumptions in chat
+                        </button>
+                      ) : null}
+                      {hasQualityBlockers ? (
+                        <button
+                          type="button"
+                          className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
+                          onClick={applyImportStudioBlockersToInput}
+                        >
+                          Use blockers in chat
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2 text-xs">
@@ -2810,6 +2870,28 @@ function AIIntake() {
                       </div>
                     </div>
                   ) : null}
+                  {auditAssumptionItems.length > 0 ? (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white/88 p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                          Assumptions to confirm
+                        </p>
+                        <p className="text-[11px] font-medium text-slate-500">
+                          These are the current cleanup assumptions worth sanity-checking before you finalize the draft.
+                        </p>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {auditAssumptionItems.slice(0, 4).map((item) => (
+                          <p
+                            key={item.id}
+                            className="rounded-xl border border-slate-200 bg-slate-50/90 px-3 py-2 text-sm leading-6 text-slate-700"
+                          >
+                            {item.text}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   {unparsedItems.length > 0 ? (
                     <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
                       <div className="flex items-center justify-between gap-2">
@@ -2827,6 +2909,28 @@ function AIIntake() {
                             className="rounded-xl border border-amber-100 bg-white/85 px-3 py-2 text-sm leading-6 text-slate-700"
                           >
                             {item.text}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {hasQualityBlockers ? (
+                    <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-700">
+                          Quality blockers
+                        </p>
+                        <p className="text-[11px] font-medium text-amber-800">
+                          Fix these before you trust the final import draft.
+                        </p>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {(Array.isArray(outputQuality?.blockers) ? outputQuality.blockers : []).slice(0, 4).map((blocker, index) => (
+                          <p
+                            key={`blocker-${blocker?.code ?? index}-${index}`}
+                            className="rounded-xl border border-amber-100 bg-white/85 px-3 py-2 text-sm leading-6 text-slate-700"
+                          >
+                            {blocker?.message || "Review item needs attention."}
                           </p>
                         ))}
                       </div>
