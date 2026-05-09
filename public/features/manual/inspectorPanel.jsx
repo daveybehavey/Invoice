@@ -1120,6 +1120,9 @@ function InspectorPanel({
     return sum + (Number.isFinite(amount) ? Math.max(amount, 0) : 0);
   }, 0);
   const previewLatestPayment = previewPaymentRecords[0] ?? null;
+  const previewPaymentProgress = Number.isFinite(previewTotal) && previewTotal > 0
+    ? Math.max(0, Math.min(100, (previewPaymentsTotal / previewTotal) * 100))
+    : 0;
   const hasClientDetails = Boolean(previewData?.billToDetails?.trim());
   const hasBillableLineItem = parsedLineItems.some(
     (item) => !item.placeholder && item.description?.trim() && Number.isFinite(item.amount) && item.amount > 0
@@ -2204,6 +2207,15 @@ function InspectorPanel({
                       {formatPreviewMoney(previewPaymentsTotal)} recorded
                     </span>
                   </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-[#6993d2] to-[#093064]"
+                      style={{ width: `${previewPaymentProgress}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                    {previewPaymentProgress.toFixed(0)}% complete
+                  </p>
                   <div className="mt-2 grid gap-2 sm:grid-cols-3">
                     <div className="rounded-md bg-slate-50 px-2 py-2">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Paid</p>
