@@ -113,6 +113,7 @@ export async function listSavedInvoiceMetadata(
         updatedAt: invoice.updatedAt,
         status: invoice.status,
         sourceType: invoice.sourceType,
+        documentType: invoice.invoiceData.finishedInvoice.documentType ?? "invoice",
         invoiceNumber:
           invoice.invoiceData.finishedInvoice.invoiceNumber ?? invoice.invoiceData.structuredInvoice.invoiceNumber,
         customerName:

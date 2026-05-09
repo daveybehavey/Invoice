@@ -1114,6 +1114,7 @@ async function generateFinishedInvoice(structuredInvoice: StructuredInvoice): Pr
   const materialLineItems = structuredInvoice.materials.map((material) => buildMaterialLineItem(material));
 
   const invoice: FinishedInvoice = {
+    documentType: "invoice",
     invoiceNumber: structuredInvoice.invoiceNumber ?? generateInvoiceNumber(),
     issueDate: structuredInvoice.issueDate,
     dueDate: structuredInvoice.dueDate,

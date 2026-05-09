@@ -1119,7 +1119,10 @@ app.post("/api/invoices/export-pdf", async (req: Request, res: Response, next: N
   try {
     const parsedRequest = InvoicePdfExportRequestSchema.parse(req.body);
     const pdfBuffer = await createInvoicePdfBuffer(parsedRequest);
-    const filename = buildPdfFilename(parsedRequest.invoice.invoiceNumber);
+    const filename = buildPdfFilename(
+      parsedRequest.invoice.invoiceNumber,
+      parsedRequest.invoice.documentType
+    );
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("Content-Length", String(pdfBuffer.byteLength));
@@ -1659,6 +1662,7 @@ function toPublicPortalInvoice(invoice: SavedInvoice) {
         customerName: structuredInvoice.customerName
       },
       finishedInvoice: {
+        documentType: finishedInvoice.documentType,
         invoiceNumber: finishedInvoice.invoiceNumber,
         issueDate: finishedInvoice.issueDate,
         dueDate: finishedInvoice.dueDate,

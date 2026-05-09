@@ -190,6 +190,7 @@
 
   const normalizeLookupText = (value) =>
     typeof value === "string" ? value.trim().toLocaleLowerCase() : "";
+  const getDocumentType = (invoice) => (invoice?.documentType === "estimate" ? "estimate" : "invoice");
 
   const buildClientMemoryStarterForInvoice = (invoice, clientMemoryEntries, savedLineItems) => {
     const customerName = normalizeLookupText(
@@ -3593,8 +3594,13 @@
                             {lifecycleLabel}
                           </p>
                           <p className="mt-1 text-lg font-semibold text-slate-900">
-                            {invoice.invoiceNumber || "Draft invoice"}
+                            {invoice.invoiceNumber || (getDocumentType(invoice) === "estimate" ? "Draft estimate" : "Draft invoice")}
                           </p>
+                          {getDocumentType(invoice) === "estimate" ? (
+                            <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6993d2]">
+                              Estimate
+                            </p>
+                          ) : null}
                           <p className="text-xs text-slate-500">
                             Updated {formatDate(invoice.updatedAt)}
                           </p>

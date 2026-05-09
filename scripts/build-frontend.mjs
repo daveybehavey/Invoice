@@ -28,6 +28,14 @@ async function main() {
   const jsxFiles = await collectFiles(publicDir, ".jsx");
   const jsFiles = await collectFiles(publicDir, ".js");
 
+  await Promise.all(
+    jsxFiles.map(async (absolutePath) => {
+      const relativePath = path.relative(publicDir, absolutePath).replace(/\.jsx$/i, ".js");
+      const destination = path.join(distDir, relativePath);
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+    })
+  );
+
   if (jsxFiles.length > 0) {
     await esbuild({
       entryPoints: jsxFiles,

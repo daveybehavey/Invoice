@@ -227,6 +227,7 @@ export async function sendLaunchTestEmail(
     openTrackingPixelUrl: buildLaunchTestPixelUrl(input.appBaseUrl),
     messageType: "invoice",
     invoice: {
+      documentType: "invoice",
       invoiceNumber: "NOTEBILL-LAUNCH",
       issueDate: new Date().toISOString().slice(0, 10),
       customerName: "Launch verification",

@@ -151,6 +151,7 @@ export class PostgresSavedInvoiceRepository {
         updatedAt: toIsoString(row.updated_at),
         status: row.status,
         sourceType: row.source_type,
+        documentType: row.invoice_data.finishedInvoice.documentType ?? "invoice",
         invoiceNumber:
           row.invoice_data.finishedInvoice.invoiceNumber ?? row.invoice_data.structuredInvoice.invoiceNumber,
         customerName:

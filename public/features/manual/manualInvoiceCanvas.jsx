@@ -380,6 +380,9 @@ function ManualInvoiceCanvas() {
   const initialBusinessProfileRef = useRef(getBusinessProfile());
   const initialBusinessProfile = initialBusinessProfileRef.current;
   const seededDraft = applyBusinessProfileToDraft(initialDraft ?? {}, initialBusinessProfile);
+  const [documentType, setDocumentType] = useState(() =>
+    initialDraft?.documentType === "estimate" ? "estimate" : "invoice"
+  );
   const [invoiceNumber, setInvoiceNumber] = useState(() => initialDraft?.invoiceNumber ?? "INV-0001");
   const [invoiceDate, setInvoiceDate] = useState(() => initialDraft?.invoiceDate ?? "");
   const [dueDate, setDueDate] = useState(() => initialDraft?.dueDate ?? "");
@@ -772,6 +775,7 @@ function ManualInvoiceCanvas() {
   const taxAmount = discountedSubtotal * (parseNumber(taxRate) / 100);
   const total = discountedSubtotal + taxAmount;
   const previewData = {
+    documentType,
     invoiceNumber,
     invoiceDate,
     dueDate,
@@ -1431,6 +1435,7 @@ function ManualInvoiceCanvas() {
       return { error: "Add at least one line item description before rewriting." };
     }
     const invoice = {
+      documentType,
       invoiceNumber: invoiceNumber?.trim() || undefined,
       issueDate: invoiceDate || undefined,
       dueDate: dueDate || undefined,
@@ -1461,6 +1466,7 @@ function ManualInvoiceCanvas() {
       return { error: "Add at least one line item description before using Edit with Billie." };
     }
     const invoice = {
+      documentType,
       invoiceNumber: invoiceNumber?.trim() || undefined,
       issueDate: invoiceDate || undefined,
       dueDate: dueDate || undefined,
@@ -1591,6 +1597,7 @@ function ManualInvoiceCanvas() {
       invoiceDate,
       dueDate,
       fromDetails,
+      documentType,
       importSourceText,
       importSourceFileName,
       businessRegistrations,
@@ -1706,6 +1713,7 @@ function ManualInvoiceCanvas() {
       const pdfBlob = await response.blob();
       const objectUrl = window.URL.createObjectURL(pdfBlob);
       const safeNumber = invoiceNumber?.trim() ? invoiceNumber.trim() : "Draft";
+      const documentPrefix = documentType === "estimate" ? "Estimate" : "Invoice";
       const filenameSuffix =
         safeNumber
           .replace(/[^a-zA-Z0-9_-]+/g, "-")
@@ -1713,7 +1721,7 @@ function ManualInvoiceCanvas() {
           .replace(/^-|-$/g, "") || "Draft";
       const link = document.createElement("a");
       link.href = objectUrl;
-      link.download = `Invoice-${filenameSuffix}.pdf`;
+      link.download = `${documentPrefix}-${filenameSuffix}.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -3013,7 +3021,7 @@ function ManualInvoiceCanvas() {
           />
           <div className={`relative ${activeSpacing.sectionGapClass || activePreset.sectionGap}`}>
             <div className={`flex items-center justify-between ${activePreset.metaClass}`}>
-              <span>Invoice Document</span>
+              <span>{documentType === "estimate" ? "Estimate document" : "Invoice document"}</span>
               <span className="flex items-center gap-2">
                 {draftStatus ? <span className="text-xs text-slate-400">{draftStatus}</span> : null}
                 <span className="rounded-full border px-2 py-0.5 text-[10px]" style={{ borderColor: accent.border, color: accent.primary }}>
@@ -3064,14 +3072,41 @@ function ManualInvoiceCanvas() {
                 }`}
               >
                 <div>
-                  <h1 className={activePreset.titleClass}>INVOICE</h1>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className={activePreset.titleClass}>{documentType === "estimate" ? "ESTIMATE" : "INVOICE"}</h1>
+                    <div className="inline-flex rounded-full border border-slate-200 bg-white/80 p-1">
+                      {[
+                        { id: "invoice", label: "Invoice" },
+                        { id: "estimate", label: "Estimate" }
+                      ].map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          aria-label={`Set document type to ${option.label}`}
+                          className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                            documentType === option.id ? "text-white shadow-sm" : "text-slate-500"
+                          }`}
+                          style={
+                            documentType === option.id
+                              ? { backgroundColor: accent.primary }
+                              : { backgroundColor: "transparent" }
+                          }
+                          onClick={() => setDocumentType(option.id)}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <p className="mt-2 text-xs font-semibold uppercase tracking-[0.2em]" style={{ color: accent.primary }}>
                     NoteBill · prepared with Billie
                   </p>
                 </div>
                 <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
                   <label className={`${activePreset.textClass} ${activePreset.labelClass} flex items-center gap-3`}>
-                    <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Invoice #</span>
+                    <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                      {documentType === "estimate" ? "Estimate #" : "Invoice #"}
+                    </span>
                     <input
                       type="text"
                       className={`min-w-[150px] ${activePreset.inputClass} ${activePreset.textClass}`}
@@ -4306,6 +4341,7 @@ function ManualInvoiceCanvas() {
             onPrint={handlePrint}
             onDownloadPdf={handleDownloadPdf}
             onSaveInvoice={handleSaveInvoice}
+            documentType={documentType}
             saveStatus={saveStatus}
             saveError={saveError}
             saveNeedsAuth={saveNeedsAuth}
@@ -4429,6 +4465,7 @@ function ManualInvoiceCanvas() {
                 onPrint={handlePrint}
                 onDownloadPdf={handleDownloadPdf}
                 onSaveInvoice={handleSaveInvoice}
+                documentType={documentType}
                 saveStatus={saveStatus}
                 saveError={saveError}
                 saveNeedsAuth={saveNeedsAuth}

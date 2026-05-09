@@ -184,6 +184,7 @@ function InspectorPanel({
   onPrint,
   onDownloadPdf,
   onSaveInvoice,
+  documentType = "invoice",
   saveStatus,
   saveError,
   saveNeedsAuth,
@@ -313,6 +314,15 @@ function InspectorPanel({
     color: accent.text
   };
   const invoiceStatus = savedInvoiceStatus || (savedInvoiceId ? "draft" : "");
+  const documentTitle = documentType === "estimate" ? "ESTIMATE" : "INVOICE";
+  const documentNumberLabel = documentType === "estimate" ? "Estimate #" : "Invoice #";
+  const saveLabel = savedInvoiceId
+    ? documentType === "estimate"
+      ? "Update saved estimate"
+      : "Update saved invoice"
+    : documentType === "estimate"
+      ? "Save estimate"
+      : "Save invoice";
   const planLimitReached = !savedInvoiceId && Boolean(accountPlan?.upgradeRequired);
   const planSummary = formatPlanSummary(accountPlan);
   const planUsage = getPlanUsageModel(accountPlan);
@@ -2004,7 +2014,7 @@ function InspectorPanel({
                 onClick={onSaveInvoice}
                 disabled={planLimitReached || Boolean(saveStatus && saveStatus !== "Saved")}
               >
-                {savedInvoiceId ? "Update saved invoice" : "Save invoice"}
+                {saveLabel}
               </button>
               {saveError ? <p className="text-xs text-rose-600">{saveError}</p> : null}
               {saveNeedsAuth ? (
@@ -2223,7 +2233,7 @@ function InspectorPanel({
                     }`}
                   >
                     <div>
-                      <h1 className={previewPreset.titleClass}>INVOICE</h1>
+                  <h1 className={previewPreset.titleClass}>{documentTitle}</h1>
                       <p
                         className="mt-2 text-xs font-semibold uppercase tracking-[0.2em]"
                         style={{ color: previewAccent.text }}
@@ -2234,7 +2244,7 @@ function InspectorPanel({
                     <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-xs">
                       <div className="flex items-center justify-between gap-4">
                         <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                          Invoice #
+                          {documentNumberLabel}
                         </span>
                         <span className="font-semibold text-slate-900">
                           {previewInvoiceNumber}

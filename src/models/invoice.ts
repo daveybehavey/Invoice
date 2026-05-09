@@ -61,6 +61,8 @@ const OptionalUrl = z.preprocess((value) => {
   return value;
 }, z.string().url().optional());
 
+export const InvoiceDocumentTypeSchema = z.enum(["invoice", "estimate"]).default("invoice");
+
 export const TaskSchema = z.object({
   description: z.string().min(1),
   hours: OptionalNumber,
@@ -123,6 +125,7 @@ export const InvoiceAuditSchema = z.object({
 });
 
 export const FinishedInvoiceSchema = z.object({
+  documentType: InvoiceDocumentTypeSchema,
   invoiceNumber: OptionalString,
   issueDate: OptionalString,
   dueDate: OptionalString,
@@ -286,6 +289,7 @@ export const InvoiceListItemSchema = z.object({
   updatedAt: z.string().datetime(),
   status: SavedInvoiceStatusSchema,
   sourceType: SavedInvoiceSourceTypeSchema,
+  documentType: InvoiceDocumentTypeSchema,
   invoiceNumber: OptionalString,
   customerName: OptionalString,
   total: OptionalNumber,
@@ -310,6 +314,7 @@ export type Task = z.infer<typeof TaskSchema>;
 export type Material = z.infer<typeof MaterialSchema>;
 export type FinishedInvoice = z.infer<typeof FinishedInvoiceSchema>;
 export type InvoiceLineItem = z.infer<typeof InvoiceLineItemSchema>;
+export type InvoiceDocumentType = z.infer<typeof InvoiceDocumentTypeSchema>;
 export type LaborPricingChoice = z.infer<typeof LaborPricingChoiceSchema>;
 export type SavedInvoice = z.infer<typeof SavedInvoiceSchema>;
 export type SavedInvoiceStatus = z.infer<typeof SavedInvoiceStatusSchema>;

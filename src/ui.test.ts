@@ -8028,6 +8028,33 @@ test("operator dashboard surfaces open balance, recurring work, and repeat-ready
   }
 });
 
+test("manual editor can save an estimate and show it as an estimate in the library", async () => {
+  const ownerId = "ui-estimate-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Set document type to Estimate", exact: true }).click();
+    await page.getByRole("heading", { name: "ESTIMATE", exact: true }).waitFor({ state: "visible" });
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Kitchen remodel estimate");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("8500");
+
+    await page.getByRole("button", { name: "Export" }).last().click();
+    await page.getByText("Save to library").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Save estimate" }).click();
+    await page.getByRole("button", { name: "Update saved estimate" }).waitFor({ state: "visible" });
+
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("Estimate").first().waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library supports sent and paid status actions", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

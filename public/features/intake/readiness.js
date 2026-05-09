@@ -190,6 +190,7 @@
       }) ?? [];
 
     const draft = {
+      documentType: invoice?.documentType === "estimate" ? "estimate" : "invoice",
       invoiceNumber:
         typeof options.invoiceNumber === "string"
           ? options.invoiceNumber

@@ -45,8 +45,19 @@ type PdfRenderState = {
   accent: ReturnType<typeof resolveAccentPalette>;
   cursorY: number;
   invoiceNumberLabel: string;
+  documentTitle: string;
+  documentNumberLabel: string;
   spacingScale: number;
 };
+
+function resolveDocumentTypeLabels(documentType?: string) {
+  const normalized = documentType === "estimate" ? "estimate" : "invoice";
+  return {
+    title: normalized === "estimate" ? "ESTIMATE" : "INVOICE",
+    numberLabel: normalized === "estimate" ? "Estimate #" : "Invoice #",
+    filenamePrefix: normalized === "estimate" ? "Estimate" : "Invoice"
+  };
+}
 
 export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Buffer> {
   const doc = await PDFDocument.create();
@@ -65,6 +76,8 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
     accent,
     cursorY: PAGE_TOP,
     invoiceNumberLabel: input.invoice.invoiceNumber?.trim() || "Draft",
+    documentTitle: resolveDocumentTypeLabels(input.invoice.documentType).title,
+    documentNumberLabel: resolveDocumentTypeLabels(input.invoice.documentType).numberLabel,
     spacingScale
   };
 
@@ -97,14 +110,14 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
   return Buffer.from(pdfBytes);
 }
 
-export function buildPdfFilename(invoiceNumber?: string): string {
+export function buildPdfFilename(invoiceNumber?: string, documentType?: string): string {
   const rawValue = typeof invoiceNumber === "string" ? invoiceNumber.trim() : "";
   const normalized = rawValue
     .replace(/[^a-zA-Z0-9_-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
   const suffix = normalized.length > 0 ? normalized : "Draft";
-  return `Invoice-${suffix}.pdf`;
+  return `${resolveDocumentTypeLabels(documentType).filenamePrefix}-${suffix}.pdf`;
 }
 
 function renderHeader(
@@ -168,7 +181,7 @@ function renderHeader(
     leftCursor -= 13 * spacingScale;
   }
 
-  const title = "INVOICE";
+  const title = state.documentTitle;
   const titleSize = 30 * styleScale;
   const titleWidth = boldFont.widthOfTextAtSize(title, titleSize);
   const titleX = PAGE_WIDTH - PAGE_MARGIN_X - titleWidth;
@@ -196,7 +209,7 @@ function renderHeader(
     color: SURFACE
   });
 
-  page.drawText("Invoice #", {
+  page.drawText(state.documentNumberLabel, {
     x: metaBoxX + 12,
     y: metaBoxY + metaBoxHeight - 16,
     size: 9,
@@ -310,7 +323,7 @@ function renderCenteredHeader(
     cursorY -= 13 * spacingScale;
   }
 
-  const title = "INVOICE";
+  const title = state.documentTitle;
   const titleSize = 30 * styleScale;
   page.drawText(title, {
     x: (PAGE_WIDTH - boldFont.widthOfTextAtSize(title, titleSize)) / 2,
@@ -337,7 +350,7 @@ function renderCenteredHeader(
     color: SURFACE
   });
 
-  page.drawText("Invoice #", {
+  page.drawText(state.documentNumberLabel, {
     x: metaBoxX + 12,
     y: metaBoxY + metaBoxHeight - 16,
     size: 9,
