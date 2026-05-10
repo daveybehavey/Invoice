@@ -307,6 +307,18 @@
       latestPartialPaymentTotal > 0
         ? Math.max(0, Math.min(100, Math.round((latestPartialPaymentAmount / latestPartialPaymentTotal) * 100)))
         : 0;
+    const latestPartialPaymentButtons = latestPartialInvoice
+      ? [
+          {
+            label: "Open latest with Billie",
+            onClick: () => handleOpenInvoiceWithBillie(latestPartialInvoice)
+          },
+          {
+            label: "Open library",
+            onClick: () => navigate("/invoices")
+          }
+        ]
+      : [];
 
     const handleSelectClient = (name) => {
       const next = new URLSearchParams(searchParams);
@@ -439,6 +451,29 @@
         onSecondary: () => navigate("/settings/memory")
       };
     }, [selectedClientName, latestInvoice, selectedMemoryEntry, leadService, navigate]);
+    const recurringClientButtons = recurringInvoice
+      ? [
+          {
+            label: "Open recurring invoice",
+            onClick: () => handleOpenInvoiceWithBillie(recurringInvoice)
+          },
+          {
+            label: "Open library",
+            onClick: () => navigate("/invoices")
+          }
+        ]
+      : selectedMemoryEntry
+        ? [
+            {
+              label: "Start from memory",
+              onClick: () => handleStartFromMemory(selectedMemoryEntry, leadService)
+            },
+            {
+              label: "Review memory",
+              onClick: () => navigate("/settings/memory")
+            }
+          ]
+        : [];
 
     return (
       <div className="nb-page nb-page--quiet min-h-screen">
@@ -606,6 +641,20 @@
                                   : "No recurring schedule saved yet."}
                               </p>
                             )}
+                            {recurringClientButtons.length > 0 ? (
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {recurringClientButtons.map((button) => (
+                                  <button
+                                    key={button.label}
+                                    type="button"
+                                    className={button.label === "Open recurring invoice" ? "nb-btn-primary" : "nb-btn-secondary"}
+                                    onClick={button.onClick}
+                                  >
+                                    {button.label}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : null}
                           </div>
                           <div className="rounded-[22px] border border-slate-100 bg-white/85 p-4">
                             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
@@ -639,6 +688,18 @@
                                       : ""}
                                   </p>
                                 ) : null}
+                                <div className="flex flex-wrap gap-2 pt-1">
+                                  {latestPartialPaymentButtons.map((button, index) => (
+                                    <button
+                                      key={button.label}
+                                      type="button"
+                                      className={index === 0 ? "nb-btn-primary" : "nb-btn-secondary"}
+                                      onClick={button.onClick}
+                                    >
+                                      {button.label}
+                                    </button>
+                                  ))}
+                                </div>
                               </div>
                             ) : (
                               <p className="mt-2 text-sm leading-6 text-slate-700">
