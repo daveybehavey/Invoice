@@ -70,6 +70,7 @@
               id: String(item.id ?? `note-${Date.now()}`),
               text: String(item.text ?? ""),
               createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
+              sourceLabel: typeof item.sourceLabel === "string" ? item.sourceLabel : "",
               tags: Array.isArray(item.tags)
                 ? item.tags.map((tag) => normalizeNoteText(tag)).filter(Boolean).slice(0, 8)
                 : []
@@ -143,6 +144,7 @@
       requestIdentity.getScopedStorageKey?.("invoiceScratchpad") ?? "invoiceScratchpad";
     const voiceUploadInputRef = useRef(null);
     const [noteText, setNoteText] = useState("");
+    const [noteSourceLabel, setNoteSourceLabel] = useState("");
     const [tagText, setTagText] = useState("");
     const [notes, setNotes] = useState(() => readNotes(scratchpadStorageKey));
     const [status, setStatus] = useState("");
@@ -265,6 +267,7 @@
         if (!transcript) {
           throw new Error("No transcript returned for that voice note.");
         }
+        setNoteSourceLabel(sourceLabel);
         setNoteText((current) => {
           const existing = normalizeNoteText(current);
           return existing ? `${existing}\n\n${transcript}` : transcript;
@@ -288,12 +291,14 @@
           id: `note-${Date.now()}`,
           text,
           createdAt: new Date().toISOString(),
+          sourceLabel: noteSourceLabel,
           tags
         },
         ...notes.filter((item) => item.text !== text || JSON.stringify(item.tags ?? []) !== JSON.stringify(tags))
       ];
       persistNotes(nextNotes);
       setNoteText("");
+      setNoteSourceLabel("");
       setTagText("");
       trackRevenueSignal("scratchpad_note_saved", "scratchpad_save");
       flashStatus("Saved to today's scratchpad.");
@@ -423,6 +428,7 @@
         trackRevenueSignal("scratchpad_note_used_in_invoice", "scratchpad_invoice_start");
         window.localStorage.setItem(draftStorageKey, JSON.stringify(buildDraftFromNote(combinedText)));
         flashStatus(`Loaded ${sessionNotes.length} notes into invoice draft.`);
+        setNoteSourceLabel("");
         navigate("/manual");
       } finally {
         setBusyId("");
@@ -445,6 +451,7 @@
         window.localStorage.setItem(scratchpadSeedStorageKey, JSON.stringify(seed));
         trackRevenueSignal("scratchpad_note_used_in_invoice", "scratchpad_billie_start");
         flashStatus(`Loaded ${sessionNotes.length} notes into Billie intake.`);
+        setNoteSourceLabel("");
         navigate("/ai-intake");
       } finally {
         setBusyId("");
@@ -460,6 +467,7 @@
         trackRevenueSignal("scratchpad_note_used_in_invoice", "scratchpad_invoice_start");
         window.localStorage.setItem(draftStorageKey, JSON.stringify(buildDraftFromNote(note.text)));
         flashStatus("Loaded into invoice draft.");
+        setNoteSourceLabel("");
         navigate("/manual");
       } finally {
         setBusyId("");
@@ -485,6 +493,7 @@
           JSON.stringify(buildDraftFromNote(buildCombinedNoteText(selectedVisibleNotes)))
         );
         flashStatus(`Loaded ${selectedVisibleNotes.length} notes into invoice draft.`);
+        setNoteSourceLabel("");
         navigate("/manual");
       } finally {
         setBusyId("");
@@ -505,6 +514,7 @@
         window.localStorage.setItem(scratchpadSeedStorageKey, JSON.stringify(seed));
         trackRevenueSignal("scratchpad_note_used_in_invoice", "scratchpad_billie_start");
         flashStatus("Loaded into Billie intake.");
+        setNoteSourceLabel("");
         navigate("/ai-intake");
       } finally {
         setBusyId("");
@@ -529,6 +539,7 @@
         window.localStorage.setItem(scratchpadSeedStorageKey, JSON.stringify(seed));
         trackRevenueSignal("scratchpad_note_used_in_invoice", "scratchpad_billie_start");
         flashStatus(`Loaded ${selectedVisibleNotes.length} notes into Billie intake.`);
+        setNoteSourceLabel("");
         navigate("/ai-intake");
       } finally {
         setBusyId("");
@@ -576,7 +587,10 @@
                   className="nb-input min-h-[180px] w-full rounded-[24px] px-4 py-3 text-base leading-6"
                   placeholder="Quick job note, materials, time, client detail, or anything you might invoice later..."
                   value={noteText}
-                  onChange={(event) => setNoteText(event.target.value)}
+                  onChange={(event) => {
+                    setNoteText(event.target.value);
+                    setNoteSourceLabel("");
+                  }}
                 />
                 <input
                   type="text"
@@ -636,6 +650,11 @@
                 <p className="text-xs text-slate-500">
                   Voice memos can be uploaded or recorded here, then transcribed into editable scratchpad text.
                 </p>
+                {noteSourceLabel ? (
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                    {noteSourceLabel} ready to save
+                  </p>
+                ) : null}
                 {status ? <p className="text-sm text-slate-600">{status}</p> : null}
                 {voiceNoteError ? <p className="text-sm text-rose-600">{voiceNoteError}</p> : null}
               </div>
@@ -810,6 +829,11 @@
                                 </p>
                               </div>
                               <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-800">{note.text}</p>
+                              {note.sourceLabel ? (
+                                <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                                  {note.sourceLabel}
+                                </p>
+                              ) : null}
                               {Array.isArray(note.tags) && note.tags.length > 0 ? (
                                 <div className="mt-3 flex flex-wrap gap-2">
                                   {note.tags.map((tag) => (

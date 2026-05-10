@@ -1127,6 +1127,9 @@ test("daily scratchpad transcribes a voice note into the note editor", async () 
       scratchpadNoteEditor(page),
       "Installed replacement filter and checked pressure."
     );
+    await page.getByRole("button", { name: "Save note" }).click();
+    await page.getByText("Saved to today's scratchpad.").waitFor({ state: "visible" });
+    await page.getByText("voice-note.webm").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
