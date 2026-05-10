@@ -312,6 +312,7 @@
     const dashboardMomentum = useMemo(() => {
       const nowMs = Date.now();
       const weekStartMs = nowMs - 7 * recurringDayMs;
+      const priorWeekStartMs = weekStartMs - 7 * recurringDayMs;
       const recentPayments = activeInvoices.reduce(
         (result, invoice) => {
           const paymentRecords = Array.isArray(invoice?.paymentRecords)
@@ -334,43 +335,117 @@
       const estimateConversions = activeInvoices.filter(
         (invoice) => parseTimestamp(invoice?.invoiceData?.finishedInvoice?.convertedFromEstimateAt) >= weekStartMs
       ).length;
+      const estimateConversionsPrior = activeInvoices.filter((invoice) => {
+        const convertedAt = parseTimestamp(invoice?.invoiceData?.finishedInvoice?.convertedFromEstimateAt);
+        return convertedAt >= priorWeekStartMs && convertedAt < weekStartMs;
+      }).length;
+      const recurringRunsPrior = recurringSendHistory.filter((entry) => {
+        const runAt = parseTimestamp(entry.lastAutoSendAt);
+        return runAt >= priorWeekStartMs && runAt < weekStartMs;
+      }).length;
+      const paymentsPrior = activeInvoices.reduce(
+        (result, invoice) => {
+          const paymentRecords = Array.isArray(invoice?.paymentRecords)
+            ? invoice.paymentRecords
+            : Array.isArray(invoice?.invoiceData?.finishedInvoice?.paymentRecords)
+              ? invoice.invoiceData.finishedInvoice.paymentRecords
+              : [];
+          paymentRecords.forEach((record) => {
+            const recordedAt = parseTimestamp(record?.recordedAt);
+            if (!Number.isFinite(recordedAt) || recordedAt < priorWeekStartMs || recordedAt >= weekStartMs) {
+              return;
+            }
+            result.count += 1;
+            result.amount += Number(record?.amount ?? 0) || 0;
+          });
+          return result;
+        },
+        { count: 0, amount: 0 }
+      );
+      const buildTrend = (current, previous) => {
+        const currentValue = Number(current ?? 0);
+        const previousValue = Number(previous ?? 0);
+        const delta = currentValue - previousValue;
+        const sign = delta > 0 ? "+" : "";
+        if (delta === 0) {
+          return "Flat vs last week";
+        }
+        return `${sign}${delta} vs last week`;
+      };
       return [
         {
           label: "Invoices touched",
           value: activeInvoices.filter((invoice) => parseTimestamp(invoice?.updatedAt) >= weekStartMs).length,
-          detail: "Saved, changed, or refreshed this week"
+          detail: buildTrend(
+            activeInvoices.filter((invoice) => parseTimestamp(invoice?.updatedAt) >= weekStartMs).length,
+            activeInvoices.filter(
+              (invoice) => {
+                const updatedAt = parseTimestamp(invoice?.updatedAt);
+                return updatedAt >= priorWeekStartMs && updatedAt < weekStartMs;
+              }
+            ).length
+          )
         },
         {
           label: "Sent this week",
           value: activeInvoices.filter(
             (invoice) => invoice.status === "sent" && parseTimestamp(invoice?.updatedAt) >= weekStartMs
           ).length,
-          detail: "Fresh invoices that moved into delivery"
+          detail: buildTrend(
+            activeInvoices.filter(
+              (invoice) => invoice.status === "sent" && parseTimestamp(invoice?.updatedAt) >= weekStartMs
+            ).length,
+            activeInvoices.filter((invoice) => {
+              const updatedAt = parseTimestamp(invoice?.updatedAt);
+              return invoice.status === "sent" && updatedAt >= priorWeekStartMs && updatedAt < weekStartMs;
+            }).length
+          )
         },
         {
           label: "Paid this week",
           value: paidInvoices.filter((invoice) => parseTimestamp(invoice?.updatedAt) >= weekStartMs).length,
-          detail: "Balances that were fully closed out"
+          detail: buildTrend(
+            paidInvoices.filter((invoice) => parseTimestamp(invoice?.updatedAt) >= weekStartMs).length,
+            paidInvoices.filter((invoice) => {
+              const updatedAt = parseTimestamp(invoice?.updatedAt);
+              return updatedAt >= priorWeekStartMs && updatedAt < weekStartMs;
+            }).length
+          )
         },
         {
           label: "Estimates active",
           value: estimateInvoices.filter((invoice) => parseTimestamp(invoice?.updatedAt) >= weekStartMs).length,
-          detail: "Planning work still moving"
+          detail: buildTrend(
+            estimateInvoices.filter((invoice) => parseTimestamp(invoice?.updatedAt) >= weekStartMs).length,
+            estimateInvoices.filter((invoice) => {
+              const updatedAt = parseTimestamp(invoice?.updatedAt);
+              return updatedAt >= priorWeekStartMs && updatedAt < weekStartMs;
+            }).length
+          )
         },
         {
           label: "Estimate conversions",
           value: estimateConversions,
-          detail: "Quotes that turned into invoices this week"
+          detail: buildTrend(estimateConversions, estimateConversionsPrior)
         },
         {
           label: "Recurring sends",
           value: recurringSendHistory.filter((entry) => parseTimestamp(entry.lastAutoSendAt) >= weekStartMs).length,
-          detail: "Auto-send runs completed in the last seven days"
+          detail: buildTrend(
+            recurringSendHistory.filter((entry) => parseTimestamp(entry.lastAutoSendAt) >= weekStartMs).length,
+            recurringRunsPrior
+          )
         },
         {
           label: "Payments recorded",
           value: recentPayments.count > 0 ? `${recentPayments.count} / ${formatMoney(recentPayments.amount)}` : "0",
-          detail: "Deposits and partials recorded this week"
+          detail:
+            recentPayments.count > 0
+              ? buildTrend(
+                  recentPayments.count,
+                  paymentsPrior.count
+                )
+              : "No recorded payments this week"
         }
       ];
     }, [activeInvoices, estimateInvoices, paidInvoices, recurringSendHistory]);

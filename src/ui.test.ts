@@ -8529,6 +8529,9 @@ test("operator dashboard surfaces open balance, recurring work, and repeat-ready
     await page.getByTestId("operator-dashboard-momentum").getByText("Momentum snapshot").waitFor({
       state: "visible"
     });
+    await page.getByTestId("operator-dashboard-momentum").getByText("last week").waitFor({
+      state: "visible"
+    });
     await page.getByTestId("operator-dashboard-followups").getByText("INV-DASH-1").waitFor({
       state: "visible"
     });
