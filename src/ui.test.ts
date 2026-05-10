@@ -8215,6 +8215,45 @@ test("client workspace shows saved services and can start from memory", async ()
   });
   assert.equal(seedResponse.status(), 200);
 
+  const partialSeedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Workspace Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-WORKSPACE-PARTIAL-1",
+          issueDate: "2026-05-01",
+          dueDate: "2026-05-10",
+          customerName: "Workspace Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "workspace-partial-line-1",
+              type: "labor",
+              description: "Emergency follow-up visit",
+              quantity: 1,
+              unitPrice: 150,
+              amount: 150
+            }
+          ],
+          subtotal: 150,
+          total: 150,
+          balanceDue: 75,
+          paymentRecords: [{ id: "payment-1", amount: 75, paidAt: "2026-05-07", note: "Deposit" }]
+        }
+      }
+    }
+  });
+  assert.equal(partialSeedResponse.status(), 200);
+
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/clients?client=${encodeURIComponent("Workspace Client")}`, {
@@ -8227,6 +8266,8 @@ test("client workspace shows saved services and can start from memory", async ()
     });
     await page.getByText("Recurring activity").waitFor({ state: "visible" });
     await page.getByText("Auto-send armed").waitFor({ state: "visible" });
+    await page.getByText("Payment progress").waitFor({ state: "visible" });
+    await page.getByText("50% complete").waitFor({ state: "visible" });
     await page.getByTestId("client-workspace-history").getByText("INV-WORKSPACE-1").waitFor({
       state: "visible"
     });

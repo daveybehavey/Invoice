@@ -68,6 +68,35 @@
     const balance = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? total);
     return Number.isFinite(total) && Number.isFinite(balance) && balance > 0 && balance < total;
   };
+  const getInvoicePaymentRecords = (invoice) => {
+    const records = invoice?.paymentRecords ?? invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? [];
+    return Array.isArray(records) ? records.filter((record) => record && typeof record === "object") : [];
+  };
+  const getInvoiceAmountPaid = (invoice) => {
+    const total = Number(invoice?.total ?? invoice?.invoiceData?.finishedInvoice?.total ?? 0);
+    const balance = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? total);
+    return Number.isFinite(total) && Number.isFinite(balance) ? Math.max(total - balance, 0) : 0;
+  };
+  const getInvoiceLatestPayment = (invoice) => {
+    const records = getInvoicePaymentRecords(invoice);
+    if (records.length === 0) {
+      return null;
+    }
+    return records.reduce((latest, record) => {
+      if (!latest) {
+        return record;
+      }
+      const latestMs = parseTimestamp(latest.paidAt ?? latest.recordedAt ?? "");
+      const nextMs = parseTimestamp(record.paidAt ?? record.recordedAt ?? "");
+      if (!Number.isFinite(latestMs) && Number.isFinite(nextMs)) {
+        return record;
+      }
+      if (Number.isFinite(nextMs) && nextMs >= latestMs) {
+        return record;
+      }
+      return latest;
+    }, null);
+  };
   const getInvoiceOpenBalance = (invoice) => {
     const total = Number(invoice?.total ?? invoice?.invoiceData?.finishedInvoice?.total ?? 0);
     const balance = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? total);
@@ -265,6 +294,19 @@
     const openBalance = sumOpenBalance(clientInvoices.filter((invoice) => invoice?.status === "sent"));
     const leadService = clientServices[0] ?? null;
     const cadenceLabel = formatRecurringCadence(selectedMemoryEntry?.recurringIntervalDays);
+    const latestPartialInvoice = clientInvoices.find((invoice) => hasPartialPayment(invoice)) ?? null;
+    const latestPartialPaymentAmount = latestPartialInvoice ? getInvoiceAmountPaid(latestPartialInvoice) : 0;
+    const latestPartialPaymentBalance = latestPartialInvoice ? getInvoiceOpenBalance(latestPartialInvoice) : 0;
+    const latestPartialPaymentTotal = Number(
+      latestPartialInvoice?.total ?? latestPartialInvoice?.invoiceData?.finishedInvoice?.total ?? 0
+    );
+    const latestPartialPaymentLatestRecord = latestPartialInvoice
+      ? getInvoiceLatestPayment(latestPartialInvoice)
+      : null;
+    const latestPartialPaymentProgress =
+      latestPartialPaymentTotal > 0
+        ? Math.max(0, Math.min(100, Math.round((latestPartialPaymentAmount / latestPartialPaymentTotal) * 100)))
+        : 0;
 
     const handleSelectClient = (name) => {
       const next = new URLSearchParams(searchParams);
@@ -562,6 +604,45 @@
                                 {selectedMemoryEntry?.recurringIntervalDays
                                   ? `${formatRecurringCadence(selectedMemoryEntry.recurringIntervalDays)} cadence is remembered for this client.`
                                   : "No recurring schedule saved yet."}
+                              </p>
+                            )}
+                          </div>
+                          <div className="rounded-[22px] border border-slate-100 bg-white/85 p-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              Payment progress
+                            </p>
+                            {latestPartialInvoice ? (
+                              <div className="mt-2 space-y-2">
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-sm font-semibold text-slate-700">
+                                    {latestPartialInvoice.invoiceNumber || "Partial invoice"}
+                                  </p>
+                                  <StatusChip tone="soft">{latestPartialPaymentProgress}% complete</StatusChip>
+                                </div>
+                                <div className="h-2 rounded-full bg-slate-100">
+                                  <div
+                                    className="h-2 rounded-full bg-[#6993d2]"
+                                    style={{ width: `${latestPartialPaymentProgress}%` }}
+                                  />
+                                </div>
+                                <p className="text-xs leading-5 text-slate-600">
+                                  {formatMoney(latestPartialPaymentAmount)} recorded · {formatMoney(latestPartialPaymentBalance)} remaining
+                                </p>
+                                {latestPartialPaymentLatestRecord ? (
+                                  <p className="text-xs leading-5 text-slate-500">
+                                    Latest payment {formatMoney(Number(latestPartialPaymentLatestRecord.amount || 0))}
+                                    {latestPartialPaymentLatestRecord.paidAt
+                                      ? ` · ${formatUpdatedDate(latestPartialPaymentLatestRecord.paidAt)}`
+                                      : ""}
+                                    {latestPartialPaymentLatestRecord.note
+                                      ? ` · ${latestPartialPaymentLatestRecord.note}`
+                                      : ""}
+                                  </p>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <p className="mt-2 text-sm leading-6 text-slate-700">
+                                No partial payments are open for this client right now.
                               </p>
                             )}
                           </div>
