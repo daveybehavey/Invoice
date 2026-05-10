@@ -8528,6 +8528,9 @@ test("operator dashboard surfaces open balance, recurring work, and repeat-ready
     await page.getByTestId("operator-dashboard-recurring-history").getByText("Dashboard Client").waitFor({
       state: "visible"
     });
+    await page.getByTestId("operator-dashboard-recent-activity").getByText("Dashboard Client").waitFor({
+      state: "visible"
+    });
     await page.getByTestId("operator-dashboard-repeat-ready").getByText("Dashboard Client").waitFor({
       state: "visible"
     });
@@ -8606,6 +8609,9 @@ test("operator dashboard surfaces estimate and action lanes", async () => {
   try {
     await page.goto(`${baseUrl}/dashboard`, { waitUntil: "networkidle" });
     await page.getByTestId("operator-dashboard-best-lane").waitFor({ state: "visible" });
+    await page.getByTestId("operator-dashboard-recent-activity").getByText("Estimate Dashboard Client").waitFor({
+      state: "visible"
+    });
     await page.getByTestId("operator-dashboard-estimates").getByText("EST-DASH-1").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Convert to invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Convert to invoice" }).click();

@@ -257,6 +257,36 @@
         .slice(0, 4);
     }, [recurringWork]);
 
+    const recentActivity = useMemo(() => {
+      return activeInvoices
+        .slice()
+        .sort(
+          (left, right) =>
+            parseTimestamp(right.updatedAt ?? right.invoiceData?.finishedInvoice?.updatedAt ?? "") -
+            parseTimestamp(left.updatedAt ?? left.invoiceData?.finishedInvoice?.updatedAt ?? "")
+        )
+        .slice(0, 4)
+        .map((invoice) => {
+          const documentType = getInvoiceDocumentType(invoice);
+          const status = invoice?.status || "draft";
+          const activityLabel =
+            documentType === "estimate"
+              ? "Estimate"
+              : status === "paid"
+                ? "Paid"
+                : status === "sent"
+                  ? "Sent"
+                  : "Draft";
+          return {
+            invoice,
+            activityLabel,
+            updatedLabel: formatDateTime(invoice.updatedAt ?? invoice.invoiceData?.finishedInvoice?.updatedAt ?? ""),
+            clientName: getInvoiceClientName(invoice) || "Client",
+            amountLabel: formatMoney(Number(invoice?.total ?? invoice?.invoiceData?.finishedInvoice?.total ?? 0))
+          };
+        });
+    }, [activeInvoices]);
+
     const handleConvertEstimateToInvoice = async (invoice) => {
       if (!invoice?.invoiceId) {
         return;
@@ -467,6 +497,62 @@
                 </p>
               </div>
             ))}
+          </section>
+
+          <section className="nb-surface mt-5 rounded-[26px] p-5 md:rounded-[30px] md:p-6" data-testid="operator-dashboard-recent-activity">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Recent activity</p>
+                <h2 className="mt-2 text-lg font-semibold text-slate-900">What changed lately</h2>
+              </div>
+              <StatusChip tone="soft">{recentActivity.length} recent</StatusChip>
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+              {recentActivity.length > 0 ? (
+                recentActivity.map((entry) => (
+                  <div
+                    key={entry.invoice.invoiceId}
+                    className="rounded-[22px] border border-slate-100 bg-white/85 p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{entry.clientName}</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-500">
+                          {entry.invoice.invoiceNumber || "Saved invoice"}
+                        </p>
+                      </div>
+                      <StatusChip tone="soft">{entry.activityLabel}</StatusChip>
+                    </div>
+                    <p className="mt-3 text-xs leading-5 text-slate-500">
+                      {entry.updatedLabel || "Updated recently"} · {entry.amountLabel}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="nb-btn-primary"
+                        onClick={() => navigate(`/invoices?open=${encodeURIComponent(entry.invoice.invoiceId)}`)}
+                      >
+                        Open invoice
+                      </button>
+                      <button
+                        type="button"
+                        className="nb-btn-secondary"
+                        onClick={() => navigate(`/clients?client=${encodeURIComponent(entry.clientName)}`)}
+                      >
+                        Open client
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-[22px] border border-slate-100 bg-white/75 p-4">
+                  <p className="text-sm font-semibold text-slate-900">No recent activity yet.</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    As invoices are saved, sent, paid, or converted, they will surface here.
+                  </p>
+                </div>
+              )}
+            </div>
           </section>
 
           <section className="nb-surface nb-surface--muted mt-5 rounded-[26px] p-5 md:rounded-[30px] md:p-6" data-testid="operator-dashboard-best-lane">
