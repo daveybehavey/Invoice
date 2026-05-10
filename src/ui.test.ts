@@ -5100,17 +5100,20 @@ test("launcher command center surfaces due recurring invoices", async () => {
   await context.addInitScript(
     ({ initOwnerId, recurringNextDueAt, recurringInvoiceId }) => {
       window.localStorage.setItem("invoiceOwnerId", initOwnerId);
-      window.localStorage.setItem(
-        `invoiceRecurringSchedules::owner:${initOwnerId}`,
-        JSON.stringify({
-          entries: {
-            [recurringInvoiceId]: {
-              intervalDays: 30,
-              nextDueAt: recurringNextDueAt
-            }
+    window.localStorage.setItem(
+      `invoiceRecurringSchedules::owner:${initOwnerId}`,
+      JSON.stringify({
+        entries: {
+          [recurringInvoiceId]: {
+            intervalDays: 30,
+            nextDueAt: recurringNextDueAt,
+            autoSendEnabled: true,
+            lastAutoSendAt: "2026-05-07T17:00:00.000Z",
+            lastAutoSendRecipient: "billing@dashboard-client.example"
           }
-        })
-      );
+        }
+      })
+    );
     },
     {
       initOwnerId: ownerId,
@@ -8403,6 +8406,9 @@ test("operator dashboard surfaces open balance, recurring work, and repeat-ready
       state: "visible"
     });
     await page.getByTestId("operator-dashboard-recurring").getByText("Dashboard Client").waitFor({
+      state: "visible"
+    });
+    await page.getByTestId("operator-dashboard-recurring-history").getByText("Dashboard Client").waitFor({
       state: "visible"
     });
     await page.getByTestId("operator-dashboard-repeat-ready").getByText("Dashboard Client").waitFor({

@@ -63,6 +63,20 @@
     return parseTimestamp(text);
   };
 
+  const formatDateTime = (value) => {
+    const parsed = parseTimestamp(value);
+    if (!Number.isFinite(parsed)) {
+      return "recently";
+    }
+    return new Date(parsed).toLocaleString([], {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    });
+  };
+
   const readRecurringSchedules = (storageKey) => {
     try {
       const raw = window.localStorage.getItem(storageKey);
@@ -203,6 +217,15 @@
             invoice,
             intervalDays: Number(entry.intervalDays ?? 30) || 30,
             nextDueMs,
+            autoSendEnabled: Boolean(entry.autoSendEnabled),
+            lastAutoSendAt:
+              typeof entry.lastAutoSendAt === "string" && entry.lastAutoSendAt.trim()
+                ? entry.lastAutoSendAt
+                : "",
+            lastAutoSendRecipient:
+              typeof entry.lastAutoSendRecipient === "string"
+                ? entry.lastAutoSendRecipient.trim().toLowerCase()
+                : "",
             dueNow: Number.isFinite(nextDueMs) && nextDueMs <= nowMs,
             dueSoon:
               Number.isFinite(nextDueMs) &&
@@ -213,6 +236,13 @@
         .filter(Boolean)
         .sort((left, right) => left.nextDueMs - right.nextDueMs);
     }, [activeInvoices, recurringEntries]);
+
+    const recurringSendHistory = useMemo(() => {
+      return recurringWork
+        .filter((entry) => Boolean(entry.lastAutoSendAt))
+        .sort((left, right) => parseTimestamp(right.lastAutoSendAt) - parseTimestamp(left.lastAutoSendAt))
+        .slice(0, 4);
+    }, [recurringWork]);
 
     const dueNowCount = recurringWork.filter((entry) => entry.dueNow).length;
     const dueSoonCount = recurringWork.filter((entry) => entry.dueSoon).length;
@@ -482,6 +512,57 @@
                     <p className="text-sm font-semibold text-slate-900">No recurring schedules yet.</p>
                     <p className="mt-1 text-xs leading-5 text-slate-500">
                       Set recurring cadence on repeat work and the dashboard will surface upcoming jobs here.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="nb-surface rounded-[26px] p-5 md:rounded-[30px] md:p-6" data-testid="operator-dashboard-recurring-history">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                    Recurring send history
+                  </p>
+                  <h2 className="mt-2 text-lg font-semibold text-slate-900">Recent recurring sends</h2>
+                </div>
+                <StatusChip tone="soft">{recurringSendHistory.length} recent</StatusChip>
+              </div>
+              <div className="mt-4 space-y-3">
+                {recurringSendHistory.length > 0 ? (
+                  recurringSendHistory.map((entry) => (
+                    <div key={entry.invoice.invoiceId} className="rounded-[22px] border border-slate-100 bg-white/85 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">
+                            {getInvoiceClientName(entry.invoice) || entry.invoice.invoiceNumber || "Recurring invoice"}
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-slate-500">
+                            Last run {formatDateTime(entry.lastAutoSendAt)}
+                            {entry.lastAutoSendRecipient ? ` · ${entry.lastAutoSendRecipient}` : ""}
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-slate-500">
+                            Next due{" "}
+                            {Number.isFinite(entry.nextDueMs)
+                              ? new Date(entry.nextDueMs).toLocaleDateString([], {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric"
+                                })
+                              : "soon"}
+                          </p>
+                        </div>
+                        <StatusChip tone={entry.autoSendEnabled ? "success" : "soft"}>
+                          {entry.autoSendEnabled ? "Auto-send armed" : "Recurring"}
+                        </StatusChip>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-[22px] border border-slate-100 bg-white/75 p-4">
+                    <p className="text-sm font-semibold text-slate-900">No recurring sends yet.</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      Once a recurring invoice runs, the latest activity will show up here.
                     </p>
                   </div>
                 )}
