@@ -1453,6 +1453,35 @@ function AIIntake() {
               })
               .filter(Boolean)
           : [],
+        draftLineItems: Array.isArray(finishedInvoice?.lineItems)
+          ? finishedInvoice.lineItems
+              .map((item, index) => {
+                const description =
+                  typeof item?.description === "string" && item.description.trim()
+                    ? item.description.trim()
+                    : `Line item ${index + 1}`;
+                const quantity = Number.isFinite(item?.quantity) ? Number(item.quantity) : null;
+                const unitPrice = Number.isFinite(item?.unitPrice) ? Number(item.unitPrice) : null;
+                const amount = Number.isFinite(item?.amount) ? Number(item.amount) : null;
+                const parts = [];
+                if (quantity !== null && unitPrice !== null) {
+                  parts.push(`${quantity} × ${unitPrice}`);
+                } else if (quantity !== null) {
+                  parts.push(`Qty ${quantity}`);
+                } else if (unitPrice !== null) {
+                  parts.push(`Rate ${unitPrice}`);
+                }
+                if (amount !== null) {
+                  parts.push(`Total ${amount}`);
+                }
+                return {
+                  id: item?.id ?? `draft-line-${index}`,
+                  description,
+                  detail: parts.join(" • ")
+                };
+              })
+              .filter(Boolean)
+          : [],
         clientName:
           typeof finishedInvoice?.customerName === "string" && finishedInvoice.customerName.trim()
             ? finishedInvoice.customerName.trim()
@@ -3029,6 +3058,23 @@ function AIIntake() {
                                         <p className="mt-1 text-xs leading-5 text-slate-600">
                                           {session.taskPreview.join(", ")}
                                         </p>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                            {importDraftComparison.draftLineItems.length > 0 ? (
+                              <div className="rounded-xl border border-slate-200 bg-white/90 px-3 py-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                  Draft line items
+                                </p>
+                                <div className="mt-2 space-y-2">
+                                  {importDraftComparison.draftLineItems.slice(0, 3).map((lineItem) => (
+                                    <div key={lineItem.id} className="rounded-lg border border-slate-200 bg-slate-50/90 px-3 py-2">
+                                      <p className="text-sm font-semibold text-slate-900">{lineItem.description}</p>
+                                      {lineItem.detail ? (
+                                        <p className="mt-1 text-xs text-slate-600">{lineItem.detail}</p>
                                       ) : null}
                                     </div>
                                   ))}
