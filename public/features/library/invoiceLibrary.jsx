@@ -419,6 +419,7 @@
   const [reminderNotificationNotice, setReminderNotificationNotice] = useState("");
   const [followUpNoteNotice, setFollowUpNoteNotice] = useState("");
   const [handoffNotice, setHandoffNotice] = useState("");
+  const openInvoiceTargetRef = useRef("");
   const undoTimeoutRef = useRef(null);
   const requiresSignIn = (authRequiredByPolicy || authRequiredError) && !authSession?.userId;
   const emailLinkProvider = Array.isArray(authProviders)
@@ -920,6 +921,22 @@
       setStatusFilter("all");
     }
   }, [showTrash, statusFilter]);
+
+  useEffect(() => {
+    const openInvoiceId = new URLSearchParams(location.search).get("open")?.trim() ?? "";
+    if (!openInvoiceId || loading || invoices.length === 0) {
+      return;
+    }
+    if (openInvoiceTargetRef.current === openInvoiceId) {
+      return;
+    }
+    const targetInvoice = invoices.find((invoice) => invoice.invoiceId === openInvoiceId);
+    if (!targetInvoice) {
+      return;
+    }
+    openInvoiceTargetRef.current = openInvoiceId;
+    void handleOpen(openInvoiceId);
+  }, [invoices, loading, location.search]);
 
   useEffect(() => {
     if (!requiresSignIn) {

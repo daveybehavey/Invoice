@@ -523,7 +523,7 @@
       ? [
           {
             label: "Open recurring invoice",
-            onClick: () => handleOpenInvoiceWithBillie(recurringInvoice)
+            onClick: () => navigate(`/invoices?open=${encodeURIComponent(recurringInvoice.invoiceId)}`)
           },
           {
             label: "Open library",

@@ -509,7 +509,7 @@
                       key={invoice.invoiceId}
                       type="button"
                       className="w-full rounded-[22px] border border-slate-100 bg-white/85 p-4 text-left transition hover:border-[#6993d2]/18"
-                      onClick={() => navigate("/invoices")}
+                      onClick={() => navigate(`/invoices?open=${encodeURIComponent(entry.invoice.invoiceId)}`)}
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
@@ -553,7 +553,7 @@
                       key={entry.invoice.invoiceId}
                       type="button"
                       className="w-full rounded-[22px] border border-slate-100 bg-white/85 p-4 text-left transition hover:border-[#6993d2]/18"
-                      onClick={() => navigate("/invoices")}
+                      onClick={() => navigate(`/invoices?open=${encodeURIComponent(entry.invoice.invoiceId)}`)}
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
@@ -625,6 +625,24 @@
                         <StatusChip tone={entry.autoSendEnabled ? "success" : "soft"}>
                           {entry.autoSendEnabled ? "Auto-send armed" : "Recurring"}
                         </StatusChip>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="nb-btn-primary"
+                          onClick={() => navigate(`/invoices?open=${encodeURIComponent(entry.invoice.invoiceId)}`)}
+                        >
+                          Open recurring invoice
+                        </button>
+                        <button
+                          type="button"
+                          className="nb-btn-secondary"
+                          onClick={() =>
+                            navigate(`/clients?client=${encodeURIComponent(getInvoiceClientName(entry.invoice) || "")}`)
+                          }
+                        >
+                          Open client workspace
+                        </button>
                       </div>
                     </div>
                   ))

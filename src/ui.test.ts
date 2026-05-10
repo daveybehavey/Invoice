@@ -7030,6 +7030,63 @@ test("invoice library recurring reminder opens invoice-again for the next due in
   }
 });
 
+test("invoice library can open a specific invoice from the query string", async () => {
+  const ownerId = "ui-library-open-query-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Query Open Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-QUERY-OPEN-1",
+          issueDate: "2026-05-03",
+          customerName: "Query Open Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "query-open-line-1",
+              type: "labor",
+              description: "Recurring query baseline",
+              quantity: 1,
+              unitPrice: 125,
+              amount: 125
+            }
+          ],
+          subtotal: 125,
+          total: 125,
+          balanceDue: 125
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const invoiceId = seedPayload?.invoice?.invoiceId as string;
+  assert.equal(typeof invoiceId, "string");
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices?open=${encodeURIComponent(invoiceId)}`, { waitUntil: "networkidle" });
+    await page.waitForURL(/\/manual$/, { timeout: 15000 });
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Query Open Client");
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library distinguishes recurring work due soon", async () => {
   const ownerId = "ui-library-recurring-soon-owner";
   const nextDueAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
