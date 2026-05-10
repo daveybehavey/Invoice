@@ -122,6 +122,18 @@
     const amount = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? 0);
     return Number.isFinite(amount) ? Math.max(amount, 0) : 0;
   };
+  const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? "").trim());
+  const getRecurringAutoSendRecipient = (invoice, clientMemoryEntries = []) => {
+    const rememberedRecipient =
+      (Array.isArray(clientMemoryEntries) ? clientMemoryEntries : []).find(
+        (entry) =>
+          normalizeName(entry?.name) ===
+          normalizeName(invoice?.customerName ?? invoice?.invoiceData?.finishedInvoice?.customerName ?? "")
+      )?.recipientEmail ?? "";
+    const deliveryRecipient = invoice?.delivery?.recipientEmail ?? "";
+    const nextRecipient = String(rememberedRecipient || deliveryRecipient).trim().toLowerCase();
+    return isValidEmail(nextRecipient) ? nextRecipient : "";
+  };
 
   function OperatorDashboardPage() {
     const navigate = useNavigate();
@@ -130,6 +142,8 @@
     const [error, setError] = useState("");
     const [estimateActionId, setEstimateActionId] = useState("");
     const [estimateNotice, setEstimateNotice] = useState("");
+    const [recurringNotice, setRecurringNotice] = useState("");
+    const [recurringSchedules, setRecurringSchedules] = useState(() => readRecurringSchedules(recurringStorageKey));
 
     useEffect(() => {
       let active = true;
@@ -163,6 +177,11 @@
       };
     }, []);
 
+    useEffect(() => {
+      setRecurringSchedules(readRecurringSchedules(recurringStorageKey));
+      setRecurringNotice("");
+    }, [recurringStorageKey]);
+
     const requestJson = async (input, init, fallbackMessage) => {
       const response = await apiFetch(input, init);
       const payload = await response.json().catch(() => ({}));
@@ -176,7 +195,7 @@
 
     const clientMemory = getClientMemory();
     const savedServices = getLineItemLibrary();
-    const recurringEntries = readRecurringSchedules(recurringStorageKey);
+    const recurringEntries = recurringSchedules;
     const activeInvoices = savedInvoices.filter((invoice) => invoice && invoice.status !== "deleted");
     const estimateInvoices = activeInvoices.filter((invoice) => getInvoiceDocumentType(invoice) === "estimate");
     const sentInvoices = activeInvoices.filter((invoice) => invoice.status === "sent");
@@ -344,6 +363,37 @@
         }
       ];
     }, [activeInvoices, estimateInvoices, paidInvoices, recurringSendHistory]);
+
+    const toggleRecurringAutoSend = (invoiceId, enabled) => {
+      const existing = recurringSchedules[invoiceId];
+      if (!existing) {
+        setError("Recurring schedule not found.");
+        return;
+      }
+      const invoice = activeInvoices.find((candidate) => candidate.invoiceId === invoiceId);
+      const recipientEmail = getRecurringAutoSendRecipient(invoice, clientMemory);
+      if (enabled && !recipientEmail) {
+        setError("Recurring auto-send needs a remembered recipient email.");
+        return;
+      }
+      const nextSchedules = {
+        ...recurringSchedules,
+        [invoiceId]: {
+          ...existing,
+          autoSendEnabled: Boolean(enabled)
+        }
+      };
+      setRecurringSchedules(nextSchedules);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(recurringStorageKey, JSON.stringify({ entries: nextSchedules }));
+      }
+      setError("");
+      setRecurringNotice(
+        enabled
+          ? `Recurring auto-send armed for ${recipientEmail || "the remembered recipient"}.`
+          : "Recurring auto-send paused for now."
+      );
+    };
 
     const handleConvertEstimateToInvoice = async (invoice) => {
       if (!invoice?.invoiceId) {
@@ -536,6 +586,7 @@
             {loading ? <p className="mt-4 text-sm text-slate-500">Loading dashboard metrics…</p> : null}
             {error ? <p className="mt-4 text-sm font-semibold text-rose-600">{error}</p> : null}
             {estimateNotice ? <p className="mt-4 text-sm font-semibold text-emerald-700">{estimateNotice}</p> : null}
+            {recurringNotice ? <p className="mt-2 text-sm font-semibold text-emerald-700">{recurringNotice}</p> : null}
           </section>
 
           <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -717,11 +768,9 @@
               <div className="mt-4 space-y-3">
                 {recurringWork.length > 0 ? (
                   recurringWork.slice(0, 4).map((entry) => (
-                    <button
+                    <div
                       key={entry.invoice.invoiceId}
-                      type="button"
-                      className="w-full rounded-[22px] border border-slate-100 bg-white/85 p-4 text-left transition hover:border-[#6993d2]/18"
-                      onClick={() => navigate(`/invoices?open=${encodeURIComponent(entry.invoice.invoiceId)}`)}
+                      className="rounded-[22px] border border-slate-100 bg-white/85 p-4"
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
@@ -738,12 +787,45 @@
                                 })
                               : "soon"}
                           </p>
+                          {entry.lastAutoSendAt ? (
+                            <p className="mt-1 text-xs leading-5 text-slate-500">
+                              Last run {formatDateTime(entry.lastAutoSendAt)}
+                              {entry.lastAutoSendRecipient ? ` · ${entry.lastAutoSendRecipient}` : ""}
+                            </p>
+                          ) : null}
                         </div>
                         <StatusChip tone={entry.dueNow ? "warning" : entry.dueSoon ? "soft" : "success"}>
-                          {entry.dueNow ? "Due now" : entry.dueSoon ? "Due soon" : "Scheduled"}
+                          {entry.autoSendEnabled ? "Auto-send armed" : entry.dueNow ? "Due now" : entry.dueSoon ? "Due soon" : "Scheduled"}
                         </StatusChip>
                       </div>
-                    </button>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="nb-btn-primary"
+                          onClick={() => navigate(`/invoices?open=${encodeURIComponent(entry.invoice.invoiceId)}`)}
+                        >
+                          Open recurring invoice
+                        </button>
+                        <button
+                          type="button"
+                          className="nb-btn-secondary"
+                          onClick={() =>
+                            navigate(`/clients?client=${encodeURIComponent(getInvoiceClientName(entry.invoice) || "")}`)
+                          }
+                        >
+                          Open client workspace
+                        </button>
+                        {getRecurringAutoSendRecipient(entry.invoice, clientMemory) ? (
+                          <button
+                            type="button"
+                            className="nb-btn-secondary border-emerald-200 bg-emerald-50 text-emerald-900"
+                            onClick={() => toggleRecurringAutoSend(entry.invoice.invoiceId, !entry.autoSendEnabled)}
+                          >
+                            {entry.autoSendEnabled ? "Pause auto-send" : "Arm auto-send"}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
                   ))
                 ) : (
                   <div className="rounded-[22px] border border-slate-100 bg-white/75 p-4">

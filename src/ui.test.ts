@@ -8528,6 +8528,11 @@ test("operator dashboard surfaces open balance, recurring work, and repeat-ready
     await page.getByTestId("operator-dashboard-recurring").getByText("Dashboard Client").waitFor({
       state: "visible"
     });
+    await page.getByRole("button", { name: "Arm auto-send" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Arm auto-send" }).click();
+    await page.getByText("Recurring auto-send armed for billing@dashboard-client.example.", {
+      exact: false
+    }).waitFor({ state: "visible" });
     await page.getByTestId("operator-dashboard-recurring-history").getByText("Dashboard Client").waitFor({
       state: "visible"
     });
