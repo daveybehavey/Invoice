@@ -1411,6 +1411,24 @@ function AIIntake() {
     hasQualityBlockers ||
     auditStatus === "timed_out" ||
     auditStatus === "failed";
+  const importCoverageSummary = importStudioContext
+    ? {
+        captured: [
+          importStudioContext.fileName ? `File: ${importStudioContext.fileName}` : null,
+          importStudioContext.preview ? "Source preview loaded" : null,
+          "Original text stays available for cleanup"
+        ].filter(Boolean),
+        cleanup: [
+          `${importStudioContext.openDecisionCount} decision${importStudioContext.openDecisionCount === 1 ? "" : "s"} pending`,
+          `${importStudioContext.unparsedCount} uncaptured line${importStudioContext.unparsedCount === 1 ? "" : "s"}`,
+          `${importStudioContext.assumptionCount} assumption${importStudioContext.assumptionCount === 1 ? "" : "s"}`,
+          importStudioContext.qualityBlockerCount > 0
+            ? `${importStudioContext.qualityBlockerCount} quality blocker${importStudioContext.qualityBlockerCount === 1 ? "" : "s"}`
+            : null,
+          importStudioContext.needsFollowUp ? "Missing money details still need a reply" : null
+        ].filter(Boolean)
+      }
+    : null;
   const needsLaborPricing = intakeReadiness.needsFollowUp;
   const needsLaborHoursOnly = intakeReadiness.needsLaborHoursOnly;
   const showConfirmDetails =
@@ -2833,6 +2851,36 @@ function AIIntake() {
                       </span>
                     ) : null}
                   </div>
+                  {importCoverageSummary ? (
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                      <div className="rounded-2xl border border-[#6993d2]/18 bg-white/88 p-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6993d2]">
+                          Captured context
+                        </p>
+                        <p className="mt-2 text-sm font-semibold text-slate-900">What Billie already has from the import</p>
+                        <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-700">
+                          {importCoverageSummary.captured.map((item) => (
+                            <li key={item} className="rounded-xl border border-slate-200 bg-slate-50/90 px-3 py-2">
+                              {item}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">
+                          Still needs cleanup
+                        </p>
+                        <p className="mt-2 text-sm font-semibold text-slate-900">What still needs a human or Billie check</p>
+                        <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-700">
+                          {importCoverageSummary.cleanup.map((item) => (
+                            <li key={item} className="rounded-xl border border-amber-100 bg-white/85 px-3 py-2">
+                              {item}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  ) : null}
                   {importStudioContext.preview ? (
                     <div className="mt-4 rounded-2xl border border-slate-200 bg-white/88 p-4">
                       <div className="flex items-center justify-between gap-2">
