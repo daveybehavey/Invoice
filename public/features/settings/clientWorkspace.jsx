@@ -152,12 +152,14 @@
           intervalDays: Number(entry.intervalDays ?? 30) || 30,
           nextDueAt: typeof entry.nextDueAt === "string" ? entry.nextDueAt : "",
           autoSendEnabled: Boolean(entry.autoSendEnabled),
+          autoSendRunCount: Math.max(0, Number(entry.autoSendRunCount ?? 0) || 0),
           lastAutoSendAt:
             typeof entry.lastAutoSendAt === "string" && entry.lastAutoSendAt.trim()
               ? entry.lastAutoSendAt
               : "",
           lastAutoSendRecipient:
-            typeof entry.lastAutoSendRecipient === "string" ? entry.lastAutoSendRecipient.trim().toLowerCase() : ""
+            typeof entry.lastAutoSendRecipient === "string" ? entry.lastAutoSendRecipient.trim().toLowerCase() : "",
+          lastAutoSendMode: typeof entry.lastAutoSendMode === "string" ? entry.lastAutoSendMode.trim() : ""
         };
         return result;
       }, {});
@@ -773,6 +775,13 @@
                                     {recurringEntry.lastAutoSendRecipient
                                       ? ` · ${recurringEntry.lastAutoSendRecipient}`
                                       : ""}
+                                  </p>
+                                ) : null}
+                                {recurringEntry.autoSendRunCount ? (
+                                  <p className="text-xs leading-5 text-slate-500">
+                                    {recurringEntry.autoSendRunCount} recurring run
+                                    {recurringEntry.autoSendRunCount === 1 ? "" : "s"} recorded
+                                    {recurringEntry.lastAutoSendMode ? ` · ${recurringEntry.lastAutoSendMode}` : ""}
                                   </p>
                                 ) : null}
                               </div>

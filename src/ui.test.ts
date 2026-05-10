@@ -2060,10 +2060,10 @@ test("import cleanup studio surfaces seeded source context in intake", async () 
     await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
     const studio = page.getByTestId("import-cleanup-studio");
     await studio.waitFor({ state: "visible" });
-    await studio.getByText("legacy-notes.txt").waitFor({ state: "visible" });
-    await studio.getByText("1 decision").waitFor({ state: "visible" });
-    await studio.getByText("1 uncaptured line").waitFor({ state: "visible" });
-    await studio.getByText("1 quality blocker").waitFor({ state: "visible" });
+    await studio.getByText("legacy-notes.txt", { exact: true }).waitFor({ state: "visible" });
+    await studio.getByRole("listitem").filter({ hasText: "1 decision pending" }).waitFor({ state: "visible" });
+    await studio.getByRole("listitem").filter({ hasText: "1 uncaptured line" }).waitFor({ state: "visible" });
+    await studio.getByRole("listitem").filter({ hasText: "1 quality blocker" }).waitFor({ state: "visible" });
     await studio.getByText("Captured context").waitFor({ state: "visible" });
     await studio.getByText("Still needs cleanup").waitFor({ state: "visible" });
     await studio.getByText("Source sessions").waitFor({ state: "visible" });
@@ -2073,6 +2073,8 @@ test("import cleanup studio surfaces seeded source context in intake", async () 
       page.locator("#ai-intake-input"),
       "Legacy invoice: Jan 30 faucet repair, 2 hours at $80/hr for Mike Johnson."
     );
+    await studio.getByRole("button", { name: "Use compare in chat" }).click();
+    await expectValueContains(page.locator("#ai-intake-input"), "Source sessions:");
   } finally {
     await context.close();
   }
@@ -6909,7 +6911,12 @@ test("invoice library can run recurring auto-send immediately", async () => {
             const parsed = JSON.parse(window.localStorage.getItem(key) || "{}");
             const entries = parsed?.entries && typeof parsed.entries === "object" ? parsed.entries : {};
             for (const entry of Object.values(entries)) {
-              if (entry?.lastAutoSendAt && entry?.lastAutoSendRecipient === "run-auto@example.com") {
+              if (
+                entry?.lastAutoSendAt &&
+                entry?.lastAutoSendRecipient === "run-auto@example.com" &&
+                Number(entry?.autoSendRunCount ?? 0) >= 1 &&
+                String(entry?.lastAutoSendMode ?? "")
+              ) {
                 return true;
               }
             }
@@ -8284,7 +8291,9 @@ test("client workspace shows saved services and can start from memory", async ()
             nextDueAt: "2026-05-15T00:00:00.000Z",
             autoSendEnabled: true,
             lastAutoSendAt: "2026-05-01T18:00:00.000Z",
-            lastAutoSendRecipient: "billing@workspace-client.example"
+            lastAutoSendRecipient: "billing@workspace-client.example",
+            autoSendRunCount: 2,
+            lastAutoSendMode: "provider"
           }
         }
       })
@@ -8385,6 +8394,7 @@ test("client workspace shows saved services and can start from memory", async ()
     await page.getByText("Recurring auto-send armed for billing@workspace-client.example.", {
       exact: false
     }).waitFor({ state: "visible" });
+    await page.getByText("2 recurring runs recorded").waitFor({ state: "visible" });
     await page.getByText("Payment progress").waitFor({ state: "visible" });
     await page.getByText("50% complete").waitFor({ state: "visible" });
     await page.getByText("Payment timeline").waitFor({ state: "visible" });
@@ -8572,7 +8582,11 @@ test("operator dashboard surfaces open balance, recurring work, and repeat-ready
             entries: {
               [recurringInvoiceId]: {
                 intervalDays: 30,
-                nextDueAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString()
+                nextDueAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+                autoSendRunCount: 3,
+                lastAutoSendAt: "2026-05-09T19:00:00.000Z",
+                lastAutoSendRecipient: "billing@dashboard-client.example",
+                lastAutoSendMode: "provider"
               }
             }
           })
@@ -8599,6 +8613,7 @@ test("operator dashboard surfaces open balance, recurring work, and repeat-ready
     await page.getByText("Recurring auto-send armed for billing@dashboard-client.example.", {
       exact: false
     }).waitFor({ state: "visible" });
+    await page.getByText("3 recurring runs recorded").waitFor({ state: "visible" });
     await page.getByTestId("operator-dashboard-recurring-history").getByText("Dashboard Client").waitFor({
       state: "visible"
     });

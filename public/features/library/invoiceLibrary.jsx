@@ -263,12 +263,14 @@
           intervalDays,
           nextDueAt,
           autoSendEnabled: Boolean(entry.autoSendEnabled),
+          autoSendRunCount: Math.max(0, Number(entry.autoSendRunCount ?? 0) || 0),
           lastAutoSendAt:
             typeof entry.lastAutoSendAt === "string" && entry.lastAutoSendAt.trim()
               ? entry.lastAutoSendAt
               : "",
           lastAutoSendRecipient:
-            typeof entry.lastAutoSendRecipient === "string" ? entry.lastAutoSendRecipient.trim().toLowerCase() : ""
+            typeof entry.lastAutoSendRecipient === "string" ? entry.lastAutoSendRecipient.trim().toLowerCase() : "",
+          lastAutoSendMode: typeof entry.lastAutoSendMode === "string" ? entry.lastAutoSendMode.trim() : ""
         };
         return result;
       }, {});
@@ -606,6 +608,7 @@
     persistRecurringSchedules({
       ...recurringSchedules,
       [invoiceId]: {
+        ...recurringSchedules[invoiceId],
         intervalDays: normalizedInterval,
         nextDueAt,
         autoSendEnabled:
@@ -665,6 +668,7 @@
     persistRecurringSchedules({
       ...recurringSchedules,
       [invoiceId]: {
+        ...existing,
         intervalDays,
         nextDueAt,
         autoSendEnabled: Boolean(existing.autoSendEnabled)
@@ -706,7 +710,7 @@
       return;
     }
     setError("");
-    await handleSendInvoice(invoice, { recipientEmail });
+    const sendResult = await handleSendInvoice(invoice, { recipientEmail });
     const nextDueAt = new Date(
       Date.now() + normalizeRecurringInterval(recurringEntry.intervalDays) * recurringDayMs
     ).toISOString();
@@ -717,7 +721,9 @@
         nextDueAt,
         autoSendEnabled: true,
         lastAutoSendAt: new Date().toISOString(),
-        lastAutoSendRecipient: recipientEmail
+        lastAutoSendRecipient: recipientEmail,
+        autoSendRunCount: Math.max(0, Number(recurringEntry.autoSendRunCount ?? 0) || 0) + 1,
+        lastAutoSendMode: String(sendResult?.mode ?? "recorded")
       }
     });
     setDeliveryNotice(
@@ -1299,8 +1305,10 @@
       setSendComposer((current) =>
         current && current.invoiceId === invoice.invoiceId ? null : current
       );
+      return payload;
     } catch (sendError) {
       handleLibraryError(sendError, "Failed to send invoice.");
+      return null;
     } finally {
       setActionId("");
     }
@@ -3850,6 +3858,13 @@
                         {recurringEntry.lastAutoSendRecipient
                           ? ` to ${recurringEntry.lastAutoSendRecipient}`
                           : ""}.
+                      </p>
+                    ) : null}
+                    {recurringEntry?.autoSendRunCount ? (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {recurringEntry.autoSendRunCount} recurring run
+                        {recurringEntry.autoSendRunCount === 1 ? "" : "s"} recorded
+                        {recurringEntry.lastAutoSendMode ? ` · ${recurringEntry.lastAutoSendMode}` : ""}.
                       </p>
                     ) : null}
                     {!isDeleted && !showTrash ? (

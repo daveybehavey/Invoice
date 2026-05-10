@@ -518,6 +518,46 @@ function AIIntake() {
       });
     }
   };
+  const applyImportStudioComparisonToInput = () => {
+    if (!importDraftComparison) {
+      return;
+    }
+    const sourceLines = Array.isArray(importDraftComparison.sourceSessions)
+      ? importDraftComparison.sourceSessions.flatMap((session) => {
+          const header = `${session.date}${session.taskCount ? ` · ${session.taskCount} task${session.taskCount === 1 ? "" : "s"}` : ""}`;
+          const previewLines = Array.isArray(session.taskPreview) ? session.taskPreview : [];
+          return [header, ...previewLines.map((item) => `  - ${item}`)];
+        })
+      : [];
+    const draftLines = Array.isArray(importDraftComparison.draftLineItems)
+      ? importDraftComparison.draftLineItems.map((item) => {
+          const detail = typeof item?.detail === "string" && item.detail.trim() ? ` · ${item.detail.trim()}` : "";
+          return `${item.description}${detail}`;
+        })
+      : [];
+    if (sourceLines.length === 0 && draftLines.length === 0) {
+      return;
+    }
+    const prefill = `Use this source-vs-draft comparison to finish the import cleanup:\n\n${
+      sourceLines.length > 0
+        ? `Source sessions:\n${sourceLines.map((line) => `- ${line}`).join("\n")}`
+        : "Source sessions: none yet"
+    }\n\n${
+      draftLines.length > 0
+        ? `Draft line items:\n${draftLines.map((line) => `- ${line}`).join("\n")}`
+        : "Draft line items: none yet"
+    }`;
+    setInputValue(prefill);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        const input = document.getElementById("ai-intake-input");
+        if (input instanceof HTMLTextAreaElement) {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      });
+    }
+  };
   const refreshOnboardingStatus = (sessionOverride) => {
     setOnboardingStatus(
       buildOnboardingStatus({
@@ -2876,6 +2916,15 @@ function AIIntake() {
                       >
                         Use source in chat
                       </button>
+                      {importDraftComparison ? (
+                        <button
+                          type="button"
+                          className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
+                          onClick={applyImportStudioComparisonToInput}
+                        >
+                          Use compare in chat
+                        </button>
+                      ) : null}
                       {visibleDecisionSource.length > 0 ? (
                         <button
                           type="button"

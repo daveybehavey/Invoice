@@ -93,12 +93,14 @@
           intervalDays: Number(entry.intervalDays ?? 30) || 30,
           nextDueAt: typeof entry.nextDueAt === "string" ? entry.nextDueAt : "",
           autoSendEnabled: Boolean(entry.autoSendEnabled),
+          autoSendRunCount: Math.max(0, Number(entry.autoSendRunCount ?? 0) || 0),
           lastAutoSendAt:
             typeof entry.lastAutoSendAt === "string" && entry.lastAutoSendAt.trim()
               ? entry.lastAutoSendAt
               : "",
           lastAutoSendRecipient:
-            typeof entry.lastAutoSendRecipient === "string" ? entry.lastAutoSendRecipient.trim().toLowerCase() : ""
+            typeof entry.lastAutoSendRecipient === "string" ? entry.lastAutoSendRecipient.trim().toLowerCase() : "",
+          lastAutoSendMode: typeof entry.lastAutoSendMode === "string" ? entry.lastAutoSendMode.trim() : ""
         };
         return result;
       }, {});
@@ -464,11 +466,11 @@
       }
       const nextSchedules = {
         ...recurringSchedules,
-        [invoiceId]: {
-          ...existing,
-          autoSendEnabled: Boolean(enabled)
-        }
-      };
+      [invoiceId]: {
+        ...existing,
+        autoSendEnabled: Boolean(enabled)
+      }
+    };
       setRecurringSchedules(nextSchedules);
       if (typeof window !== "undefined") {
         window.localStorage.setItem(recurringStorageKey, JSON.stringify({ entries: nextSchedules }));
@@ -881,6 +883,12 @@
                               {entry.lastAutoSendRecipient ? ` · ${entry.lastAutoSendRecipient}` : ""}
                             </p>
                           ) : null}
+                          {entry.autoSendRunCount ? (
+                            <p className="mt-1 text-[11px] text-slate-400">
+                              {entry.autoSendRunCount} recurring run{entry.autoSendRunCount === 1 ? "" : "s"} recorded
+                              {entry.lastAutoSendMode ? ` · ${entry.lastAutoSendMode}` : ""}
+                            </p>
+                          ) : null}
                         </div>
                         <StatusChip tone={entry.dueNow ? "warning" : entry.dueSoon ? "soft" : "success"}>
                           {entry.autoSendEnabled ? "Auto-send armed" : entry.dueNow ? "Due now" : entry.dueSoon ? "Due soon" : "Scheduled"}
@@ -945,6 +953,12 @@
                           <p className="text-sm font-semibold text-slate-900">
                             {getInvoiceClientName(entry.invoice) || entry.invoice.invoiceNumber || "Recurring invoice"}
                           </p>
+                          {entry.autoSendRunCount ? (
+                            <p className="mt-1 text-[11px] text-slate-400">
+                              {entry.autoSendRunCount} recurring run{entry.autoSendRunCount === 1 ? "" : "s"} recorded
+                              {entry.lastAutoSendMode ? ` · ${entry.lastAutoSendMode}` : ""}
+                            </p>
+                          ) : null}
                           <p className="mt-1 text-xs leading-5 text-slate-500">
                             Last run {formatDateTime(entry.lastAutoSendAt)}
                             {entry.lastAutoSendRecipient ? ` · ${entry.lastAutoSendRecipient}` : ""}
