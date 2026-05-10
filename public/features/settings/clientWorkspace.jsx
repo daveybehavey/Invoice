@@ -446,7 +446,9 @@
                 ...invoiceData,
                 finishedInvoice: {
                   ...finishedInvoice,
-                  documentType: "invoice"
+                  documentType: "invoice",
+                  convertedFromEstimateAt: new Date().toISOString(),
+                  sourceEstimateNumber: finishedInvoice.invoiceNumber || ""
                 }
               }
             })

@@ -288,8 +288,11 @@
         .map((invoice) => {
           const documentType = getInvoiceDocumentType(invoice);
           const status = invoice?.status || "draft";
+          const convertedFromEstimateAt = invoice?.invoiceData?.finishedInvoice?.convertedFromEstimateAt ?? "";
           const activityLabel =
-            documentType === "estimate"
+            convertedFromEstimateAt
+              ? "Converted"
+              : documentType === "estimate"
               ? "Estimate"
               : status === "paid"
                 ? "Paid"
@@ -328,6 +331,9 @@
         },
         { count: 0, amount: 0 }
       );
+      const estimateConversions = activeInvoices.filter(
+        (invoice) => parseTimestamp(invoice?.invoiceData?.finishedInvoice?.convertedFromEstimateAt) >= weekStartMs
+      ).length;
       return [
         {
           label: "Invoices touched",
@@ -350,6 +356,11 @@
           label: "Estimates active",
           value: estimateInvoices.filter((invoice) => parseTimestamp(invoice?.updatedAt) >= weekStartMs).length,
           detail: "Planning work still moving"
+        },
+        {
+          label: "Estimate conversions",
+          value: estimateConversions,
+          detail: "Quotes that turned into invoices this week"
         },
         {
           label: "Recurring sends",
@@ -426,7 +437,9 @@
                 ...invoiceData,
                 finishedInvoice: {
                   ...finishedInvoice,
-                  documentType: "invoice"
+                  documentType: "invoice",
+                  convertedFromEstimateAt: new Date().toISOString(),
+                  sourceEstimateNumber: finishedInvoice.invoiceNumber || ""
                 }
               }
             })

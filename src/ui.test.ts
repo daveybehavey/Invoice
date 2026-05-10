@@ -8622,6 +8622,9 @@ test("operator dashboard surfaces estimate and action lanes", async () => {
   try {
     await page.goto(`${baseUrl}/dashboard`, { waitUntil: "networkidle" });
     await page.getByTestId("operator-dashboard-best-lane").waitFor({ state: "visible" });
+    await page.getByTestId("operator-dashboard-momentum").getByText("Estimate conversions").waitFor({
+      state: "visible"
+    });
     await page.getByTestId("operator-dashboard-recent-activity").getByText("Estimate Dashboard Client").waitFor({
       state: "visible"
     });
