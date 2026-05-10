@@ -8322,8 +8322,13 @@ test("client workspace shows saved services and can start from memory", async ()
       state: "visible"
     });
     await page.getByText("Recurring activity").waitFor({ state: "visible" });
-    await page.getByText("Auto-send armed").waitFor({ state: "visible" });
+    await page.getByText("Recurring schedule ready").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Open recurring invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Arm auto-send" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Arm auto-send" }).click();
+    await page.getByText("Recurring auto-send armed for billing@workspace-client.example.", {
+      exact: false
+    }).waitFor({ state: "visible" });
     await page.getByText("Payment progress").waitFor({ state: "visible" });
     await page.getByText("50% complete").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Open latest with Billie" }).waitFor({ state: "visible" });

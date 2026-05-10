@@ -171,6 +171,18 @@
       const amount = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? 0);
       return total + (Number.isFinite(amount) ? Math.max(amount, 0) : 0);
     }, 0);
+  const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value ?? "").trim());
+  const getRecurringAutoSendRecipient = (invoice, clientMemoryEntries = []) => {
+    const rememberedRecipient =
+      (Array.isArray(clientMemoryEntries) ? clientMemoryEntries : []).find(
+        (entry) =>
+          normalizeName(entry?.name) ===
+          normalizeName(invoice?.customerName ?? invoice?.invoiceData?.finishedInvoice?.customerName ?? "")
+      )?.recipientEmail ?? "";
+    const deliveryRecipient = invoice?.delivery?.recipientEmail ?? "";
+    const nextRecipient = String(rememberedRecipient || deliveryRecipient).trim().toLowerCase();
+    return isValidEmail(nextRecipient) ? nextRecipient : "";
+  };
 
   function ClientWorkspacePage() {
     const navigate = useNavigate();
@@ -181,6 +193,8 @@
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(true);
     const [estimateActionId, setEstimateActionId] = useState("");
+    const [recurringNotice, setRecurringNotice] = useState("");
+    const [recurringSchedules, setRecurringSchedules] = useState(() => readRecurringSchedules(recurringStorageKey));
 
     useEffect(() => {
       let active = true;
@@ -215,6 +229,11 @@
         active = false;
       };
     }, []);
+
+    useEffect(() => {
+      setRecurringSchedules(readRecurringSchedules(recurringStorageKey));
+      setRecurringNotice("");
+    }, [recurringStorageKey]);
 
     const requestJson = async (input, init, fallbackMessage) => {
       const response = await apiFetch(input, init);
@@ -289,7 +308,6 @@
       [savedInvoices, selectedLookupKey]
     );
     const latestInvoice = clientInvoices[0] ?? null;
-    const recurringSchedules = useMemo(() => readRecurringSchedules(recurringStorageKey), [selectedClientName, latestInvoice, clientInvoices]);
     const recurringInvoice = useMemo(
       () => clientInvoices.find((invoice) => Boolean(recurringSchedules[invoice.invoiceId])) ?? null,
       [clientInvoices, recurringSchedules]
@@ -453,6 +471,40 @@
       }
     };
 
+    const persistRecurringSchedules = (nextSchedules) => {
+      setRecurringSchedules(nextSchedules);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(recurringStorageKey, JSON.stringify({ entries: nextSchedules }));
+      }
+    };
+
+    const toggleRecurringAutoSend = (invoiceId, enabled) => {
+      const existing = recurringSchedules[invoiceId];
+      if (!existing) {
+        setError("Recurring schedule not found.");
+        return;
+      }
+      const recurringInvoiceCandidate = clientInvoices.find((invoice) => invoice.invoiceId === invoiceId);
+      const recipientEmail = getRecurringAutoSendRecipient(recurringInvoiceCandidate, clientMemory);
+      if (enabled && !recipientEmail) {
+        setError("Recurring auto-send needs a remembered recipient email.");
+        return;
+      }
+      persistRecurringSchedules({
+        ...recurringSchedules,
+        [invoiceId]: {
+          ...existing,
+          autoSendEnabled: Boolean(enabled)
+        }
+      });
+      setError("");
+      setRecurringNotice(
+        enabled
+          ? `Recurring auto-send armed for ${recipientEmail || "the remembered recipient"}.`
+          : "Recurring auto-send paused for now."
+      );
+    };
+
     const bestNextMove = useMemo(() => {
       if (!selectedClientName) {
         return null;
@@ -528,7 +580,15 @@
           {
             label: "Open library",
             onClick: () => navigate("/invoices")
-          }
+          },
+          ...(recurringAutoSendRecipient
+            ? [
+                {
+                  label: recurringEntry?.autoSendEnabled ? "Pause auto-send" : "Arm auto-send",
+                  onClick: () => toggleRecurringAutoSend(recurringInvoice.invoiceId, !recurringEntry?.autoSendEnabled)
+                }
+              ]
+            : [])
         ]
       : selectedMemoryEntry
         ? [
@@ -542,6 +602,12 @@
             }
           ]
         : [];
+    const recurringClientButtonClass = (label) =>
+      label === "Open recurring invoice"
+        ? "nb-btn-primary"
+        : label === "Arm auto-send"
+          ? "nb-btn-secondary border-emerald-200 bg-emerald-50 text-emerald-900"
+          : "nb-btn-secondary";
 
     return (
       <div className="nb-page nb-page--quiet min-h-screen">
@@ -624,6 +690,7 @@
                   ) : null}
                 </div>
                 {status ? <p className="mt-4 text-sm font-semibold text-[#093064]">{status}</p> : null}
+                {recurringNotice ? <p className="mt-2 text-sm font-semibold text-emerald-700">{recurringNotice}</p> : null}
                 {error ? <p className="mt-4 text-sm font-semibold text-rose-600">{error}</p> : null}
                 {loading ? <p className="mt-4 text-sm text-slate-500">Loading client context…</p> : null}
               </section>
@@ -715,7 +782,7 @@
                                   <button
                                     key={button.label}
                                     type="button"
-                                    className={button.label === "Open recurring invoice" ? "nb-btn-primary" : "nb-btn-secondary"}
+                                    className={recurringClientButtonClass(button.label)}
                                     onClick={button.onClick}
                                   >
                                     {button.label}
