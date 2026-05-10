@@ -835,6 +835,14 @@ function Launcher() {
   const [authReturnPath, setAuthReturnPath] = useState("/");
   const [accountPlan, setAccountPlan] = useState(null);
   const [billingNotice, setBillingNotice] = useState(null);
+  const guestEntryStorageKey =
+    requestIdentity.getScopedStorageKey?.("guestEntryDismissed") ?? "invoiceGuestEntryDismissed";
+  const [guestEntryDismissed, setGuestEntryDismissed] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return window.localStorage.getItem(guestEntryStorageKey) === "true";
+  });
   const showDiagnosticsLink =
     typeof window !== "undefined" && isDiagnosticsHost(window.location.hostname);
 
@@ -844,6 +852,13 @@ function Launcher() {
       setBillingNotice(notice);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(guestEntryStorageKey, guestEntryDismissed ? "true" : "false");
+  }, [guestEntryDismissed, guestEntryStorageKey]);
 
   useEffect(() => {
     if (authSession?.userId) {
@@ -1036,9 +1051,23 @@ function Launcher() {
     }
   };
 
-  const handleGoogleSignIn = () => {
-    const googleProvider = Array.isArray(authProviders)
-      ? authProviders.find((provider) => provider?.id === "google")
+  const handleGoogleSignIn = async () => {
+    let providers = Array.isArray(authProviders) ? authProviders : [];
+    if (providers.length === 0) {
+      try {
+        providers = (await loadAuthProviders()) ?? [];
+        setAuthProviders(Array.isArray(providers) ? providers : []);
+      } catch (error) {
+        const message = error?.message || "Google Sign-In isn't available right now.";
+        setAuthBusy(false);
+        setAuthFlow("");
+        setAuthNotice("");
+        setAuthError(message);
+        return;
+      }
+    }
+    const googleProvider = Array.isArray(providers)
+      ? providers.find((provider) => provider?.id === "google")
       : null;
     if (!googleProvider?.available) {
       const message = googleProvider?.warning || "Google Sign-In isn't available right now.";
@@ -1108,6 +1137,12 @@ function Launcher() {
     setAuthEmail(authSession?.email ?? "");
     setAuthModalOpen(true);
   };
+  const handleContinueAsGuest = () => {
+    setGuestEntryDismissed(true);
+    setAuthError("");
+    setAuthSuccessNotice("Continuing as a guest. You can sign in later to sync saved work.");
+  };
+  const showWelcomeEntry = !authSession?.userId && !guestEntryDismissed;
 
   const handleSignOut = async () => {
     setAuthBusy(true);
@@ -1701,6 +1736,125 @@ function Launcher() {
       setOperationsBusyActionId("");
     }
   };
+
+  if (showWelcomeEntry) {
+    return (
+      <div
+        className="nb-page nb-page--launcher min-h-screen overflow-hidden text-slate-900"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle at top left, rgba(172,204,240,0.88), rgba(238,244,251,0) 30%), radial-gradient(circle at top right, rgba(105,147,210,0.18), rgba(238,244,251,0) 28%), linear-gradient(180deg, #f8fbff 0%, #eef4fb 48%, #f7fbff 100%)"
+        }}
+      >
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[linear-gradient(120deg,rgba(9,48,100,0.04),rgba(9,48,100,0)_36%)]" />
+        <div className="pointer-events-none absolute left-[-120px] top-[120px] h-[240px] w-[240px] rounded-full bg-[#acd0f4]/40 blur-3xl" />
+        <div className="pointer-events-none absolute right-[-80px] top-[80px] h-[220px] w-[220px] rounded-full bg-[#6993d2]/20 blur-3xl" />
+        <main className="nb-page-shell nb-page-shell--wide relative flex min-h-screen items-center justify-center py-6 md:py-14">
+          <section className="nb-surface nb-surface--elevated w-full max-w-4xl overflow-hidden rounded-[36px] border-white/70 bg-white/78 p-5 shadow-[0_24px_80px_rgba(9,48,100,0.12)] md:p-8 lg:p-10">
+            <div className="grid gap-8 md:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] md:items-center">
+              <div>
+                <div className="flex items-center gap-4">
+                  <img
+                    src="/icons/notebill.svg"
+                    alt="NoteBill"
+                    className="h-16 w-16 rounded-2xl border border-[#6993d2]/20 bg-white p-2 shadow-sm"
+                  />
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#6993d2]">
+                      Billie helps, you approve
+                    </p>
+                    <h1
+                      className="mt-2 text-4xl font-semibold text-slate-900 md:text-6xl"
+                      style={{ fontFamily: "'Fraunces', serif" }}
+                    >
+                      NoteBill
+                    </h1>
+                  </div>
+                </div>
+                <p className="mt-5 max-w-xl text-base leading-7 text-slate-600 md:text-lg">
+                  Start with rough notes, a photo, or a voice memo. Build a clean invoice in the app, or keep it
+                  light and continue as a guest.
+                </p>
+                <div className="mt-6 grid gap-2 sm:grid-cols-3">
+                  {[
+                    ["Fast start", "Google or email sign-in when you want saved work tied to your account."],
+                    ["Simple path", "Continue as a guest and use the app right away."],
+                    ["Power ready", "Import, recurring, estimates, and client memory stay available."]
+                  ].map(([title, copy]) => (
+                    <div
+                      key={title}
+                      className="rounded-[22px] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,248,253,0.92))] px-4 py-4 shadow-[0_10px_30px_rgba(9,48,100,0.05)]"
+                    >
+                      <p className="text-sm font-semibold text-[#093064]">{title}</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">{copy}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-[30px] border border-[#6993d2]/20 bg-[#093064] p-5 text-white shadow-[0_24px_60px_rgba(9,48,100,0.22)] md:p-6">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#acd0f4]">Start here</p>
+                <h2 className="mt-3 text-2xl leading-tight text-white" style={{ fontFamily: "'Fraunces', serif" }}>
+                  Choose the easiest way to begin.
+                </h2>
+                <div className="mt-5 space-y-3">
+                  <button
+                    type="button"
+                    className="nb-btn-primary w-full rounded-2xl px-4 py-3 text-sm font-semibold"
+                    onClick={() => void handleGoogleSignIn()}
+                    disabled={authBusy}
+                  >
+                    {authBusy && authFlow === "google" ? "Opening Google..." : "Continue with Google"}
+                  </button>
+                  <button
+                    type="button"
+                    className="nb-btn-secondary w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white"
+                    onClick={() => openSignInModal()}
+                    disabled={authBusy}
+                  >
+                    Continue with email
+                  </button>
+                  <button
+                    type="button"
+                    className="w-full rounded-2xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/15"
+                    onClick={handleContinueAsGuest}
+                  >
+                    Continue as guest
+                  </button>
+                </div>
+                <p className="mt-4 text-sm leading-6 text-slate-200">
+                  Guest mode keeps the app simple. Sign in anytime from the launcher when you want saved work tied to
+                  your account.
+                </p>
+                {authError ? <p className="mt-3 text-sm text-rose-200">{authError}</p> : null}
+              </div>
+            </div>
+          </section>
+        </main>
+        <AuthModal
+          open={authModalOpen}
+          authBusy={authBusy}
+          authFlow={authFlow}
+          authEmail={authEmail}
+          authEmailError={authEmailError}
+          authNotice={authNotice}
+          authPreviewUrl={authPreviewUrl}
+          authReturnPathLabel={describeAuthReturnPath(authReturnPath)}
+          authProviders={authProviders}
+          authProvidersBusy={authProvidersBusy}
+          authProvidersError={authProvidersError}
+          onChangeEmail={(event) => {
+            setAuthEmail(event.target.value);
+            setAuthEmailError("");
+            setAuthNotice("");
+            setAuthPreviewUrl("");
+          }}
+          onCancel={() => setAuthModalOpen(false)}
+          onStartGoogle={handleGoogleSignIn}
+          onSubmit={handleSignIn}
+        />
+      </div>
+    );
+  }
 
   return (
     <div

@@ -273,6 +273,26 @@ test("launcher footer exposes feedback and support", async () => {
   }
 });
 
+test("launcher welcome screen shows sign-in and guest entry", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+
+    await page.getByRole("heading", { name: "NoteBill" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Continue with Google" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Continue with email" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Continue as guest" }).waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "Continue as guest" }).click();
+
+    await page.getByRole("button", { name: "Show manage tools" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher sign-in modal shows provider readiness and keeps email-link flow active", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
