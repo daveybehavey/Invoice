@@ -1980,6 +1980,30 @@ test("daily scratchpad groups notes by day and converts selected notes into one 
   }
 });
 
+test("daily scratchpad can convert a whole session directly into Billie intake", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await openDailyScratchpad(page);
+
+    await scratchpadNoteEditor(page).fill("Installed replacement filter.");
+    await page.getByRole("button", { name: "Save note" }).click();
+    await scratchpadNoteEditor(page).fill("Checked pressure and left the system running.");
+    await page.getByRole("button", { name: "Save note" }).click();
+
+    await page.getByRole("button", { name: "Use session in invoice" }).first().waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Open session with Billie" }).first().click();
+    await page.waitForURL(/\/ai-intake$/, { timeout: 10000 });
+    await page.getByTestId("scratchpad-seed-notice").waitFor({ state: "visible" });
+    await expectValueContains(
+      page.locator("#ai-intake-input"),
+      "Installed replacement filter.\n\nChecked pressure and left the system running."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("import cleanup studio surfaces seeded source context in intake", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

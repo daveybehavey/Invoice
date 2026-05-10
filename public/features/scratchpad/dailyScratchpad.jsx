@@ -411,6 +411,46 @@
       setSelectedNoteIds([]);
     };
 
+    const handleUseSessionNotes = (sessionNotes) => {
+      if (!Array.isArray(sessionNotes) || sessionNotes.length === 0) {
+        flashStatus("Select one or more notes first.");
+        return;
+      }
+      setSelectedNoteIds(sessionNotes.map((note) => note.id));
+      const combinedText = buildCombinedNoteText(sessionNotes);
+      setBusyId("selected-notes");
+      try {
+        trackRevenueSignal("scratchpad_note_used_in_invoice", "scratchpad_invoice_start");
+        window.localStorage.setItem(draftStorageKey, JSON.stringify(buildDraftFromNote(combinedText)));
+        flashStatus(`Loaded ${sessionNotes.length} notes into invoice draft.`);
+        navigate("/manual");
+      } finally {
+        setBusyId("");
+      }
+    };
+
+    const handleUseSessionNotesWithBillie = (sessionNotes) => {
+      if (!Array.isArray(sessionNotes) || sessionNotes.length === 0) {
+        flashStatus("Select one or more notes first.");
+        return;
+      }
+      setSelectedNoteIds(sessionNotes.map((note) => note.id));
+      const seed = {
+        text: buildCombinedNoteText(sessionNotes),
+        tags: Array.from(new Set(sessionNotes.flatMap((note) => (Array.isArray(note.tags) ? note.tags : [])))).slice(0, 8),
+        createdAt: sessionNotes[0]?.createdAt || new Date().toISOString()
+      };
+      setBusyId("selected-notes-billie");
+      try {
+        window.localStorage.setItem(scratchpadSeedStorageKey, JSON.stringify(seed));
+        trackRevenueSignal("scratchpad_note_used_in_invoice", "scratchpad_billie_start");
+        flashStatus(`Loaded ${sessionNotes.length} notes into Billie intake.`);
+        navigate("/ai-intake");
+      } finally {
+        setBusyId("");
+      }
+    };
+
     const handleUseNote = (note) => {
       if (!note?.text) {
         return;
@@ -710,23 +750,41 @@
                           {group.notes.length} note{group.notes.length === 1 ? "" : "s"} in this session
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
-                        onClick={() =>
-                          setSelectedNoteIds((current) => {
-                            const groupIds = group.notes.map((note) => note.id);
-                            const allSelected = groupIds.every((id) => current.includes(id));
-                            return allSelected
-                              ? current.filter((id) => !groupIds.includes(id))
-                              : Array.from(new Set([...current, ...groupIds]));
-                          })
-                        }
-                      >
-                        {group.notes.every((note) => selectedNoteIds.includes(note.id))
-                          ? "Clear session selection"
-                          : "Select session"}
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
+                          onClick={() =>
+                            setSelectedNoteIds((current) => {
+                              const groupIds = group.notes.map((note) => note.id);
+                              const allSelected = groupIds.every((id) => current.includes(id));
+                              return allSelected
+                                ? current.filter((id) => !groupIds.includes(id))
+                                : Array.from(new Set([...current, ...groupIds]));
+                            })
+                          }
+                        >
+                          {group.notes.every((note) => selectedNoteIds.includes(note.id))
+                            ? "Clear session selection"
+                            : "Select session"}
+                        </button>
+                        <button
+                          type="button"
+                          className="nb-btn-primary rounded-full px-3 py-1.5 text-sm disabled:opacity-60"
+                          onClick={() => handleUseSessionNotes(group.notes)}
+                          disabled={busyId === "selected-notes"}
+                        >
+                          {busyId === "selected-notes" ? "Opening..." : "Use session in invoice"}
+                        </button>
+                        <button
+                          type="button"
+                          className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm disabled:opacity-60"
+                          onClick={() => handleUseSessionNotesWithBillie(group.notes)}
+                          disabled={busyId === "selected-notes-billie"}
+                        >
+                          {busyId === "selected-notes-billie" ? "Opening..." : "Open session with Billie"}
+                        </button>
+                      </div>
                     </div>
                     <div className="mt-3 space-y-3">
                       {group.notes.map((note) => (
