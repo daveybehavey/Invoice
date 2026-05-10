@@ -1952,6 +1952,34 @@ test("manual import cleanup card seeds Billie from stored import source text", a
   }
 });
 
+test("daily scratchpad groups notes by day and converts selected notes into one draft", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await openDailyScratchpad(page);
+
+    await page.getByRole("button", { name: "Record voice memo" }).waitFor({ state: "visible" });
+
+    await scratchpadNoteEditor(page).fill("Installed replacement filter.");
+    await page.getByRole("button", { name: "Save note" }).click();
+    await scratchpadNoteEditor(page).fill("Checked pressure and left the system running.");
+    await page.getByRole("button", { name: "Save note" }).click();
+
+    await page.getByText("Today").first().waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Select all shown" }).click();
+    await page.getByText("2 selected notes ready to convert").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Use selected in invoice" }).click();
+    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+    await expectValueContains(page.getByPlaceholder("Thank you for your business"), "Installed replacement filter.");
+    await expectValueContains(
+      page.getByPlaceholder("Thank you for your business"),
+      "Checked pressure and left the system running."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("import cleanup studio surfaces seeded source context in intake", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

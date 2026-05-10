@@ -26,6 +26,36 @@
     });
   };
 
+  const formatSessionLabel = (value) => {
+    const parsed = Date.parse(value ?? "");
+    if (!Number.isFinite(parsed)) {
+      return "Today";
+    }
+    const noteDate = new Date(parsed);
+    const today = new Date();
+    const sameDay =
+      noteDate.getFullYear() === today.getFullYear() &&
+      noteDate.getMonth() === today.getMonth() &&
+      noteDate.getDate() === today.getDate();
+    if (sameDay) {
+      return "Today";
+    }
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    const sameYesterday =
+      noteDate.getFullYear() === yesterday.getFullYear() &&
+      noteDate.getMonth() === yesterday.getMonth() &&
+      noteDate.getDate() === yesterday.getDate();
+    if (sameYesterday) {
+      return "Yesterday";
+    }
+    return noteDate.toLocaleDateString([], {
+      month: "short",
+      day: "numeric",
+      weekday: "short"
+    });
+  };
+
   const readNotes = (storageKey) => {
     try {
       const raw = window.localStorage.getItem(storageKey);
@@ -91,6 +121,18 @@
     savedInvoiceStatus: ""
   });
 
+  const buildCombinedNoteText = (selectedNotes) =>
+    selectedNotes
+      .map((note) => {
+        const parts = [`${formatSessionLabel(note.createdAt)}`];
+        if (Array.isArray(note.tags) && note.tags.length > 0) {
+          parts.push(`Tags: ${note.tags.map((tag) => `#${tag}`).join(", ")}`);
+        }
+        parts.push(note.text);
+        return parts.join("\n");
+      })
+      .join("\n\n");
+
   function DailyScratchpadPage() {
     const navigate = useNavigate();
     const draftStorageKey =
@@ -106,12 +148,38 @@
     const [status, setStatus] = useState("");
     const [voiceNoteBusy, setVoiceNoteBusy] = useState(false);
     const [voiceNoteError, setVoiceNoteError] = useState("");
+    const [isRecording, setIsRecording] = useState(false);
     const [busyId, setBusyId] = useState("");
     const [activeTagFilter, setActiveTagFilter] = useState("");
+    const [selectedNoteIds, setSelectedNoteIds] = useState([]);
+    const mediaRecorderRef = useRef(null);
+    const mediaStreamRef = useRef(null);
+    const recordedChunksRef = useRef([]);
+    const discardRecordingResultRef = useRef(false);
 
     useEffect(() => {
       setNotes(readNotes(scratchpadStorageKey));
     }, [scratchpadStorageKey]);
+
+    useEffect(() => {
+      setSelectedNoteIds((current) => current.filter((id) => notes.some((note) => note.id === id)));
+    }, [notes]);
+
+    useEffect(
+      () => () => {
+        discardRecordingResultRef.current = true;
+        try {
+          mediaRecorderRef.current?.stop?.();
+        } catch (_error) {
+          // Ignore recorder shutdown errors on page teardown.
+        }
+        if (mediaStreamRef.current) {
+          mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+          mediaStreamRef.current = null;
+        }
+      },
+      []
+    );
 
     const tagList = (value) =>
       String(value ?? "")
@@ -129,6 +197,29 @@
 
     const visibleNotes = notes.filter((note) => noteMatchesFilter(note, activeTagFilter));
     const latestNote = visibleNotes[0] ?? notes[0] ?? null;
+    const groupedVisibleNotes = useMemo(() => {
+      const groups = [];
+      visibleNotes.forEach((note) => {
+        const label = formatSessionLabel(note.createdAt);
+        const existing = groups.find((group) => group.label === label);
+        if (existing) {
+          existing.notes.push(note);
+          return;
+        }
+        groups.push({ label, notes: [note] });
+      });
+      return groups;
+    }, [visibleNotes]);
+    const selectedVisibleNotes = useMemo(
+      () => visibleNotes.filter((note) => selectedNoteIds.includes(note.id)),
+      [selectedNoteIds, visibleNotes]
+    );
+    const multiNoteSelectionLabel =
+      selectedVisibleNotes.length > 1
+        ? `${selectedVisibleNotes.length} selected notes ready to convert`
+        : selectedVisibleNotes.length === 1
+          ? "1 selected note ready to convert"
+          : "";
     const noteCountLabel = useMemo(() => {
       const savedLabel = `${notes.length} saved note${notes.length === 1 ? "" : "s"}`;
       if (!activeTagFilter) {
@@ -153,6 +244,36 @@
       const trimmed = nextNotes.slice(0, 30);
       setNotes(trimmed);
       writeNotes(scratchpadStorageKey, trimmed);
+    };
+
+    const transcribeAudioFile = async (file, sourceLabel) => {
+      setVoiceNoteBusy(true);
+      setVoiceNoteError("");
+      try {
+        const formData = new FormData();
+        formData.append("audioFile", file);
+        const response = await requestIdentity.apiFetch("/api/invoices/transcribe-audio", {
+          method: "POST",
+          body: formData
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error || `Could not transcribe ${sourceLabel}.`);
+        }
+        const transcript =
+          typeof payload?.extractedText === "string" ? normalizeNoteText(payload.extractedText) : "";
+        if (!transcript) {
+          throw new Error("No transcript returned for that voice note.");
+        }
+        setNoteText((current) => {
+          const existing = normalizeNoteText(current);
+          return existing ? `${existing}\n\n${transcript}` : transcript;
+        });
+        trackRevenueSignal("scratchpad_voice_note_transcribed", "scratchpad_voice_upload");
+        flashStatus(`Added transcript from ${sourceLabel}. Review it, then save the note.`);
+      } finally {
+        setVoiceNoteBusy(false);
+      }
     };
 
     const handleSaveNote = () => {
@@ -187,37 +308,83 @@
       if (!file) {
         return;
       }
-      setVoiceNoteBusy(true);
-      setVoiceNoteError("");
       try {
-        const formData = new FormData();
-        formData.append("audioFile", file);
-        const response = await requestIdentity.apiFetch("/api/invoices/transcribe-audio", {
-          method: "POST",
-          body: formData
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(payload?.error || "Could not transcribe that voice note.");
-        }
-        const transcript =
-          typeof payload?.extractedText === "string" ? normalizeNoteText(payload.extractedText) : "";
-        if (!transcript) {
-          throw new Error("No transcript returned for that voice note.");
-        }
-        setNoteText((current) => {
-          const existing = normalizeNoteText(current);
-          return existing ? `${existing}\n\n${transcript}` : transcript;
-        });
-        trackRevenueSignal("scratchpad_voice_note_transcribed", "scratchpad_voice_upload");
-        flashStatus(`Added transcript from ${file.name}. Review it, then save the note.`);
+        await transcribeAudioFile(file, file.name);
       } catch (error) {
         setVoiceNoteError(error?.message || "Could not transcribe that voice note.");
       } finally {
-        setVoiceNoteBusy(false);
         if (event?.target) {
           event.target.value = "";
         }
+      }
+    };
+
+    const startVoiceRecording = async () => {
+      if (isRecording || voiceNoteBusy) {
+        return;
+      }
+      if (!navigator.mediaDevices?.getUserMedia || typeof window.MediaRecorder !== "function") {
+        flashStatus("Voice recording is not supported in this browser.");
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = new window.MediaRecorder(stream);
+        recordedChunksRef.current = [];
+        mediaStreamRef.current = stream;
+        mediaRecorderRef.current = recorder;
+        discardRecordingResultRef.current = false;
+        recorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) {
+            recordedChunksRef.current.push(event.data);
+          }
+        };
+        recorder.onstop = async () => {
+          const discardResult = discardRecordingResultRef.current;
+          const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+          recordedChunksRef.current = [];
+          if (mediaStreamRef.current) {
+            mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+            mediaStreamRef.current = null;
+          }
+          mediaRecorderRef.current = null;
+          setIsRecording(false);
+          if (discardResult) {
+            discardRecordingResultRef.current = false;
+            return;
+          }
+          if (blob.size === 0) {
+            flashStatus("Voice memo was empty.");
+            return;
+          }
+          const file = new File([blob], `scratchpad-voice-memo-${Date.now()}.webm`, {
+            type: blob.type || "audio/webm"
+          });
+          await transcribeAudioFile(file, "voice memo");
+        };
+        recorder.start();
+        setIsRecording(true);
+        flashStatus("Recording voice memo...");
+      } catch (error) {
+        if (mediaStreamRef.current) {
+          mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+          mediaStreamRef.current = null;
+        }
+        mediaRecorderRef.current = null;
+        setIsRecording(false);
+        setVoiceNoteError(error?.message || "Could not start voice recording.");
+      }
+    };
+
+    const stopVoiceRecording = () => {
+      if (!mediaRecorderRef.current || !isRecording) {
+        return;
+      }
+      try {
+        discardRecordingResultRef.current = false;
+        mediaRecorderRef.current.stop();
+      } catch (_error) {
+        setIsRecording(false);
       }
     };
 
@@ -228,6 +395,20 @@
 
     const handleToggleFilter = (tag) => {
       setActiveTagFilter((current) => (current.toLowerCase() === tag.toLowerCase() ? "" : tag));
+    };
+
+    const toggleNoteSelection = (noteId) => {
+      setSelectedNoteIds((current) =>
+        current.includes(noteId) ? current.filter((id) => id !== noteId) : [...current, noteId]
+      );
+    };
+
+    const selectVisibleNotes = () => {
+      setSelectedNoteIds(visibleNotes.map((note) => note.id));
+    };
+
+    const clearSelectedNotes = () => {
+      setSelectedNoteIds([]);
     };
 
     const handleUseNote = (note) => {
@@ -251,6 +432,25 @@
       }
     };
 
+    const handleUseSelectedNotes = () => {
+      if (selectedVisibleNotes.length === 0) {
+        flashStatus("Select one or more notes first.");
+        return;
+      }
+      setBusyId("selected-notes");
+      try {
+        trackRevenueSignal("scratchpad_note_used_in_invoice", "scratchpad_invoice_start");
+        window.localStorage.setItem(
+          draftStorageKey,
+          JSON.stringify(buildDraftFromNote(buildCombinedNoteText(selectedVisibleNotes)))
+        );
+        flashStatus(`Loaded ${selectedVisibleNotes.length} notes into invoice draft.`);
+        navigate("/manual");
+      } finally {
+        setBusyId("");
+      }
+    };
+
     const handleUseNoteWithBillie = (note) => {
       if (!note?.text) {
         return;
@@ -265,6 +465,30 @@
         window.localStorage.setItem(scratchpadSeedStorageKey, JSON.stringify(seed));
         trackRevenueSignal("scratchpad_note_used_in_invoice", "scratchpad_billie_start");
         flashStatus("Loaded into Billie intake.");
+        navigate("/ai-intake");
+      } finally {
+        setBusyId("");
+      }
+    };
+
+    const handleUseSelectedNotesWithBillie = () => {
+      if (selectedVisibleNotes.length === 0) {
+        flashStatus("Select one or more notes first.");
+        return;
+      }
+      setBusyId("selected-notes-billie");
+      try {
+        const tags = Array.from(
+          new Set(selectedVisibleNotes.flatMap((note) => (Array.isArray(note.tags) ? note.tags : [])))
+        ).slice(0, 8);
+        const seed = {
+          text: buildCombinedNoteText(selectedVisibleNotes),
+          tags,
+          createdAt: selectedVisibleNotes[0]?.createdAt || new Date().toISOString()
+        };
+        window.localStorage.setItem(scratchpadSeedStorageKey, JSON.stringify(seed));
+        trackRevenueSignal("scratchpad_note_used_in_invoice", "scratchpad_billie_start");
+        flashStatus(`Loaded ${selectedVisibleNotes.length} notes into Billie intake.`);
         navigate("/ai-intake");
       } finally {
         setBusyId("");
@@ -340,6 +564,14 @@
                   <button
                     type="button"
                     className="nb-btn-secondary rounded-full px-4 py-2 disabled:opacity-60"
+                    onClick={isRecording ? stopVoiceRecording : startVoiceRecording}
+                    disabled={voiceNoteBusy}
+                  >
+                    {isRecording ? "Stop recording" : "Record voice memo"}
+                  </button>
+                  <button
+                    type="button"
+                    className="nb-btn-secondary rounded-full px-4 py-2 disabled:opacity-60"
                     onClick={handleUseLatest}
                     disabled={!latestNote}
                   >
@@ -361,6 +593,9 @@
                   className="sr-only"
                   onChange={handleVoiceNoteSelected}
                 />
+                <p className="text-xs text-slate-500">
+                  Voice memos can be uploaded or recorded here, then transcribed into editable scratchpad text.
+                </p>
                 {status ? <p className="text-sm text-slate-600">{status}</p> : null}
                 {voiceNoteError ? <p className="text-sm text-rose-600">{voiceNoteError}</p> : null}
               </div>
@@ -389,6 +624,39 @@
                     ))}
                   </div>
                 ) : null}
+                {selectedVisibleNotes.length > 0 ? (
+                  <div className="mt-4 rounded-[22px] border border-[#6993d2]/18 bg-[#f6f9ff] p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                      Selected notes
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900">{multiNoteSelectionLabel}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="nb-btn-primary rounded-full px-3 py-1.5 text-sm disabled:opacity-60"
+                        onClick={handleUseSelectedNotes}
+                        disabled={busyId === "selected-notes"}
+                      >
+                        {busyId === "selected-notes" ? "Opening..." : "Use selected in invoice"}
+                      </button>
+                      <button
+                        type="button"
+                        className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm disabled:opacity-60"
+                        onClick={handleUseSelectedNotesWithBillie}
+                        disabled={busyId === "selected-notes-billie"}
+                      >
+                        {busyId === "selected-notes-billie" ? "Opening..." : "Open selected with Billie"}
+                      </button>
+                      <button
+                        type="button"
+                        className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
+                        onClick={clearSelectedNotes}
+                      >
+                        Clear selection
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 {latestNote ? (
                   <button
                     type="button"
@@ -409,78 +677,133 @@
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Running notes</p>
                 <p className="mt-1 text-sm text-slate-600">Tap any note to turn it into a draft invoice.</p>
               </div>
-              <button
-                type="button"
-                className="nb-btn-ghost rounded-full px-3 py-1.5 text-sm"
-                onClick={handleClearAll}
-                disabled={notes.length === 0}
-              >
-                Clear all
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
+                  onClick={selectVisibleNotes}
+                  disabled={visibleNotes.length === 0}
+                >
+                  Select all shown
+                </button>
+                <button
+                  type="button"
+                  className="nb-btn-ghost rounded-full px-3 py-1.5 text-sm"
+                  onClick={handleClearAll}
+                  disabled={notes.length === 0}
+                >
+                  Clear all
+                </button>
+              </div>
             </div>
 
             {visibleNotes.length > 0 ? (
               <div className="mt-4 space-y-3">
-                {visibleNotes.map((note) => (
-                  <article
-                    key={note.id}
-                    className="rounded-[24px] border border-slate-200 bg-slate-50/90 p-4 shadow-sm"
-                  >
-                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                          {formatTime(note.createdAt)}
+                {groupedVisibleNotes.map((group) => (
+                  <section key={group.label} className="rounded-[28px] border border-slate-200 bg-white/80 p-3 md:p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                          {group.label}
                         </p>
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-800">{note.text}</p>
-                        {Array.isArray(note.tags) && note.tags.length > 0 ? (
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {note.tags.map((tag) => (
-                              <button
-                                key={`${note.id}:${tag}`}
-                                type="button"
-                                className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-[#093064] ring-1 ring-[#093064]/10"
-                                onClick={() => handleToggleFilter(tag)}
-                              >
-                                #{tag}
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
+                        <p className="mt-1 text-sm text-slate-600">
+                          {group.notes.length} note{group.notes.length === 1 ? "" : "s"} in this session
+                        </p>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          className="nb-btn-primary rounded-full px-3 py-1.5 text-sm disabled:opacity-60"
-                          onClick={() => handleUseNote(note)}
-                          disabled={busyId === note.id}
-                        >
-                          {busyId === note.id ? "Opening..." : "Use in invoice"}
-                        </button>
-                        <button
-                          type="button"
-                          className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm disabled:opacity-60"
-                          onClick={() => handleUseNoteWithBillie(note)}
-                          disabled={busyId === note.id}
-                        >
-                          {busyId === note.id ? "Opening..." : "Open with Billie"}
-                        </button>
-                        <button
-                          type="button"
-                          className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
-                          onClick={() => navigator.clipboard?.writeText(note.text).catch(() => {})}
-                        >
-                          Copy
-                        </button>
-                        <button
-                          type="button"
-                          className="nb-btn-ghost rounded-full px-3 py-1.5 text-sm"
-                          onClick={() => handleDeleteNote(note.id)}
-                        >
-                          Delete
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
+                        onClick={() =>
+                          setSelectedNoteIds((current) => {
+                            const groupIds = group.notes.map((note) => note.id);
+                            const allSelected = groupIds.every((id) => current.includes(id));
+                            return allSelected
+                              ? current.filter((id) => !groupIds.includes(id))
+                              : Array.from(new Set([...current, ...groupIds]));
+                          })
+                        }
+                      >
+                        {group.notes.every((note) => selectedNoteIds.includes(note.id))
+                          ? "Clear session selection"
+                          : "Select session"}
+                      </button>
                     </div>
-                  </article>
+                    <div className="mt-3 space-y-3">
+                      {group.notes.map((note) => (
+                        <article
+                          key={note.id}
+                          className={`rounded-[24px] border p-4 shadow-sm transition ${
+                            selectedNoteIds.includes(note.id)
+                              ? "border-[#6993d2]/35 bg-[#f6f9ff]"
+                              : "border-slate-200 bg-slate-50/90"
+                          }`}
+                        >
+                          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4 rounded border-slate-300 text-[#093064]"
+                                  checked={selectedNoteIds.includes(note.id)}
+                                  onChange={() => toggleNoteSelection(note.id)}
+                                />
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                                  {formatTime(note.createdAt)}
+                                </p>
+                              </div>
+                              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-800">{note.text}</p>
+                              {Array.isArray(note.tags) && note.tags.length > 0 ? (
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                  {note.tags.map((tag) => (
+                                    <button
+                                      key={`${note.id}:${tag}`}
+                                      type="button"
+                                      className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-[#093064] ring-1 ring-[#093064]/10"
+                                      onClick={() => handleToggleFilter(tag)}
+                                    >
+                                      #{tag}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className="nb-btn-primary rounded-full px-3 py-1.5 text-sm disabled:opacity-60"
+                                onClick={() => handleUseNote(note)}
+                                disabled={busyId === note.id}
+                              >
+                                {busyId === note.id ? "Opening..." : "Use in invoice"}
+                              </button>
+                              <button
+                                type="button"
+                                className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm disabled:opacity-60"
+                                onClick={() => handleUseNoteWithBillie(note)}
+                                disabled={busyId === note.id}
+                              >
+                                {busyId === note.id ? "Opening..." : "Open with Billie"}
+                              </button>
+                              <button
+                                type="button"
+                                className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
+                                onClick={() => navigator.clipboard?.writeText(note.text).catch(() => {})}
+                              >
+                                Copy
+                              </button>
+                              <button
+                                type="button"
+                                className="nb-btn-ghost rounded-full px-3 py-1.5 text-sm"
+                                onClick={() => handleDeleteNote(note.id)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
             ) : (

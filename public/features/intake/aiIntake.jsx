@@ -1429,6 +1429,44 @@ function AIIntake() {
         ].filter(Boolean)
       }
     : null;
+  const importDraftComparison = importStudioContext
+    ? {
+        clientName:
+          typeof finishedInvoice?.customerName === "string" && finishedInvoice.customerName.trim()
+            ? finishedInvoice.customerName.trim()
+            : typeof structuredInvoice?.customerName === "string" && structuredInvoice.customerName.trim()
+              ? structuredInvoice.customerName.trim()
+              : "",
+        lineItemCount: Array.isArray(finishedInvoice?.lineItems) ? finishedInvoice.lineItems.length : 0,
+        noteCount:
+          typeof finishedInvoice?.notes === "string" && finishedInvoice.notes.trim()
+            ? 1
+            : 0,
+        totalLabel: (() => {
+          const totalValue = Number(finishedInvoice?.total);
+          if (!Number.isFinite(totalValue)) {
+            return "";
+          }
+          const currencyCode =
+            typeof finishedInvoice?.currency === "string" && finishedInvoice.currency.trim().length === 3
+              ? finishedInvoice.currency.trim().toUpperCase()
+              : "USD";
+          try {
+            return new Intl.NumberFormat([], { style: "currency", currency: currencyCode }).format(totalValue);
+          } catch (_error) {
+            return totalValue.toFixed(2);
+          }
+        })(),
+        statusLabel:
+          finishedInvoice
+            ? finishedInvoice.status === "estimate"
+              ? "Estimate draft"
+              : finishedInvoice.status === "partial"
+                ? "Partial payment draft"
+                : "Invoice draft"
+            : "Waiting for the cleaned draft"
+      }
+    : null;
   const needsLaborPricing = intakeReadiness.needsFollowUp;
   const needsLaborHoursOnly = intakeReadiness.needsLaborHoursOnly;
   const showConfirmDetails =
@@ -2881,19 +2919,84 @@ function AIIntake() {
                       </div>
                     </div>
                   ) : null}
-                  {importStudioContext.preview ? (
-                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white/88 p-4">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-                          Imported source preview
-                        </p>
-                        <p className="text-[11px] font-medium text-slate-500">
-                          Original text stays available for cleanup
-                        </p>
-                      </div>
-                      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                        {importStudioContext.preview}
-                      </p>
+                  {importStudioContext.preview || importDraftComparison ? (
+                    <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                      {importStudioContext.preview ? (
+                        <div className="rounded-2xl border border-slate-200 bg-white/88 p-4">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              Imported source
+                            </p>
+                            <p className="text-[11px] font-medium text-slate-500">
+                              Keep this close while you clean up the draft
+                            </p>
+                          </div>
+                          <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                            {importStudioContext.preview}
+                          </p>
+                        </div>
+                      ) : null}
+                      {importDraftComparison ? (
+                        <div className="rounded-2xl border border-[#6993d2]/18 bg-[#f6f9ff] p-4">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6993d2]">
+                              Current draft snapshot
+                            </p>
+                            <p className="text-[11px] font-medium text-slate-500">
+                              What the cleaned draft currently knows
+                            </p>
+                          </div>
+                          <div className="mt-3 space-y-3">
+                            <div className="rounded-xl border border-slate-200 bg-white/90 px-3 py-2">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                Status
+                              </p>
+                              <p className="mt-1 text-sm font-semibold text-slate-900">{importDraftComparison.statusLabel}</p>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div className="rounded-xl border border-slate-200 bg-white/90 px-3 py-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                  Client
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-slate-900">
+                                  {importDraftComparison.clientName || "Not captured yet"}
+                                </p>
+                              </div>
+                              <div className="rounded-xl border border-slate-200 bg-white/90 px-3 py-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                  Total
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-slate-900">
+                                  {importDraftComparison.totalLabel || "Waiting on the cleaned draft"}
+                                </p>
+                              </div>
+                              <div className="rounded-xl border border-slate-200 bg-white/90 px-3 py-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                  Line items
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-slate-900">
+                                  {importDraftComparison.lineItemCount > 0
+                                    ? `${importDraftComparison.lineItemCount} captured`
+                                    : "Still waiting"}
+                                </p>
+                              </div>
+                              <div className="rounded-xl border border-slate-200 bg-white/90 px-3 py-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                  Notes
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-slate-900">
+                                  {importDraftComparison.noteCount > 0 ? "Included" : "Not yet captured"}
+                                </p>
+                              </div>
+                            </div>
+                            <p className="rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm leading-6 text-slate-700">
+                              {finishedInvoice
+                                ? "This draft is ready to compare against the import and keep refining before you commit."
+                                : "No cleaned draft yet. Billie will build one after the cleanup decisions are settled."}
+                            </p>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                   {visibleDecisionSource.length > 0 ? (
