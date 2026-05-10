@@ -8331,6 +8331,8 @@ test("client workspace shows saved services and can start from memory", async ()
     }).waitFor({ state: "visible" });
     await page.getByText("Payment progress").waitFor({ state: "visible" });
     await page.getByText("50% complete").waitFor({ state: "visible" });
+    await page.getByText("Payment timeline").waitFor({ state: "visible" });
+    await page.getByText("Deposit").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Open latest with Billie" }).waitFor({ state: "visible" });
     await page.getByTestId("client-workspace-history").getByText("INV-WORKSPACE-1").waitFor({
       state: "visible"

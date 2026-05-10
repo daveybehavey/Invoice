@@ -333,6 +333,11 @@
     const latestPartialPaymentLatestRecord = latestPartialInvoice
       ? getInvoiceLatestPayment(latestPartialInvoice)
       : null;
+    const latestPartialPaymentRecords = latestPartialInvoice
+      ? getInvoicePaymentRecords(latestPartialInvoice)
+          .slice()
+          .sort((left, right) => parseTimestamp(right.paidAt ?? right.recordedAt ?? "") - parseTimestamp(left.paidAt ?? left.recordedAt ?? ""))
+      : [];
     const latestPartialPaymentProgress =
       latestPartialPaymentTotal > 0
         ? Math.max(0, Math.min(100, Math.round((latestPartialPaymentAmount / latestPartialPaymentTotal) * 100)))
@@ -825,6 +830,35 @@
                                       : ""}
                                   </p>
                                 ) : null}
+                                <div className="rounded-[18px] border border-slate-100 bg-white/90 p-3">
+                                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                    Payment timeline
+                                  </p>
+                                  <div className="mt-2 space-y-2">
+                                    {latestPartialPaymentRecords.length > 0 ? (
+                                      latestPartialPaymentRecords.slice(0, 3).map((record, index) => (
+                                        <div key={`${record.id ?? index}`} className="flex items-start justify-between gap-3">
+                                          <div className="min-w-0">
+                                            <p className="text-sm font-semibold text-slate-700">
+                                              {record.note?.trim() || `Payment ${index + 1}`}
+                                            </p>
+                                            <p className="text-xs leading-5 text-slate-500">
+                                              {formatMoney(Number(record.amount || 0))}
+                                              {record.paidAt || record.recordedAt
+                                                ? ` · ${formatUpdatedDate(record.paidAt ?? record.recordedAt)}`
+                                                : ""}
+                                            </p>
+                                          </div>
+                                          <StatusChip tone={index === 0 ? "soft" : "neutral"}>
+                                            Step {index + 1}
+                                          </StatusChip>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <p className="text-xs leading-5 text-slate-500">No payment steps recorded yet.</p>
+                                    )}
+                                  </div>
+                                </div>
                                 <div className="flex flex-wrap gap-2 pt-1">
                                   {latestPartialPaymentButtons.map((button, index) => (
                                     <button
