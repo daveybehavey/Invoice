@@ -2042,6 +2042,7 @@ test("import cleanup studio surfaces seeded source context in intake", async () 
     await studio.getByText("1 quality blocker").waitFor({ state: "visible" });
     await studio.getByText("Captured context").waitFor({ state: "visible" });
     await studio.getByText("Still needs cleanup").waitFor({ state: "visible" });
+    await studio.getByText("Source sessions").waitFor({ state: "visible" });
     await studio.getByRole("button", { name: "Use source in chat" }).click();
     await expectValueContains(
       page.locator("#ai-intake-input"),

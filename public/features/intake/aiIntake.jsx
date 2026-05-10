@@ -1431,6 +1431,28 @@ function AIIntake() {
     : null;
   const importDraftComparison = importStudioContext
     ? {
+        sourceSessions: Array.isArray(structuredInvoice?.workSessions)
+          ? structuredInvoice.workSessions
+              .map((session, index) => {
+                const date = typeof session?.date === "string" ? session.date.trim() : "";
+                const taskCount = Array.isArray(session?.tasks) ? session.tasks.length : 0;
+                const taskPreview = Array.isArray(session?.tasks)
+                  ? session.tasks
+                      .map((task) => (typeof task?.description === "string" ? task.description.trim() : ""))
+                      .filter(Boolean)
+                      .slice(0, 2)
+                  : [];
+                return date
+                  ? {
+                      id: `source-session-${index}`,
+                      date,
+                      taskCount,
+                      taskPreview
+                    }
+                  : null;
+              })
+              .filter(Boolean)
+          : [],
         clientName:
           typeof finishedInvoice?.customerName === "string" && finishedInvoice.customerName.trim()
             ? finishedInvoice.customerName.trim()
@@ -2989,6 +3011,30 @@ function AIIntake() {
                                 </p>
                               </div>
                             </div>
+                            {importDraftComparison.sourceSessions.length > 0 ? (
+                              <div className="rounded-xl border border-slate-200 bg-white/90 px-3 py-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                  Source sessions
+                                </p>
+                                <div className="mt-2 space-y-2">
+                                  {importDraftComparison.sourceSessions.slice(0, 3).map((session) => (
+                                    <div key={session.id} className="rounded-lg border border-slate-200 bg-slate-50/90 px-3 py-2">
+                                      <p className="text-sm font-semibold text-slate-900">{session.date}</p>
+                                      <p className="text-xs text-slate-500">
+                                        {session.taskCount > 0
+                                          ? `${session.taskCount} task${session.taskCount === 1 ? "" : "s"} captured`
+                                          : "No tasks captured"}
+                                      </p>
+                                      {session.taskPreview.length > 0 ? (
+                                        <p className="mt-1 text-xs leading-5 text-slate-600">
+                                          {session.taskPreview.join(", ")}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
                             <p className="rounded-xl border border-slate-200 bg-white/90 px-3 py-2 text-sm leading-6 text-slate-700">
                               {finishedInvoice
                                 ? "This draft is ready to compare against the import and keep refining before you commit."
