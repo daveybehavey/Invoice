@@ -128,6 +128,8 @@
     const [savedInvoices, setSavedInvoices] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const [estimateActionId, setEstimateActionId] = useState("");
+    const [estimateNotice, setEstimateNotice] = useState("");
 
     useEffect(() => {
       let active = true;
@@ -160,6 +162,17 @@
         active = false;
       };
     }, []);
+
+    const requestJson = async (input, init, fallbackMessage) => {
+      const response = await apiFetch(input, init);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const requestError = new Error(payload?.error || fallbackMessage);
+        requestError.status = response.status;
+        throw requestError;
+      }
+      return payload;
+    };
 
     const clientMemory = getClientMemory();
     const savedServices = getLineItemLibrary();
@@ -244,6 +257,62 @@
         .slice(0, 4);
     }, [recurringWork]);
 
+    const handleConvertEstimateToInvoice = async (invoice) => {
+      if (!invoice?.invoiceId) {
+        return;
+      }
+      setEstimateActionId(invoice.invoiceId);
+      setError("");
+      setEstimateNotice("");
+      try {
+        const payload = await requestJson(`/api/invoices/${invoice.invoiceId}`, undefined, "Failed to load estimate.");
+        const savedInvoice = payload?.invoice;
+        const invoiceData = savedInvoice?.invoiceData;
+        const finishedInvoice = invoiceData?.finishedInvoice;
+        if (!savedInvoice?.invoiceId || !invoiceData || !finishedInvoice) {
+          throw new Error("Saved estimate data is incomplete.");
+        }
+        if (finishedInvoice.documentType !== "estimate") {
+          throw new Error("This saved document is already an invoice.");
+        }
+        const savePayload = await requestJson(
+          "/api/invoices/save",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              confirmSave: true,
+              invoiceId: savedInvoice.invoiceId,
+              sourceType: savedInvoice.sourceType,
+              invoiceData: {
+                ...invoiceData,
+                finishedInvoice: {
+                  ...finishedInvoice,
+                  documentType: "invoice"
+                }
+              }
+            })
+          },
+          "Failed to convert estimate."
+        );
+        const updatedInvoice = savePayload?.invoice;
+        if (updatedInvoice?.invoiceId) {
+          setSavedInvoices((prev) =>
+            prev.map((existing) =>
+              existing.invoiceId === updatedInvoice.invoiceId ? { ...existing, ...updatedInvoice } : existing
+            )
+          );
+          setEstimateNotice(
+            `Converted ${updatedInvoice.invoiceNumber || "the estimate"} into a draft invoice. Next: open it, confirm payment terms, and send when ready.`
+          );
+        }
+      } catch (convertError) {
+        setError(convertError?.message || "Failed to convert estimate.");
+      } finally {
+        setEstimateActionId("");
+      }
+    };
+
     const dueNowCount = recurringWork.filter((entry) => entry.dueNow).length;
     const dueSoonCount = recurringWork.filter((entry) => entry.dueSoon).length;
     const topEstimate = estimateInvoices[0] ?? null;
@@ -311,10 +380,10 @@
           title: `Keep ${topEstimate.invoiceNumber || "the estimate"} moving`,
           body:
             "Estimates should stay visible until they either turn into work or get replaced. Reopen the client context before that planning work goes cold.",
-          primaryLabel: "Open client workspace",
-          onPrimary: () => navigate(`/clients?client=${encodeURIComponent(getInvoiceClientName(topEstimate) || "")}`),
-          secondaryLabel: "Open library",
-          onSecondary: () => navigate("/invoices")
+          primaryLabel: estimateActionId === topEstimate.invoiceId ? "Converting..." : "Convert to invoice",
+          onPrimary: () => void handleConvertEstimateToInvoice(topEstimate),
+          secondaryLabel: "Open client workspace",
+          onSecondary: () => navigate(`/clients?client=${encodeURIComponent(getInvoiceClientName(topEstimate) || "")}`)
         };
       }
       if (topRecurring) {
@@ -347,7 +416,7 @@
         secondaryLabel: "Open library",
         onSecondary: () => navigate("/invoices")
       };
-    }, [estimateInvoices, navigate, partiallyPaidInvoices, recurringWork, repeatReadyClients, urgentFollowUps]);
+    }, [estimateActionId, estimateInvoices, navigate, partiallyPaidInvoices, recurringWork, repeatReadyClients, urgentFollowUps]);
 
     return (
       <div className="nb-page nb-page--quiet min-h-screen">
@@ -378,6 +447,7 @@
             </div>
             {loading ? <p className="mt-4 text-sm text-slate-500">Loading dashboard metrics…</p> : null}
             {error ? <p className="mt-4 text-sm font-semibold text-rose-600">{error}</p> : null}
+            {estimateNotice ? <p className="mt-4 text-sm font-semibold text-emerald-700">{estimateNotice}</p> : null}
           </section>
 
           <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -622,13 +692,9 @@
               <div className="mt-4 space-y-3">
                 {estimateInvoices.length > 0 ? (
                   estimateInvoices.slice(0, 3).map((invoice) => (
-                    <button
+                    <div
                       key={invoice.invoiceId}
-                      type="button"
                       className="w-full rounded-[22px] border border-slate-100 bg-white/85 p-4 text-left transition hover:border-[#6993d2]/18"
-                      onClick={() =>
-                        navigate(`/clients?client=${encodeURIComponent(getInvoiceClientName(invoice) || "")}`)
-                      }
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
@@ -641,7 +707,26 @@
                         </div>
                         <StatusChip tone="soft">estimate</StatusChip>
                       </div>
-                    </button>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="nb-btn-primary"
+                          onClick={() => void handleConvertEstimateToInvoice(invoice)}
+                          disabled={estimateActionId === invoice.invoiceId}
+                        >
+                          {estimateActionId === invoice.invoiceId ? "Converting..." : "Convert to invoice"}
+                        </button>
+                        <button
+                          type="button"
+                          className="nb-btn-secondary"
+                          onClick={() =>
+                            navigate(`/clients?client=${encodeURIComponent(getInvoiceClientName(invoice) || "")}`)
+                          }
+                        >
+                          Open client workspace
+                        </button>
+                      </div>
+                    </div>
                   ))
                 ) : (
                   <div className="rounded-[22px] border border-slate-100 bg-white/75 p-4">

@@ -8550,6 +8550,11 @@ test("operator dashboard surfaces estimate and action lanes", async () => {
     await page.goto(`${baseUrl}/dashboard`, { waitUntil: "networkidle" });
     await page.getByTestId("operator-dashboard-best-lane").waitFor({ state: "visible" });
     await page.getByTestId("operator-dashboard-estimates").getByText("EST-DASH-1").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Convert to invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Convert to invoice" }).click();
+    await page.getByText("Converted EST-DASH-1 into a draft invoice.", { exact: false }).waitFor({
+      state: "visible"
+    });
     await page.getByTestId("operator-dashboard-partials").waitFor({ state: "visible" });
     await page.getByText("Partial payments", { exact: false }).waitFor({ state: "visible" });
   } finally {
