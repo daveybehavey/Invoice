@@ -8519,6 +8519,9 @@ test("operator dashboard surfaces open balance, recurring work, and repeat-ready
     );
     await page.goto(`${baseUrl}/dashboard`, { waitUntil: "networkidle" });
     await page.getByTestId("operator-dashboard-page").waitFor({ state: "visible" });
+    await page.getByTestId("operator-dashboard-momentum").getByText("Momentum snapshot").waitFor({
+      state: "visible"
+    });
     await page.getByTestId("operator-dashboard-followups").getByText("INV-DASH-1").waitFor({
       state: "visible"
     });

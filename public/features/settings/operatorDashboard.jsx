@@ -287,6 +287,64 @@
         });
     }, [activeInvoices]);
 
+    const dashboardMomentum = useMemo(() => {
+      const nowMs = Date.now();
+      const weekStartMs = nowMs - 7 * recurringDayMs;
+      const recentPayments = activeInvoices.reduce(
+        (result, invoice) => {
+          const paymentRecords = Array.isArray(invoice?.paymentRecords)
+            ? invoice.paymentRecords
+            : Array.isArray(invoice?.invoiceData?.finishedInvoice?.paymentRecords)
+              ? invoice.invoiceData.finishedInvoice.paymentRecords
+              : [];
+          paymentRecords.forEach((record) => {
+            const recordedAt = parseTimestamp(record?.recordedAt);
+            if (!Number.isFinite(recordedAt) || recordedAt < weekStartMs) {
+              return;
+            }
+            result.count += 1;
+            result.amount += Number(record?.amount ?? 0) || 0;
+          });
+          return result;
+        },
+        { count: 0, amount: 0 }
+      );
+      return [
+        {
+          label: "Invoices touched",
+          value: activeInvoices.filter((invoice) => parseTimestamp(invoice?.updatedAt) >= weekStartMs).length,
+          detail: "Saved, changed, or refreshed this week"
+        },
+        {
+          label: "Sent this week",
+          value: activeInvoices.filter(
+            (invoice) => invoice.status === "sent" && parseTimestamp(invoice?.updatedAt) >= weekStartMs
+          ).length,
+          detail: "Fresh invoices that moved into delivery"
+        },
+        {
+          label: "Paid this week",
+          value: paidInvoices.filter((invoice) => parseTimestamp(invoice?.updatedAt) >= weekStartMs).length,
+          detail: "Balances that were fully closed out"
+        },
+        {
+          label: "Estimates active",
+          value: estimateInvoices.filter((invoice) => parseTimestamp(invoice?.updatedAt) >= weekStartMs).length,
+          detail: "Planning work still moving"
+        },
+        {
+          label: "Recurring sends",
+          value: recurringSendHistory.filter((entry) => parseTimestamp(entry.lastAutoSendAt) >= weekStartMs).length,
+          detail: "Auto-send runs completed in the last seven days"
+        },
+        {
+          label: "Payments recorded",
+          value: recentPayments.count > 0 ? `${recentPayments.count} / ${formatMoney(recentPayments.amount)}` : "0",
+          detail: "Deposits and partials recorded this week"
+        }
+      ];
+    }, [activeInvoices, estimateInvoices, paidInvoices, recurringSendHistory]);
+
     const handleConvertEstimateToInvoice = async (invoice) => {
       if (!invoice?.invoiceId) {
         return;
@@ -499,6 +557,30 @@
             ))}
           </section>
 
+          <section className="nb-surface mt-5 rounded-[26px] p-5 md:rounded-[30px] md:p-6" data-testid="operator-dashboard-momentum">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Momentum snapshot</p>
+                <h2 className="mt-2 text-lg font-semibold text-slate-900">What moved this week</h2>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">
+                  A quick read on the latest activity so the dashboard stays focused on momentum, not just totals.
+                </p>
+              </div>
+              <StatusChip tone="soft">7-day window</StatusChip>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {dashboardMomentum.map((item) => (
+                <div key={item.label} className="rounded-[22px] border border-slate-100 bg-white/85 p-4">
+                  <p className="text-xl font-semibold text-[#093064]">{item.value}</p>
+                  <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                    {item.label}
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-600">{item.detail}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
           <section className="nb-surface mt-5 rounded-[26px] p-5 md:rounded-[30px] md:p-6" data-testid="operator-dashboard-recent-activity">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -595,7 +677,7 @@
                       key={invoice.invoiceId}
                       type="button"
                       className="w-full rounded-[22px] border border-slate-100 bg-white/85 p-4 text-left transition hover:border-[#6993d2]/18"
-                      onClick={() => navigate(`/invoices?open=${encodeURIComponent(entry.invoice.invoiceId)}`)}
+                      onClick={() => navigate(`/invoices?open=${encodeURIComponent(invoice.invoiceId)}`)}
                     >
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div>
