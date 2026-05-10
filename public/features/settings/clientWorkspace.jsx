@@ -180,6 +180,7 @@
     const [status, setStatus] = useState("");
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(true);
+    const [estimateActionId, setEstimateActionId] = useState("");
 
     useEffect(() => {
       let active = true;
@@ -214,6 +215,17 @@
         active = false;
       };
     }, []);
+
+    const requestJson = async (input, init, fallbackMessage) => {
+      const response = await apiFetch(input, init);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const requestError = new Error(payload?.error || fallbackMessage);
+        requestError.status = response.status;
+        throw requestError;
+      }
+      return payload;
+    };
 
     const clientOptions = useMemo(() => {
       const remembered = getClientMemory().map((entry) => ({
@@ -385,6 +397,62 @@
       navigate("/manual");
     };
 
+    const handleConvertEstimateToInvoice = async (invoice = latestInvoice) => {
+      if (!invoice?.invoiceId) {
+        return;
+      }
+      setEstimateActionId(invoice.invoiceId);
+      setStatus("");
+      setError("");
+      try {
+        const payload = await requestJson(`/api/invoices/${invoice.invoiceId}`, undefined, "Failed to load estimate.");
+        const savedInvoice = payload?.invoice;
+        const invoiceData = savedInvoice?.invoiceData;
+        const finishedInvoice = invoiceData?.finishedInvoice;
+        if (!savedInvoice?.invoiceId || !invoiceData || !finishedInvoice) {
+          throw new Error("Saved estimate data is incomplete.");
+        }
+        if (finishedInvoice.documentType !== "estimate") {
+          throw new Error("This saved document is already an invoice.");
+        }
+        const savePayload = await requestJson(
+          "/api/invoices/save",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              confirmSave: true,
+              invoiceId: savedInvoice.invoiceId,
+              sourceType: savedInvoice.sourceType,
+              invoiceData: {
+                ...invoiceData,
+                finishedInvoice: {
+                  ...finishedInvoice,
+                  documentType: "invoice"
+                }
+              }
+            })
+          },
+          "Failed to convert estimate."
+        );
+        const updatedInvoice = savePayload?.invoice;
+        if (updatedInvoice?.invoiceId) {
+          setSavedInvoices((prev) =>
+            prev.map((existing) =>
+              existing.invoiceId === updatedInvoice.invoiceId ? { ...existing, ...updatedInvoice } : existing
+            )
+          );
+          setStatus(
+            `Converted ${updatedInvoice.invoiceNumber || "the estimate"} into a draft invoice. Next: open it, confirm payment terms, and send when ready.`
+          );
+        }
+      } catch (convertError) {
+        setError(convertError?.message || "Failed to convert estimate.");
+      } finally {
+        setEstimateActionId("");
+      }
+    };
+
     const bestNextMove = useMemo(() => {
       if (!selectedClientName) {
         return null;
@@ -395,10 +463,10 @@
           title: "Reopen the estimate before turning it into billable work",
           body:
             "Keep the estimate as the planning document until the work is approved. Reopen it with Billie first, then convert it from the library when the money workflow is ready.",
-          primaryLabel: "Open latest with Billie",
-          onPrimary: () => handleOpenInvoiceWithBillie(latestInvoice),
-          secondaryLabel: "Open library",
-          onSecondary: () => navigate("/invoices")
+          primaryLabel: estimateActionId === latestInvoice.invoiceId ? "Converting..." : "Convert to invoice",
+          onPrimary: () => void handleConvertEstimateToInvoice(latestInvoice),
+          secondaryLabel: "Open latest with Billie",
+          onSecondary: () => handleOpenInvoiceWithBillie(latestInvoice)
         };
       }
       if (latestInvoice && hasPartialPayment(latestInvoice)) {
@@ -450,7 +518,7 @@
         secondaryLabel: "Review memory",
         onSecondary: () => navigate("/settings/memory")
       };
-    }, [selectedClientName, latestInvoice, selectedMemoryEntry, leadService, navigate]);
+    }, [estimateActionId, latestInvoice, leadService, navigate, selectedClientName, selectedMemoryEntry]);
     const recurringClientButtons = recurringInvoice
       ? [
           {
@@ -829,27 +897,28 @@
                                   </StatusChip>
                                 </div>
                               </div>
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  className="nb-btn-secondary"
-                                  onClick={() => handleOpenInvoiceWithBillie(invoice)}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="nb-btn-secondary"
+                          onClick={() => handleOpenInvoiceWithBillie(invoice)}
                                 >
                                   Open with Billie
                                 </button>
-                                {getInvoiceDocumentType(invoice) === "estimate" ? (
-                                  <button
-                                    type="button"
-                                    className="nb-btn-secondary"
-                                    onClick={() => navigate("/invoices")}
-                                  >
-                                    Open library
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    className="nb-btn-secondary"
-                                    onClick={() => handleInvoiceAgain(invoice)}
+                        {getInvoiceDocumentType(invoice) === "estimate" ? (
+                          <button
+                            type="button"
+                            className="nb-btn-primary"
+                            onClick={() => void handleConvertEstimateToInvoice(invoice)}
+                            disabled={estimateActionId === invoice.invoiceId}
+                          >
+                            {estimateActionId === invoice.invoiceId ? "Converting..." : "Convert to invoice"}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="nb-btn-secondary"
+                            onClick={() => handleInvoiceAgain(invoice)}
                                   >
                                     Invoice again
                                   </button>

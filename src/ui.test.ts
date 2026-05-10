@@ -8348,10 +8348,11 @@ test("client workspace gives estimates a safer next action", async () => {
       waitUntil: "networkidle"
     });
     await page.getByTestId("client-workspace-page").waitFor({ state: "visible" });
-    await page
-      .getByTestId("client-workspace-history")
-      .getByRole("button", { name: "Open library" })
-      .waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Convert to invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Convert to invoice" }).click();
+    await page.getByText("Converted EST-WORKSPACE-1 into a draft invoice.", { exact: false }).waitFor({
+      state: "visible"
+    });
   } finally {
     await context.close();
   }
