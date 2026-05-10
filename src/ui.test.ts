@@ -8162,6 +8162,20 @@ test("client workspace shows saved services and can start from memory", async ()
         }
       ])
     );
+    window.localStorage.setItem(
+      `invoiceRecurringSchedules::owner:${initOwnerId}`,
+      JSON.stringify({
+        entries: {
+          "workspace-invoice-id": {
+            intervalDays: 90,
+            nextDueAt: "2026-05-15T00:00:00.000Z",
+            autoSendEnabled: true,
+            lastAutoSendAt: "2026-05-01T18:00:00.000Z",
+            lastAutoSendRecipient: "billing@workspace-client.example"
+          }
+        }
+      })
+    );
   }, ownerId);
   const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
     headers: {
@@ -8211,6 +8225,8 @@ test("client workspace shows saved services and can start from memory", async ()
     await page.getByTestId("client-workspace-services").getByText("Quarterly HVAC tune-up").waitFor({
       state: "visible"
     });
+    await page.getByText("Recurring activity").waitFor({ state: "visible" });
+    await page.getByText("Auto-send armed").waitFor({ state: "visible" });
     await page.getByTestId("client-workspace-history").getByText("INV-WORKSPACE-1").waitFor({
       state: "visible"
     });

@@ -53,6 +53,8 @@
   const draftStorageKey = requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? "invoiceDraft";
   const billieWorkspaceStorageKey =
     requestIdentity.getScopedStorageKey?.("billieWorkspaceInstruction") ?? "billieWorkspaceInstruction";
+  const recurringStorageKey =
+    requestIdentity.getScopedStorageKey?.("invoiceRecurringSchedules") ?? "invoiceRecurringSchedules";
 
   const normalizeName = (value) => (typeof value === "string" ? value.trim().toLocaleLowerCase() : "");
   const getInvoiceClientName = (invoice) =>
@@ -98,6 +100,41 @@
       return "Updated recently";
     }
     return `Updated ${parsed.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
+  };
+
+  const parseTimestamp = (value) => {
+    const parsed = Date.parse(value ?? "");
+    return Number.isFinite(parsed) ? parsed : NaN;
+  };
+
+  const readRecurringSchedules = (storageKey) => {
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) {
+        return {};
+      }
+      const parsed = JSON.parse(raw);
+      const entries = parsed?.entries && typeof parsed.entries === "object" ? parsed.entries : {};
+      return Object.entries(entries).reduce((result, [invoiceId, entry]) => {
+        if (!invoiceId || !entry || typeof entry !== "object") {
+          return result;
+        }
+        result[invoiceId] = {
+          intervalDays: Number(entry.intervalDays ?? 30) || 30,
+          nextDueAt: typeof entry.nextDueAt === "string" ? entry.nextDueAt : "",
+          autoSendEnabled: Boolean(entry.autoSendEnabled),
+          lastAutoSendAt:
+            typeof entry.lastAutoSendAt === "string" && entry.lastAutoSendAt.trim()
+              ? entry.lastAutoSendAt
+              : "",
+          lastAutoSendRecipient:
+            typeof entry.lastAutoSendRecipient === "string" ? entry.lastAutoSendRecipient.trim().toLowerCase() : ""
+        };
+        return result;
+      }, {});
+    } catch (_error) {
+      return {};
+    }
   };
 
   const sumOpenBalance = (invoices) =>
@@ -211,6 +248,15 @@
       [savedInvoices, selectedLookupKey]
     );
     const latestInvoice = clientInvoices[0] ?? null;
+    const recurringSchedules = useMemo(() => readRecurringSchedules(recurringStorageKey), [selectedClientName, latestInvoice, clientInvoices]);
+    const recurringInvoice = useMemo(
+      () => clientInvoices.find((invoice) => Boolean(recurringSchedules[invoice.invoiceId])) ?? null,
+      [clientInvoices, recurringSchedules]
+    );
+    const recurringEntry = recurringInvoice ? recurringSchedules[recurringInvoice.invoiceId] : null;
+    const recurringNextDueLabel = recurringEntry?.nextDueAt
+      ? formatUpdatedDate(recurringEntry.nextDueAt)
+      : "";
     const paidCount = clientInvoices.filter((invoice) => invoice?.status === "paid").length;
     const sentCount = clientInvoices.filter((invoice) => invoice?.status === "sent").length;
     const draftCount = clientInvoices.filter((invoice) => invoice?.status === "draft").length;
@@ -488,6 +534,36 @@
                             <p className="mt-2 text-sm leading-6 text-slate-700">
                               {selectedMemoryEntry?.defaultNotes || "No saved default notes yet"}
                             </p>
+                          </div>
+                          <div className="rounded-[22px] border border-slate-100 bg-white/85 p-4">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                              Recurring activity
+                            </p>
+                            {recurringEntry ? (
+                              <div className="mt-2 space-y-1">
+                                <p className="text-sm font-semibold text-slate-700">
+                                  {recurringEntry.autoSendEnabled ? "Auto-send armed" : "Recurring schedule ready"}
+                                </p>
+                                <p className="text-xs leading-5 text-slate-600">
+                                  {recurringEntry.intervalDays}-day cadence
+                                  {recurringNextDueLabel ? ` · Next due ${recurringNextDueLabel}` : ""}
+                                </p>
+                                {recurringEntry.lastAutoSendAt ? (
+                                  <p className="text-xs leading-5 text-slate-500">
+                                    Last run {formatUpdatedDate(recurringEntry.lastAutoSendAt)}
+                                    {recurringEntry.lastAutoSendRecipient
+                                      ? ` · ${recurringEntry.lastAutoSendRecipient}`
+                                      : ""}
+                                  </p>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <p className="mt-2 text-sm leading-6 text-slate-700">
+                                {selectedMemoryEntry?.recurringIntervalDays
+                                  ? `${formatRecurringCadence(selectedMemoryEntry.recurringIntervalDays)} cadence is remembered for this client.`
+                                  : "No recurring schedule saved yet."}
+                              </p>
+                            )}
                           </div>
                         </div>
                       </div>
