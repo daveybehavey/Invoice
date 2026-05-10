@@ -115,6 +115,12 @@
     invoice?.documentType === "estimate" || invoice?.invoiceData?.finishedInvoice?.documentType === "estimate"
       ? "estimate"
       : "invoice";
+  const getEstimateReviewState = (invoice) =>
+    typeof invoice?.invoiceData?.finishedInvoice?.estimateReviewState === "string"
+      ? invoice.invoiceData.finishedInvoice.estimateReviewState.trim().toLowerCase()
+      : typeof invoice?.estimateReviewState === "string"
+        ? invoice.estimateReviewState.trim().toLowerCase()
+        : "";
   const hasPartialPayment = (invoice) => {
     const total = Number(invoice?.total ?? invoice?.invoiceData?.finishedInvoice?.total ?? 0);
     const balance = Number(invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? total);
@@ -1075,7 +1081,21 @@
                             {invoice.dueDate ? `Target ${invoice.dueDate}` : "No target date yet"} · {formatMoney(Number(invoice.total || invoice.invoiceData?.finishedInvoice?.total || 0))}
                           </p>
                         </div>
-                        <StatusChip tone="soft">estimate</StatusChip>
+                        <StatusChip
+                          tone={
+                            getEstimateReviewState(invoice) === "approved"
+                              ? "success"
+                              : getEstimateReviewState(invoice) === "needs_review"
+                                ? "warning"
+                                : "soft"
+                          }
+                        >
+                          {getEstimateReviewState(invoice) === "approved"
+                            ? "approved estimate"
+                            : getEstimateReviewState(invoice) === "needs_review"
+                              ? "needs review"
+                              : "estimate"}
+                        </StatusChip>
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
                         <button

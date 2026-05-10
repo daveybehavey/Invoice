@@ -192,6 +192,12 @@
   const normalizeLookupText = (value) =>
     typeof value === "string" ? value.trim().toLocaleLowerCase() : "";
   const getDocumentType = (invoice) => (invoice?.documentType === "estimate" ? "estimate" : "invoice");
+  const getEstimateReviewState = (invoice) =>
+    typeof invoice?.invoiceData?.finishedInvoice?.estimateReviewState === "string"
+      ? invoice.invoiceData.finishedInvoice.estimateReviewState.trim().toLowerCase()
+      : typeof invoice?.estimateReviewState === "string"
+        ? invoice.estimateReviewState.trim().toLowerCase()
+        : "";
 
   const buildClientMemoryStarterForInvoice = (invoice, clientMemoryEntries, savedLineItems) => {
     const customerName = normalizeLookupText(
@@ -415,6 +421,7 @@
   const [reminderNotificationSettings, setReminderNotificationSettings] = useState(() =>
     readReminderNotificationSettings(reminderNotificationSettingsStorageKey)
   );
+  const [estimateReviewActionId, setEstimateReviewActionId] = useState("");
   const [reminderAutomationBusy, setReminderAutomationBusy] = useState(false);
   const [reminderAutomationNotice, setReminderAutomationNotice] = useState("");
   const [reminderNotificationBusy, setReminderNotificationBusy] = useState(false);
@@ -1191,6 +1198,85 @@
       handleLibraryError(convertError, "Failed to convert estimate.");
     } finally {
       setActionId("");
+    }
+  };
+
+  const handleSetEstimateReviewState = async (invoiceId, reviewState) => {
+    if (!invoiceId || !reviewState) {
+      return;
+    }
+    setEstimateReviewActionId(invoiceId);
+    setError("");
+    setDeliveryNotice("");
+    try {
+      const payload = await requestJson(`/api/invoices/${invoiceId}`, undefined, "Failed to load estimate.");
+      const savedInvoice = payload?.invoice;
+      const invoiceData = savedInvoice?.invoiceData;
+      const finishedInvoice = invoiceData?.finishedInvoice;
+      if (!savedInvoice?.invoiceId || !invoiceData || !finishedInvoice) {
+        throw new Error("Saved estimate data is incomplete.");
+      }
+      if (finishedInvoice.documentType !== "estimate") {
+        throw new Error("This saved document is already an invoice.");
+      }
+      const savePayload = await requestJson(
+        "/api/invoices/save",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            confirmSave: true,
+            invoiceId: savedInvoice.invoiceId,
+            sourceType: savedInvoice.sourceType,
+            invoiceData: {
+              ...invoiceData,
+              finishedInvoice: {
+                ...finishedInvoice,
+                estimateReviewState: reviewState,
+                estimateReviewUpdatedAt: new Date().toISOString()
+              }
+            }
+          })
+        },
+        "Failed to update estimate review state."
+      );
+      const updatedInvoice = savePayload?.invoice;
+      if (updatedInvoice?.invoiceId) {
+        const estimateLabel =
+          updatedInvoice.invoiceNumber ||
+          savedInvoice.invoiceNumber ||
+          savedInvoice.invoiceData?.finishedInvoice?.invoiceNumber ||
+          "the estimate";
+        setInvoices((prev) =>
+          prev.map((invoice) => {
+            if (invoice.invoiceId !== updatedInvoice.invoiceId) {
+              return invoice;
+            }
+            const mergedInvoice = mergeUpdatedInvoiceMetadata(invoice, updatedInvoice);
+            return {
+              ...mergedInvoice,
+              estimateReviewState: reviewState,
+              invoiceData: {
+                ...(mergedInvoice.invoiceData || {}),
+                finishedInvoice: {
+                  ...(mergedInvoice.invoiceData?.finishedInvoice || {}),
+                  estimateReviewState: reviewState,
+                  estimateReviewUpdatedAt: new Date().toISOString()
+                }
+              }
+            };
+          })
+        );
+        setDeliveryNotice(
+          reviewState === "approved"
+            ? `Marked ${estimateLabel} as approved. Next: convert it when the work is ready to bill.`
+            : `Marked ${estimateLabel} as needing review. Next: reopen it with Billie and tidy the missing pieces.`
+        );
+      }
+    } catch (reviewError) {
+      handleLibraryError(reviewError, "Failed to update estimate review state.");
+    } finally {
+      setEstimateReviewActionId("");
     }
   };
 
@@ -3460,6 +3546,7 @@
                 const lifecycleLabel = getInvoiceLifecycleLabel(invoice);
                 const recurringEntry = recurringSchedulesByInvoiceId[invoice.invoiceId] ?? null;
                 const isEstimateDocument = getDocumentType(invoice) === "estimate";
+                const estimateReviewState = isEstimateDocument ? getEstimateReviewState(invoice) : "";
                 const recurringAutoSendRecipient = recurringEntry
                   ? getRecurringAutoSendRecipient(invoice, getClientMemory())
                   : "";
@@ -3792,7 +3879,11 @@
                           </p>
                           {getDocumentType(invoice) === "estimate" ? (
                             <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6993d2]">
-                              Estimate
+                              {estimateReviewState === "approved"
+                                ? "Estimate approved"
+                                : estimateReviewState === "needs_review"
+                                  ? "Estimate needs review"
+                                  : "Estimate"}
                             </p>
                           ) : null}
                           <p className="text-xs text-slate-500">
@@ -4005,6 +4096,25 @@
                               disabled={actionId === invoice.invoiceId || isStatusBusy || isDeleting}
                             >
                               {actionId === invoice.invoiceId ? "Converting..." : "Convert to invoice"}
+                            </button>
+                          ) : null}
+                          {isEstimateDocument ? (
+                            <button
+                              type="button"
+                              className="nb-btn-secondary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:text-slate-300"
+                              onClick={() =>
+                                void handleSetEstimateReviewState(
+                                  invoice.invoiceId,
+                                  estimateReviewState === "approved" ? "needs_review" : "approved"
+                                )
+                              }
+                              disabled={actionId === invoice.invoiceId || isDeleting || isStatusBusy || estimateReviewActionId === invoice.invoiceId}
+                            >
+                              {estimateReviewActionId === invoice.invoiceId
+                                ? "Saving..."
+                                : estimateReviewState === "approved"
+                                  ? "Mark needs review"
+                                  : "Mark approved"}
                             </button>
                           ) : null}
                           {repeatMemoryStarter ? (

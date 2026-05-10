@@ -8827,7 +8827,14 @@ test("invoice library can convert a saved estimate into a draft invoice", async 
       .getByTestId("library-billie-next-up")
       .getByText("Turn EST-CONVERT-1 into billable work")
       .waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Convert to invoice" }).click();
+    await page.getByRole("button", { name: "Mark approved" }).click();
+    await page.getByText("Marked EST-CONVERT-1 as approved.", { exact: false }).waitFor({
+      state: "visible"
+    });
+    await page
+      .getByTestId("library-billie-next-up")
+      .getByRole("button", { name: "Convert to invoice" })
+      .click();
     await page.getByRole("button", { name: "Send invoice EST-CONVERT-1" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
