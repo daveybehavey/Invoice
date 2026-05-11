@@ -2304,31 +2304,64 @@ function AppChrome({ children }) {
   ];
   const showNav = !hiddenRoutes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
   const navItems = [
-    { label: "Launcher", path: "/", icon: SparklesIcon },
-    { label: "Library", path: "/invoices", icon: ArchiveIcon },
-    { label: "Scratchpad", path: "/scratchpad", icon: NotebookIcon },
-    { label: "Dashboard", path: "/dashboard", icon: SquaresIcon },
-    { label: "Settings", path: "/settings/business", icon: SwatchIcon }
+    { label: "Launcher", mobileLabel: "Home", path: "/", icon: SparklesIcon },
+    { label: "Library", mobileLabel: "Library", path: "/invoices", icon: ArchiveIcon },
+    { label: "Scratchpad", mobileLabel: "Notes", path: "/scratchpad", icon: NotebookIcon },
+    { label: "Dashboard", mobileLabel: "Stats", path: "/dashboard", icon: SquaresIcon },
+    { label: "Settings", mobileLabel: "Prefs", path: "/settings/business", icon: SwatchIcon }
   ];
   const isActive = (path) => (path === "/" ? pathname === "/" : pathname === path || pathname.startsWith(`${path}/`));
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen pb-24 md:pb-0">
       {showNav ? (
-        <div className="sticky top-0 z-50 border-b border-emerald-200/70 bg-[rgba(245,252,247,0.92)] backdrop-blur-xl">
-          <div className="mx-auto flex max-w-7xl items-center gap-3 px-3 py-3 md:px-6">
-            <button
-              type="button"
-              className="hidden shrink-0 items-center gap-2 rounded-full border border-emerald-200/80 bg-white/85 px-3 py-2 text-sm font-semibold text-emerald-950 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 sm:inline-flex"
-              onClick={() => navigate("/")}
-            >
-              <img src="/icons/notebill.svg" alt="" aria-hidden="true" className="h-7 w-7 rounded-xl" />
-              <span>NoteBill</span>
-            </button>
-            <nav
-              className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto rounded-full border border-emerald-200 bg-emerald-50/80 p-1 shadow-sm"
-              aria-label="Primary"
-            >
+        <>
+          <div className="sticky top-0 z-50 hidden border-b border-emerald-200/70 bg-[rgba(245,252,247,0.92)] backdrop-blur-xl md:block">
+            <div className="mx-auto flex max-w-7xl items-center gap-3 px-3 py-3 md:px-6">
+              <button
+                type="button"
+                className="hidden shrink-0 items-center gap-2 rounded-full border border-emerald-200/80 bg-white/85 px-3 py-2 text-sm font-semibold text-emerald-950 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 sm:inline-flex"
+                onClick={() => navigate("/")}
+              >
+                <img src="/icons/notebill.svg" alt="" aria-hidden="true" className="h-7 w-7 rounded-xl" />
+                <span>NoteBill</span>
+              </button>
+              <nav
+                className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto rounded-full border border-emerald-200 bg-emerald-50/80 p-1 shadow-sm"
+                aria-label="Primary"
+              >
+                {navItems.map((item) => {
+                  const active = isActive(item.path);
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.path}
+                      type="button"
+                      className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold transition ${
+                        active
+                          ? "bg-[#14532d] text-white shadow-[0_12px_30px_rgba(20,83,45,0.18)]"
+                          : "text-emerald-900/80 hover:bg-white/85 hover:text-emerald-950"
+                      }`}
+                      aria-current={active ? "page" : undefined}
+                      onClick={() => navigate(item.path)}
+                    >
+                      <Icon className={`h-4 w-4 ${active ? "text-white" : "text-emerald-700"}`} />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+              <button
+                type="button"
+                className="hidden shrink-0 rounded-full bg-[linear-gradient(135deg,_#4f8b5f_0%,_#14532d_100%)] px-4 py-2 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(20,83,45,0.2)] transition hover:-translate-y-0.5 sm:inline-flex"
+                onClick={() => navigate("/ai-intake")}
+              >
+                New invoice
+              </button>
+            </div>
+          </div>
+          <div className="fixed inset-x-0 bottom-0 z-50 border-t border-emerald-200/70 bg-[rgba(245,252,247,0.96)] px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl md:hidden">
+            <div className="mx-auto grid max-w-2xl grid-cols-5 gap-1">
               {navItems.map((item) => {
                 const active = isActive(item.path);
                 const Icon = item.icon;
@@ -2336,29 +2369,33 @@ function AppChrome({ children }) {
                   <button
                     key={item.path}
                     type="button"
-                    className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold transition ${
+                    className={`flex min-h-14 flex-col items-center justify-center rounded-2xl px-1 py-2 text-[10px] font-semibold leading-none transition ${
                       active
-                        ? "bg-[#14532d] text-white shadow-[0_12px_30px_rgba(20,83,45,0.18)]"
+                        ? "bg-[#14532d] text-white shadow-[0_10px_24px_rgba(20,83,45,0.18)]"
                         : "text-emerald-900/80 hover:bg-white/85 hover:text-emerald-950"
                     }`}
                     aria-current={active ? "page" : undefined}
+                    aria-label={item.label}
                     onClick={() => navigate(item.path)}
                   >
-                    <Icon className={`h-4 w-4 ${active ? "text-white" : "text-emerald-700"}`} />
-                    <span>{item.label}</span>
+                    <Icon className={`h-5 w-5 ${active ? "text-white" : "text-emerald-700"}`} />
+                    <span className="mt-1">{item.mobileLabel || item.label}</span>
                   </button>
                 );
               })}
-            </nav>
+            </div>
             <button
               type="button"
-              className="hidden shrink-0 rounded-full bg-[linear-gradient(135deg,_#4f8b5f_0%,_#14532d_100%)] px-4 py-2 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(20,83,45,0.2)] transition hover:-translate-y-0.5 sm:inline-flex"
+              className="absolute right-3 top-[-3.15rem] inline-flex h-12 w-12 items-center justify-center rounded-full bg-[linear-gradient(135deg,_#4f8b5f_0%,_#14532d_100%)] text-white shadow-[0_18px_36px_rgba(20,83,45,0.22)] transition hover:-translate-y-0.5"
+              aria-label="New invoice"
               onClick={() => navigate("/ai-intake")}
             >
-              New invoice
+              <span className="text-2xl leading-none" aria-hidden="true">
+                +
+              </span>
             </button>
           </div>
-        </div>
+        </>
       ) : null}
       {children}
     </div>
