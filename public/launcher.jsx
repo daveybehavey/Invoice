@@ -2360,7 +2360,7 @@ function AppChrome({ children }) {
               </button>
             </div>
           </div>
-          <div className="fixed inset-x-0 bottom-0 z-50 border-t border-emerald-200/70 bg-[rgba(245,252,247,0.96)] px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl md:hidden">
+          <div className="fixed inset-x-0 bottom-0 z-50 border-t border-emerald-200/70 bg-[rgba(245,252,247,0.96)] px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur-xl md:hidden relative">
             <div className="mx-auto grid max-w-2xl grid-cols-5 gap-1">
               {navItems.map((item) => {
                 const active = isActive(item.path);
