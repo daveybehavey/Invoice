@@ -1,4 +1,4 @@
-const { BrowserRouter, Routes, Route, useLocation, useNavigate, useSearchParams } = ReactRouterDOM;
+﻿const { BrowserRouter, Routes, Route, useLocation, useNavigate, useSearchParams } = ReactRouterDOM;
 const { useEffect, useState } = React;
 
 const uiPrimitives = window.InvoiceUIPrimitives;
@@ -13,7 +13,8 @@ const {
   ArchiveIcon,
   SwatchIcon,
   FeedbackIcon,
-  NotebookIcon
+  NotebookIcon,
+  SquaresIcon
 } = uiPrimitives;
 
 const intakeFeatureUtils = window.InvoiceIntakeFeature;
@@ -1746,9 +1747,9 @@ function Launcher() {
             "radial-gradient(circle at top left, rgba(172,204,240,0.88), rgba(238,244,251,0) 30%), radial-gradient(circle at top right, rgba(105,147,210,0.18), rgba(238,244,251,0) 28%), linear-gradient(180deg, #f8fbff 0%, #eef4fb 48%, #f7fbff 100%)"
         }}
       >
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[linear-gradient(120deg,rgba(9,48,100,0.04),rgba(9,48,100,0)_36%)]" />
-        <div className="pointer-events-none absolute left-[-120px] top-[120px] h-[240px] w-[240px] rounded-full bg-[#acd0f4]/40 blur-3xl" />
-        <div className="pointer-events-none absolute right-[-80px] top-[80px] h-[220px] w-[220px] rounded-full bg-[#6993d2]/20 blur-3xl" />
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[linear-gradient(120deg,rgba(20,83,45,0.05),rgba(20,83,45,0)_36%)]" />
+        <div className="pointer-events-none absolute left-[-120px] top-[120px] h-[240px] w-[240px] rounded-full bg-[#d7f1dd]/40 blur-3xl" />
+        <div className="pointer-events-none absolute right-[-80px] top-[80px] h-[220px] w-[220px] rounded-full bg-[#4f8b5f]/20 blur-3xl" />
         <main className="nb-page-shell nb-page-shell--wide relative flex min-h-screen items-center justify-center py-6 md:py-14">
           <section className="nb-surface nb-surface--elevated w-full max-w-4xl overflow-hidden rounded-[36px] border-white/70 bg-white/78 p-5 shadow-[0_24px_80px_rgba(9,48,100,0.12)] md:p-8 lg:p-10">
             <div className="grid gap-8 md:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] md:items-center">
@@ -1757,10 +1758,10 @@ function Launcher() {
                   <img
                     src="/icons/notebill.svg"
                     alt="NoteBill"
-                    className="h-16 w-16 rounded-2xl border border-[#6993d2]/20 bg-white p-2 shadow-sm"
+                    className="h-16 w-16 rounded-2xl border border-[#4f8b5f]/20 bg-white p-2 shadow-sm"
                   />
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#6993d2]">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#4f8b5f]">
                       Billie helps, you approve
                     </p>
                     <h1
@@ -1785,14 +1786,14 @@ function Launcher() {
                       key={title}
                       className="rounded-[22px] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,248,253,0.92))] px-4 py-4 shadow-[0_10px_30px_rgba(9,48,100,0.05)]"
                     >
-                      <p className="text-sm font-semibold text-[#093064]">{title}</p>
+                      <p className="text-sm font-semibold text-[#14532d]">{title}</p>
                       <p className="mt-1 text-xs leading-5 text-slate-600">{copy}</p>
                     </div>
                   ))}
                 </div>
               </div>
-              <div className="rounded-[30px] border border-[#6993d2]/20 bg-[#093064] p-5 text-white shadow-[0_24px_60px_rgba(9,48,100,0.22)] md:p-6">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#acd0f4]">Start here</p>
+              <div className="rounded-[30px] border border-[#4f8b5f]/20 bg-[#14532d] p-5 text-white shadow-[0_24px_60px_rgba(20,83,45,0.22)] md:p-6">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#d7f1dd]">Start here</p>
                 <h2 className="mt-3 text-2xl leading-tight text-white" style={{ fontFamily: "'Fraunces', serif" }}>
                   Choose the easiest way to begin.
                 </h2>
@@ -1860,22 +1861,22 @@ function Launcher() {
     <div
       className="nb-page nb-page--launcher min-h-screen overflow-hidden text-slate-900"
       style={{
-        backgroundImage:
-          "radial-gradient(circle at top left, rgba(172,204,240,0.88), rgba(238,244,251,0) 30%), radial-gradient(circle at top right, rgba(105,147,210,0.18), rgba(238,244,251,0) 28%), linear-gradient(180deg, #f8fbff 0%, #eef4fb 48%, #f7fbff 100%)"
+          backgroundImage:
+            "radial-gradient(circle at top left, rgba(215,241,221,0.88), rgba(238,248,241,0) 30%), radial-gradient(circle at top right, rgba(79,139,95,0.18), rgba(238,248,241,0) 28%), linear-gradient(180deg, #f8fdf9 0%, #eef8f1 48%, #f7fbf8 100%)"
       }}
     >
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[linear-gradient(120deg,rgba(9,48,100,0.04),rgba(9,48,100,0)_36%)]" />
-      <div className="pointer-events-none absolute left-[-120px] top-[120px] h-[240px] w-[240px] rounded-full bg-[#acd0f4]/40 blur-3xl" />
-      <div className="pointer-events-none absolute right-[-80px] top-[80px] h-[220px] w-[220px] rounded-full bg-[#6993d2]/20 blur-3xl" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-[linear-gradient(120deg,rgba(20,83,45,0.05),rgba(20,83,45,0)_36%)]" />
+      <div className="pointer-events-none absolute left-[-120px] top-[120px] h-[240px] w-[240px] rounded-full bg-[#d7f1dd]/40 blur-3xl" />
+      <div className="pointer-events-none absolute right-[-80px] top-[80px] h-[220px] w-[220px] rounded-full bg-[#4f8b5f]/20 blur-3xl" />
       <main className="nb-page-shell nb-page-shell--wide relative max-w-xl md:max-w-6xl md:py-14">
         <section className="nb-surface nb-surface--elevated overflow-hidden rounded-[36px] border-white/70 bg-white/72 p-0">
           <div className="grid gap-6 p-4 md:grid-cols-[minmax(0,1.35fr)_minmax(280px,0.65fr)] md:gap-8 md:p-8 lg:p-10">
             <div>
               <div className="flex flex-wrap items-center gap-3">
-                <span className="inline-flex items-center rounded-full border border-[#6993d2]/25 bg-[#f4f8fd] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#093064]">
+                <span className="inline-flex items-center rounded-full border border-[#4f8b5f]/25 bg-[#eef8f1] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#14532d]">
                   NoteBill
                 </span>
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">
                   Billie helps, you approve
                 </span>
               </div>
@@ -1898,9 +1899,9 @@ function Launcher() {
                 ].map(([title, copy]) => (
                   <div
                     key={title}
-                    className="nb-subcard rounded-[20px] border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(244,248,253,0.94))] px-3 py-3 shadow-[0_10px_30px_rgba(9,48,100,0.05)] md:rounded-[22px] md:px-4 md:py-4"
+                    className="nb-subcard rounded-[20px] border-white/75 bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(238,248,241,0.94))] px-3 py-3 shadow-[0_10px_30px_rgba(20,83,45,0.05)] md:rounded-[22px] md:px-4 md:py-4"
                   >
-                    <p className="text-sm font-semibold text-[#093064]">{title}</p>
+                    <p className="text-sm font-semibold text-[#14532d]">{title}</p>
                     <p className="mt-1 hidden text-xs leading-5 text-slate-600 sm:block md:mt-1.5">{copy}</p>
                   </div>
                 ))}
@@ -1955,17 +1956,17 @@ function Launcher() {
                 </div>
               ) : null}
               {billingError ? <p className="mt-3 text-sm text-rose-600">{billingError}</p> : null}
-              <div className="mt-4 rounded-[24px] border border-[#6993d2]/18 bg-[#093064] px-4 py-4 text-white shadow-[0_14px_40px_rgba(9,48,100,0.18)] md:hidden">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#acd0f4]">Built for real work</p>
+              <div className="mt-4 rounded-[24px] border border-[#4f8b5f]/18 bg-[#14532d] px-4 py-4 text-white shadow-[0_14px_40px_rgba(20,83,45,0.18)] md:hidden">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#d7f1dd]">Built for real work</p>
                 <p className="mt-2 text-base font-semibold text-white">Billie organizes the draft. You approve the money.</p>
                 <p className="mt-2 text-sm leading-6 text-slate-200">
                   One clear start. Visible draft changes. No silent total edits.
                 </p>
               </div>
             </div>
-            <aside className="hidden flex-col justify-between rounded-[30px] border border-[#6993d2]/22 bg-[#093064] p-5 text-white shadow-[0_20px_60px_rgba(9,48,100,0.22)] md:flex md:p-6">
+            <aside className="hidden flex-col justify-between rounded-[30px] border border-[#4f8b5f]/22 bg-[#14532d] p-5 text-white shadow-[0_20px_60px_rgba(20,83,45,0.22)] md:flex md:p-6">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#acd0f4]">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#d7f1dd]">
                   Built for real work
                 </p>
                 <h2
@@ -1982,10 +1983,10 @@ function Launcher() {
                   ].map((item) => (
                     <div key={item} className="flex items-start gap-3 rounded-2xl bg-white/8 px-3 py-3">
                       <span
-                        className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#acd0f4]"
+                        className="mt-0.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#d7f1dd]"
                         aria-hidden="true"
                       >
-                        <span className="h-2 w-2 rounded-full bg-[#093064]" />
+                        <span className="h-2 w-2 rounded-full bg-[#14532d]" />
                       </span>
                       <p className="text-sm leading-6 text-slate-100">{item}</p>
                     </div>
@@ -1993,7 +1994,7 @@ function Launcher() {
                 </div>
               </div>
               <div className="mt-6 rounded-[24px] border border-white/10 bg-white/8 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#acd0f4]">Best first step</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#d7f1dd]">Best first step</p>
                 <p className="mt-2 text-lg font-semibold text-white">Paste the rough version first.</p>
                 <p className="mt-2 text-sm leading-6 text-slate-200">
                   Most people only need one path: start with Billie, approve the money details, then send.
@@ -2286,6 +2287,84 @@ function Placeholder({ title, description }) {
   );
 }
 
+function AppChrome({ children }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const pathname = location.pathname || "/";
+  const hiddenRoutes = [
+    "/auth/verify",
+    "/auth/google",
+    "/portal",
+    "/privacy",
+    "/help",
+    "/support",
+    "/feedback",
+    "/data-deletion",
+    "/delete-account"
+  ];
+  const showNav = !hiddenRoutes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+  const navItems = [
+    { label: "Launcher", path: "/", icon: SparklesIcon },
+    { label: "Library", path: "/invoices", icon: ArchiveIcon },
+    { label: "Scratchpad", path: "/scratchpad", icon: NotebookIcon },
+    { label: "Dashboard", path: "/dashboard", icon: SquaresIcon },
+    { label: "Settings", path: "/settings/business", icon: SwatchIcon }
+  ];
+  const isActive = (path) => (path === "/" ? pathname === "/" : pathname === path || pathname.startsWith(`${path}/`));
+
+  return (
+    <div className="min-h-screen">
+      {showNav ? (
+        <div className="sticky top-0 z-50 border-b border-emerald-200/70 bg-[rgba(245,252,247,0.92)] backdrop-blur-xl">
+          <div className="mx-auto flex max-w-7xl items-center gap-3 px-3 py-3 md:px-6">
+            <button
+              type="button"
+              className="hidden shrink-0 items-center gap-2 rounded-full border border-emerald-200/80 bg-white/85 px-3 py-2 text-sm font-semibold text-emerald-950 shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-300 sm:inline-flex"
+              onClick={() => navigate("/")}
+            >
+              <img src="/icons/notebill.svg" alt="" aria-hidden="true" className="h-7 w-7 rounded-xl" />
+              <span>NoteBill</span>
+            </button>
+            <nav
+              className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto rounded-full border border-emerald-200 bg-emerald-50/80 p-1 shadow-sm"
+              aria-label="Primary"
+            >
+              {navItems.map((item) => {
+                const active = isActive(item.path);
+                const Icon = item.icon;
+                return (
+                  <button
+                    key={item.path}
+                    type="button"
+                    className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold transition ${
+                      active
+                        ? "bg-[#14532d] text-white shadow-[0_12px_30px_rgba(20,83,45,0.18)]"
+                        : "text-emerald-900/80 hover:bg-white/85 hover:text-emerald-950"
+                    }`}
+                    aria-current={active ? "page" : undefined}
+                    onClick={() => navigate(item.path)}
+                  >
+                    <Icon className={`h-4 w-4 ${active ? "text-white" : "text-emerald-700"}`} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+            <button
+              type="button"
+              className="hidden shrink-0 rounded-full bg-[linear-gradient(135deg,_#4f8b5f_0%,_#14532d_100%)] px-4 py-2 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(20,83,45,0.2)] transition hover:-translate-y-0.5 sm:inline-flex"
+              onClick={() => navigate("/ai-intake")}
+            >
+              New invoice
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {children}
+    </div>
+  );
+}
+
 const PUBLIC_INFO_LAST_UPDATED = "2026-04-21";
 const SUPPORT_EMAIL = "support@notebill.app";
 const CONTACT_EMAIL = "contact@notebill.app";
@@ -2389,7 +2468,7 @@ function PublicInfoPage({ kicker, title, intro, sections, footerNote, actions, c
                   <ul className="mt-3 space-y-2 text-sm leading-7 text-slate-700 md:text-[15px]">
                     {section.items.map((item) => (
                       <li key={item} className="flex items-start gap-3">
-                        <span className="mt-[0.55rem] inline-flex h-2 w-2 rounded-full bg-[#6993d2]" />
+                        <span className="mt-[0.55rem] inline-flex h-2 w-2 rounded-full bg-[#4f8b5f]" />
                         <span>{item}</span>
                       </li>
                     ))}
@@ -2621,9 +2700,9 @@ function HelpCenterPage() {
         }
       ]}
     >
-      <section className="nb-subcard border-[#6993d2]/30 bg-[#f6f9ff]" data-testid="help-center-quick-starts">
+      <section className="nb-subcard border-[#4f8b5f]/30 bg-[#f1faf3]" data-testid="help-center-quick-starts">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Quick starts</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">Quick starts</p>
           <h2 className="mt-2 text-lg font-semibold text-slate-900">Most common things people need help with</h2>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -2631,7 +2710,7 @@ function HelpCenterPage() {
             <div key={task.title} className="rounded-2xl border border-white/80 bg-white/85 px-4 py-4">
               <p className="text-sm font-semibold text-slate-900">{task.title}</p>
               <p className="mt-2 text-sm leading-6 text-slate-600">{task.body}</p>
-              <a href={task.action.href} className="mt-3 inline-flex rounded-full border border-[#6993d2]/20 bg-[#f6f9ff] px-3 py-1.5 text-xs font-semibold text-[#285ea8]">
+              <a href={task.action.href} className="mt-3 inline-flex rounded-full border border-[#4f8b5f]/20 bg-[#f1faf3] px-3 py-1.5 text-xs font-semibold text-[#14532d]">
                 {task.action.label}
               </a>
             </div>
@@ -2768,7 +2847,7 @@ function FeedbackPage() {
           ))}
         </div>
       </section>
-      <section className="nb-subcard border-[#6993d2]/30 bg-[#f6f9ff]">
+      <section className="nb-subcard border-[#4f8b5f]/30 bg-[#f1faf3]">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Copy device details</h2>
@@ -2860,33 +2939,35 @@ function DataDeletionPage() {
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Launcher />} />
-        <Route path="/scratchpad" element={<DailyScratchpadPage />} />
-        <Route path="/portal/:invoiceId/:token" element={<ClientPortalPage />} />
-        <Route path="/auth/verify" element={<EmailLinkVerificationPage />} />
-        <Route path="/auth/google" element={<GoogleSignInCompletionPage />} />
-        <Route path="/ai-intake" element={<AIIntake />} />
-        <Route path="/invoices" element={<InvoiceLibrary />} />
-        <Route path="/manual" element={<ManualInvoiceCanvas />} />
-        <Route path="/import" element={<ImportInvoice />} />
-        <Route path="/diagnostics" element={<IntakeDiagnostics />} />
-        <Route path="/settings/business" element={<BusinessIdentitySettings />} />
-        <Route path="/settings/memory" element={<ClientMemorySettings />} />
-        <Route path="/settings/services" element={<ServiceCatalogSettings />} />
-        <Route path="/clients" element={<ClientWorkspacePage />} />
-        <Route path="/dashboard" element={<OperatorDashboardPage />} />
-        <Route path="/privacy" element={<PrivacyPage />} />
-        <Route path="/help" element={<HelpCenterPage />} />
-        <Route path="/support" element={<SupportPage />} />
-        <Route path="/feedback" element={<FeedbackPage />} />
-        <Route path="/data-deletion" element={<DataDeletionPage />} />
-        <Route path="/delete-account" element={<DataDeletionPage />} />
-        <Route
-          path="*"
-          element={<Placeholder title="Page not found" description="Return to the launcher to continue." />}
-        />
-      </Routes>
+      <AppChrome>
+        <Routes>
+          <Route path="/" element={<Launcher />} />
+          <Route path="/scratchpad" element={<DailyScratchpadPage />} />
+          <Route path="/portal/:invoiceId/:token" element={<ClientPortalPage />} />
+          <Route path="/auth/verify" element={<EmailLinkVerificationPage />} />
+          <Route path="/auth/google" element={<GoogleSignInCompletionPage />} />
+          <Route path="/ai-intake" element={<AIIntake />} />
+          <Route path="/invoices" element={<InvoiceLibrary />} />
+          <Route path="/manual" element={<ManualInvoiceCanvas />} />
+          <Route path="/import" element={<ImportInvoice />} />
+          <Route path="/diagnostics" element={<IntakeDiagnostics />} />
+          <Route path="/settings/business" element={<BusinessIdentitySettings />} />
+          <Route path="/settings/memory" element={<ClientMemorySettings />} />
+          <Route path="/settings/services" element={<ServiceCatalogSettings />} />
+          <Route path="/clients" element={<ClientWorkspacePage />} />
+          <Route path="/dashboard" element={<OperatorDashboardPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/help" element={<HelpCenterPage />} />
+          <Route path="/support" element={<SupportPage />} />
+          <Route path="/feedback" element={<FeedbackPage />} />
+          <Route path="/data-deletion" element={<DataDeletionPage />} />
+          <Route path="/delete-account" element={<DataDeletionPage />} />
+          <Route
+            path="*"
+            element={<Placeholder title="Page not found" description="Return to the launcher to continue." />}
+          />
+        </Routes>
+      </AppChrome>
     </BrowserRouter>
   );
 }

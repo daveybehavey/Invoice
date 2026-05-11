@@ -1,4 +1,4 @@
-const launcherSectionUiPrimitives = window.InvoiceUIPrimitives;
+﻿const launcherSectionUiPrimitives = window.InvoiceUIPrimitives;
 if (!launcherSectionUiPrimitives) {
   throw new Error("Missing /ui/primitives.jsx load. Ensure it is loaded before launcher sections.");
 }
@@ -88,7 +88,7 @@ function LauncherAccountStrip({
         ) : (
           <button
             type="button"
-            className="nb-btn-ghost rounded-full bg-[#acd0f4] px-3 py-1.5 text-sm disabled:opacity-60"
+            className="nb-btn-ghost rounded-full bg-[#d7f1dd] px-3 py-1.5 text-sm disabled:opacity-60"
             onClick={onOpenSignIn}
             disabled={authBusy}
           >
@@ -168,7 +168,7 @@ function LauncherOperationsQueueSection({
     return null;
   }
   const actionToneClass = {
-    draft: "border-blue-200 bg-blue-50 text-blue-950",
+    draft: "border-emerald-200 bg-emerald-50 text-emerald-950",
     "follow-up": "border-amber-200 bg-amber-50 text-amber-950",
     "repeat-due": "border-violet-200 bg-violet-50 text-violet-950",
     "repeat-soon": "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-950",
@@ -188,7 +188,7 @@ function LauncherOperationsQueueSection({
     <section className="nb-surface nb-surface--elevated mt-6 rounded-[30px] p-5 md:p-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="max-w-2xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Today&apos;s queue</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4f8b5f]">Today&apos;s queue</p>
           <h2 className="mt-2 text-2xl text-slate-900 md:text-3xl" style={{ fontFamily: "'Fraunces', serif" }}>
             Invoice command center
           </h2>
@@ -201,7 +201,7 @@ function LauncherOperationsQueueSection({
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[420px]">
           {stats.map((stat) => (
             <div key={stat.label} className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-3 text-center">
-              <p className="text-lg font-semibold text-[#093064]">{stat.value}</p>
+              <p className="text-lg font-semibold text-[#14532d]">{stat.value}</p>
               <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
                 {stat.label}
               </p>
@@ -226,11 +226,11 @@ function LauncherOperationsQueueSection({
               <div
                 key={action.id}
                 className={`rounded-[24px] border p-4 ${toneClass} ${
-                  isPrimary ? "ring-2 ring-[#093064]/10 md:col-span-2" : ""
+                  isPrimary ? "ring-2 ring-[#14532d]/10 md:col-span-2" : ""
                 }`}
               >
                 {isPrimary ? (
-                  <p className="mb-2 inline-flex rounded-full bg-white/70 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#093064]">
+                  <p className="mb-2 inline-flex rounded-full bg-white/70 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#14532d]">
                     Next up
                   </p>
                 ) : null}
@@ -421,7 +421,7 @@ function LauncherOnboardingSection({
       >
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-2xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Complete your setup</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4f8b5f]">Complete your setup</p>
             <h2 className="mt-2 text-2xl text-slate-900 md:text-3xl" style={{ fontFamily: "'Fraunces', serif" }}>
               Turn that first invoice into a faster second one.
             </h2>
@@ -449,10 +449,10 @@ function LauncherOnboardingSection({
     <section className="nb-surface nb-surface--elevated mt-6 rounded-[30px] p-5 md:p-6" data-testid="launcher-onboarding-section">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="max-w-2xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Getting started</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4f8b5f]">Getting started</p>
           {status?.walkthroughActive ? (
             <p
-              className="mt-2 inline-flex rounded-full border border-[#6993d2]/20 bg-[#f6f9ff] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#093064]"
+              className="mt-2 inline-flex rounded-full border border-[#4f8b5f]/20 bg-[#f6f9ff] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#14532d]"
               data-testid="launcher-guided-walkthrough-chip"
             >
               Guided walkthrough active
@@ -470,13 +470,13 @@ function LauncherOnboardingSection({
         <div className="lg:min-w-[260px]">
           <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200/80">
             <div
-              className="h-full rounded-full bg-[#093064] transition-all duration-300"
+              className="h-full rounded-full bg-[#14532d] transition-all duration-300"
               style={{ width: `${status.progressPercent}%` }}
             />
           </div>
           {nextStep ? (
-            <div className="mt-3 rounded-[22px] border border-[#6993d2]/16 bg-[#f7faff] p-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Next step</p>
+            <div className="mt-3 rounded-[22px] border border-[#4f8b5f]/16 bg-[#f7faff] p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">Next step</p>
               <p className="mt-1 text-sm font-semibold text-slate-900">{nextStep.label}</p>
               <p className="mt-1 text-xs leading-5 text-slate-600">{nextStep.helper}</p>
               <button
@@ -495,7 +495,7 @@ function LauncherOnboardingSection({
           const stepClass = step.complete
             ? "border-emerald-200 bg-emerald-50 text-emerald-950"
             : nextStep?.id === step.id
-              ? "border-[#6993d2]/25 bg-[#f6f9ff] text-slate-900"
+              ? "border-[#4f8b5f]/25 bg-[#f6f9ff] text-slate-900"
               : "border-slate-200 bg-white/85 text-slate-700";
           return (
             <div key={step.id} className={`rounded-[22px] border px-3 py-3 ${stepClass}`}>
@@ -505,7 +505,7 @@ function LauncherOnboardingSection({
                     step.complete
                       ? "bg-emerald-600 text-white"
                       : nextStep?.id === step.id
-                        ? "bg-[#093064] text-white"
+                        ? "bg-[#14532d] text-white"
                         : "bg-slate-200 text-slate-700"
                   }`}
                 >
@@ -566,12 +566,12 @@ function LauncherLaunchRunway({ onOpenLibrary, onOpenEditor, onOpenFeedback }) {
 
   return (
     <div
-      className="mt-5 rounded-[26px] border border-[#6993d2]/18 bg-[linear-gradient(135deg,_#f7faff_0%,_#ffffff_56%,_#ecfdf5_100%)] p-4"
+      className="mt-5 rounded-[26px] border border-[#4f8b5f]/18 bg-[linear-gradient(135deg,_#f7faff_0%,_#ffffff_56%,_#ecfdf5_100%)] p-4"
       data-testid="launcher-v2-runway"
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">V2 launch runway</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">V2 launch runway</p>
           <p className="mt-1 text-sm font-semibold text-slate-900">Next best blocks after setup</p>
           <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-600">
             These are the safest high-reward paths to rehearse before the public Play Store push.
@@ -638,7 +638,7 @@ function LauncherSetupChecklist({ status, onContinueSetup }) {
           const stepClass = step.complete
             ? "border-emerald-200 bg-emerald-50 text-emerald-950"
             : nextSetupStep?.id === step.id
-              ? "border-[#6993d2]/25 bg-[#f6f9ff] text-slate-900"
+              ? "border-[#4f8b5f]/25 bg-[#f6f9ff] text-slate-900"
               : "border-slate-200 bg-white/85 text-slate-700";
           return (
             <div key={step.id} className={`rounded-[22px] border px-3 py-3 ${stepClass}`}>
@@ -648,7 +648,7 @@ function LauncherSetupChecklist({ status, onContinueSetup }) {
                     step.complete
                       ? "bg-emerald-600 text-white"
                       : nextSetupStep?.id === step.id
-                        ? "bg-[#093064] text-white"
+                        ? "bg-[#14532d] text-white"
                         : "bg-slate-200 text-slate-700"
                   }`}
                 >
@@ -689,7 +689,7 @@ function LauncherDraftRecoverySection({
     <section className="nb-surface mt-5 rounded-[28px] p-5 md:p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Draft recovery</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">Draft recovery</p>
           <p className="mt-1 text-sm text-slate-600">Open the last draft you were working on without hunting for it.</p>
         </div>
         <button
@@ -764,8 +764,8 @@ function LauncherStartSection({
     >
       <div className="grid gap-5 p-4 md:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.9fr)] md:gap-6 md:p-8">
         <div className="relative">
-          <div className="inline-flex rounded-full border border-[#6993d2]/14 bg-white/82 px-3 py-1 shadow-sm">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[#5f8fd2]">Start Here</p>
+          <div className="inline-flex rounded-full border border-[#4f8b5f]/14 bg-white/82 px-3 py-1 shadow-sm">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[#4f8b5f]">Start Here</p>
           </div>
           <p className="nb-assistant-chip nb-assistant-chip--ready mt-3 inline-flex text-xs normal-case tracking-normal">
             <span className="nb-assistant-chip__dot" aria-hidden="true" />
@@ -802,7 +802,7 @@ function LauncherStartSection({
                 className="nb-subcard border-white/70 bg-white/78 p-4 shadow-sm backdrop-blur"
               >
                 <div className="flex items-center gap-2">
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[linear-gradient(135deg,_#093064_0%,_#184d8e_100%)] text-xs font-bold text-white shadow-[0_12px_28px_rgba(8,47,99,0.18)]">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[linear-gradient(135deg,_#14532d_0%,_#184d8e_100%)] text-xs font-bold text-white shadow-[0_12px_28px_rgba(8,47,99,0.18)]">
                     {step}
                   </span>
                   <p className="text-sm font-semibold text-slate-900">{title}</p>
@@ -813,8 +813,8 @@ function LauncherStartSection({
           </div>
         </div>
         <div className="nb-surface nb-surface--muted rounded-[30px] p-4 md:p-5">
-          <div className="rounded-[24px] bg-[linear-gradient(145deg,_#093064_0%,_#0e437c_58%,_#123d6d_100%)] px-4 py-4 text-white shadow-[0_24px_60px_rgba(8,47,99,0.18)]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#c5dcf7]">Recommended path</p>
+          <div className="rounded-[24px] bg-[linear-gradient(145deg,_#14532d_0%,_#0e437c_58%,_#123d6d_100%)] px-4 py-4 text-white shadow-[0_24px_60px_rgba(8,47,99,0.18)]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#d7f1dd]">Recommended path</p>
             <p className="mt-2 text-lg font-semibold" style={{ fontFamily: "'Fraunces', serif" }}>
               One calm route from notes to invoice.
             </p>
@@ -871,15 +871,15 @@ function LauncherStartSection({
           </div>
           {!hasSavedHistory ? (
             <div
-              className="mt-4 rounded-[26px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_#f6f9ff_0%,_#ffffff_52%,_#eef6ff_100%)] px-4 py-4 shadow-sm"
+              className="mt-4 rounded-[26px] border border-[#4f8b5f]/18 bg-[linear-gradient(145deg,_#f6f9ff_0%,_#ffffff_52%,_#eef6ff_100%)] px-4 py-4 shadow-sm"
               data-testid="launcher-first-invoice-guide"
             >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">
                     Guided first invoice
                   </p>
-                  <p className="mt-1 text-sm font-semibold leading-6 text-[#093064]">
+                  <p className="mt-1 text-sm font-semibold leading-6 text-[#14532d]">
                     First invoice? Try sample notes for a quick walkthrough, or open scratchpad to collect
                     real notes during the day.
                   </p>
@@ -895,7 +895,7 @@ function LauncherStartSection({
               <div className="mt-3 grid gap-2">
                 {firstInvoiceSteps.map(([step, title, copy]) => (
                   <div key={step} className="flex items-start gap-2 rounded-2xl bg-white/78 px-3 py-2 shadow-sm">
-                    <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,_#093064_0%,_#184d8e_100%)] text-[11px] font-bold text-white">
+                    <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,_#14532d_0%,_#184d8e_100%)] text-[11px] font-bold text-white">
                       {step}
                     </span>
                     <div>
@@ -941,12 +941,12 @@ function LauncherAlternateStartsSection({ showAlternateStarts, quickStartOptions
           <button
             key={option.key}
             type="button"
-            className="nb-subcard rounded-[24px] border-white/75 bg-white/84 p-4 text-left transition hover:-translate-y-0.5 hover:border-[#6993d2]/40 hover:bg-white"
+            className="nb-subcard rounded-[24px] border-white/75 bg-white/84 p-4 text-left transition hover:-translate-y-0.5 hover:border-[#4f8b5f]/40 hover:bg-white"
             onClick={option.onClick}
             disabled={option.disabled}
           >
             <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-[#acd0f4] text-[#093064]">
+              <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-[#d7f1dd] text-[#14532d]">
                 {React.cloneElement(option.icon, { className: "h-5 w-5" })}
               </div>
               <div>
@@ -990,12 +990,12 @@ function LauncherManageSection({ showManageOptions, onToggleManageOptions, manag
             <button
               key={option.key}
               type="button"
-              className="nb-subcard rounded-[22px] border-white/75 bg-white/84 p-4 text-left text-sm font-semibold text-slate-700 transition hover:border-[#6993d2]/40 hover:bg-white"
+              className="nb-subcard rounded-[22px] border-white/75 bg-white/84 p-4 text-left text-sm font-semibold text-slate-700 transition hover:border-[#4f8b5f]/40 hover:bg-white"
               onClick={option.onClick}
               disabled={option.disabled}
             >
               <div className="flex items-start gap-3">
-                <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-[#f4f8fd] text-[#093064]">
+                <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-[#f4f8fd] text-[#14532d]">
                   {React.cloneElement(option.icon, { className: "h-5 w-5" })}
                 </div>
                 <div>
@@ -1050,7 +1050,7 @@ function LauncherAuthModal({
           Keep saved work tied to your email with whichever sign-in path is ready for this build.
         </p>
         {authReturnPathLabel ? (
-          <p className="mt-3 rounded-2xl border border-[#6993d2]/16 bg-[#f7faff] px-3 py-2 text-xs font-semibold text-[#093064]">
+          <p className="mt-3 rounded-2xl border border-[#4f8b5f]/16 bg-[#f7faff] px-3 py-2 text-xs font-semibold text-[#14532d]">
             {authReturnPathLabel}
           </p>
         ) : null}
@@ -1142,7 +1142,7 @@ function LauncherAuthModal({
         {authPreviewUrl ? (
           <a
             href={authPreviewUrl}
-            className="mt-2 inline-flex text-sm font-semibold text-[#093064] underline underline-offset-2"
+            className="mt-2 inline-flex text-sm font-semibold text-[#14532d] underline underline-offset-2"
           >
             Open preview sign-in link
           </a>

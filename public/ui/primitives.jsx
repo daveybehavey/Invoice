@@ -1,6 +1,6 @@
 (() => {
   const cardBase =
-    "w-full text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6993d2]/30 active:scale-[0.99]";
+    "w-full text-left transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4f8b5f]/30 active:scale-[0.99]";
 
   function SparklesIcon({ className }) {
     return (
@@ -143,8 +143,27 @@
     );
   }
 
+  function SquaresIcon({ className }) {
+    return (
+      <svg
+        className={className}
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        aria-hidden="true"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M4.5 4.5h6v6h-6v-6zM13.5 4.5h6v6h-6v-6zM4.5 13.5h6v6h-6v-6zM13.5 13.5h6v6h-6v-6z"
+        />
+      </svg>
+    );
+  }
+
   function LauncherCard({ title, description, icon, onClick, disabled, badge }) {
-    const iconClass = disabled ? "h-6 w-6 text-slate-400" : "h-6 w-6 text-[#093064]";
+    const iconClass = disabled ? "h-6 w-6 text-slate-400" : "h-6 w-6 text-[#14532d]";
     return (
       <button
         type="button"
@@ -160,7 +179,7 @@
         <div className="flex items-start justify-between gap-4">
           <div
             className={`flex h-12 w-12 items-center justify-center rounded-[20px] border ${
-              disabled ? "border-slate-200 bg-slate-100" : "border-[#6993d2]/12 bg-[linear-gradient(135deg,_#ecf4ff_0%,_#ffffff_100%)] shadow-[0_14px_32px_rgba(8,47,99,0.08)]"
+              disabled ? "border-slate-200 bg-slate-100" : "border-[#4f8b5f]/12 bg-[linear-gradient(135deg,_#ecf8ee_0%,_#ffffff_100%)] shadow-[0_14px_32px_rgba(20,83,45,0.08)]"
             }`}
           >
             {React.cloneElement(icon, { className: iconClass })}
@@ -174,7 +193,7 @@
                 {title}
               </h2>
               {badge ? (
-                <span className="nb-chip border-0 bg-[linear-gradient(135deg,_#093064_0%,_#184d8e_100%)] px-2 py-0.5 text-[10px] text-white shadow-[0_10px_26px_rgba(8,47,99,0.16)]">
+                <span className="nb-chip border-0 bg-[linear-gradient(135deg,_#14532d_0%,_#4f8b5f_100%)] px-2 py-0.5 text-[10px] text-white shadow-[0_10px_26px_rgba(20,83,45,0.16)]">
                   {badge}
                 </span>
               ) : null}
@@ -182,7 +201,7 @@
             <p className="max-w-md text-sm leading-6 text-slate-600">{description}</p>
           </div>
           {!disabled ? (
-            <div className="mt-0.5 hidden rounded-full border border-[#6993d2]/18 bg-white/88 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#093064] shadow-sm sm:block">
+            <div className="mt-0.5 hidden rounded-full border border-[#4f8b5f]/18 bg-white/88 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#14532d] shadow-sm sm:block">
               Open
             </div>
           ) : null}
@@ -223,6 +242,7 @@
     SwatchIcon,
     FeedbackIcon,
     NotebookIcon,
+    SquaresIcon,
     LauncherCard,
     SurfacePanel,
     StatusChip
