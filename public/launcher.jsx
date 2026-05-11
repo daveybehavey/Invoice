@@ -1826,6 +1826,14 @@ function Launcher() {
                   Guest mode keeps the app simple. Sign in anytime from the launcher when you want saved work tied to
                   your account.
                 </p>
+                <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#d7f1dd]">
+                  <a href="/privacy" className="underline decoration-[#d7f1dd]/50 underline-offset-4 hover:text-white">
+                    Privacy policy
+                  </a>
+                  <a href="/support" className="underline decoration-[#d7f1dd]/50 underline-offset-4 hover:text-white">
+                    Support
+                  </a>
+                </div>
                 {authError ? <p className="mt-3 text-sm text-rose-200">{authError}</p> : null}
               </div>
             </div>
@@ -1962,6 +1970,14 @@ function Launcher() {
                 <p className="mt-2 text-sm leading-6 text-slate-200">
                   One clear start. Visible draft changes. No silent total edits.
                 </p>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">
+                <a href="/privacy" className="underline decoration-[#4f8b5f]/50 underline-offset-4 hover:text-[#14532d]">
+                  Privacy policy
+                </a>
+                <a href="/support" className="underline decoration-[#4f8b5f]/50 underline-offset-4 hover:text-[#14532d]">
+                  Support
+                </a>
               </div>
             </div>
             <aside className="hidden flex-col justify-between rounded-[30px] border border-[#4f8b5f]/22 bg-[#14532d] p-5 text-white shadow-[0_20px_60px_rgba(20,83,45,0.22)] md:flex md:p-6">
