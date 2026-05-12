@@ -1751,7 +1751,7 @@ function Launcher() {
         <div className="pointer-events-none absolute left-[-120px] top-[120px] h-[240px] w-[240px] rounded-full bg-[#d7f1dd]/40 blur-3xl" />
         <div className="pointer-events-none absolute right-[-80px] top-[80px] h-[220px] w-[220px] rounded-full bg-[#4f8b5f]/20 blur-3xl" />
         <main className="nb-page-shell nb-page-shell--wide relative flex min-h-screen items-center justify-center py-6 md:py-14">
-          <section className="nb-surface nb-surface--elevated w-full max-w-4xl overflow-hidden rounded-[36px] border-white/70 bg-white/78 p-5 shadow-[0_24px_80px_rgba(9,48,100,0.12)] md:p-8 lg:p-10">
+          <section className="nb-surface nb-surface--elevated w-full max-w-4xl overflow-hidden rounded-[36px] border-white/70 bg-white/78 p-5 shadow-[0_24px_80px_rgba(20,83,45,0.12)] md:p-8 lg:p-10">
             <div className="grid gap-8 md:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] md:items-center">
               <div>
                 <div className="flex items-center gap-4">
@@ -1784,7 +1784,7 @@ function Launcher() {
                   ].map(([title, copy]) => (
                     <div
                       key={title}
-                      className="rounded-[22px] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,248,253,0.92))] px-4 py-4 shadow-[0_10px_30px_rgba(9,48,100,0.05)]"
+                      className="rounded-[22px] border border-white/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,250,245,0.92))] px-4 py-4 shadow-[0_10px_30px_rgba(20,83,45,0.05)]"
                     >
                       <p className="text-sm font-semibold text-[#14532d]">{title}</p>
                       <p className="mt-1 text-xs leading-5 text-slate-600">{copy}</p>

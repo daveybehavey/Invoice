@@ -47,17 +47,17 @@
     @apply relative min-h-screen text-slate-900;
     overflow-x: hidden;
     background:
-      radial-gradient(circle at top left, rgba(185, 215, 246, 0.72), rgba(238, 244, 251, 0) 30%),
-      radial-gradient(circle at top right, rgba(95, 143, 210, 0.22), rgba(238, 244, 251, 0) 26%),
-      radial-gradient(circle at 50% -12%, rgba(243, 194, 125, 0.18), rgba(238, 244, 251, 0) 24%),
-      linear-gradient(180deg, #f9fbff 0%, var(--nb-page-bg) 42%, #f4f8fd 100%);
+      radial-gradient(circle at top left, rgba(215, 241, 221, 0.72), rgba(238, 248, 241, 0) 30%),
+      radial-gradient(circle at top right, rgba(79, 139, 95, 0.22), rgba(238, 248, 241, 0) 26%),
+      radial-gradient(circle at 50% -12%, rgba(243, 194, 125, 0.16), rgba(238, 248, 241, 0) 24%),
+      linear-gradient(180deg, #f8fcf9 0%, var(--nb-page-bg) 42%, #f3faf5 100%);
   }
 
   .nb-page--quiet {
     background:
-      radial-gradient(circle at top left, rgba(185, 215, 246, 0.44), rgba(238, 244, 251, 0) 24%),
-      radial-gradient(circle at top right, rgba(243, 194, 125, 0.14), rgba(238, 244, 251, 0) 18%),
-      linear-gradient(180deg, #fbfdff 0%, #eef4fb 58%, #f8fbff 100%);
+      radial-gradient(circle at top left, rgba(215, 241, 221, 0.44), rgba(238, 248, 241, 0) 24%),
+      radial-gradient(circle at top right, rgba(243, 194, 125, 0.14), rgba(238, 248, 241, 0) 18%),
+      linear-gradient(180deg, #fbfefc 0%, #eef8f1 58%, #f7fbf8 100%);
   }
 
   .nb-page-shell {
@@ -95,8 +95,8 @@
   .nb-page-header {
     @apply border-b backdrop-blur;
     border-color: var(--nb-border-soft);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(247, 250, 255, 0.8) 100%);
-    box-shadow: 0 16px 48px rgba(8, 47, 99, 0.08);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(243, 250, 245, 0.84) 100%);
+    box-shadow: 0 16px 48px rgba(20, 83, 45, 0.08);
   }
 
   .nb-page-header__inner {

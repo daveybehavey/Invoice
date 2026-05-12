@@ -452,7 +452,7 @@ function LauncherOnboardingSection({
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4f8b5f]">Getting started</p>
           {status?.walkthroughActive ? (
             <p
-              className="mt-2 inline-flex rounded-full border border-[#4f8b5f]/20 bg-[#f6f9ff] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#14532d]"
+              className="mt-2 inline-flex rounded-full border border-[#4f8b5f]/20 bg-[#f1faf3] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#14532d]"
               data-testid="launcher-guided-walkthrough-chip"
             >
               Guided walkthrough active
@@ -475,7 +475,7 @@ function LauncherOnboardingSection({
             />
           </div>
           {nextStep ? (
-            <div className="mt-3 rounded-[22px] border border-[#4f8b5f]/16 bg-[#f7faff] p-4">
+            <div className="mt-3 rounded-[22px] border border-[#4f8b5f]/16 bg-[#f1faf3] p-4">
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">Next step</p>
               <p className="mt-1 text-sm font-semibold text-slate-900">{nextStep.label}</p>
               <p className="mt-1 text-xs leading-5 text-slate-600">{nextStep.helper}</p>
@@ -495,7 +495,7 @@ function LauncherOnboardingSection({
           const stepClass = step.complete
             ? "border-emerald-200 bg-emerald-50 text-emerald-950"
             : nextStep?.id === step.id
-              ? "border-[#4f8b5f]/25 bg-[#f6f9ff] text-slate-900"
+              ? "border-[#4f8b5f]/25 bg-[#f1faf3] text-slate-900"
               : "border-slate-200 bg-white/85 text-slate-700";
           return (
             <div key={step.id} className={`rounded-[22px] border px-3 py-3 ${stepClass}`}>
@@ -566,7 +566,7 @@ function LauncherLaunchRunway({ onOpenLibrary, onOpenEditor, onOpenFeedback }) {
 
   return (
     <div
-      className="mt-5 rounded-[26px] border border-[#4f8b5f]/18 bg-[linear-gradient(135deg,_#f7faff_0%,_#ffffff_56%,_#ecfdf5_100%)] p-4"
+      className="mt-5 rounded-[26px] border border-[#4f8b5f]/18 bg-[linear-gradient(135deg,_#f1faf3_0%,_#ffffff_56%,_#ecfdf5_100%)] p-4"
       data-testid="launcher-v2-runway"
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -638,7 +638,7 @@ function LauncherSetupChecklist({ status, onContinueSetup }) {
           const stepClass = step.complete
             ? "border-emerald-200 bg-emerald-50 text-emerald-950"
             : nextSetupStep?.id === step.id
-              ? "border-[#4f8b5f]/25 bg-[#f6f9ff] text-slate-900"
+              ? "border-[#4f8b5f]/25 bg-[#f1faf3] text-slate-900"
               : "border-slate-200 bg-white/85 text-slate-700";
           return (
             <div key={step.id} className={`rounded-[22px] border px-3 py-3 ${stepClass}`}>
@@ -802,7 +802,7 @@ function LauncherStartSection({
                 className="nb-subcard border-white/70 bg-white/78 p-4 shadow-sm backdrop-blur"
               >
                 <div className="flex items-center gap-2">
-                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[linear-gradient(135deg,_#14532d_0%,_#184d8e_100%)] text-xs font-bold text-white shadow-[0_12px_28px_rgba(8,47,99,0.18)]">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[linear-gradient(135deg,_#14532d_0%,_#1f5e35_100%)] text-xs font-bold text-white shadow-[0_12px_28px_rgba(20,83,45,0.18)]">
                     {step}
                   </span>
                   <p className="text-sm font-semibold text-slate-900">{title}</p>
@@ -813,7 +813,7 @@ function LauncherStartSection({
           </div>
         </div>
         <div className="nb-surface nb-surface--muted rounded-[30px] p-4 md:p-5">
-          <div className="rounded-[24px] bg-[linear-gradient(145deg,_#14532d_0%,_#0e437c_58%,_#123d6d_100%)] px-4 py-4 text-white shadow-[0_24px_60px_rgba(8,47,99,0.18)]">
+          <div className="rounded-[24px] bg-[linear-gradient(145deg,_#14532d_0%,_#1b5230_58%,_#14532d_100%)] px-4 py-4 text-white shadow-[0_24px_60px_rgba(20,83,45,0.18)]">
             <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#d7f1dd]">Recommended path</p>
             <p className="mt-2 text-lg font-semibold" style={{ fontFamily: "'Fraunces', serif" }}>
               One calm route from notes to invoice.
@@ -871,7 +871,7 @@ function LauncherStartSection({
           </div>
           {!hasSavedHistory ? (
             <div
-              className="mt-4 rounded-[26px] border border-[#4f8b5f]/18 bg-[linear-gradient(145deg,_#f6f9ff_0%,_#ffffff_52%,_#eef6ff_100%)] px-4 py-4 shadow-sm"
+              className="mt-4 rounded-[26px] border border-[#4f8b5f]/18 bg-[linear-gradient(145deg,_#f1faf3_0%,_#ffffff_52%,_#edf9ef_100%)] px-4 py-4 shadow-sm"
               data-testid="launcher-first-invoice-guide"
             >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -895,7 +895,7 @@ function LauncherStartSection({
               <div className="mt-3 grid gap-2">
                 {firstInvoiceSteps.map(([step, title, copy]) => (
                   <div key={step} className="flex items-start gap-2 rounded-2xl bg-white/78 px-3 py-2 shadow-sm">
-                    <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,_#14532d_0%,_#184d8e_100%)] text-[11px] font-bold text-white">
+                    <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,_#14532d_0%,_#1f5e35_100%)] text-[11px] font-bold text-white">
                       {step}
                     </span>
                     <div>
@@ -1050,7 +1050,7 @@ function LauncherAuthModal({
           Keep saved work tied to your email with whichever sign-in path is ready for this build.
         </p>
         {authReturnPathLabel ? (
-          <p className="mt-3 rounded-2xl border border-[#4f8b5f]/16 bg-[#f7faff] px-3 py-2 text-xs font-semibold text-[#14532d]">
+          <p className="mt-3 rounded-2xl border border-[#4f8b5f]/16 bg-[#f1faf3] px-3 py-2 text-xs font-semibold text-[#14532d]">
             {authReturnPathLabel}
           </p>
         ) : null}

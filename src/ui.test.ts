@@ -278,6 +278,10 @@ test("launcher welcome screen shows sign-in and guest entry", async () => {
   const page = await context.newPage();
 
   try {
+    await page.addInitScript(() => {
+      window.localStorage.removeItem("invoiceGuestEntryDismissed");
+      window.localStorage.removeItem("invoiceAuthPendingReturnPath");
+    });
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
 
     await page.getByRole("heading", { name: "NoteBill" }).waitFor({ state: "visible" });
