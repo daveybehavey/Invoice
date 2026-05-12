@@ -1808,7 +1808,7 @@ function Launcher() {
                   </button>
                   <button
                     type="button"
-                    className="nb-btn-secondary w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white"
+                    className="nb-btn-secondary w-full rounded-2xl px-4 py-3 text-sm font-semibold text-slate-900"
                     onClick={() => openSignInModal()}
                     disabled={authBusy}
                   >
