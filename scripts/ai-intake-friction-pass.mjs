@@ -259,11 +259,11 @@ async function run() {
     await page.getByRole("button", { name: "Build invoice" }).click();
 
     await page.getByText("Draft snapshot").waitFor({ timeout: DEFAULT_TIMEOUT });
-    const simplifiedDecisionHeading = page.getByText("Choose Add or Skip", { exact: true });
+    const simplifiedDecisionHeading = page.getByText("Needs a choice", { exact: true });
     if ((await simplifiedDecisionHeading.count()) > 0) {
       await simplifiedDecisionHeading.first().waitFor({ timeout: DEFAULT_TIMEOUT });
     } else {
-      await page.getByText("Needs your call", { exact: false }).first().waitFor({ timeout: DEFAULT_TIMEOUT });
+      await page.getByText("Decisions", { exact: true }).first().waitFor({ timeout: DEFAULT_TIMEOUT });
     }
 
     const quickActionsVisible = await page.getByText("Quick actions", { exact: true }).isVisible();
@@ -389,11 +389,15 @@ async function run() {
       await quickAction.click();
       await page.waitForTimeout(150);
       const cursorAtEnd = await page.evaluate(() => {
-        const input = document.querySelector("textarea#ai-intake-input");
+        const input = document.activeElement;
         if (!(input instanceof HTMLTextAreaElement)) {
           return false;
         }
-        return input.selectionStart === input.value.length && input.selectionEnd === input.value.length;
+        return (
+          input.dataset.intakeInput === "true" &&
+          input.selectionStart === input.value.length &&
+          input.selectionEnd === input.value.length
+        );
       });
       recorder.addCheck(
         "quick action focuses visible chat input with cursor at end",
@@ -429,7 +433,8 @@ async function run() {
     console.log(`Updated history: ${getFlowFrictionHistoryPath()}`);
 
     const hasMajorIssue = report.issues.some((issue) => issue.severity === "major");
-    if (hasMajorIssue) {
+    const hasFailedCheck = report.checks.some((check) => !check.pass);
+    if (hasMajorIssue || hasFailedCheck) {
       process.exitCode = 1;
     }
   } finally {

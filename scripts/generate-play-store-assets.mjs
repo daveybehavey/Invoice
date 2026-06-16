@@ -11,33 +11,33 @@ const rawScreenshotPrefix = "__raw__";
 const screenshotDecorations = {
   "phone-01-launcher.png": {
     eyebrow: "Start fast",
-    title: "Turn rough notes into invoices",
-    body: "Begin with what happened, then let Billie shape the first clean draft."
+    title: "Start with rough notes, not a blank invoice",
+    body: "Open one clear path from messy job details to a clean draft you can trust."
   },
   "phone-02-ai-intake.png": {
     eyebrow: "Guided intake",
-    title: "Start with Billie, not a blank invoice",
-    body: "Paste rough job notes and keep the first invoice moving step by step."
+    title: "Let Billie organize the first draft",
+    body: "Paste rough job notes and move step by step without losing the thread."
   },
   "phone-03-manual-editor.png": {
-    eyebrow: "Customer handoff",
-    title: "Finish send, payment, and portal steps clearly",
-    body: "Keep the money handoff explicit before you leave the editor."
+    eyebrow: "Money stays visible",
+    title: "Approve the details before anything gets sent",
+    body: "Keep totals, payment handoff, and client-ready wording in one clear workspace."
   },
   "phone-04-invoice-library.png": {
     eyebrow: "Follow-ups",
     title: "See the next best action instantly",
-    body: "Track reminders, payment status, and repeat work from one calm hub."
+    body: "Track follow-up, payment status, and repeat work from one calmer library."
   },
   "phone-05-help-center.png": {
     eyebrow: "Built-in support",
     title: "Help is already inside the app",
-    body: "Guide new users without sending them off to hunt through docs."
+    body: "Keep first-time users moving without sending them off to hunt through docs."
   },
   "phone-06-import.png": {
     eyebrow: "Import old work",
     title: "Bring in older invoice files and notes",
-    body: "Use PDFs, text, and images as a faster starting point for the next draft."
+    body: "Use PDFs, text, and images as a faster starting point when work already exists."
   }
 };
 
@@ -504,6 +504,14 @@ async function cleanupRawScreenshots() {
   );
 }
 
+async function cleanupLegacyArtifacts() {
+  await Promise.all(
+    ["phone-05-import.png"].map((filename) =>
+      fs.rm(path.join(outputDir, filename), { force: true }).catch(() => {})
+    )
+  );
+}
+
 async function captureLauncher(browser) {
   const context = await browser.newContext(buildContextOptions());
   await context.addInitScript(seedDemoIdentity);
@@ -583,8 +591,9 @@ async function captureManual(browser) {
   try {
     await routeCommon(page);
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByText("Send & payment handoff").waitFor({ state: "visible" });
-    await page.locator('[data-testid="manual-send-payment-handoff"]').evaluate((element) => {
+    const handoffPanel = page.locator('[data-testid="manual-send-payment-handoff"]').first();
+    await handoffPanel.waitFor({ state: "visible" });
+    await handoffPanel.evaluate((element) => {
       const top = element.getBoundingClientRect().top + window.scrollY - 24;
       window.scrollTo({ top: Math.max(top, 0), behavior: "instant" });
       const mobileToolbar = document.querySelector(".fixed.bottom-0.left-0.right-0.z-40");
@@ -609,11 +618,36 @@ async function captureLibrary(browser) {
   try {
     await routeCommon(page, { invoicesPayload: libraryInvoicesPayload });
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    await page.getByText("Billie next up").waitFor({ state: "visible" });
-    await page.locator('[data-testid="library-billie-next-up"]').evaluate((element) => {
-      const top = element.getBoundingClientRect().top + window.scrollY - 24;
-      window.scrollTo({ top: Math.max(top, 0), behavior: "instant" });
-    });
+    const anchorSelectors = [
+      'text=Invoice Library',
+      '[data-testid="library-billie-next-up"]',
+      '[data-testid="library-follow-up-plan"]',
+      '[data-testid="library-repeat-workflow"]',
+      '[data-testid^="library-repeat-workflow-"]',
+      'text=Collections command center',
+      'text=Repeat-ready clients',
+      'text=Needs attention'
+    ];
+    let anchorLocator = null;
+    for (const selector of anchorSelectors) {
+      const locator = page.locator(selector).first();
+      if (await locator.count()) {
+        anchorLocator = locator;
+        break;
+      }
+    }
+    if (anchorLocator) {
+      await anchorLocator.waitFor({ state: "visible" });
+      await anchorLocator.evaluate((element) => {
+        const top = element.getBoundingClientRect().top + window.scrollY - 24;
+        window.scrollTo({ top: Math.max(top, 0), behavior: "instant" });
+      });
+    } else {
+      await page.locator("body").waitFor({ state: "visible" });
+      await page.evaluate(() => {
+        window.scrollTo({ top: 0, behavior: "instant" });
+      });
+    }
     await page.waitForTimeout(300);
     await page.screenshot({
       path: buildRawScreenshotPath("phone-04-invoice-library.png"),
@@ -650,7 +684,9 @@ async function captureImport(browser) {
   try {
     await routeCommon(page);
     await page.goto(`${baseUrl}/import`, { waitUntil: "networkidle" });
-    await page.getByText("Upload old invoice files or photo notes").waitFor({ state: "visible" });
+    await page
+      .getByRole("heading", { name: /Bring old files forward without rebuilding them from scratch/i })
+      .waitFor({ state: "visible" });
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
     await page.waitForTimeout(300);
     await page.screenshot({
@@ -850,13 +886,13 @@ async function createFeatureGraphic(browser) {
                   <img src="${iconUrl}" alt="NoteBill icon" />
                   <span>NoteBill</span>
                 </div>
-                <div class="eyebrow">Business invoicing</div>
+                <div class="eyebrow">Mobile-first invoicing</div>
                 <h1>Turn rough job notes into client-ready invoices.</h1>
-                <p>Guide the first invoice, reuse repeat work faster, and tighten the payment handoff before you send.</p>
+                <p>Approve the money, send faster, and make repeat work easier without getting buried in admin drag.</p>
                 <div class="points">
-                  <span class="point">Guided onboarding</span>
+                  <span class="point">Guided first invoice</span>
                   <span class="point">Repeat work</span>
-                  <span class="point">Payment handoff</span>
+                  <span class="point">Follow-up clarity</span>
                 </div>
               </section>
               <section class="right">
@@ -907,10 +943,10 @@ async function writeManifest() {
     "- Preview video: optional, not included",
     "",
     "Suggested screenshot captions:",
-    "1. Start with a guided first invoice instead of a blank screen",
-    "2. Paste rough job notes and let Billie prepare the draft",
-    "3. Finish the customer handoff with save, payment link, and portal steps",
-    "4. Reopen saved work and see the clearest next action instantly",
+    "1. Start from rough job notes instead of a blank invoice",
+    "2. Let Billie turn messy details into a clean draft",
+    "3. Approve the money decisions before anything gets sent",
+    "4. See what needs follow-up without digging through old invoices",
     "5. Find help, support, and feedback without leaving the app",
     "6. Import old invoices, PDFs, and files when you need a head start"
   ].join("\n");
@@ -921,6 +957,7 @@ async function main() {
   await ensureOutputDir();
   const browser = await chromium.launch({ headless: true });
   try {
+    await cleanupLegacyArtifacts();
     await copyBrandAssets();
     await captureLauncher(browser);
     await captureAiIntake(browser);
