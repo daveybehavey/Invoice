@@ -1,4 +1,5 @@
 import { FinishedInvoice } from "../models/invoice.js";
+import { buildPaymentMethodHtml, buildPaymentMethodTextLines } from "./paymentMethods.js";
 
 export type InvoiceEmailProvider = "none" | "resend" | "smtp2go";
 
@@ -43,6 +44,23 @@ type SendInvoiceEmailInput = {
   invoiceId: string;
   openTrackingPixelUrl: string;
   messageType?: "invoice" | "reminder";
+};
+
+type ClientStatementInvoiceSummary = {
+  invoiceNumber?: string | null;
+  dueDate?: string | null;
+  total?: number | null;
+  balanceDue?: number | null;
+  currency?: string | null;
+};
+
+type SendClientStatementEmailInput = {
+  recipientEmail: string;
+  clientName: string;
+  preparedAt: string;
+  openBalance: number;
+  currency?: string | null;
+  invoices: ClientStatementInvoiceSummary[];
 };
 
 type SendAuthSignInEmailInput = {
@@ -130,6 +148,17 @@ export async function sendInvoiceEmail(input: SendInvoiceEmailInput): Promise<In
     subject: buildInvoiceEmailSubject(input),
     textBody: buildInvoiceEmailText(input),
     htmlBody: buildInvoiceEmailHtml(input)
+  });
+}
+
+export async function sendClientStatementEmail(
+  input: SendClientStatementEmailInput
+): Promise<InvoiceEmailSendResult> {
+  return sendTransactionalEmail({
+    recipientEmail: input.recipientEmail,
+    subject: buildClientStatementEmailSubject(input),
+    textBody: buildClientStatementEmailText(input),
+    htmlBody: buildClientStatementEmailHtml(input)
   });
 }
 
@@ -468,6 +497,7 @@ function buildInvoiceEmailText(input: SendInvoiceEmailInput): string {
     typeof invoice.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0
       ? `Pay online: ${invoice.paymentLinkUrl.trim()}`
       : "";
+  const paymentMethodsLine = buildPaymentMethodTextLines(invoice.paymentMethods);
   const linePreview = invoice.lineItems
     .slice(0, 8)
     .map((lineItem) => `- ${lineItem.description}: ${formatCurrency(lineItem.amount, invoice.currency)}`)
@@ -483,12 +513,13 @@ function buildInvoiceEmailText(input: SendInvoiceEmailInput): string {
     "",
     linePreview,
     "",
-    `Total due: ${total}`,
-    dueDate ? `Due date: ${dueDate}` : "",
-    paymentLine,
-    "",
-    "Sent with NoteBill."
-  ]
+      `Total due: ${total}`,
+      dueDate ? `Due date: ${dueDate}` : "",
+      paymentLine,
+      paymentMethodsLine,
+      "",
+      "Sent with NoteBill."
+    ]
     .filter(Boolean)
     .join("\n");
 }
@@ -504,6 +535,7 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
     typeof invoice.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0
       ? invoice.paymentLinkUrl.trim()
       : "";
+  const paymentMethodsBlock = buildPaymentMethodHtml(invoice.paymentMethods);
   const lineRows = invoice.lineItems
     .slice(0, 8)
     .map((lineItem) => {
@@ -545,8 +577,111 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
                 </table>
                 <p style="margin:16px 0 0 0;font-size:16px;font-weight:700;color:#0f172a;">Total due: ${total}</p>
                 ${paymentBlock}
+                ${paymentMethodsBlock}
                 <p style="margin:18px 0 0 0;font-size:12px;color:#64748b;">Sent with NoteBill.</p>
                 <img src="${escapeAttribute(input.openTrackingPixelUrl)}" alt="" width="1" height="1" style="display:block;border:0;outline:none;" />
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+function buildClientStatementEmailSubject(input: SendClientStatementEmailInput): string {
+  const clientName = toOptionalTrimmedString(input.clientName);
+  return clientName ? `${clientName} statement from NoteBill` : "Client statement from NoteBill";
+}
+
+function buildClientStatementEmailText(input: SendClientStatementEmailInput): string {
+  const clientName = toOptionalTrimmedString(input.clientName) ?? "your account";
+  const currency = resolveStatementCurrency(input);
+  const preparedAt = formatStatementPreparedAt(input.preparedAt);
+  const invoiceLines =
+    input.invoices.length > 0
+      ? input.invoices.map((invoice) => {
+          const invoiceNumber = toOptionalTrimmedString(invoice.invoiceNumber) ?? "Draft";
+          const balanceDue = formatCurrency(Number(invoice.balanceDue ?? 0), currency);
+          const dueDate = toOptionalTrimmedString(invoice.dueDate);
+          const total = Number.isFinite(Number(invoice.total))
+            ? `Total ${formatCurrency(Number(invoice.total), currency)}`
+            : "";
+          return `- ${invoiceNumber}: ${balanceDue} open${dueDate ? `, due ${dueDate}` : ""}${total ? `, ${total}` : ""}`;
+        })
+      : ["- No open invoices were found."];
+  return [
+    `Hi ${clientName},`,
+    "",
+    preparedAt
+      ? `Here is your current NoteBill statement prepared ${preparedAt}.`
+      : "Here is your current NoteBill statement.",
+    "",
+    ...invoiceLines,
+    "",
+    `Total open balance: ${formatCurrency(input.openBalance, currency)}`,
+    "",
+    "If anything looks off, reply and I can adjust it right away.",
+    "",
+    "Sent with NoteBill."
+  ].join("\n");
+}
+
+function buildClientStatementEmailHtml(input: SendClientStatementEmailInput): string {
+  const clientName = escapeHtml(toOptionalTrimmedString(input.clientName) ?? "Client");
+  const currency = resolveStatementCurrency(input);
+  const preparedAt = formatStatementPreparedAt(input.preparedAt);
+  const rows = input.invoices.length
+    ? input.invoices
+        .map((invoice) => {
+          const invoiceNumber = escapeHtml(toOptionalTrimmedString(invoice.invoiceNumber) ?? "Draft");
+          const dueDate = escapeHtml(toOptionalTrimmedString(invoice.dueDate) ?? "Not set");
+          const total = escapeHtml(
+            Number.isFinite(Number(invoice.total)) ? formatCurrency(Number(invoice.total), currency) : "-"
+          );
+          const openBalance = escapeHtml(formatCurrency(Number(invoice.balanceDue ?? 0), currency));
+          return `<tr>
+            <td style="padding:8px 0;color:#0f172a;">${invoiceNumber}</td>
+            <td style="padding:8px 0;color:#475569;">${dueDate}</td>
+            <td style="padding:8px 0;text-align:right;color:#0f172a;">${total}</td>
+            <td style="padding:8px 0;text-align:right;color:#0f172a;font-weight:700;">${openBalance}</td>
+          </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="4" style="padding:8px 0;color:#475569;">No open invoices were found.</td></tr>`;
+  return `<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f8fafc;font-family:Arial,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:24px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:24px;">
+            <tr>
+              <td>
+                <p style="margin:0;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#17493c;font-weight:700;">Client statement</p>
+                <h1 style="margin:10px 0 0 0;font-size:24px;color:#093064;">${clientName}</h1>
+                <p style="margin:12px 0 0 0;font-size:14px;line-height:1.6;color:#475569;">
+                  ${preparedAt ? `Here is your current NoteBill statement prepared ${escapeHtml(preparedAt)}.` : "Here is your current NoteBill statement."}
+                </p>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:18px;border-collapse:collapse;">
+                  <thead>
+                    <tr>
+                      <th style="padding:0 0 10px 0;border-bottom:1px solid #e2e8f0;text-align:left;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Invoice</th>
+                      <th style="padding:0 0 10px 0;border-bottom:1px solid #e2e8f0;text-align:left;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Due</th>
+                      <th style="padding:0 0 10px 0;border-bottom:1px solid #e2e8f0;text-align:right;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Total</th>
+                      <th style="padding:0 0 10px 0;border-bottom:1px solid #e2e8f0;text-align:right;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#64748b;">Open</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rows}
+                  </tbody>
+                </table>
+                <p style="margin:18px 0 0 0;font-size:16px;font-weight:700;color:#0f172a;">Total open balance: ${escapeHtml(
+                  formatCurrency(input.openBalance, currency)
+                )}</p>
+                <p style="margin:18px 0 0 0;font-size:13px;color:#64748b;">If anything looks off, reply and I can adjust it right away.</p>
+                <p style="margin:18px 0 0 0;font-size:12px;color:#64748b;">Sent with NoteBill.</p>
               </td>
             </tr>
           </table>
@@ -567,6 +702,25 @@ function buildAuthSignInEmailText(input: SendAuthSignInEmailInput & { recipientE
     expiresAt ? `This sign-in link expires ${expiresAt}.` : "This sign-in link expires soon.",
     "If you did not request this email, you can ignore it."
   ].join("\n");
+}
+
+function resolveStatementCurrency(input: SendClientStatementEmailInput): string {
+  const explicit = toOptionalTrimmedString(input.currency);
+  if (explicit) {
+    return explicit;
+  }
+  const firstInvoiceCurrency = input.invoices
+    .map((invoice) => toOptionalTrimmedString(invoice.currency))
+    .find(Boolean);
+  return firstInvoiceCurrency ?? "USD";
+}
+
+function formatStatementPreparedAt(value: string): string {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    return "";
+  }
+  return new Date(parsed).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 function buildAuthSignInEmailHtml(input: SendAuthSignInEmailInput & { recipientEmail: string }): string {

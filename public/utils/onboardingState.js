@@ -46,14 +46,14 @@
     {
       id: "sign_in",
       label: "Sign in for saved account access",
-      helper: "Optional, but helpful if you want saved work tied to your email."
+      helper: "Optional, but helpful when you want saved work and billing tied to your account."
     }
   ];
   const SETUP_DEFINITIONS = [
     {
       id: "sign_in",
       label: "Link your account",
-      helper: "Use email or Google sign-in so saved work follows your email.",
+      helper: "Use email or Google sign-in so saved work, billing, and repeat setup stay with your account.",
       ctaLabel: "Open sign-in",
       routeHint: "sign-in"
     },

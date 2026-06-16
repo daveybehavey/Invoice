@@ -159,7 +159,7 @@
       summaryLines.push(
         `${decisions.length} decision${decisions.length > 1 ? "s" : ""} need${
           decisions.length > 1 ? "" : "s"
-        } your call.`
+        } a choice.`
       );
     }
     if (unparsedCount > 0) {
@@ -291,6 +291,8 @@
       fromDetails: "",
       billToDetails: invoice?.customerName ?? "",
       notes: invoice?.notes ?? "",
+      importSourceText: typeof transcript === "string" ? transcript : "",
+      importSourceFileName: "",
       taxRate: taxOverride ?? "0",
       lineItems: lineItems.length
         ? lineItems

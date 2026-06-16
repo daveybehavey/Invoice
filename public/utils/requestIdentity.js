@@ -2,8 +2,10 @@
   const storageKey = "invoiceOwnerId";
   const sessionTokenStorageKey = "invoiceSessionToken";
   const sessionStorageKey = "invoiceAuthSession";
+  const attributionStorageKey = "invoiceFirstTouchAttribution";
   const ownerHeader = "x-invoice-user-id";
   const authHeader = "authorization";
+  const attributionHeader = "x-notebill-attribution";
   const productionApiOrigin = "https://app.notebill.app";
   let cachedOwnerId = null;
   let cachedSessionToken = null;
@@ -11,7 +13,12 @@
 
   const isCapacitorLocalApiOrigin = () => {
     const origin = window.location?.origin || "";
-    return origin === "https://localhost" && Boolean(window.Capacitor || window.WEBVIEW_SERVER_URL);
+    const isNativeLocalOrigin =
+      origin === "https://localhost" ||
+      origin === "http://localhost" ||
+      origin === "capacitor://localhost" ||
+      origin === "ionic://localhost";
+    return isNativeLocalOrigin && Boolean(window.Capacitor || window.WEBVIEW_SERVER_URL);
   };
 
   const resolveApiUrl = (value) => {
@@ -40,6 +47,27 @@
       return value;
     }
     return value;
+  };
+
+  const normalizeGoogleClientId = (value) => (typeof value === "string" ? value.trim() : "");
+
+  const getPublicGoogleClientId = () => {
+    const publicConfigClientId =
+      window.InvoicePublicConfig && typeof window.InvoicePublicConfig === "object"
+        ? normalizeGoogleClientId(window.InvoicePublicConfig.googleClientId)
+        : "";
+    if (publicConfigClientId) {
+      return publicConfigClientId;
+    }
+
+    const legacyClientId = normalizeGoogleClientId(window.InvoiceGoogleClientId);
+    if (legacyClientId) {
+      return legacyClientId;
+    }
+
+    const metaElement =
+      window.document?.querySelector?.('meta[name="notebill-google-client-id"]') ?? null;
+    return normalizeGoogleClientId(metaElement?.getAttribute?.("content"));
   };
 
   const isExpiredSession = (session) => {
@@ -158,6 +186,47 @@
     return cachedSession;
   };
 
+  const normalizeAttributionValue = (value, maxLength = 160) =>
+    typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+
+  const readStoredAttribution = () => {
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(attributionStorageKey) || "null");
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  const captureFirstTouchAttribution = () => {
+    const existing = readStoredAttribution();
+    if (existing) {
+      return existing;
+    }
+    const params = new URLSearchParams(window.location?.search || "");
+    const attribution = {
+      gclid: normalizeAttributionValue(params.get("gclid"), 220),
+      utmSource: normalizeAttributionValue(params.get("utm_source")),
+      utmMedium: normalizeAttributionValue(params.get("utm_medium")),
+      utmCampaign: normalizeAttributionValue(params.get("utm_campaign")),
+      utmTerm: normalizeAttributionValue(params.get("utm_term")),
+      utmContent: normalizeAttributionValue(params.get("utm_content")),
+      landingPath: normalizeAttributionValue(window.location?.pathname || "/", 220),
+      capturedAt: new Date().toISOString()
+    };
+    if (!attribution.gclid && !attribution.utmSource && !attribution.utmMedium) {
+      return null;
+    }
+    try {
+      window.localStorage.setItem(attributionStorageKey, JSON.stringify(attribution));
+    } catch (_error) {
+      // Best-effort write only.
+    }
+    return attribution;
+  };
+
+  const getFirstTouchAttribution = () => readStoredAttribution() || captureFirstTouchAttribution();
+
   const setAuthSession = (token, session) => {
     cachedSessionToken = token || null;
     cachedSession = session || null;
@@ -236,6 +305,10 @@
     if (!headers.has(ownerHeader)) {
       headers.set(ownerHeader, session?.userId || getInvoiceOwnerId());
     }
+    const attribution = getFirstTouchAttribution();
+    if (attribution && !headers.has(attributionHeader)) {
+      headers.set(attributionHeader, encodeURIComponent(JSON.stringify(attribution)));
+    }
     return { ...requestInit, headers };
   };
 
@@ -283,6 +356,46 @@
       throw new Error(payload?.error || "Sign in failed.");
     }
     return payload;
+  };
+
+  const completeNativeGoogleSignIn = async ({ clientId } = {}) => {
+    const normalizedClientId = normalizeGoogleClientId(clientId) || getPublicGoogleClientId();
+    if (!normalizedClientId) {
+      throw new Error("Google Sign-In isn't configured for native login yet.");
+    }
+    const plugin = window.Capacitor?.Plugins?.GoogleAuth ?? null;
+    if (!plugin?.signIn) {
+      throw new Error("Native Google Sign-In isn't available on this build.");
+    }
+    const credential = await plugin.signIn({ serverClientId: normalizedClientId });
+    const idToken = typeof credential?.idToken === "string" ? credential.idToken.trim() : "";
+    if (!idToken) {
+      throw new Error("Google Sign-In did not return an ID token.");
+    }
+    const response = await apiFetch("/api/auth/google/native", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error || "Sign in failed.");
+    }
+    const token = typeof payload?.token === "string" ? payload.token : null;
+    const session = payload?.session ?? null;
+    if (!token || !session?.userId) {
+      throw new Error("Sign in failed.");
+    }
+    setAuthSession(token, session);
+    try {
+      window.sessionStorage.setItem(
+        "invoiceAuthJustSignedIn",
+        JSON.stringify({ provider: "google", email: session?.email ?? "" })
+      );
+    } catch (_error) {
+      // Best-effort handoff only.
+    }
+    return session;
   };
 
   const getGoogleAuthStartUrl = (returnTo = "/") => {
@@ -383,16 +496,21 @@
   window.InvoiceRequestIdentity = {
     ownerHeader,
     authHeader,
+    attributionHeader,
     storageKey,
     sessionTokenStorageKey,
     sessionStorageKey,
+    attributionStorageKey,
     getScopedStorageKey,
     getInvoiceOwnerId,
     getSessionToken,
     getAuthSession,
+    getFirstTouchAttribution,
+    getPublicGoogleClientId,
     getGoogleAuthStartUrl,
     loadAuthProviders,
     requestSignInLink,
+    completeNativeGoogleSignIn,
     completeEmailLinkSignIn,
     completeRedirectSignIn,
     signOut,

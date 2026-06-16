@@ -190,12 +190,12 @@
     const foundText =
       lineItems.length > 0
         ? `${lineItems.length} line item${lineItems.length > 1 ? "s" : ""} captured.`
-        : "No line items captured yet.";
+        : "No billable line items drafted yet.";
     const decisionsText =
       pendingDecisionCount > 0
         ? `${pendingDecisionCount} decision${pendingDecisionCount > 1 ? "s" : ""} ${
             pendingDecisionCount > 1 ? "need" : "needs"
-          } your call.`
+          } a choice.`
         : qualityBlockerCount > 0
           ? `No decisions pending. ${qualityBlockerCount} review item${
               qualityBlockerCount > 1 ? "s" : ""

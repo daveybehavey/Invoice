@@ -1,5 +1,74 @@
-const CACHE_NAME = "notebill-shell-v1";
-const APP_SHELL_URLS = ["/", "/index.html", "/dist/app.css", "/manifest.webmanifest"];
+const SW_URL = new URL(self.location.href);
+const BUILD_VERSION = SW_URL.searchParams.get("v") || "dev";
+const CACHE_NAME = `notebill-shell-${BUILD_VERSION}`;
+const APP_SHELL_URLS = [
+  "/",
+  "/index.html",
+  "/dist/app.css",
+  "/dist/build-meta.js",
+  "/dist/runtime-config.js",
+  "/manifest.webmanifest"
+];
+
+function isCacheableResponse(response) {
+  return Boolean(response && response.status === 200 && response.type === "basic");
+}
+
+async function cacheResponse(request, response) {
+  if (!isCacheableResponse(response)) {
+    return response;
+  }
+  const cache = await caches.open(CACHE_NAME);
+  await cache.put(request, response.clone()).catch(() => undefined);
+  return response;
+}
+
+async function networkFirst(request) {
+  try {
+    const response = await fetch(request);
+    return await cacheResponse(request, response);
+  } catch (_error) {
+    const cached = await caches.match(request);
+    if (cached) {
+      return cached;
+    }
+    if (request.mode === "navigate") {
+      const shell = await caches.match("/index.html");
+      if (shell) {
+        return shell;
+      }
+    }
+    throw _error;
+  }
+}
+
+async function staleWhileRevalidate(request) {
+  const cached = await caches.match(request);
+  const networkPromise = fetch(request)
+    .then((response) => cacheResponse(request, response))
+    .catch(() => null);
+  if (cached) {
+    return cached;
+  }
+  const networkResponse = await networkPromise;
+  if (networkResponse) {
+    return networkResponse;
+  }
+  throw new Error("offline");
+}
+
+function shouldUseNetworkFirst(requestUrl, request) {
+  if (request.mode === "navigate") {
+    return true;
+  }
+  return (
+    requestUrl.pathname === "/index.html" ||
+    requestUrl.pathname.endsWith(".js") ||
+    requestUrl.pathname.endsWith(".css") ||
+    requestUrl.pathname.endsWith(".html") ||
+    requestUrl.pathname.endsWith(".webmanifest")
+  );
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -36,28 +105,10 @@ self.addEventListener("fetch", (event) => {
   if (requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith("/api/")) {
     return;
   }
+
   event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) {
-        return cached;
-      }
-      return fetch(request)
-        .then((response) => {
-          if (!response || response.status !== 200 || response.type !== "basic") {
-            return response;
-          }
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(request, responseClone).catch(() => undefined);
-          });
-          return response;
-        })
-        .catch(() => {
-          if (request.mode === "navigate") {
-            return caches.match("/index.html");
-          }
-          return Promise.reject(new Error("offline"));
-        });
-    })
+    shouldUseNetworkFirst(requestUrl, request)
+      ? networkFirst(request)
+      : staleWhileRevalidate(request)
   );
 });

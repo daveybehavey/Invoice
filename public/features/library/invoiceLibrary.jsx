@@ -3,6 +3,8 @@
   const { useEffect, useRef, useState } = React;
   const requestIdentity = window.InvoiceRequestIdentity;
   const apiFetch = requestIdentity?.apiFetch ?? window.fetch.bind(window);
+  const revenueAnalytics = window.InvoiceRevenueAnalytics;
+  const inAppReview = window.InvoiceInAppReview;
   const getAuthSession = requestIdentity?.getAuthSession;
   const refreshSession = requestIdentity?.refreshSession;
 
@@ -20,8 +22,40 @@
     );
   }
 
+  const estimateWorkflowUtils = window.InvoiceEstimateWorkflowUtils;
+  if (!estimateWorkflowUtils) {
+    throw new Error(
+      "Missing /utils/estimateWorkflow.js load. Ensure it is loaded before /features/library/invoiceLibrary.jsx."
+    );
+  }
+
+  const recurringUtils = window.InvoiceRecurringUtils;
+  if (!recurringUtils) {
+    throw new Error(
+      "Missing /utils/recurring.js load. Ensure it is loaded before /features/library/invoiceLibrary.jsx."
+    );
+  }
+  const paymentProgressUtils = window.InvoicePaymentProgressUtils;
+  if (!paymentProgressUtils) {
+    throw new Error(
+      "Missing /utils/paymentProgress.js load. Ensure it is loaded before /features/library/invoiceLibrary.jsx."
+    );
+  }
+
   const { buildDraftFromFinishedInvoice } = intakeReadinessUtils;
   const { formatMoney } = formatUtils;
+  const { buildEstimateWorkflowSummary, getInvoiceDocumentType, getEstimateReviewState } = estimateWorkflowUtils;
+  const {
+    normalizeRecurringInterval: normalizeRecurringIntervalShared,
+    formatRecurringCadence: formatRecurringCadenceShared,
+    readRecurringSchedules: readRecurringSchedulesShared,
+    getRecurringAutoSendRecipient: getRecurringAutoSendRecipientShared,
+    buildRecurringScheduleSummary
+  } = recurringUtils;
+  const {
+    hasPartialPayment: hasPartialPaymentShared,
+    getInvoiceLatestPayment: getInvoiceLatestPaymentShared
+  } = paymentProgressUtils;
   const accountPlanUtils = window.InvoiceAccountPlanUtils;
   if (!accountPlanUtils) {
     throw new Error(
@@ -44,8 +78,10 @@
   const {
     hasStripeCheckout,
     hasStripePortal,
+    getGooglePlaySubscriptionPlans,
     startUpgradeCheckout,
     openBillingPortal,
+    getBillingEnvironment,
     readBillingNoticeFromUrl
   } = billingActions;
   const clientMemoryUtils = window.InvoiceClientMemory;
@@ -75,11 +111,6 @@
   const reminderAutomationSettingsStorageKey = "invoiceReminderAutomationSettings";
   const reminderNotificationSettingsStorageKey = "invoiceReminderNotificationSettings";
   const recurringIntervalOptions = [7, 14, 30];
-  const recurringIntervalLabels = {
-    7: "weekly",
-    14: "biweekly",
-    30: "monthly"
-  };
   const reminderAutomationPresets = [
     {
       id: "gentle",
@@ -108,25 +139,19 @@
   ];
   const recurringDayMs = 24 * 60 * 60 * 1000;
   const recurringSoonWindowMs = 7 * recurringDayMs;
+  const markReviewMilestone = (milestone) => {
+    inAppReview?.markReviewMilestone?.(milestone);
+  };
+  const maybeRequestInAppReview = (trigger) => {
+    void inAppReview?.maybeRequestInAppReview?.(trigger);
+  };
 
   const normalizeRecurringInterval = (value) => {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) {
-      return 30;
-    }
-    const rounded = Math.round(parsed);
-    if (rounded < 1) {
-      return 30;
-    }
-    return Math.min(rounded, 365);
+    return normalizeRecurringIntervalShared(value);
   };
 
   const formatRecurringCadence = (intervalDays) => {
-    const normalized = normalizeRecurringInterval(intervalDays);
-    if (recurringIntervalLabels[normalized]) {
-      return recurringIntervalLabels[normalized];
-    }
-    return `${normalized}-day`;
+    return formatRecurringCadenceShared(intervalDays);
   };
 
   const parseRecurringTimestamp = (value) => {
@@ -191,13 +216,6 @@
 
   const normalizeLookupText = (value) =>
     typeof value === "string" ? value.trim().toLocaleLowerCase() : "";
-  const getDocumentType = (invoice) => (invoice?.documentType === "estimate" ? "estimate" : "invoice");
-  const getEstimateReviewState = (invoice) =>
-    typeof invoice?.invoiceData?.finishedInvoice?.estimateReviewState === "string"
-      ? invoice.invoiceData.finishedInvoice.estimateReviewState.trim().toLowerCase()
-      : typeof invoice?.estimateReviewState === "string"
-        ? invoice.estimateReviewState.trim().toLowerCase()
-        : "";
 
   const buildClientMemoryStarterForInvoice = (invoice, clientMemoryEntries, savedLineItems) => {
     const customerName = normalizeLookupText(
@@ -230,59 +248,20 @@
         String(invoice?.customerName ?? invoice?.invoiceData?.finishedInvoice?.customerName ?? "").trim(),
       defaultNotes: hasSavedNotes ? String(entry.defaultNotes).trim() : "",
       leadItem,
+      topItems: matchingItems.slice(0, 3),
       savedItemCount: matchingItems.length,
       hasSavedDetails,
-      hasSavedNotes
+      hasSavedNotes,
+      recipientEmail: String(entry?.recipientEmail ?? "").trim().toLowerCase()
     };
   };
 
   const getRecurringAutoSendRecipient = (invoice, clientMemoryEntries = []) => {
-    const rememberedRecipient =
-      (Array.isArray(clientMemoryEntries) ? clientMemoryEntries : []).find(
-        (entry) =>
-          normalizeLookupText(entry?.name) ===
-          normalizeLookupText(invoice?.customerName ?? invoice?.invoiceData?.finishedInvoice?.customerName ?? "")
-      )?.recipientEmail ?? "";
-    const deliveryRecipient = invoice?.delivery?.recipientEmail ?? "";
-    const nextRecipient = String(rememberedRecipient || deliveryRecipient).trim().toLowerCase();
-    return isValidEmail(nextRecipient) ? nextRecipient : "";
+    return getRecurringAutoSendRecipientShared(invoice, clientMemoryEntries);
   };
 
   const readRecurringSchedules = (storageKey) => {
-    if (typeof window === "undefined") {
-      return {};
-    }
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      if (!raw) {
-        return {};
-      }
-      const parsed = JSON.parse(raw);
-      const entries = parsed?.entries && typeof parsed.entries === "object" ? parsed.entries : {};
-      return Object.entries(entries).reduce((result, [invoiceId, entry]) => {
-        if (!invoiceId || !entry || typeof entry !== "object") {
-          return result;
-        }
-        const intervalDays = normalizeRecurringInterval(entry.intervalDays);
-        const nextDueAt = new Date(parseRecurringTimestamp(entry.nextDueAt)).toISOString();
-        result[invoiceId] = {
-          intervalDays,
-          nextDueAt,
-          autoSendEnabled: Boolean(entry.autoSendEnabled),
-          autoSendRunCount: Math.max(0, Number(entry.autoSendRunCount ?? 0) || 0),
-          lastAutoSendAt:
-            typeof entry.lastAutoSendAt === "string" && entry.lastAutoSendAt.trim()
-              ? entry.lastAutoSendAt
-              : "",
-          lastAutoSendRecipient:
-            typeof entry.lastAutoSendRecipient === "string" ? entry.lastAutoSendRecipient.trim().toLowerCase() : "",
-          lastAutoSendMode: typeof entry.lastAutoSendMode === "string" ? entry.lastAutoSendMode.trim() : ""
-        };
-        return result;
-      }, {});
-    } catch (_error) {
-      return {};
-    }
+    return readRecurringSchedulesShared(storageKey);
   };
 
   const readFollowUpReminderState = (storageKey) => {
@@ -369,6 +348,8 @@
   function InvoiceLibrary() {
   const location = useLocation();
   const navigate = useNavigate();
+  const searchParams = new URLSearchParams(location.search);
+  const viewFocus = searchParams.get("focus")?.trim() ?? "";
   const legacyDraftStorageKey = "invoiceDraft";
   const draftStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceDraft") ?? legacyDraftStorageKey;
@@ -427,6 +408,10 @@
   const [reminderNotificationBusy, setReminderNotificationBusy] = useState(false);
   const [reminderNotificationNotice, setReminderNotificationNotice] = useState("");
   const [followUpNoteNotice, setFollowUpNoteNotice] = useState("");
+  const [followUpNoteDraft, setFollowUpNoteDraft] = useState("");
+  const [followUpAiPanelOpen, setFollowUpAiPanelOpen] = useState(false);
+  const [followUpAiBusy, setFollowUpAiBusy] = useState("");
+  const [followUpAiError, setFollowUpAiError] = useState("");
   const [handoffNotice, setHandoffNotice] = useState("");
   const openInvoiceTargetRef = useRef("");
   const undoTimeoutRef = useRef(null);
@@ -435,8 +420,8 @@
     ? authProviders.find((provider) => provider?.id === "email_link")
     : null;
   const requiresSignInHint = emailLinkProvider?.available
-    ? "Open launcher sign-in to send yourself an email link, then come right back here."
-    : emailLinkProvider?.warning || "Open launcher sign-in to continue.";
+    ? "Open sign-in, send yourself a secure link, then come right back to your invoice library."
+    : emailLinkProvider?.warning || "Open sign-in to continue.";
 
   const requestJson = async (input, init, fallbackMessage) => {
     const response = await apiFetch(input, init);
@@ -456,6 +441,14 @@
       setError("");
       setLoading(false);
       setAuthSession(getAuthSession?.() ?? null);
+      return;
+    }
+    if (requestError?.status === 402) {
+      setError("");
+      setBillingError(
+        requestError?.message ||
+          "This is a Pro workflow. Upgrade to unlock sends, reminders, payment links, client portals, and repeat-work shortcuts."
+      );
       return;
     }
     setError(requestError?.message || fallbackMessage);
@@ -506,14 +499,7 @@
   const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
   const trackRevenueSignal = (event, source) => {
-    void apiFetch("/api/telemetry/revenue-signals", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        event,
-        source
-      })
-    }).catch(() => {});
+    revenueAnalytics?.trackRevenueSignal?.(event, source);
   };
 
   const deriveTaxRate = (invoice) => {
@@ -717,11 +703,11 @@
       return;
     }
     setError("");
-    const sendResult = await handleSendInvoice(invoice, { recipientEmail });
+    setDeliveryNotice(`Running recurring send for ${recipientEmail}...`);
     const nextDueAt = new Date(
       Date.now() + normalizeRecurringInterval(recurringEntry.intervalDays) * recurringDayMs
     ).toISOString();
-    persistRecurringSchedules({
+    const nextSchedules = {
       ...recurringSchedules,
       [invoice.invoiceId]: {
         ...recurringEntry,
@@ -730,12 +716,63 @@
         lastAutoSendAt: new Date().toISOString(),
         lastAutoSendRecipient: recipientEmail,
         autoSendRunCount: Math.max(0, Number(recurringEntry.autoSendRunCount ?? 0) || 0) + 1,
-        lastAutoSendMode: String(sendResult?.mode ?? "recorded")
+        lastAutoSendMode: "running",
+        runHistory: [
+          {
+            runAt: new Date().toISOString(),
+            recipient: recipientEmail,
+            mode: "running"
+          },
+          ...(Array.isArray(recurringEntry.runHistory) ? recurringEntry.runHistory : [])
+        ].slice(0, 5)
       }
-    });
-    setDeliveryNotice(
-      `Recurring send run for ${recipientEmail}. Next due ${formatDate(nextDueAt)}. Watch delivery before nudging again.`
-    );
+    };
+    persistRecurringSchedules(nextSchedules);
+    try {
+      const payload = await requestJson(
+        `/api/invoices/${invoice.invoiceId}/send`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recipientEmail })
+        },
+        "Failed to send recurring invoice."
+      );
+      persistRecurringSchedules({
+        ...nextSchedules,
+        [invoice.invoiceId]: {
+          ...nextSchedules[invoice.invoiceId],
+          lastAutoSendMode: String(payload?.mode ?? "recorded"),
+          runHistory: [
+            {
+              runAt: new Date().toISOString(),
+              recipient: recipientEmail,
+              mode: String(payload?.mode ?? "recorded")
+            },
+            ...(Array.isArray(nextSchedules[invoice.invoiceId].runHistory)
+              ? nextSchedules[invoice.invoiceId].runHistory.slice(1)
+              : [])
+          ].slice(0, 5)
+        }
+      });
+      setInvoices((prev) =>
+        prev.map((candidate) =>
+          candidate.invoiceId === invoice.invoiceId
+            ? {
+                ...candidate,
+                status: payload?.invoice?.status ?? candidate.status,
+                updatedAt: payload?.invoice?.updatedAt ?? candidate.updatedAt,
+                delivery: payload?.delivery ?? candidate.delivery ?? null
+              }
+            : candidate
+        )
+      );
+      setDeliveryNotice(
+        `Recurring send run for ${recipientEmail}. Next due ${formatDate(nextDueAt)}. Watch delivery before nudging again.`
+      );
+    } catch (sendError) {
+      setError(sendError?.message || "Failed to send recurring invoice.");
+    }
   };
 
   const clearUndoToast = () => {
@@ -1005,6 +1042,9 @@
       if (typeof options?.onLoaded === "function") {
         options.onLoaded(savedInvoice, draft);
       }
+      revenueAnalytics?.trackRevenueSignalOnce?.("first_invoice_reopened", "library_reopen");
+      markReviewMilestone("invoice_reopened");
+      maybeRequestInAppReview("invoice_reopened");
       navigate(options?.navigateTo || "/manual");
     } catch (openError) {
       handleLibraryError(openError, "Failed to open invoice.");
@@ -1066,16 +1106,20 @@
       {
         customerName: starter.customerName,
         notes: starter.defaultNotes || getClientDefaultNotes(invoice?.customerName ?? ""),
-        lineItems: starter.leadItem
-          ? [
-              {
-                id: `memory-line-${Date.now()}`,
-                description: starter.leadItem.description,
-                quantity: Number(starter.leadItem.qty),
-                unitPrice: Number(starter.leadItem.rate),
-                amount: Number(starter.leadItem.qty) * Number(starter.leadItem.rate)
-              }
-            ]
+        lineItems: Array.isArray(starter.topItems) && starter.topItems.length > 0
+          ? starter.topItems.map((item, index) => {
+              const quantity = Number(item?.qty);
+              const unitPrice = Number(item?.rate);
+              return {
+                id: `memory-line-${Date.now()}-${index}`,
+                description: item?.description ?? "",
+                quantity: Number.isFinite(quantity) ? quantity : 1,
+                unitPrice: Number.isFinite(unitPrice) ? unitPrice : 0,
+                amount:
+                  (Number.isFinite(quantity) ? quantity : 1) *
+                  (Number.isFinite(unitPrice) ? unitPrice : 0)
+              };
+            })
           : []
       },
       {
@@ -1089,6 +1133,19 @@
     trackRevenueSignal("client_memory_reused", "library_client_memory_start");
     if (starter.leadItem) {
       trackRevenueSignal("service_memory_reused", "library_client_memory_start");
+    }
+    if (starter.recipientEmail) {
+      setDeliveryNotice(
+        Array.isArray(starter.topItems) && starter.topItems.length > 1
+          ? `Started a repeat-ready draft with ${starter.topItems.length} saved services. Saved recipient ${starter.recipientEmail} will stay easy to reuse when you send.`
+          : `Started a repeat-ready draft from saved client memory. Saved recipient ${starter.recipientEmail} will stay easy to reuse when you send.`
+      );
+    } else {
+      setDeliveryNotice(
+        Array.isArray(starter.topItems) && starter.topItems.length > 1
+          ? `Started a repeat-ready draft with ${starter.topItems.length} saved services.`
+          : "Started a repeat-ready draft from saved client memory."
+      );
     }
     navigate("/manual");
   };
@@ -1388,6 +1445,8 @@
       if (invoice.customerName) {
         rememberClientRecipientEmail(invoice.customerName, recipientEmail);
       }
+      markReviewMilestone("invoice_sent");
+      maybeRequestInAppReview(isResend ? "invoice_resent" : "invoice_sent");
       setSendComposer((current) =>
         current && current.invoiceId === invoice.invoiceId ? null : current
       );
@@ -1759,6 +1818,10 @@
     paid: "nb-chip nb-chip--success normal-case tracking-normal rounded-full",
     deleted: "nb-chip nb-chip--danger normal-case tracking-normal rounded-full"
   };
+  const sentReminderThresholdDays = 14;
+  const sentReminderThresholdMs = sentReminderThresholdDays * 24 * 60 * 60 * 1000;
+  const staleDraftThresholdDays = 7;
+  const staleDraftThresholdMs = staleDraftThresholdDays * 24 * 60 * 60 * 1000;
   const getInvoiceLifecycleLabel = (invoice) => {
     if (invoice?.status === "deleted") {
       return "Deleted invoice";
@@ -1812,7 +1875,7 @@
       return "Restore to edit, export, or send again.";
     }
     if (invoice?.status === "paid") {
-      return "Paid and closed. Reuse it for the next similar job or set a cadence.";
+      return "Paid and closed. Reuse it for the next similar job, set a cadence, or let it anchor the next repeat invoice.";
     }
     if (invoice?.status === "sent" && isPastDue) {
       if (hasDelivery && !deliveryOpened) {
@@ -1831,30 +1894,183 @@
     }
     return "Open the draft, finish the details, then send or export.";
   };
+  const getNeedsAttentionSignals = (invoice, now = Date.now()) => {
+    if (!invoice || invoice?.status === "deleted") {
+      return {
+        matches: false,
+        priority: Number.POSITIVE_INFINITY,
+        label: "",
+        reason: ""
+      };
+    }
+    const dueDateValue = getInvoiceDueDateValue(invoice);
+    const dueDateMs = parseInvoiceDueTimestamp(dueDateValue);
+    const isPastDue = invoice.status === "sent" && Number.isFinite(dueDateMs) && dueDateMs <= now;
+    const delivery = invoice?.delivery ?? null;
+    const hasTrackedDelivery = Boolean(delivery?.recipientEmail) && Boolean(delivery?.sentAt);
+    const deliveryOpened = delivery?.status === "opened";
+    const paymentLinkReady =
+      typeof invoice?.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0;
+    const clientPortalReady = buildLibraryClientPortalUrl(invoice).length > 0;
+    const updatedAtMs = Date.parse(invoice?.updatedAt ?? "");
+    const isStaleDraft =
+      invoice.status === "draft" &&
+      Number.isFinite(updatedAtMs) &&
+      now - updatedAtMs >= staleDraftThresholdMs;
+
+    if (invoice.status === "sent" && isPastDue && hasTrackedDelivery && deliveryOpened) {
+      return {
+        matches: true,
+        priority: 0,
+        label: "Opened overdue",
+        reason: "Opened and overdue with money still outstanding."
+      };
+    }
+    if (invoice.status === "sent" && isPastDue && hasTrackedDelivery && !deliveryOpened) {
+      return {
+        matches: true,
+        priority: 1,
+        label: "Overdue unopened",
+        reason: "Past due, but the client still has not opened it."
+      };
+    }
+    if (invoice.status === "sent" && isPastDue) {
+      return {
+        matches: true,
+        priority: 2,
+        label: "Past due",
+        reason: "Past due and still needs a payment follow-up."
+      };
+    }
+    if (invoice.status === "sent" && !hasTrackedDelivery) {
+      return {
+        matches: true,
+        priority: 3,
+        label: "Track delivery",
+        reason: "Marked sent, but delivery tracking is missing."
+      };
+    }
+    if (invoice.status === "sent" && hasTrackedDelivery && !deliveryOpened) {
+      return {
+        matches: true,
+        priority: 4,
+        label: "Waiting for open",
+        reason: "Delivery is tracked, but the client has not opened it yet."
+      };
+    }
+    if (invoice.status === "sent" && !paymentLinkReady) {
+      return {
+        matches: true,
+        priority: 5,
+        label: "Add payment link",
+        reason: "Sending was handled, but the payment handoff can still feel easier and more trustworthy."
+      };
+    }
+    if (invoice.status === "sent" && !clientPortalReady) {
+      return {
+        matches: true,
+        priority: 6,
+        label: "Add portal",
+        reason: "The invoice is out, but the client still lacks the cleaner portal handoff."
+      };
+    }
+    if (isStaleDraft) {
+      return {
+        matches: true,
+        priority: 7,
+        label: "Stale draft",
+        reason: "Saved draft has been sitting for a while and likely needs a final push."
+      };
+    }
+    return {
+      matches: false,
+      priority: Number.POSITIVE_INFINITY,
+      label: "",
+      reason: ""
+    };
+  };
+  const normalizeLibraryFocus = (value) => {
+    if (value === "opened_unpaid") {
+      return "opened_unpaid";
+    }
+    if (value === "partial_payments") {
+      return "partial_payments";
+    }
+    if (value === "overdue_unopened") {
+      return "overdue_unopened";
+    }
+    if (value === "overdue_opened") {
+      return "overdue_opened";
+    }
+    return "";
+  };
   const statusFilterOptions = [
     { id: "all", label: "All" },
+    { id: "needs_attention", label: "Needs attention" },
     { id: "draft", label: "Draft" },
     { id: "sent", label: "Sent" },
     { id: "paid", label: "Paid" }
   ];
   const emptyLibraryStates = {
     all: {
-      title: "No invoices saved yet",
-      body: "Start with notes or try the sample job. Saved drafts, sent invoices, and paid work will show up here."
+      title: "Your invoice library is ready for the first saved draft",
+      body: "Start from notes, the sample job, or a blank invoice. Saved drafts, sent invoices, and paid work will stack up here in one reusable workspace."
+    },
+    needs_attention: {
+      title: "Nothing needs attention right now",
+      body: "When an invoice needs follow-up, delivery checking, or a payment handoff, this queue will surface it first."
     },
     draft: {
-      title: "No draft invoices",
-      body: "Drafts appear here after you save from the editor. Start from notes when you are ready to create one."
+      title: "No saved drafts yet",
+      body: "Save a draft from the editor and it will show up here ready for review, reuse, or sending."
     },
     sent: {
       title: "No sent invoices",
-      body: "Invoices you mark or send as sent will appear here for follow-up and payment tracking."
+      body: "Invoices you mark or send as sent appear here so follow-up, payment progress, and reminders stay in one place."
     },
     paid: {
       title: "No paid invoices",
-      body: "Mark a sent invoice paid when payment arrives. Paid work stays available for repeat invoices."
+      body: "Mark an invoice paid when the money lands. Paid work stays here as proof of completed jobs and repeat-work history."
     }
   };
+  const nowMs = Date.now();
+  const needsAttentionEntries = invoices
+    .map((invoice) => ({
+      invoice,
+      signal: getNeedsAttentionSignals(invoice, nowMs)
+    }))
+    .filter((entry) => entry.signal.matches)
+    .sort((left, right) => {
+      if (left.signal.priority !== right.signal.priority) {
+        return left.signal.priority - right.signal.priority;
+      }
+      return String(right.invoice?.updatedAt ?? "").localeCompare(String(left.invoice?.updatedAt ?? ""));
+    });
+  const needsAttentionById = new Map(
+    needsAttentionEntries.map((entry) => [entry.invoice?.invoiceId, entry.signal])
+  );
+  const normalizedViewFocus = normalizeLibraryFocus(viewFocus);
+  const sentOpenInvoices = invoices.filter(
+    (invoice) => invoice?.status === "sent" && getInvoiceOpenBalance(invoice) > 0
+  );
+  const openedUnpaidInvoices = sentOpenInvoices.filter(
+    (invoice) => invoice?.delivery?.status === "opened"
+  );
+  const focusedInvoiceIds = (() => {
+    if (normalizedViewFocus === "opened_unpaid") {
+      return new Set(openedUnpaidInvoices.map((invoice) => invoice.invoiceId));
+    }
+    if (normalizedViewFocus === "partial_payments") {
+      return new Set(partialPaymentInvoices.map((invoice) => invoice.invoiceId));
+    }
+    if (normalizedViewFocus === "overdue_unopened") {
+      return new Set(overdueUnopenedInvoices.map((invoice) => invoice.invoiceId));
+    }
+    if (normalizedViewFocus === "overdue_opened") {
+      return new Set(overdueOpenedInvoices.map((invoice) => invoice.invoiceId));
+    }
+    return null;
+  })();
   const statusCounts = invoices.reduce(
     (counts, invoice) => {
       if (invoice?.status === "draft" || invoice?.status === "sent" || invoice?.status === "paid") {
@@ -1864,37 +2080,102 @@
     },
     { draft: 0, sent: 0, paid: 0 }
   );
+  statusCounts.needs_attention = needsAttentionEntries.length;
   const filteredInvoices =
     showTrash || statusFilter === "all"
       ? invoices
+      : statusFilter === "needs_attention"
+        ? needsAttentionEntries.map((entry) => entry.invoice)
       : invoices.filter((invoice) => invoice.status === statusFilter);
+  const visibleInvoices =
+    focusedInvoiceIds instanceof Set
+      ? filteredInvoices.filter((invoice) => focusedInvoiceIds.has(invoice.invoiceId))
+      : filteredInvoices;
   const emptyLibraryState = emptyLibraryStates[statusFilter] ?? emptyLibraryStates.all;
+  const needsAttentionSummary = (() => {
+    if (showTrash || statusFilter !== "needs_attention" || needsAttentionEntries.length === 0) {
+      return null;
+    }
+    const topSignal = needsAttentionEntries[0]?.signal ?? null;
+    const overdueCount = needsAttentionEntries.filter((entry) => entry.signal.priority <= 2).length;
+    const deliveryCount = needsAttentionEntries.filter((entry) => entry.signal.priority === 3 || entry.signal.priority === 4).length;
+    const handoffCount = needsAttentionEntries.filter((entry) => entry.signal.priority === 5 || entry.signal.priority === 6).length;
+    const staleDraftCount = needsAttentionEntries.filter((entry) => entry.signal.priority === 7).length;
+    return {
+      title:
+        overdueCount > 0
+          ? `${overdueCount} invoice${overdueCount === 1 ? "" : "s"} need payment follow-up first`
+          : `${needsAttentionEntries.length} invoice${needsAttentionEntries.length === 1 ? "" : "s"} need attention`,
+      body:
+        topSignal?.reason ||
+        "This view brings overdue work, weak delivery signals, and unfinished handoffs into one calmer queue.",
+      chips: [
+        overdueCount > 0 ? `${overdueCount} overdue` : "",
+        deliveryCount > 0 ? `${deliveryCount} delivery checks` : "",
+        handoffCount > 0 ? `${handoffCount} payment handoffs` : "",
+        staleDraftCount > 0 ? `${staleDraftCount} stale drafts` : ""
+      ].filter(Boolean)
+    };
+  })();
   const selectedCount = selectedIds.length;
-  const visibleIds = filteredInvoices.map((invoice) => invoice.invoiceId);
+  const visibleIds = visibleInvoices.map((invoice) => invoice.invoiceId);
   const allSelected = visibleIds.length > 0 && selectedCount === visibleIds.length;
+  const applyLibraryView = ({ nextStatusFilter = "all", nextShowTrash = false, nextFocus = "" }) => {
+    const normalizedFocus = normalizeLibraryFocus(nextFocus);
+    setShowTrash(Boolean(nextShowTrash));
+    setStatusFilter(nextStatusFilter);
+    setSelectedIds([]);
+    const nextParams = new URLSearchParams(location.search);
+    if (normalizedFocus) {
+      nextParams.set("focus", normalizedFocus);
+    } else {
+      nextParams.delete("focus");
+    }
+    const nextQuery = nextParams.toString();
+    navigate(`${location.pathname}${nextQuery ? `?${nextQuery}` : ""}`);
+  };
   const planSummary = formatPlanSummary(accountPlan);
   const planUsage = getPlanUsageModel(accountPlan);
   const planLimitReached = Boolean(accountPlan?.upgradeRequired);
   const planWarning = getPlanPrelimitWarning(accountPlan);
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
   const billingPortalUrl = getPlanBillingPortalUrl(accountPlan);
+  const googlePlayEntitlements = accountPlan?.billing?.googlePlay?.entitlements ?? {};
+  const googlePlayRecoveryState =
+    accountPlan?.plan === "free" &&
+    Number.isFinite(googlePlayEntitlements?.subscriptionCount) &&
+    Number(googlePlayEntitlements.subscriptionCount) > 0 &&
+    (!Number.isFinite(googlePlayEntitlements?.activeSubscriptionCount) ||
+      Number(googlePlayEntitlements.activeSubscriptionCount) <= 0);
   const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
-  const useStripePortalAction = accountPlan?.plan === "pro" && hasStripePortal(accountPlan);
+  const useStripePortalAction =
+    (accountPlan?.plan === "pro" || googlePlayRecoveryState) && hasStripePortal(accountPlan);
   const showUpgradeAction =
     accountPlan?.plan === "free" && (Boolean(upgradeUrl) || useStripeUpgradeAction);
   const showBillingPortalAction =
-    accountPlan?.plan === "pro" && (Boolean(billingPortalUrl) || useStripePortalAction);
+    (accountPlan?.plan === "pro" || googlePlayRecoveryState) &&
+    (Boolean(billingPortalUrl) || useStripePortalAction);
+  const billingEnvironment = getBillingEnvironment(accountPlan);
+  const googlePlaySubscriptionPlans = getGooglePlaySubscriptionPlans(accountPlan);
+  const hasGooglePlayPlanChoices =
+    billingEnvironment?.mode === "google-play" && googlePlaySubscriptionPlans.length > 1;
+  const upgradeActionLabel =
+    billingEnvironment?.mode === "google-play" ? "Upgrade in Google Play" : "Upgrade to Pro";
+  const manageBillingLabel =
+    billingEnvironment?.mode === "google-play" ? "Manage in Google Play" : "Manage billing";
+  const billingEnvironmentHint =
+    billingEnvironment?.hint ||
+    "Use the billing controls that match this device and keep upgrades tied to the same account.";
+  const recoveryEnvironmentHint = googlePlayRecoveryState
+    ? "Google Play remembers a purchase history for this account. Try Restore purchases from the launcher first, or open Google Play management to review the subscription state."
+    : "";
+  const showInstalledAppGuard = billingEnvironment?.mode === "android-browser";
   const planUsageToneClass =
     planUsage?.statusTone === "limit"
       ? "nb-usage-meter--limit"
       : planUsage?.statusTone === "warning"
         ? "nb-usage-meter--warning"
         : "";
-  const sentReminderThresholdDays = 14;
-  const sentReminderThresholdMs = sentReminderThresholdDays * 24 * 60 * 60 * 1000;
-  const staleDraftThresholdDays = 7;
-  const staleDraftThresholdMs = staleDraftThresholdDays * 24 * 60 * 60 * 1000;
-  const nowMs = Date.now();
   const recurringSchedulesByInvoiceId = recurringSchedules;
   const recurringReminderInvoices = invoices
     .filter((invoice) => invoice?.status !== "deleted")
@@ -1903,10 +2184,16 @@
       if (!recurringEntry) {
         return null;
       }
+      const recurringSummary = buildRecurringScheduleSummary(recurringEntry, {
+        nowMs,
+        dueSoonWindowMs: recurringSoonWindowMs,
+        runHistoryLimit: 2
+      });
       return {
         ...invoice,
         recurringEntry,
-        nextDueMs: parseRecurringTimestamp(recurringEntry.nextDueAt)
+        recurringSummary,
+        nextDueMs: recurringSummary.nextDueMs
       };
     })
     .filter(Boolean)
@@ -1935,6 +2222,7 @@
     })
     .sort((left, right) => left.updatedAt.localeCompare(right.updatedAt));
   const oldestStaleDraft = staleDraftInvoices[0] ?? null;
+  const staleDraftPreview = staleDraftInvoices.slice(0, 3);
   const showDraftRecoveryReminder =
     !requiresSignIn &&
     !showTrash &&
@@ -1986,6 +2274,98 @@
   const oldestSentReminderHasTrackedDelivery = Boolean(
     oldestSentReminder?.delivery?.recipientEmail && oldestSentReminder?.delivery?.sentAt
   );
+  const overdueOpenedInvoices = sentFollowUpInvoices.filter(
+    (invoice) => invoice.isPastDue && invoice?.delivery?.status === "opened"
+  );
+  const overdueUnopenedInvoices = sentFollowUpInvoices.filter(
+    (invoice) =>
+      invoice.isPastDue &&
+      Boolean(invoice?.delivery?.recipientEmail && invoice?.delivery?.sentAt) &&
+      invoice?.delivery?.status !== "opened"
+  );
+  const partialPaymentInvoices = invoices
+    .filter((invoice) => invoice?.status !== "deleted" && hasPartialPaymentShared(invoice))
+    .sort((left, right) => {
+      const latestLeft = getInvoiceLatestPaymentShared(left);
+      const latestRight = getInvoiceLatestPaymentShared(right);
+      const leftMs = Date.parse(latestLeft?.paidAt ?? latestLeft?.recordedAt ?? left?.updatedAt ?? "");
+      const rightMs = Date.parse(latestRight?.paidAt ?? latestRight?.recordedAt ?? right?.updatedAt ?? "");
+      return rightMs - leftMs;
+    });
+  const latestPartialPaymentInvoice = partialPaymentInvoices[0] ?? null;
+  const sentOpenBalanceTotal = sentOpenInvoices.reduce(
+    (sum, invoice) => sum + getInvoiceOpenBalance(invoice),
+    0
+  );
+  const partialOpenBalanceTotal = partialPaymentInvoices.reduce(
+    (sum, invoice) => sum + getInvoiceOpenBalance(invoice),
+    0
+  );
+  const focusQueueOptions = [
+    {
+      id: "overdue_opened",
+      title: "Overdue and already opened",
+      shortLabel: "Opened overdue",
+      count: overdueOpenedInvoices.length,
+      summary:
+        overdueOpenedInvoices.length > 0
+          ? `${overdueOpenedInvoices.length} invoice${overdueOpenedInvoices.length === 1 ? "" : "s"} were already opened, so a focused reminder is usually the cleanest next move.`
+          : "Nothing is overdue and already opened right now.",
+      emptyTitle: "No overdue opened invoices in this queue",
+      emptyBody:
+        "When an overdue invoice has already been opened, it will land here so you can follow up without re-scanning the whole library.",
+      statusFilter: "needs_attention"
+    },
+    {
+      id: "overdue_unopened",
+      title: "Overdue and still unopened",
+      shortLabel: "Overdue unopened",
+      count: overdueUnopenedInvoices.length,
+      summary:
+        overdueUnopenedInvoices.length > 0
+          ? `${overdueUnopenedInvoices.length} overdue invoice${overdueUnopenedInvoices.length === 1 ? "" : "s"} still need a delivery-first check before you escalate.`
+          : "Nothing overdue is still unopened right now.",
+      emptyTitle: "No overdue unopened invoices in this queue",
+      emptyBody:
+        "If an overdue invoice still has not been opened, it will appear here so you can confirm delivery before sending a reminder.",
+      statusFilter: "needs_attention"
+    },
+    {
+      id: "partial_payments",
+      title: "Partial-payment recovery",
+      shortLabel: "Partial payments",
+      count: partialPaymentInvoices.length,
+      summary:
+        partialPaymentInvoices.length > 0
+          ? `${partialPaymentInvoices.length} invoice${partialPaymentInvoices.length === 1 ? "" : "s"} already have money recorded but still need the remaining balance collected.`
+          : "No partial-payment recovery work is waiting right now.",
+      emptyTitle: "No partial-payment invoices in this queue",
+      emptyBody:
+        "When an invoice has money recorded but still has balance left, it will show up here so the remaining payment does not get lost.",
+      statusFilter: "needs_attention"
+    },
+    {
+      id: "opened_unpaid",
+      title: "Opened and still unpaid",
+      shortLabel: "Opened unpaid",
+      count: openedUnpaidInvoices.length,
+      summary:
+        openedUnpaidInvoices.length > 0
+          ? `${openedUnpaidInvoices.length} invoice${openedUnpaidInvoices.length === 1 ? "" : "s"} were opened by the client and still have an outstanding balance.`
+          : "No opened-but-unpaid invoices are waiting right now.",
+      emptyTitle: "No opened-unpaid invoices in this queue",
+      emptyBody:
+        "If a client opens an invoice but still does not pay, it will show up here so your next reminder can stay focused.",
+      statusFilter: "needs_attention"
+    }
+  ];
+  const focusQueueMap = new Map(focusQueueOptions.map((queue) => [queue.id, queue]));
+  const focusedQueueMeta = normalizedViewFocus ? focusQueueMap.get(normalizedViewFocus) ?? null : null;
+  const alternateFocusQueues = focusQueueOptions
+    .filter((queue) => queue.id !== normalizedViewFocus && queue.count > 0)
+    .slice(0, 2);
+  const strongestAlternateQueue =
+    focusQueueOptions.find((queue) => queue.id !== normalizedViewFocus && queue.count > 0) ?? null;
   const canQuickSendReminderOldest = Boolean(
     oldestSentReminder?.invoiceId && isValidEmail(oldestSentRecipient)
   );
@@ -2077,6 +2457,8 @@
       "Billie from NoteBill"
     ].join("\n");
   })();
+  const activeFollowUpNoteText = followUpNoteDraft || buildFollowUpNoteText();
+  const followUpAiToneOptions = ["Friendlier", "Firmer", "Shorter", "More professional"];
   const followUpPlan = oldestSentReminder
     ? {
         urgencyValue: oldestSentReminder.isPastDue
@@ -2122,6 +2504,10 @@
     sentFollowUpInvoices.length > 0 &&
     !reminderIsSnoozed &&
     !reminderIsDismissed;
+  const showCollectionsCommandCenter =
+    !requiresSignIn &&
+    !showTrash &&
+    (sentOpenInvoices.length > 0 || partialPaymentInvoices.length > 0);
   const latestDraftInvoice =
     invoices
       .filter((invoice) => invoice?.status === "draft")
@@ -2176,9 +2562,59 @@
   const paidRepeatRecurringLabel = paidRepeatRecurringInterval
     ? formatRecurringCadence(paidRepeatRecurringInterval)
     : "";
+  const repeatReadyClients = (() => {
+    const clientMemoryEntries = getClientMemory();
+    const savedLineItems = getLineItemLibrary();
+    const byClient = new Map();
+    invoices
+      .filter((invoice) => invoice?.status === "paid")
+      .forEach((invoice) => {
+        const clientName = String(
+          invoice?.customerName ?? invoice?.invoiceData?.finishedInvoice?.customerName ?? ""
+        ).trim();
+        const lookupKey = normalizeLookupText(clientName);
+        if (!lookupKey) {
+          return;
+        }
+        const existing = byClient.get(lookupKey);
+        if (!existing || String(existing.updatedAt ?? "").localeCompare(String(invoice.updatedAt ?? "")) < 0) {
+          const memoryStarter = buildClientMemoryStarterForInvoice(invoice, clientMemoryEntries, savedLineItems);
+          const savedCadence = getClientRecurringInterval(clientName);
+          const latestInvoiceNumber = String(invoice?.invoiceNumber ?? "").trim();
+          byClient.set(lookupKey, {
+            lookupKey,
+            clientName,
+            invoice,
+            updatedAt: String(invoice?.updatedAt ?? ""),
+            invoiceNumber: latestInvoiceNumber,
+            total: Number(invoice?.total ?? 0),
+            memoryStarter,
+            savedCadence,
+            savedRecipient: String(memoryStarter?.recipientEmail ?? "").trim()
+          });
+        }
+      });
+    return Array.from(byClient.values())
+      .sort((left, right) => {
+        const leftScore =
+          (left.memoryStarter?.savedItemCount ?? 0) * 100 +
+          (left.savedCadence ? 20 : 0) +
+          (left.savedRecipient ? 10 : 0);
+        const rightScore =
+          (right.memoryStarter?.savedItemCount ?? 0) * 100 +
+          (right.savedCadence ? 20 : 0) +
+          (right.savedRecipient ? 10 : 0);
+        if (leftScore !== rightScore) {
+          return rightScore - leftScore;
+        }
+        return right.updatedAt.localeCompare(left.updatedAt);
+      })
+      .slice(0, 3);
+  })();
+  const showRepeatReadyLane = !showTrash && !requiresSignIn && repeatReadyClients.length > 0;
   const latestEstimateInvoice =
     invoices
-      .filter((invoice) => invoice?.status !== "deleted" && getDocumentType(invoice) === "estimate")
+      .filter((invoice) => invoice?.status !== "deleted" && getInvoiceDocumentType(invoice) === "estimate")
       .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
   const recurringMemoryStarter = nextRecurringCandidate
     ? buildClientMemoryStarterForInvoice(
@@ -2188,6 +2624,13 @@
       )
     : null;
   const recurringMemoryLabel = recurringMemoryStarter?.leadItem?.description || "";
+  const recurringMemorySummary = recurringMemoryStarter
+    ? recurringMemoryStarter.savedItemCount > 1
+      ? `${recurringMemoryStarter.savedItemCount} saved services ready`
+      : recurringMemoryStarter.leadItem?.description
+        ? `Saved ${recurringMemoryStarter.leadItem.description}`
+        : "Saved client memory ready"
+    : "";
   const libraryGuide = (() => {
     if (showTrash || requiresSignIn) {
       return null;
@@ -2197,7 +2640,7 @@
         toneClass: "border-sky-200 bg-sky-50 text-sky-950",
         eyebrow: "Billie next up",
         title: `Track delivery for ${sentWithoutTrackedDeliveryInvoice.invoiceNumber || "this invoice"}`,
-        body: "This invoice is already marked sent, but delivery is not being tracked yet. Run it through the send flow so reminders and payment follow-up have stronger context.",
+        body: "This invoice is marked sent, but delivery is not tracked yet. Send it again so reminders have context.",
         meta: [
           sentWithoutTrackedDeliveryInvoice.customerName || "",
           Number.isFinite(sentWithoutTrackedDeliveryInvoice.total)
@@ -2220,7 +2663,7 @@
         toneClass: "border-sky-200 bg-sky-50 text-sky-950",
         eyebrow: "Billie next up",
         title: `Check delivery for ${sentTrackedUnopenedInvoice.invoiceNumber || "this invoice"}`,
-        body: "Delivery is recorded, but the invoice has not been opened yet. Confirm the client saw it before you escalate into a reminder or resend.",
+        body: "Delivery is recorded, but the invoice has not been opened yet. Confirm delivery before you resend or remind.",
         meta: [
           sentTrackedUnopenedInvoice.customerName || "",
           Number.isFinite(sentTrackedUnopenedInvoice.total)
@@ -2257,12 +2700,12 @@
           : `Check ${oldestSentReminder.invoiceNumber || "this sent invoice"}`,
         body: oldestSentReminder.isPastDue
           ? oldestReminderHasTrackedDelivery && !oldestReminderOpened
-            ? "This invoice is overdue, but it still has not been opened. Re-send it or confirm delivery before escalating into a payment reminder."
+            ? "This invoice is overdue, but it still has not been opened. Re-send it or confirm delivery before escalating."
             : oldestReminderHasTrackedDelivery && oldestReminderOpened
-              ? "The invoice has already been opened and payment is still outstanding. Send a focused reminder now, then mark it paid if the money already arrived."
-            : "Payment is still open. Send the reminder now, then mark it paid if the money already arrived."
+              ? "The invoice has already been opened and payment is still outstanding. Send a focused reminder, then mark it paid if the money already arrived."
+            : "Payment is still open. Send the reminder, then mark it paid if the money already arrived."
           : oldestReminderHasTrackedDelivery && !oldestReminderOpened
-            ? "Delivery is tracked, but the invoice has not been opened yet. Confirm whether the client saw it before escalating into a reminder."
+            ? "Delivery is tracked, but the invoice has not been opened yet. Confirm delivery before escalating."
           : "Keep the send workflow moving before this invoice goes cold.",
         meta: [
           oldestSentReminderDueLabel
@@ -2364,12 +2807,17 @@
       };
     }
     if (latestEstimateInvoice) {
+      const estimateSummary = buildEstimateWorkflowSummary(latestEstimateInvoice);
       return {
-        toneClass: "border-emerald-200 bg-emerald-50 text-emerald-950",
+        toneClass:
+          estimateSummary.statusTone === "warning"
+            ? "border-amber-200 bg-amber-50 text-amber-950"
+            : estimateSummary.statusTone === "success"
+              ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+              : "border-slate-200 bg-slate-50 text-slate-900",
         eyebrow: "Billie next up",
-        title: `Turn ${latestEstimateInvoice.invoiceNumber || "this estimate"} into billable work`,
-        body:
-          "Estimates are planning documents until the job gets approved. Reopen it with Billie or convert it from the library when the estimate becomes real work.",
+        title: estimateSummary.statusLabel,
+        body: estimateSummary.actionHint,
         meta: [
           latestEstimateInvoice.customerName || "",
           Number.isFinite(latestEstimateInvoice.total)
@@ -2381,9 +2829,16 @@
         primaryDisabled: actionId === latestEstimateInvoice.invoiceId,
         onPrimary: () => void handleConvertEstimateToInvoice(latestEstimateInvoice.invoiceId),
         secondaryLabel:
-          actionId === latestEstimateInvoice.invoiceId ? "Opening..." : "Open with Billie",
+          actionId === latestEstimateInvoice.invoiceId
+            ? "Opening..."
+            : estimateSummary.isApproved
+              ? "Mark needs review"
+              : "Mark approved",
         secondaryDisabled: actionId === latestEstimateInvoice.invoiceId,
-        onSecondary: () => handleOpenWithBillie(latestEstimateInvoice.invoiceId)
+        onSecondary: () =>
+          estimateSummary.isApproved
+            ? void handleSetEstimateReviewState(latestEstimateInvoice.invoiceId, "needs_review")
+            : void handleSetEstimateReviewState(latestEstimateInvoice.invoiceId, "approved")
       };
     }
     if (nextRecurringCandidate) {
@@ -2436,8 +2891,8 @@
         eyebrow: "Billie next up",
         title: `Resume ${targetDraft?.invoiceNumber || "your latest draft"}`,
         body: oldestStaleDraft
-          ? "This draft has been sitting for a while. Finishing it now is the fastest way to turn it into a send-ready invoice."
-          : "Open the draft and keep moving it toward save, send, or export.",
+          ? "This draft has been sitting for a while. Reopening it now is the fastest way to finish the invoice and get the payment handoff back on track."
+          : "Open the draft and keep moving it toward save, payment setup, send, or export.",
         meta: [
           targetDraft?.customerName || "",
           targetDraft?.updatedAt ? `Updated ${formatDate(targetDraft.updatedAt)}` : ""
@@ -2469,7 +2924,9 @@
             ? `Last total ${formatMoney(paidRepeatCandidate.total)}`
             : "",
           paidRepeatRecurringLabel ? `Saved cadence ${paidRepeatRecurringLabel}` : "",
-          paidRepeatMemoryStarter?.leadItem?.description
+          paidRepeatMemoryStarter?.savedItemCount > 1
+            ? `${paidRepeatMemoryStarter.savedItemCount} saved services`
+            : paidRepeatMemoryStarter?.leadItem?.description
             ? `Saved service ${paidRepeatMemoryStarter.leadItem.description}`
             : ""
         ].filter(Boolean),
@@ -2502,11 +2959,12 @@
     return null;
   })();
 
-  const handleUpgradeAction = async () => {
+  const handleUpgradeAction = async (basePlanId = "") => {
     setBillingBusy(true);
     setBillingError("");
     try {
       await startUpgradeCheckout(accountPlan, {
+        basePlanId,
         successPath: "/invoices?billing=success",
         cancelPath: "/invoices?billing=cancelled"
       });
@@ -2539,7 +2997,7 @@
   };
 
   const handleCopyFollowUpNote = async () => {
-    const followUpNoteText = buildFollowUpNoteText();
+    const followUpNoteText = activeFollowUpNoteText;
     if (!followUpNoteText) {
       setFollowUpNoteNotice("No follow-up note is available yet.");
       return;
@@ -2553,12 +3011,48 @@
     }
   };
 
-  const buildLibraryClientPortalUrl = (invoice) => {
+  const handleRewriteFollowUpNote = async (tone) => {
+    const baselineMessage = followUpNoteDraft || buildFollowUpNoteText();
+    if (!baselineMessage) {
+      setFollowUpAiError("No follow-up note is available yet.");
+      return;
+    }
+    setFollowUpAiBusy(tone);
+    setFollowUpAiError("");
+    setFollowUpNoteNotice("");
+    try {
+      const payload = await requestJson(
+        "/api/invoices/rewrite-follow-up-message",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: baselineMessage,
+            tone
+          })
+        },
+        "Failed to rewrite the follow-up note."
+      );
+      const rewritten = String(payload?.message ?? "").trim();
+      if (!rewritten) {
+        throw new Error("Billie did not return a rewritten follow-up note.");
+      }
+      setFollowUpNoteDraft(rewritten);
+      setFollowUpAiPanelOpen(true);
+      setFollowUpNoteNotice(`Billie rewrote the reminder in a ${tone.toLowerCase()} tone.`);
+    } catch (rewriteError) {
+      setFollowUpAiError(rewriteError?.message || "Failed to rewrite the follow-up note.");
+    } finally {
+      setFollowUpAiBusy("");
+    }
+  };
+
+  function buildLibraryClientPortalUrl(invoice) {
     if (!invoice?.invoiceId || !invoice?.portalAccessToken) {
       return "";
     }
     return `${window.location.origin}/portal/${invoice.invoiceId}/${encodeURIComponent(invoice.portalAccessToken)}`;
-  };
+  }
 
   const buildLibrarySharePackText = (invoice) => {
     if (!invoice?.invoiceId) {
@@ -2585,11 +3079,18 @@
     setHandoffNotice("");
     try {
       await navigator.clipboard?.writeText?.(sharePackText);
-      setHandoffNotice("Share pack copied. Paste it into email or chat.");
+      setHandoffNotice("Share pack copied. Next: paste it into email, text, or chat.");
     } catch (copyError) {
       setHandoffNotice(copyError?.message || "Could not copy the share pack.");
     }
   };
+
+  useEffect(() => {
+    setFollowUpNoteDraft("");
+    setFollowUpAiPanelOpen(false);
+    setFollowUpAiBusy("");
+    setFollowUpAiError("");
+  }, [oldestSentReminder?.invoiceId]);
 
   const handleCreateClientPortal = async (invoice) => {
     if (!invoice?.invoiceId) {
@@ -2627,6 +3128,7 @@
           ? "Client portal is ready. Open it or include it in the share pack."
           : "Client portal created."
       );
+      maybeRequestInAppReview("client_portal_created");
     } catch (portalError) {
       handleLibraryError(portalError, "Failed to create the client portal.");
     } finally {
@@ -2662,32 +3164,36 @@
             >
               Back to launcher
             </button>
-            <div className="mt-4 inline-flex rounded-full border border-[#6993d2]/14 bg-white/82 px-3 py-1 shadow-sm">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-[#5f8fd2]">Operations Hub</p>
+            <div className="mt-4 inline-flex rounded-full border border-[#3d6f61]/14 bg-white/82 px-3 py-1 shadow-sm">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#3d6f61]">Operations hub</p>
             </div>
             <h1 className="nb-hero-title mt-4 text-[2.5rem] md:text-[3.5rem]">Invoice Library</h1>
             <p className="mt-3 text-base leading-7 text-slate-600">
-              Reopen saved work, follow up with confidence, and keep repeat jobs and payments moving from one calm place.
+              Reopen saved work and keep follow-up moving from one calm place.
             </p>
             <p className="nb-assistant-chip nb-assistant-chip--ready mt-2 inline-flex normal-case tracking-normal text-xs">
               <span className="nb-assistant-chip__dot" aria-hidden="true" />
-              Billie is ready to polish any draft when you open it.
+              Billie can polish drafts as you open them.
             </p>
-            <div className="nb-chip mt-2 inline-flex items-center gap-2 px-3 py-1 normal-case tracking-normal text-xs">
+            <div className="mt-3 flex max-w-full flex-wrap items-center gap-2 text-sm normal-case tracking-normal text-slate-600">
               <span className="font-semibold text-slate-500">Account:</span>
-              <span className={authSession?.email ? "font-semibold text-blue-800" : "font-semibold text-slate-700"}>
-                {authSession?.email ? authSession.email : "Local mode"}
+              <span
+                className={`min-w-0 break-all ${
+                  authSession?.email ? "font-semibold text-[#17493c]" : "font-semibold text-slate-700"
+                }`}
+              >
+                {authSession?.email ? authSession.email : "Guest mode"}
               </span>
               <button
                 type="button"
-                className="font-semibold text-blue-800 hover:text-blue-900"
+                className="rounded-full border border-[#d5e5de] bg-white px-3 py-1 text-xs font-semibold text-[#17493c] transition hover:border-[#c2d8cf] hover:bg-[#f7fbf9]"
                 onClick={() => navigate("/")}
               >
                 Manage
               </button>
               <button
                 type="button"
-                className="font-semibold text-blue-800 hover:text-blue-900"
+                className="rounded-full border border-[#d5e5de] bg-white px-3 py-1 text-xs font-semibold text-[#17493c] transition hover:border-[#c2d8cf] hover:bg-[#f7fbf9]"
                 onClick={() => navigate("/help")}
               >
                 Help
@@ -2696,29 +3202,49 @@
                 useStripePortalAction ? (
                   <button
                     type="button"
-                    className="font-semibold text-blue-800 hover:text-blue-900 disabled:cursor-not-allowed disabled:text-blue-400"
+                    className="rounded-full border border-[#d5e5de] bg-white px-3 py-1 text-xs font-semibold text-[#17493c] transition hover:border-[#c2d8cf] hover:bg-[#f7fbf9] disabled:cursor-not-allowed disabled:text-slate-400"
                     onClick={handleBillingAction}
                     disabled={billingBusy}
                   >
-                    {billingBusy ? "Opening..." : "Billing"}
+                    {billingBusy ? "Opening..." : manageBillingLabel}
                   </button>
                 ) : (
                   <a
                     href={billingPortalUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="font-semibold text-blue-800 hover:text-blue-900"
+                    className="rounded-full border border-[#d5e5de] bg-white px-3 py-1 text-xs font-semibold text-[#17493c] transition hover:border-[#c2d8cf] hover:bg-[#f7fbf9]"
                   >
-                    Billing
+                    {manageBillingLabel}
                   </a>
                 )
               ) : null}
             </div>
+            {recoveryEnvironmentHint ? <p className="mt-1 text-xs leading-5 text-amber-700">{recoveryEnvironmentHint}</p> : null}
             {planSummary ? (
               <p className={`mt-2 text-xs ${planLimitReached ? "font-semibold text-amber-700" : "text-slate-500"}`}>
                 {planSummary}
               </p>
             ) : null}
+            <p className="mt-2 text-xs leading-5 text-slate-500">
+              {authSession?.email
+                ? "This account keeps invoices, upgrades, and billing together."
+                : "Sign in to keep invoices, upgrades, and billing tied to your email."}
+            </p>
+            {showInstalledAppGuard ? (
+              <div
+                className="mt-2 rounded-[18px] border border-blue-200 bg-blue-50/70 px-3 py-2 text-xs leading-5 text-blue-950"
+                role="status"
+                aria-live="polite"
+              >
+                <p className="font-semibold uppercase tracking-[0.16em] text-blue-700">Open the app</p>
+                <p className="mt-1">
+                  Google Play upgrades need the installed NoteBill app. Browser review and export still work.
+                </p>
+              </div>
+            ) : (
+              <p className="mt-1 text-xs leading-5 text-slate-500">{recoveryEnvironmentHint || billingEnvironmentHint}</p>
+            )}
             {planUsage?.finite ? (
               <div className={`nb-usage-meter mt-2 max-w-sm ${planUsageToneClass}`}>
                 <div className="nb-usage-meter__row">
@@ -2826,8 +3352,28 @@
           </div>
         ) : null}
         {billingError ? (
-          <div className="nb-banner nb-banner--danger mt-3">
-            {billingError}
+          <div className="nb-banner nb-banner--warning mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-semibold">Pro workflow locked</p>
+              <p className="mt-1 text-sm">{billingError}</p>
+              {recoveryEnvironmentHint ? (
+                <p className="mt-2 text-xs leading-5 text-amber-800">{recoveryEnvironmentHint}</p>
+              ) : null}
+            </div>
+            {showUpgradeAction ? (
+              <button
+                type="button"
+                className="nb-btn-primary rounded-full px-3 py-1.5 text-sm disabled:opacity-60"
+                onClick={() => handleUpgradeAction()}
+                disabled={billingBusy}
+              >
+                {billingBusy ? "Opening..." : upgradeActionLabel}
+              </button>
+            ) : (
+              <a href="/support" className="font-semibold underline underline-offset-2">
+                Get support
+              </a>
+            )}
           </div>
         ) : null}
         {billingNotice ? (
@@ -2865,7 +3411,7 @@
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                className="rounded-xl border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8] disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={handleEnableReminderNotifications}
                 disabled={reminderNotificationBusy || !canUseBrowserNotifications()}
               >
@@ -2873,7 +3419,7 @@
               </button>
               <button
                 type="button"
-                className="rounded-xl border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8] disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={handleTestReminderNotification}
                 disabled={reminderNotificationBusy || !canUseBrowserNotifications()}
               >
@@ -2882,11 +3428,11 @@
             </div>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-            <span className="rounded-full bg-blue-50 px-2 py-1 font-semibold text-blue-800">
+            <span className="rounded-full bg-[#f7faf7] px-2 py-1 font-semibold text-[#17493c]">
               {reminderNotificationSettings.enabled ? "Enabled" : "Off"}
             </span>
             {reminderNotificationNotice ? (
-              <span className="rounded-full bg-white px-2 py-1 font-semibold text-blue-900">
+              <span className="rounded-full bg-white px-2 py-1 font-semibold text-[#17493c]">
                 {reminderNotificationNotice}
               </span>
             ) : null}
@@ -2894,7 +3440,7 @@
           {oldestSentReminder ? (
             <p className="mt-3 rounded-2xl border border-slate-200 bg-white/88 px-3 py-2 text-[11px] leading-5 text-slate-600 shadow-sm">
               <span className="font-semibold text-slate-700">Preview:</span>{" "}
-              {reminderNotePreviewText || buildReminderNotificationPreview()}
+              {activeFollowUpNoteText || reminderNotePreviewText || buildReminderNotificationPreview()}
             </p>
           ) : null}
           {!canUseBrowserNotifications() ? (
@@ -2905,7 +3451,7 @@
         </div>
 
         {!requiresSignIn && planLimitReached ? (
-          <div className="nb-banner nb-banner--warning mt-6">
+          <div className="nb-banner nb-banner--warning mt-6" role="status" aria-live="polite">
             <p className="text-sm font-semibold text-amber-900">Free plan limit reached</p>
             {planUsage?.finite ? (
               <div className={`nb-usage-meter mt-2 ${planUsageToneClass}`}>
@@ -2923,17 +3469,62 @@
               </div>
             ) : null}
             <p className="mt-1 text-sm text-amber-800">
-              You can open and export existing invoices. Save more drafts by upgrading your plan.
+              You can still open and export existing invoices. Upgrade to keep saving new work and unlock payment links, portal access, and follow-up tools.
             </p>
+            {showInstalledAppGuard ? (
+              <div
+                className="mt-3 rounded-[18px] border border-blue-200 bg-blue-50/70 px-3 py-2 text-xs leading-5 text-blue-950"
+                role="status"
+                aria-live="polite"
+              >
+                <p className="font-semibold uppercase tracking-[0.16em] text-blue-700">Open the app</p>
+                <p className="mt-1">
+                  Google Play upgrades work best from the installed NoteBill app. This browser is still fine for reviewing and exporting.
+                </p>
+              </div>
+            ) : (
+              <p className="mt-1 text-xs leading-5 text-amber-800">{billingEnvironmentHint}</p>
+            )}
             {showUpgradeAction ? (
-              useStripeUpgradeAction ? (
+              hasGooglePlayPlanChoices ? (
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {googlePlaySubscriptionPlans.map((option) => (
+                    <button
+                      key={option.basePlanId}
+                      type="button"
+                      className={`rounded-[18px] border px-3 py-3 text-left transition ${
+                        option.isDefault
+                          ? "border-amber-300 bg-white shadow-[0_14px_30px_rgba(217,119,6,0.12)]"
+                          : "border-amber-200 bg-white/90 hover:border-amber-300 hover:bg-white"
+                      } disabled:cursor-not-allowed disabled:opacity-60`}
+                      onClick={() => handleUpgradeAction(option.basePlanId)}
+                      disabled={billingBusy}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-amber-950">{option.label}</span>
+                        {option.badge || option.isDefault ? (
+                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-900">
+                            {option.badge || "Default"}
+                          </span>
+                        ) : null}
+                      </div>
+                      {option.cadenceLabel ? (
+                        <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-800">
+                          {option.cadenceLabel}
+                        </p>
+                      ) : null}
+                      <p className="mt-2 text-xs leading-5 text-amber-900/80">{option.description}</p>
+                    </button>
+                  ))}
+                </div>
+              ) : useStripeUpgradeAction ? (
                 <button
                   type="button"
                   className="mt-3 inline-flex rounded-xl border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={handleUpgradeAction}
                   disabled={billingBusy}
                 >
-                  {billingBusy ? "Opening..." : "Upgrade plan"}
+                  {billingBusy ? "Opening..." : upgradeActionLabel}
                 </button>
               ) : (
                 <a
@@ -2942,46 +3533,300 @@
                   rel="noreferrer"
                   className="mt-3 inline-flex rounded-xl border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 shadow-sm transition hover:border-amber-400"
                 >
-                  Upgrade plan
+                  {upgradeActionLabel}
                 </a>
               )
             ) : null}
+            <p className="mt-2 text-xs text-amber-900">
+              Need a hand?{" "}
+              <a href="/support" className="font-semibold underline underline-offset-2">
+                Get support
+              </a>
+            </p>
           </div>
         ) : null}
         {showDraftRecoveryReminder ? (
-          <div className="nb-banner nb-banner--success mt-6">
-            <p className="text-sm font-semibold text-emerald-900">Draft recovery inbox</p>
-            <p className="mt-1 text-sm text-emerald-900">
-              {staleDraftInvoices.length === 1
-                ? "1 draft has been inactive for over a week."
-                : `${staleDraftInvoices.length} drafts have been inactive for over a week.`}
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {oldestStaleDraft ? (
+          <div className="nb-accent-panel nb-reveal-up mt-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="nb-section-chip">Draft recovery inbox</div>
+                <p className="mt-3 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+                  Reopen unfinished work before it slips out of context.
+                </p>
+                <p className="mt-2 text-sm text-slate-600">
+                  {staleDraftInvoices.length === 1
+                    ? "1 draft has been inactive for over a week. Reopening it now is usually the fastest way to recover momentum."
+                    : `${staleDraftInvoices.length} drafts have been inactive for over a week. Reopening them now is usually the fastest way to recover momentum.`}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {oldestStaleDraft ? (
+                  <button
+                    type="button"
+                    className="nb-btn-primary rounded-xl px-3 py-2 text-xs disabled:cursor-not-allowed"
+                    onClick={() => handleOpen(oldestStaleDraft.invoiceId)}
+                    disabled={actionId === oldestStaleDraft.invoiceId}
+                  >
+                    {actionId === oldestStaleDraft.invoiceId ? "Opening..." : "Resume oldest draft"}
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  className="rounded-xl border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-900 shadow-sm transition hover:border-emerald-400 disabled:cursor-not-allowed disabled:text-emerald-400"
-                  onClick={() => handleOpen(oldestStaleDraft.invoiceId)}
-                  disabled={actionId === oldestStaleDraft.invoiceId}
+                  className="nb-btn-secondary rounded-xl px-3 py-2 text-xs"
+                  onClick={() => {
+                    setStatusFilter("draft");
+                    setSelectedIds([]);
+                  }}
                 >
-                  {actionId === oldestStaleDraft.invoiceId ? "Opening..." : "Resume oldest draft"}
+                  Show all drafts
                 </button>
-              ) : null}
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              {staleDraftPreview.map((invoice) => {
+                const customerLabel = String(invoice?.customerName ?? "").trim() || "No client saved";
+                const updatedLabel = invoice?.updatedAt ? formatDate(invoice.updatedAt) : "recently";
+                const openLabel = actionId === invoice.invoiceId ? "Opening..." : "Resume draft";
+                return (
+                  <article key={invoice.invoiceId} className="nb-stage-card">
+                    <p className="nb-stage-card__label">{invoice.invoiceNumber || "Draft invoice"}</p>
+                    <p className="nb-stage-card__value text-[1rem] leading-6">{customerLabel}</p>
+                    <p className="mt-2 text-xs leading-5 text-slate-600">
+                      Updated {updatedLabel}. Reopen it to finish the save, payment, or send path without rebuilding the context.
+                    </p>
+                    <div className="nb-mobile-actions mt-3">
+                      <button
+                        type="button"
+                        className="nb-btn-secondary rounded-xl px-3 py-2 text-xs disabled:cursor-not-allowed"
+                        onClick={() => handleOpen(invoice.invoiceId)}
+                        disabled={actionId === invoice.invoiceId}
+                      >
+                        {openLabel}
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            {staleDraftInvoices.length > staleDraftPreview.length ? (
+              <p className="mt-3 text-xs leading-5 text-slate-500">
+                {staleDraftInvoices.length - staleDraftPreview.length} more stale draft
+                {staleDraftInvoices.length - staleDraftPreview.length === 1 ? "" : "s"} are waiting in the draft list.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {showCollectionsCommandCenter ? (
+          <div className="nb-accent-panel nb-reveal-up mt-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="nb-section-chip">Collections command center</div>
+                <p className="mt-3 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+                  See who still owes you money and what the cleanest next move is.
+                </p>
+                <p className="mt-2 text-sm text-slate-600">
+                  Open balances, overdue opens, and partial payments are grouped here so the payment path stays obvious.
+                </p>
+              </div>
               <button
                 type="button"
-                className="rounded-xl border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-900 shadow-sm transition hover:border-emerald-400"
-                onClick={() => {
-                  setStatusFilter("draft");
-                  setSelectedIds([]);
-                }}
+                className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8]"
+                onClick={() => applyLibraryView({ nextStatusFilter: "needs_attention" })}
               >
-                Show draft invoices
+                Open needs attention
               </button>
-              {oldestStaleDraft ? (
-                <p className="text-xs text-emerald-800">
-                  Oldest draft update: {formatDate(oldestStaleDraft.updatedAt)}
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <article className="nb-stage-card">
+                <p className="nb-stage-card__label">Open sent balance</p>
+                <p className="nb-stage-card__value">
+                  {sentOpenInvoices.length > 0 ? formatMoney(sentOpenBalanceTotal) : "0"}
                 </p>
-              ) : null}
+                <p className="mt-2 text-xs leading-5 text-slate-600">
+                  {sentOpenInvoices.length === 1
+                    ? "1 sent invoice is still waiting on payment."
+                    : `${sentOpenInvoices.length} sent invoices are still waiting on payment.`}
+                </p>
+                <div className="nb-mobile-actions mt-3">
+                  <button
+                    type="button"
+                    className="nb-btn-secondary rounded-xl px-3 py-2 text-xs"
+                    onClick={() => applyLibraryView({ nextStatusFilter: "sent" })}
+                  >
+                    Show sent invoices
+                  </button>
+                </div>
+              </article>
+              <article className="nb-stage-card">
+                <p className="nb-stage-card__label">Opened and unpaid</p>
+                <p className="nb-stage-card__value">{openedUnpaidInvoices.length}</p>
+                <p className="mt-2 text-xs leading-5 text-slate-600">
+                  {overdueOpenedInvoices.length > 0
+                    ? `${overdueOpenedInvoices.length} overdue invoice${overdueOpenedInvoices.length === 1 ? "" : "s"} were already opened.`
+                    : openedUnpaidInvoices.length > 0
+                      ? "The client has already seen these invoices, so a focused reminder is usually next."
+                      : "No opened-but-unpaid invoices right now."}
+                </p>
+                {overdueOpenedInvoices.length > 0 || openedUnpaidInvoices.length > 0 ? (
+                  <div className="nb-mobile-actions mt-3">
+                    <button
+                      type="button"
+                      className="nb-btn-primary rounded-xl px-3 py-2 text-xs"
+                      onClick={() =>
+                        applyLibraryView({
+                          nextStatusFilter: "needs_attention",
+                          nextFocus: overdueOpenedInvoices.length > 0 ? "overdue_opened" : "opened_unpaid"
+                        })
+                      }
+                    >
+                      {overdueOpenedInvoices.length > 0 ? "Review opened overdue" : "Review opened unpaid"}
+                    </button>
+                  </div>
+                ) : null}
+              </article>
+              <article className="nb-stage-card">
+                <p className="nb-stage-card__label">Partial payments</p>
+                <p className="nb-stage-card__value">
+                  {partialPaymentInvoices.length > 0 ? formatMoney(partialOpenBalanceTotal) : "0"}
+                </p>
+                <p className="mt-2 text-xs leading-5 text-slate-600">
+                  {partialPaymentInvoices.length === 0
+                    ? "No partial-payment balances need attention right now."
+                    : partialPaymentInvoices.length === 1
+                      ? "1 invoice has money recorded but still needs the remaining balance collected."
+                      : `${partialPaymentInvoices.length} invoices have money recorded but still need the remaining balance collected.`}
+                </p>
+                {latestPartialPaymentInvoice?.invoiceId ? (
+                  <div className="nb-mobile-actions mt-3">
+                    <button
+                      type="button"
+                      className="nb-btn-primary rounded-xl px-3 py-2 text-xs"
+                      onClick={() =>
+                        applyLibraryView({
+                          nextStatusFilter: "needs_attention",
+                          nextFocus: "partial_payments"
+                        })
+                      }
+                    >
+                      Review partial payments
+                    </button>
+                    {latestPartialPaymentInvoice.customerName ? (
+                      <button
+                        type="button"
+                        className="nb-btn-secondary rounded-xl px-3 py-2 text-xs"
+                        onClick={() =>
+                          navigate(`/clients?client=${encodeURIComponent(latestPartialPaymentInvoice.customerName)}`)
+                        }
+                      >
+                        Open client workspace
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </article>
+            </div>
+            {(overdueUnopenedInvoices.length > 0 || oldestSentReminder) ? (
+              <p className="mt-4 rounded-2xl border border-[#d5e5de] bg-white/88 px-3 py-2 text-xs leading-5 text-[#17493c] shadow-sm">
+                {overdueUnopenedInvoices.length > 0
+                  ? `Delivery first: ${overdueUnopenedInvoices.length} overdue invoice${overdueUnopenedInvoices.length === 1 ? "" : "s"} still unopened. Re-send or confirm delivery before a reminder.`
+                  : oldestSentReminderOpened
+                    ? "Fastest move: the client already opened it, so send a focused reminder."
+                    : "Fastest move: keep delivery and payment handoff tight."}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {showRepeatReadyLane ? (
+          <div className="nb-accent-panel nb-reveal-up mt-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="nb-section-chip">Repeat-ready clients</div>
+                <p className="mt-3 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+                  Start the next job from clients with the strongest memory.
+                </p>
+                <p className="mt-2 text-sm text-slate-600">
+                  Paid history, saved services, recipient memory, and cadence are already lined up.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8]"
+                onClick={() => navigate("/clients")}
+              >
+                Open client workspace
+              </button>
+            </div>
+            <div className="mt-4 grid gap-3">
+              {repeatReadyClients.map((entry) => {
+                const serviceCount = entry.memoryStarter?.savedItemCount ?? 0;
+                const serviceSummary =
+                  serviceCount > 1
+                    ? `${serviceCount} saved services`
+                    : entry.memoryStarter?.leadItem?.description
+                      ? entry.memoryStarter.leadItem.description
+                      : "No saved bundle yet";
+                const cadenceSummary = entry.savedCadence ? formatRecurringCadence(entry.savedCadence) : "";
+                const invoiceId = entry.invoice?.invoiceId ?? "";
+                const primaryUsesBundle = Boolean(entry.memoryStarter);
+                return (
+                  <article
+                    key={entry.lookupKey}
+                    className="rounded-[24px] border border-[#d5e5de] bg-white/88 px-4 py-4 shadow-sm"
+                  >
+                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{entry.clientName}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {entry.invoiceNumber || "Latest paid invoice"}
+                          {Number.isFinite(entry.total) && entry.total > 0 ? ` · Last total ${formatMoney(entry.total)}` : ""}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <span className="rounded-full border border-[#d5e5de] bg-[#f7faf7] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3d6f61]">
+                            {serviceSummary}
+                          </span>
+                          {cadenceSummary ? (
+                            <span className="rounded-full border border-[#d5e5de] bg-[#f7faf7] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3d6f61]">
+                              {cadenceSummary} cadence
+                            </span>
+                          ) : null}
+                          {entry.savedRecipient ? (
+                            <span className="rounded-full border border-[#d5e5de] bg-[#f7faf7] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3d6f61]">
+                              Saved recipient
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="nb-mobile-actions md:max-w-[320px]">
+                        <button
+                          type="button"
+                          className="nb-btn-primary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:bg-[#86ab9d]"
+                          onClick={() =>
+                            primaryUsesBundle
+                              ? handleStartFromClientMemory(entry.invoice)
+                              : handleInvoiceAgain(invoiceId)
+                          }
+                          disabled={actionId === invoiceId}
+                        >
+                          {actionId === invoiceId
+                            ? "Opening..."
+                            : primaryUsesBundle
+                              ? serviceCount > 1
+                                ? "Use saved bundle"
+                                : "Start from saved memory"
+                              : "Invoice again"}
+                        </button>
+                        <button
+                          type="button"
+                          className="nb-btn-secondary rounded-xl px-4 py-2"
+                          onClick={() => navigate(`/clients?client=${encodeURIComponent(entry.clientName)}`)}
+                        >
+                          Open client workspace
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </div>
         ) : null}
@@ -3001,9 +3846,9 @@
                   ? `Next recurring invoice is due ${formatDate(nextRecurringCandidate.recurringEntry?.nextDueAt)}.`
                   : "Recurring schedules are active."}
             </p>
-            {nextRecurringCandidate && recurringMemoryStarter?.leadItem ? (
+            {nextRecurringCandidate && recurringMemoryStarter ? (
               <p className="mt-2 text-xs text-indigo-800">
-                Saved {recurringMemoryStarter.leadItem.description} memory is ready for{" "}
+                {recurringMemorySummary} is ready for{" "}
                 {nextRecurringCandidate.customerName || "this repeat client"}.
               </p>
             ) : null}
@@ -3071,14 +3916,51 @@
                   : `${sentFollowUpInvoices.length} sent invoices are waiting on follow-up.`}
             </p>
             {smartFollowUpSuggestion ? (
-              <p className="mt-3 rounded-2xl border border-blue-200/70 bg-white/88 px-3 py-2 text-xs font-medium text-blue-900 shadow-sm">
+              <p className="mt-3 rounded-2xl border border-[#d5e5de] bg-white/88 px-3 py-2 text-xs font-medium text-[#17493c] shadow-sm">
                 {smartFollowUpSuggestion}
               </p>
             ) : null}
             {oldestSentReminder ? (
-              <p className="mt-3 rounded-2xl border border-blue-100/80 bg-white/84 px-3 py-2 text-xs leading-5 text-blue-900 shadow-sm">
-                {buildFollowUpNoteText()}
-              </p>
+              <div className="mt-3 space-y-3 rounded-2xl border border-[#e4efe9] bg-white/84 px-3 py-3 text-xs leading-5 text-[#17493c] shadow-sm">
+                <p>{activeFollowUpNoteText}</p>
+                {followUpAiPanelOpen ? (
+                  <div className="space-y-3 rounded-2xl border border-[#dbe9e2] bg-[#f7faf7] px-3 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3d6f61]">
+                      Billie polish
+                    </p>
+                    <p className="text-xs text-[#3d6f61]">
+                      Rewrite wording only. Invoice details, due timing, and payment context stay the same.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {followUpAiToneOptions.map((tone) => (
+                        <button
+                          key={tone}
+                          type="button"
+                          className="rounded-full border border-[#c9ddd3] bg-white px-3 py-1.5 text-[11px] font-semibold text-[#17493c] shadow-sm transition hover:border-[#b7d0c3] disabled:cursor-not-allowed disabled:text-[#7da393]"
+                          onClick={() => void handleRewriteFollowUpNote(tone)}
+                          disabled={Boolean(followUpAiBusy)}
+                        >
+                          {followUpAiBusy === tone ? "Rewriting..." : tone}
+                        </button>
+                      ))}
+                      {followUpNoteDraft ? (
+                        <button
+                          type="button"
+                          className="rounded-full border border-transparent px-3 py-1.5 text-[11px] font-semibold text-[#3d6f61] transition hover:text-[#17493c]"
+                          onClick={() => {
+                            setFollowUpNoteDraft("");
+                            setFollowUpAiError("");
+                            setFollowUpNoteNotice("Returned to the original reminder note.");
+                          }}
+                          disabled={Boolean(followUpAiBusy)}
+                        >
+                          Reset to original
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
             {followUpPlan ? (
               <div
@@ -3086,10 +3968,10 @@
                 data-testid="library-follow-up-plan"
               >
                 <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-800">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
                     Follow-up plan
                   </p>
-                  <p className="text-xs text-blue-800">{followUpPlan.summary}</p>
+                  <p className="text-xs text-[#3d6f61]">{followUpPlan.summary}</p>
                 </div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-4">
                   <div className="nb-metric-card">
@@ -3122,7 +4004,7 @@
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
+                className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8]"
                 onClick={() => {
                   setStatusFilter("sent");
                   setSelectedIds([]);
@@ -3133,7 +4015,7 @@
               {recurringCandidateInvoice ? (
                 <button
                   type="button"
-                  className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 disabled:cursor-not-allowed disabled:text-blue-400"
+                  className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8] disabled:cursor-not-allowed disabled:text-[#7da393]"
                   onClick={() => handleInvoiceAgain(recurringCandidateInvoice.invoiceId)}
                   disabled={actionId === recurringCandidateInvoice.invoiceId}
                 >
@@ -3145,7 +4027,7 @@
               {oldestSentReminder.isPastDue && oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened ? (
                 <button
                   type="button"
-                  className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
+                  className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8]"
                   onClick={() => startSendComposer(oldestSentReminder)}
                 >
                   Open send flow
@@ -3153,7 +4035,7 @@
               ) : canQuickSendReminderOldest ? (
                 <button
                   type="button"
-                  className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 disabled:cursor-not-allowed disabled:text-blue-400"
+                  className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8] disabled:cursor-not-allowed disabled:text-[#7da393]"
                   onClick={() => handleSendReminder(oldestSentReminder)}
                   disabled={actionId === oldestSentReminder.invoiceId}
                 >
@@ -3169,7 +4051,7 @@
               {oldestSentReminderHasTrackedDelivery && !oldestSentReminderOpened ? (
                 <button
                   type="button"
-                  className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 disabled:cursor-not-allowed disabled:text-blue-400"
+                  className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8] disabled:cursor-not-allowed disabled:text-[#7da393]"
                   onClick={() => void handleMarkDeliveryOpened(oldestSentReminder.invoiceId)}
                   disabled={actionId === oldestSentReminder.invoiceId}
                 >
@@ -3179,7 +4061,7 @@
               {oldestSentReminder ? (
                 <button
                   type="button"
-                  className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 disabled:cursor-not-allowed disabled:text-blue-400"
+                  className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8] disabled:cursor-not-allowed disabled:text-[#7da393]"
                   onClick={() => handleStatusUpdate(oldestSentReminder.invoiceId, "paid")}
                   disabled={statusActionId === `${oldestSentReminder.invoiceId}:paid`}
                 >
@@ -3189,22 +4071,34 @@
               {oldestSentReminder ? (
                 <button
                   type="button"
-                  className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
+                  className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8]"
                   onClick={handleCopyFollowUpNote}
                 >
                   Copy reminder note
                 </button>
               ) : null}
+              {oldestSentReminder ? (
+                <button
+                  type="button"
+                  className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8]"
+                  onClick={() => {
+                    setFollowUpAiPanelOpen((current) => !current);
+                    setFollowUpAiError("");
+                  }}
+                >
+                  {followUpAiPanelOpen ? "Hide Billie helper" : "Billie polish note"}
+                </button>
+              ) : null}
               <button
                 type="button"
-                className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
+                className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8]"
                 onClick={handleSnoozeFollowUpReminder}
               >
                 Snooze for 7 days
               </button>
               <button
                 type="button"
-                className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
+                className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8]"
                 onClick={handleDismissFollowUpReminder}
               >
                 Dismiss
@@ -3217,6 +4111,7 @@
                 </p>
               ) : null}
               {followUpNoteNotice ? <p className="text-xs font-medium text-blue-900">{followUpNoteNotice}</p> : null}
+              {followUpAiError ? <p className="text-xs font-medium text-rose-700">{followUpAiError}</p> : null}
             </div>
             <div className="nb-glass-list mt-4 space-y-3">
               <div>
@@ -3232,7 +4127,7 @@
                   <button
                     key={preset.id}
                     type="button"
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 shadow-sm transition hover:border-[#bcd2c8] disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() =>
                       persistReminderAutomationSettings({
                         dueAfterDays: preset.dueAfterDays,
@@ -3330,20 +4225,20 @@
 
         {requiresSignIn ? (
           <div className="nb-banner nb-banner--warning mt-6 p-4">
-            <p className="text-sm font-semibold text-amber-900">Sign in required to use Invoice Library</p>
+            <p className="text-sm font-semibold text-amber-900">Sign in required to open your invoice library</p>
             <p className="mt-1 text-sm text-amber-800">
-              Your server currently requires an authenticated account for saved invoices.
+              Saved invoices on this server are tied to an account so your library stays private and reusable.
             </p>
             <p className="mt-1 text-sm text-amber-800">{requiresSignInHint}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
-                className="rounded-xl bg-blue-800 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-900"
+                className="rounded-xl bg-[#17493c] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[#12372d]"
                 onClick={() =>
                   navigate(`/?auth=sign-in&returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`)
                 }
               >
-                Go to launcher sign-in
+                Open sign-in
               </button>
               <button
                 type="button"
@@ -3358,14 +4253,14 @@
                   setAuthRequiredError(false);
                 }}
               >
-                I signed in, retry
+                I signed in
               </button>
             </div>
           </div>
         ) : null}
         {libraryGuide ? (
           <section
-            className={`mt-6 rounded-[28px] border px-5 py-4 ${libraryGuide.toneClass}`}
+            className={`nb-highlight-panel mt-6 ${libraryGuide.toneClass}`}
             data-testid="library-billie-next-up"
           >
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -3431,7 +4326,7 @@
                 <>
                   <button
                     type="button"
-                    className="rounded-xl bg-blue-800 px-3 py-2 text-xs font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-blue-300"
+                    className="rounded-xl bg-[#17493c] px-3 py-2 text-xs font-semibold text-white shadow-sm transition disabled:cursor-not-allowed disabled:bg-[#86ab9d]"
                     onClick={() => handleRestore(selectedIds)}
                     disabled={selectedCount === 0 || isDeleting}
                   >
@@ -3474,13 +4369,93 @@
 
         {!requiresSignIn ? (
           <div className="mt-6 space-y-4">
+          {needsAttentionSummary ? (
+            <div className="nb-accent-panel nb-reveal-up">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="nb-section-chip">Needs attention</div>
+                  <p className="mt-3 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+                    {needsAttentionSummary.title}
+                  </p>
+                  <p className="mt-2 text-sm text-slate-600">{needsAttentionSummary.body}</p>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8]"
+                  onClick={() => applyLibraryView({ nextStatusFilter: "all" })}
+                >
+                  Show all invoices
+                </button>
+              </div>
+              {needsAttentionSummary.chips.length > 0 ? (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {needsAttentionSummary.chips.map((chip) => (
+                    <span
+                      key={chip}
+                      className="rounded-full border border-[#d5e5de] bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3d6f61]"
+                    >
+                      {chip}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {normalizedViewFocus ? (
+            <div className="nb-glass-list">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
+                    Focused queue
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-slate-900">
+                    {focusedQueueMeta?.title || "Focused billing lane"}
+                  </p>
+                  {focusedQueueMeta ? (
+                    <p className="mt-1 text-xs leading-5 text-slate-600">
+                      {focusedQueueMeta.summary}
+                    </p>
+                  ) : null}
+                  {focusedQueueMeta ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="rounded-full border border-[#d5e5de] bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3d6f61]">
+                        {focusedQueueMeta.count} in queue
+                      </span>
+                      {alternateFocusQueues.map((queue) => (
+                        <button
+                          key={queue.id}
+                          type="button"
+                          className="rounded-full border border-[#d5e5de] bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3d6f61] transition hover:border-[#bcd2c8]"
+                          onClick={() =>
+                            applyLibraryView({
+                              nextStatusFilter: queue.statusFilter,
+                              nextFocus: queue.id
+                            })
+                          }
+                        >
+                          {queue.shortLabel} ({queue.count})
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  className="nb-btn-secondary rounded-xl px-3 py-2 text-xs"
+                  onClick={() => applyLibraryView({ nextStatusFilter: statusFilter })}
+                >
+                  Clear focus
+                </button>
+              </div>
+            </div>
+          ) : null}
           {loading ? (
             <div className="nb-surface nb-surface--muted rounded-[28px] p-6 text-sm text-slate-500">
               Loading saved invoices...
             </div>
           ) : null}
 
-          {!loading && filteredInvoices.length === 0 ? (
+          {!loading && visibleInvoices.length === 0 ? (
             <div className="nb-empty">
               {showTrash ? (
                 <>
@@ -3491,9 +4466,59 @@
                 </>
               ) : (
                 <>
-                  <p className="text-sm font-semibold text-slate-900">{emptyLibraryState.title}</p>
-                  <p className="mt-2 text-sm text-slate-600">{emptyLibraryState.body}</p>
-                  {statusFilter === "all" ? (
+                  <p className="text-sm font-semibold text-slate-900">
+                    {focusedQueueMeta?.emptyTitle || emptyLibraryState.title}
+                  </p>
+                  <p className="mt-2 text-sm text-slate-600">
+                    {focusedQueueMeta?.emptyBody || emptyLibraryState.body}
+                  </p>
+                  {normalizedViewFocus ? (
+                    <div className="mt-4 space-y-3">
+                      {strongestAlternateQueue ? (
+                        <div className="rounded-[22px] border border-[#d5e5de] bg-white/90 px-4 py-3 text-left shadow-sm">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3d6f61]">
+                            Best fallback queue
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-slate-900">
+                            {strongestAlternateQueue.title}
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-slate-600">
+                            {strongestAlternateQueue.summary}
+                          </p>
+                        </div>
+                      ) : null}
+                      <div className="flex flex-wrap justify-center gap-2">
+                        {strongestAlternateQueue ? (
+                          <button
+                            type="button"
+                            className="nb-btn-primary inline-flex h-10 px-4"
+                            onClick={() =>
+                              applyLibraryView({
+                                nextStatusFilter: strongestAlternateQueue.statusFilter,
+                                nextFocus: strongestAlternateQueue.id
+                              })
+                            }
+                          >
+                            Open {strongestAlternateQueue.shortLabel}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="nb-btn-secondary inline-flex h-10 rounded-full px-4"
+                          onClick={() => applyLibraryView({ nextStatusFilter: statusFilter })}
+                        >
+                          Clear focus
+                        </button>
+                        <button
+                          type="button"
+                          className="nb-btn-secondary inline-flex h-10 rounded-full px-4"
+                          onClick={() => applyLibraryView({ nextStatusFilter: "needs_attention" })}
+                        >
+                          Open needs attention
+                        </button>
+                      </div>
+                    </div>
+                  ) : statusFilter === "all" ? (
                     <div className="mt-4 flex flex-wrap justify-center gap-2">
                       <button
                         type="button"
@@ -3515,7 +4540,7 @@
                       <button
                         type="button"
                         className="nb-btn-secondary inline-flex h-10 rounded-full px-4"
-                        onClick={() => setStatusFilter("all")}
+                        onClick={() => applyLibraryView({ nextStatusFilter: "all" })}
                       >
                         Show all invoices
                       </button>
@@ -3526,8 +4551,8 @@
             </div>
           ) : null}
 
-          {!loading && filteredInvoices.length > 0
-              ? filteredInvoices.map((invoice) => {
+          {!loading && visibleInvoices.length > 0
+              ? visibleInvoices.map((invoice) => {
                 const statusClass = statusStyles[invoice.status] ?? statusStyles.draft;
                 const totalLabel = Number.isFinite(invoice.total)
                   ? formatMoney(invoice.total)
@@ -3543,9 +4568,13 @@
                   total: Number(invoice?.total ?? 0),
                   isPastDue
                 });
+                const attentionSignal = needsAttentionById.get(invoice.invoiceId) ?? null;
                 const lifecycleLabel = getInvoiceLifecycleLabel(invoice);
                 const recurringEntry = recurringSchedulesByInvoiceId[invoice.invoiceId] ?? null;
-                const isEstimateDocument = getDocumentType(invoice) === "estimate";
+                const recurringSummary = recurringEntry
+                  ? buildRecurringScheduleSummary(recurringEntry, { runHistoryLimit: 2 })
+                  : null;
+                const isEstimateDocument = getInvoiceDocumentType(invoice) === "estimate";
                 const estimateReviewState = isEstimateDocument ? getEstimateReviewState(invoice) : "";
                 const recurringAutoSendRecipient = recurringEntry
                   ? getRecurringAutoSendRecipient(invoice, getClientMemory())
@@ -3577,25 +4606,25 @@
                 const sendComposerIsResend = hasDelivery;
                 const sendComposerIntro = sendComposerIsResend
                   ? isPastDue && !deliveryOpened
-                    ? "This invoice is overdue and still unopened. Re-send it to put the invoice back in front of the client and keep delivery tracking current."
+                    ? "This invoice is overdue and still unopened. Re-send it to put it back in front of the client and keep delivery tracking clear."
                     : isPastDue && deliveryOpened
-                      ? "This invoice is overdue and already opened. Re-send only if the client needs another copy; otherwise move into a focused reminder."
+                      ? "This invoice is overdue and already opened. Re-send only if the client needs another copy; otherwise move into a short focused reminder."
                       : "Re-sending keeps delivery tracking current and lets you confirm the best recipient before the next follow-up."
-                  : "Sending records this invoice as sent, updates delivery tracking, and remembers the recipient for this client.";
-                const sendComposerButtonLabel = sendComposerIsResend ? "Re-send now" : "Send now";
+                  : "Sending records this invoice as sent, starts delivery tracking, and remembers the recipient for this client.";
+                const sendComposerButtonLabel = sendComposerIsResend ? "Re-send invoice" : "Send invoice";
                 const sendComposerNextStep = !paymentLinkReady
                   ? sendComposerIsResend
-                    ? "After the re-send, add a hosted payment link so the client has a clearer way to pay."
-                    : "After tracking the send, add a hosted payment link so the invoice is easier to pay."
+                    ? "After the re-send, add a hosted payment link so the client has a clearer way to pay if you need to follow up again."
+                    : "After the send records cleanly, add a hosted payment link so the invoice is easier to pay."
                   : !clientPortalReady
                     ? sendComposerIsResend
-                      ? "After the re-send, create the client portal so the customer gets the full review-and-pay handoff."
-                      : "After tracking the send, create the client portal so the customer gets the full review-and-pay handoff."
+                      ? "After the re-send, create the client portal so the customer also gets the full review-and-pay handoff."
+                      : "After the send records cleanly, create the client portal so the customer gets the full review-and-pay handoff."
                     : sendComposerIsResend
                       ? isPastDue && deliveryOpened
                         ? "After the re-send, watch for payment and move into a focused reminder only if the balance still does not move."
-                        : "After the re-send, watch for an open before escalating into another reminder."
-                      : "After tracking the send, watch for opens and follow up only if the client needs another copy.";
+                        : "After the re-send, watch for an open before you escalate into another reminder."
+                      : "After the send records cleanly, watch for opens and follow up only if the client needs another copy.";
                 const isDeleted = invoice.status === "deleted";
                 const isSelected = selectedIds.includes(invoice.invoiceId);
                 const isStatusBusy = statusActionId.startsWith(`${invoice.invoiceId}:`);
@@ -3613,6 +4642,83 @@
                   isPastDue,
                   deliveryOpened
                 });
+                const clientNameLabel = String(invoice.customerName ?? "").trim() || "No client saved";
+                const balanceSummaryLabel =
+                  invoice.status === "paid"
+                    ? "Paid in full"
+                    : invoice.status === "deleted"
+                      ? "Restore first"
+                      : balanceDue > 0
+                        ? formatMoney(balanceDue)
+                        : "No balance";
+                const dueSummaryLabel =
+                  dueDateLabel
+                    ? `${isPastDue ? "Past due" : "Due"} ${dueDateLabel}`
+                    : invoice.status === "paid"
+                      ? "Closed out"
+                      : invoice.status === "draft"
+                        ? "Add a due date"
+                        : "No due date";
+                const clientStateLabel =
+                  invoice.status === "deleted"
+                    ? "In trash"
+                    : invoice.status === "paid"
+                      ? "Work completed"
+                      : hasDelivery
+                        ? deliveryOpened
+                          ? `Opened${deliveryOpenedAt ? ` ${deliveryOpenedAt}` : ""}`
+                          : `Sent${deliverySentAt ? ` ${deliverySentAt}` : ""}`
+                        : invoice.status === "draft"
+                          ? "Still drafting"
+                          : "Ready to send";
+                const topSummaryItems = [
+                  {
+                    label: "Client",
+                    value: clientNameLabel,
+                    toneClass: "text-slate-900",
+                    cardClass: ""
+                  },
+                  {
+                    label: invoice.status === "paid" ? "Total" : "Open balance",
+                    value: balanceSummaryLabel,
+                    toneClass:
+                      invoice.status === "paid"
+                        ? "text-emerald-700"
+                        : isPastDue
+                          ? "text-amber-700"
+                          : "text-slate-900"
+                    ,
+                    cardClass:
+                      invoice.status === "paid"
+                        ? "nb-stage-card--success"
+                        : isPastDue || (invoice.status === "sent" && balanceDue > 0)
+                          ? "nb-stage-card--warning"
+                          : ""
+                  },
+                  {
+                    label: "Due",
+                    value: dueSummaryLabel,
+                    toneClass: isPastDue ? "text-amber-700" : "text-slate-900",
+                    cardClass: isPastDue ? "nb-stage-card--warning" : ""
+                  },
+                  {
+                    label: hasDelivery ? "Client activity" : "State",
+                    value: clientStateLabel,
+                    toneClass:
+                      hasDelivery && deliveryOpened
+                        ? "text-emerald-700"
+                        : hasDelivery
+                          ? "text-sky-700"
+                          : "text-slate-900"
+                    ,
+                    cardClass:
+                      hasDelivery && deliveryOpened
+                        ? "nb-stage-card--success"
+                        : hasDelivery
+                          ? "nb-stage-card--info"
+                          : ""
+                  }
+                ];
                 const repeatWorkflow = (() => {
                   if (isDeleted || showTrash) {
                     return null;
@@ -3627,8 +4733,10 @@
                         ? "Ready to define"
                         : "Optional";
                   const memoryValue = repeatMemoryStarter
-                    ? repeatMemoryStarter.leadItem
-                      ? repeatMemoryStarter.leadItem.description
+                    ? repeatMemoryStarter.savedItemCount > 1
+                      ? `${repeatMemoryStarter.savedItemCount} saved services`
+                      : repeatMemoryStarter.leadItem
+                        ? repeatMemoryStarter.leadItem.description
                       : "Client setup ready"
                     : invoice.customerName
                       ? "No saved bundle yet"
@@ -3643,8 +4751,10 @@
                         : "Keep schedule active"
                     : rememberedRecurringLabel
                       ? "Reuse saved cadence"
-                      : repeatMemoryStarter
-                        ? "Start from memory"
+                    : repeatMemoryStarter
+                        ? repeatMemoryStarter.savedItemCount > 1
+                          ? "Start from saved bundle"
+                          : "Start from memory"
                         : invoice.status === "paid"
                           ? "Invoice again"
                           : "Set cadence later";
@@ -3652,7 +4762,10 @@
                   if (repeatMemoryStarter) {
                     actions.push({
                       id: "memory",
-                      label: "Start from saved memory",
+                      label:
+                        repeatMemoryStarter.savedItemCount > 1
+                          ? "Use saved bundle"
+                          : "Start from saved memory",
                       className:
                         "rounded-full border border-indigo-200 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-900 transition hover:border-indigo-300 disabled:cursor-not-allowed disabled:text-indigo-300",
                       onClick: () => handleStartFromClientMemory(invoice)
@@ -3712,6 +4825,242 @@
                     actions: actions.slice(0, 3)
                   };
                 })();
+                const quickNextActions = (() => {
+                  if (isDeleted || showTrash) {
+                    return [
+                      {
+                        id: "restore",
+                        label: "Restore invoice",
+                        tone: "primary",
+                        onClick: () => handleRestore([invoice.invoiceId]),
+                        disabled: actionId === invoice.invoiceId || isDeleting
+                      },
+                      {
+                        id: "delete-permanent",
+                        label: "Delete permanently",
+                        tone: "danger",
+                        onClick: () =>
+                          requestDelete({
+                            ids: [invoice.invoiceId],
+                            label: invoice.invoiceNumber || "Draft invoice",
+                            mode: "permanent"
+                          }),
+                        disabled: actionId === invoice.invoiceId || isDeleting
+                      }
+                    ];
+                  }
+                  if (isEstimateDocument) {
+                    return [
+                      {
+                        id: "estimate-open",
+                        label: "Open with Billie",
+                        tone: "primary",
+                        onClick: () => handleOpenWithBillie(invoice.invoiceId),
+                        disabled: actionId === invoice.invoiceId || isStatusBusy
+                      },
+                      {
+                        id: "estimate-convert",
+                        label: estimateReviewState === "approved" ? "Convert to invoice" : "Mark approved",
+                        tone: "secondary",
+                        onClick: () =>
+                          estimateReviewState === "approved"
+                            ? void handleConvertEstimateToInvoice(invoice.invoiceId)
+                            : void handleSetEstimateReviewState(invoice.invoiceId, "approved"),
+                        disabled:
+                          actionId === invoice.invoiceId ||
+                          isDeleting ||
+                          isStatusBusy ||
+                          estimateReviewActionId === invoice.invoiceId
+                      },
+                      {
+                        id: "estimate-open-editor",
+                        label: "Open",
+                        tone: "secondary",
+                        onClick: () => handleOpen(invoice.invoiceId),
+                        disabled: actionId === invoice.invoiceId
+                      }
+                    ];
+                  }
+                  if (invoice.status === "paid") {
+                    return [
+                      repeatMemoryStarter
+                        ? {
+                            id: "paid-memory",
+                            label:
+                              repeatMemoryStarter.savedItemCount > 1
+                                ? "Use saved bundle"
+                                : "Start from saved memory",
+                            tone: "primary",
+                            onClick: () => handleStartFromClientMemory(invoice),
+                            disabled: actionId === invoice.invoiceId || isStatusBusy
+                          }
+                        : {
+                            id: "paid-again",
+                            label: "Invoice again",
+                            tone: "primary",
+                            onClick: () => handleInvoiceAgain(invoice.invoiceId),
+                            disabled: actionId === invoice.invoiceId || isStatusBusy
+                          },
+                      {
+                        id: "paid-client",
+                        label: "Open client workspace",
+                        tone: "secondary",
+                        onClick: () =>
+                          invoice.customerName
+                            ? navigate(`/clients?client=${encodeURIComponent(invoice.customerName)}`)
+                            : handleOpen(invoice.invoiceId),
+                        disabled: actionId === invoice.invoiceId
+                      },
+                      {
+                        id: "paid-recurring",
+                        label: rememberedRecurringLabel ? `Use ${rememberedRecurringLabel} cadence` : "Set monthly recurring",
+                        tone: "secondary",
+                        onClick: () =>
+                          rememberedRecurringInterval
+                            ? setRecurringSchedule(invoice.invoiceId, rememberedRecurringInterval, {
+                                source: "library_client_cadence_reuse"
+                              })
+                            : setRecurringSchedule(invoice.invoiceId, 30),
+                        disabled: actionId === invoice.invoiceId || isDeleting || isStatusBusy
+                      }
+                    ];
+                  }
+                  if (invoice.status === "sent" && hasPartialPaymentShared(invoice)) {
+                    return [
+                      {
+                        id: "partial-open",
+                        label: "Open with Billie",
+                        tone: "primary",
+                        onClick: () => handleOpenWithBillie(invoice.invoiceId),
+                        disabled: actionId === invoice.invoiceId || isStatusBusy
+                      },
+                      {
+                        id: "partial-mark-paid",
+                        label: "Mark paid",
+                        tone: "secondary",
+                        onClick: () => handleStatusUpdate(invoice.invoiceId, "paid"),
+                        disabled: actionId === invoice.invoiceId || isDeleting || isStatusBusy
+                      },
+                      clientPortalReady
+                        ? {
+                            id: "partial-portal",
+                            label: "Open client portal",
+                            tone: "secondary",
+                            onClick: () => window.open(clientPortalUrl, "_blank", "noopener,noreferrer"),
+                            disabled: false
+                          }
+                        : {
+                            id: "partial-export",
+                            label: "Export PDF",
+                            tone: "secondary",
+                            onClick: () => handleExport(invoice.invoiceId),
+                            disabled: actionId === invoice.invoiceId || isStatusBusy
+                          }
+                    ].filter(Boolean);
+                  }
+                  const actions = [];
+                  if (invoice.status === "sent" && !paymentLinkReady) {
+                    actions.push({
+                      id: "payment-link",
+                      label: "Add payment link",
+                      disabled: actionId === invoice.invoiceId || isStatusBusy,
+                      className:
+                        "rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300",
+                      onClick: () => handleCreatePaymentLink(invoice.invoiceId)
+                    });
+                  }
+                  if (invoice.status === "sent" && !clientPortalReady) {
+                    actions.push({
+                      id: "client-portal",
+                      label: "Create client portal",
+                      disabled: actionId === invoice.invoiceId || isStatusBusy,
+                      className:
+                        "rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300",
+                      onClick: () => handleCreateClientPortal(invoice.invoiceId)
+                    });
+                  }
+                  if (invoice.status === "sent" && hasDelivery && !deliveryOpened) {
+                    actions.push({
+                      id: canQuickSendReminderOldest && oldestSentReminder?.invoiceId === invoice.invoiceId ? "send-reminder" : "follow-up",
+                      label:
+                        canQuickSendReminderOldest && oldestSentReminder?.invoiceId === invoice.invoiceId
+                          ? "Send reminder now"
+                          : "Follow up",
+                      disabled: actionId === invoice.invoiceId || isStatusBusy,
+                      className:
+                        "rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300",
+                      onClick: () =>
+                        canQuickSendReminderOldest && oldestSentReminder?.invoiceId === invoice.invoiceId
+                          ? sendReminder(invoice.invoiceId)
+                          : handleOpen(invoice.invoiceId)
+                    });
+                  }
+                  if (invoice.status === "sent" && hasDelivery && deliveryOpened) {
+                    actions.push({
+                      id: "payment-link-sent",
+                      label: "Payment link ready",
+                      disabled: true,
+                      className:
+                        "rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition disabled:cursor-not-allowed disabled:text-slate-300",
+                      onClick: () => {}
+                    });
+                  }
+                  if (invoice.status === "sent" && !hasDelivery && paymentLinkReady) {
+                    actions.push({
+                      id: "track-send",
+                      label: "Track the send",
+                      disabled: actionId === invoice.invoiceId || isStatusBusy,
+                      className:
+                        "rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300",
+                      onClick: () => handleOpen(invoice.invoiceId)
+                    });
+                  }
+                  if (invoice.status === "draft") {
+                    actions.push({
+                      id: "open-draft",
+                      label: "Open draft",
+                      disabled: actionId === invoice.invoiceId || isStatusBusy,
+                      className:
+                        "rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300",
+                      onClick: () => handleOpen(invoice.invoiceId)
+                    });
+                  }
+                  if (invoice.status === "paid" && !recurringEntry) {
+                    actions.push({
+                      id: "paid-recurring",
+                      label: rememberedRecurringLabel ? `Use ${rememberedRecurringLabel} cadence` : "Set monthly recurring",
+                      disabled: actionId === invoice.invoiceId || isStatusBusy,
+                      className:
+                        "rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300",
+                      onClick: () =>
+                        rememberedRecurringInterval
+                          ? setRecurringSchedule(invoice.invoiceId, rememberedRecurringInterval, {
+                              source: "library_client_cadence_reuse"
+                            })
+                          : setRecurringSchedule(invoice.invoiceId, 30)
+                    });
+                    if (!recurringEntry && invoice.status === "paid") {
+                      actions.push({
+                        id: "invoice-again",
+                        label: actionId === invoice.invoiceId ? "Opening..." : "Invoice again",
+                        disabled: actionId === invoice.invoiceId || isStatusBusy,
+                        className:
+                          "rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:text-slate-300",
+                        onClick: () => handleInvoiceAgain(invoice.invoiceId)
+                      });
+                    }
+                  }
+                  if (actions.length === 0) {
+                    return null;
+                  }
+                  return {
+                    cadenceValue: repeatWorkflow?.cadenceValue,
+                    memoryValue: repeatWorkflow?.memoryValue,
+                    nextStepValue: repeatWorkflow?.nextStepValue,
+                    actions: actions.slice(0, 3)
+                  };
+                })();
+                const visibleQuickNextActions = quickNextActions.actions.slice(0, 2);
                 const cardNextAction = (() => {
                   if (invoice.status === "deleted") {
                     return {
@@ -3734,16 +5083,16 @@
                       return {
                         label: "Re-send or confirm delivery",
                         detail: paymentLinkReady
-                          ? "This invoice is overdue, but it still has not been opened. Re-send it or confirm delivery before escalating into a payment reminder."
-                          : "This invoice is overdue and still unopened. Re-send it, confirm delivery, and tighten the payment handoff next."
+                          ? "This invoice is overdue, but it still has not been opened. Put it back in front of the client or confirm delivery before you escalate."
+                          : "This invoice is overdue and still unopened. Re-send it, confirm delivery, and tighten the payment path next."
                       };
                     }
                     if (hasDelivery && deliveryOpened) {
                       return {
                         label: "Send focused reminder",
                         detail: paymentLinkReady
-                          ? "The client already opened this overdue invoice. Send a direct reminder and keep the hosted payment path handy."
-                          : "The client already opened this overdue invoice. Send a direct reminder, then tighten the payment handoff."
+                          ? "The client already opened this overdue invoice. Send a short direct reminder and keep the hosted payment path handy."
+                          : "The client already opened this overdue invoice. Send a short direct reminder, then tighten the payment handoff."
                       };
                     }
                     return {
@@ -3751,47 +5100,53 @@
                         ? "Send reminder now"
                         : "Follow up now",
                       detail: paymentLinkReady
-                        ? "The invoice is overdue. Nudge the client and keep the hosted payment path handy."
-                        : "The invoice is overdue. Follow up first, then consider adding a hosted payment link."
+                        ? "The invoice is overdue. Nudge the client and keep the hosted payment path ready if they reply."
+                        : "The invoice is overdue. Follow up first, then add a hosted payment link so paying is easier when the client is ready."
                     };
                   }
                   if (invoice.status === "sent" && hasDelivery && !deliveryOpened) {
                     return {
                       label: "Check delivery first",
-                      detail: "This invoice is tracked but still unopened. Confirm the client saw it before you escalate into a reminder."
+                      detail: "This invoice is tracked but still unopened. Confirm the client saw it before you escalate into reminders."
                     };
                   }
                   if (invoice.status === "sent" && !paymentLinkReady) {
                     return {
                       label: "Open and add payment link",
-                      detail: "This invoice is already out. Add a hosted payment link so the customer has a clearer, safer way to pay."
+                        detail: "This invoice is already out. Add a hosted payment link now so the next resend or reminder points to a clearer, safer payment path."
                     };
                   }
                   if (invoice.status === "sent" && !clientPortalReady) {
                     return {
                       label: "Create client portal",
-                      detail: paymentLinkReady
-                        ? "The payment link is ready. Add the portal so the customer also gets a clear review surface before paying."
-                        : "Once the draft is sent, add a client portal so the customer can review details in one place."
+                        detail: paymentLinkReady
+                          ? "The payment link is ready. Add the portal next so the customer also gets a clear review surface before paying."
+                          : "Once the draft is sent, add a client portal next so the customer can review details in one place."
                     };
                   }
                   if (invoice.status === "sent") {
-                    return {
-                      label: hasDelivery ? "Track payment" : "Track the send first",
-                      detail: hasDelivery
-                        ? "Delivery is recorded. Next step is watching for payment or sending a reminder later."
+                      return {
+                        label: hasDelivery ? "Track payment" : "Track the send first",
+                        detail: hasDelivery
+                        ? "Delivery is recorded. Next step is watching for payment and only nudging later if the balance still sits."
                         : "Add a tracked send so reminders and payment follow-up have better context."
-                    };
+                      };
                   }
                   if (repeatMemoryStarter) {
                     return {
-                      label: "Start from saved memory",
-                      detail: "Use the remembered client setup and strongest saved service instead of reopening from scratch."
+                      label:
+                        repeatMemoryStarter.savedItemCount > 1
+                          ? "Start from saved client bundle"
+                          : "Start from saved memory",
+                      detail:
+                        repeatMemoryStarter.savedItemCount > 1
+                          ? `Use the remembered client setup and ${repeatMemoryStarter.savedItemCount} saved services instead of reopening from scratch.`
+                          : "Use the remembered client setup and strongest saved service instead of reopening from scratch."
                     };
                   }
                   return {
                     label: "Open draft and finish",
-                    detail: "Confirm the details, then move into save, send, payment link, or export."
+                    detail: "Confirm the details, save it, then add the payment link or portal before the first send so reopening later still feels organized and complete."
                   };
                 })();
                 const workflowStages = [
@@ -3875,10 +5230,10 @@
                             {lifecycleLabel}
                           </p>
                           <p className="mt-1 text-lg font-semibold text-slate-900">
-                            {invoice.invoiceNumber || (getDocumentType(invoice) === "estimate" ? "Draft estimate" : "Draft invoice")}
+                            {invoice.invoiceNumber || (getInvoiceDocumentType(invoice) === "estimate" ? "Draft estimate" : "Draft invoice")}
                           </p>
-                          {getDocumentType(invoice) === "estimate" ? (
-                            <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6993d2]">
+                          {getInvoiceDocumentType(invoice) === "estimate" ? (
+                            <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3d6f61]">
                               {estimateReviewState === "approved"
                                 ? "Estimate approved"
                                 : estimateReviewState === "needs_review"
@@ -3889,6 +5244,11 @@
                           <p className="text-xs text-slate-500">
                             Updated {formatDate(invoice.updatedAt)}
                           </p>
+                          {attentionSignal ? (
+                            <p className="mt-2 inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-800">
+                              {attentionSignal.label}
+                            </p>
+                          ) : null}
                           {dueDateLabel ? (
                             <p
                               className={`mt-1 text-xs font-semibold ${
@@ -3908,10 +5268,25 @@
                                 : ` - Sent ${deliverySentAt || "recently"}`}
                             </p>
                           ) : null}
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                            {topSummaryItems.map((item) => (
+                              <div
+                                key={item.label}
+                                className={`nb-stage-card rounded-[22px] px-3 py-3 md:px-4 md:py-4 ${item.cardClass || ""}`}
+                              >
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                  {item.label}
+                                </p>
+                                <p className={`mt-2 text-sm font-semibold leading-5 ${item.toneClass}`}>
+                                  {item.value}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
                           <p className="mt-2 text-xs leading-5 text-slate-500">
                             <span className="font-semibold text-slate-600">Next:</span> {nextActionHint}
                           </p>
-                          <div className="mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3 py-3 shadow-sm">
+                          <div className="nb-focus-panel mt-3">
                             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                               Best next action
                             </p>
@@ -3938,30 +5313,48 @@
                     {recurringEntry ? (
                       <p className="mt-3 text-xs text-slate-600">Next due {recurringNextDue || "soon"}</p>
                     ) : null}
-                    {recurringEntry && recurringAutoSendEnabled ? (
+                    {recurringEntry && recurringSummary?.statusLabel === "Auto-send armed" ? (
                       <p className="mt-1 text-xs font-semibold text-emerald-700">
                         Auto-send armed{recurringAutoSendRecipient ? ` for ${recurringAutoSendRecipient}` : ""}.
                       </p>
                     ) : null}
-                    {recurringEntry?.lastAutoSendAt ? (
+                    {recurringSummary?.lastAutoSendAt ? (
                       <p className="mt-1 text-[11px] text-slate-500">
-                        Last recurring send {formatUpdatedLabel(recurringEntry.lastAutoSendAt)}
-                        {recurringEntry.lastAutoSendRecipient
-                          ? ` to ${recurringEntry.lastAutoSendRecipient}`
+                        Last recurring send {formatUpdatedLabel(recurringSummary.lastAutoSendAt)}
+                        {recurringSummary.lastAutoSendRecipient
+                          ? ` to ${recurringSummary.lastAutoSendRecipient}`
                           : ""}.
                       </p>
                     ) : null}
-                    {recurringEntry?.autoSendRunCount ? (
+                    {recurringSummary?.autoSendRunCount ? (
                       <p className="mt-1 text-[11px] text-slate-500">
-                        {recurringEntry.autoSendRunCount} recurring run
-                        {recurringEntry.autoSendRunCount === 1 ? "" : "s"} recorded
-                        {recurringEntry.lastAutoSendMode ? ` · ${recurringEntry.lastAutoSendMode}` : ""}.
+                        {recurringSummary.autoSendRunCount} recurring run
+                        {recurringSummary.autoSendRunCount === 1 ? "" : "s"} recorded
+                        {recurringSummary.lastAutoSendMode ? ` · ${recurringSummary.lastAutoSendMode}` : ""}.
                       </p>
                     ) : null}
+                    {Array.isArray(recurringSummary?.runHistoryPreview) && recurringSummary.runHistoryPreview.length > 0 ? (
+                      <div className="mt-2 space-y-1">
+                        <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-400">Recent runs</p>
+                        {recurringSummary.runHistoryPreview.map((run, index) => (
+                          <p key={`${invoice.invoiceId}-run-${index}`} className="text-[11px] text-slate-500">
+                            {formatUpdatedLabel(run.runAt)}
+                            {run.recipient ? ` · ${run.recipient}` : ""}
+                            {run.mode ? ` · ${run.mode}` : ""}
+                          </p>
+                        ))}
+                        {recurringSummary.runHistoryOverflowCount > 0 ? (
+                          <p className="text-[11px] text-slate-500">
+                            {recurringSummary.runHistoryOverflowCount} more run
+                            {recurringSummary.runHistoryOverflowCount === 1 ? "" : "s"} recorded.
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {!isDeleted && !showTrash ? (
-                      <div className="mt-4 rounded-[24px] border border-[#6993d2]/18 bg-[#f7faff] px-4 py-3">
+                      <div className="nb-highlight-panel mt-4">
                         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
                             Send/payment workflow
                           </p>
                           <p className="text-xs text-slate-500">
@@ -3970,11 +5363,9 @@
                         </div>
                         <div className="mt-3 grid gap-2 sm:grid-cols-4">
                           {workflowStages.map((stage) => (
-                            <div key={stage.label} className="rounded-2xl border border-white/80 bg-white px-3 py-2">
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                                {stage.label}
-                              </p>
-                              <p className="mt-1 text-xs font-semibold text-slate-800">{stage.value}</p>
+                            <div key={stage.label} className="nb-stage-card">
+                              <p className="nb-stage-card__label">{stage.label}</p>
+                              <p className="nb-stage-card__value">{stage.value}</p>
                             </div>
                           ))}
                         </div>
@@ -3990,11 +5381,11 @@
                     ) : null}
                     {repeatWorkflow ? (
                       <div
-                        className="mt-4 rounded-[24px] border border-indigo-200/60 bg-indigo-50/60 px-4 py-3"
+                        className="nb-highlight-panel mt-4"
                         data-testid={`library-repeat-workflow-${invoice.invoiceId}`}
                       >
                         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-700">
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
                             Repeat workflow
                           </p>
                           <p className="text-xs text-slate-500">
@@ -4002,26 +5393,20 @@
                           </p>
                         </div>
                         <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                          <div className="rounded-2xl border border-white/80 bg-white px-3 py-2">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                              Cadence
-                            </p>
-                            <p className="mt-1 text-xs font-semibold text-slate-800">{repeatWorkflow.cadenceValue}</p>
+                          <div className="nb-stage-card">
+                            <p className="nb-stage-card__label">Cadence</p>
+                            <p className="nb-stage-card__value">{repeatWorkflow.cadenceValue}</p>
                           </div>
-                          <div className="rounded-2xl border border-white/80 bg-white px-3 py-2">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                              Saved memory
-                            </p>
-                            <p className="mt-1 text-xs font-semibold text-slate-800">{repeatWorkflow.memoryValue}</p>
+                          <div className="nb-stage-card">
+                            <p className="nb-stage-card__label">Saved memory</p>
+                            <p className="nb-stage-card__value">{repeatWorkflow.memoryValue}</p>
                           </div>
-                          <div className="rounded-2xl border border-white/80 bg-white px-3 py-2">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                              Next repeat step
-                            </p>
-                            <p className="mt-1 text-xs font-semibold text-slate-800">{repeatWorkflow.nextStepValue}</p>
+                          <div className="nb-stage-card">
+                            <p className="nb-stage-card__label">Next repeat step</p>
+                            <p className="nb-stage-card__value">{repeatWorkflow.nextStepValue}</p>
                           </div>
                         </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
+                        <div className="nb-mobile-actions mt-3">
                           {repeatWorkflow.actions.map((action) => (
                             <button
                               key={action.id}
@@ -4036,37 +5421,54 @@
                         </div>
                       </div>
                     ) : null}
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {isDeleted || showTrash ? (
-                        <>
+                    {visibleQuickNextActions.length > 0 ? (
+                      <div className="nb-highlight-panel mt-4">
+                        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
+                            Quick next move
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Best actions for this invoice right now.
+                          </p>
+                        </div>
+                        <div className="nb-mobile-actions mt-3">
+                          {visibleQuickNextActions.map((action) => {
+                            const className =
+                              action.tone === "primary"
+                                ? "nb-btn-primary rounded-xl px-4 py-2"
+                                : action.tone === "danger"
+                                  ? "nb-btn-secondary rounded-xl border-rose-200 bg-rose-50 px-4 py-2 text-rose-700 hover:border-rose-300 disabled:cursor-not-allowed disabled:text-rose-300"
+                                  : "nb-btn-secondary rounded-xl px-4 py-2";
+                            return (
+                              <button
+                                key={action.id}
+                                type="button"
+                                className={className}
+                                onClick={action.onClick}
+                                disabled={action.disabled}
+                              >
+                                {action.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : null}
+                    {!isDeleted && !showTrash ? (
+                      <details
+                        className="mt-4 rounded-[24px] border border-[#d5e5de] bg-white/88 px-4 py-3 shadow-sm"
+                        open={showSendComposer}
+                      >
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-slate-900">
+                          <span>More actions</span>
+                          <span className="text-xs font-medium text-slate-500">
+                            Edit, send, share, recurring, and status tools
+                          </span>
+                        </summary>
+                        <div className="mt-4 flex flex-wrap gap-2">
                           <button
                             type="button"
-                            className="nb-btn-primary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:bg-blue-300"
-                            onClick={() => handleRestore([invoice.invoiceId])}
-                            disabled={actionId === invoice.invoiceId || isDeleting}
-                          >
-                            Restore
-                          </button>
-                          <button
-                            type="button"
-                            className="nb-btn-secondary rounded-xl border-rose-200 bg-rose-50 px-4 py-2 text-rose-600 hover:border-rose-300 hover:text-rose-700 disabled:cursor-not-allowed disabled:text-rose-300"
-                            onClick={() =>
-                              requestDelete({
-                                ids: [invoice.invoiceId],
-                                label: invoice.invoiceNumber || "Draft invoice",
-                                mode: "permanent"
-                              })
-                            }
-                            disabled={actionId === invoice.invoiceId || isDeleting}
-                          >
-                            Delete permanently
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            className="nb-btn-primary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:bg-blue-300"
+                            className="nb-btn-primary rounded-xl px-4 py-2 disabled:cursor-not-allowed disabled:bg-[#86ab9d]"
                             onClick={() => handleOpen(invoice.invoiceId)}
                             disabled={actionId === invoice.invoiceId}
                           >
@@ -4074,7 +5476,7 @@
                           </button>
                           <button
                             type="button"
-                            className="nb-btn-secondary rounded-xl border-[#6993d2]/30 bg-[#f5f9ff] px-4 py-2 text-[#1d4f91] hover:border-[#6993d2]/45 hover:text-[#093064] disabled:cursor-not-allowed disabled:text-slate-300"
+                            className="nb-btn-secondary rounded-xl border-[#d5e5de] bg-[#f7faf7] px-4 py-2 text-[#17493c] hover:border-[#bcd2c8] hover:text-[#17493c] disabled:cursor-not-allowed disabled:text-slate-300"
                             onClick={() => handleOpenWithBillie(invoice.invoiceId)}
                             disabled={actionId === invoice.invoiceId || isStatusBusy}
                           >
@@ -4363,9 +5765,9 @@
                           >
                             Delete
                           </button>
-                        </>
-                      )}
-                    </div>
+                        </div>
+                      </details>
+                    ) : null}
                     {showSendComposer ? (
                       <div className="nb-surface nb-surface--muted mt-3 rounded-xl p-3">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -4376,6 +5778,9 @@
                         </p>
                         <p className="mt-2 rounded-2xl border border-blue-100/80 bg-white/90 px-3 py-2 text-xs leading-5 text-blue-900 shadow-sm">
                           {sendComposerNextStep}
+                        </p>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Use the address you want this invoice, reminder trail, and future resend history tied to.
                         </p>
                         {sendComposer?.prefilledFrom === "client_memory" ? (
                           <p className="mt-1 text-xs text-emerald-700">
@@ -4403,7 +5808,7 @@
                           <div className="flex items-center gap-2">
                             <button
                               type="button"
-                              className="nb-btn-primary rounded-lg px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-blue-300"
+                              className="nb-btn-primary rounded-lg px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-[#86ab9d]"
                               onClick={() => void submitSendComposer(invoice.invoiceId)}
                               disabled={actionId === invoice.invoiceId}
                             >
@@ -4490,11 +5895,11 @@
         ) : null}
         {undoToast ? (
           <div className="fixed bottom-6 left-0 right-0 z-40 flex justify-center px-4">
-            <div className="flex w-full max-w-3xl items-center justify-between gap-3 rounded-2xl border border-blue-300 bg-blue-100 px-4 py-3 text-sm text-blue-900 shadow-lg">
+            <div className="flex w-full max-w-3xl items-center justify-between gap-3 rounded-2xl border border-[#d5e5de] bg-[#eff7f2] px-4 py-3 text-sm text-[#17493c] shadow-lg">
               <span className="font-semibold">{undoToast.message}</span>
               <button
                 type="button"
-                className="rounded-xl border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 shadow-sm transition hover:border-blue-400"
+                className="rounded-xl border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8]"
                 onClick={handleUndo}
                 disabled={isDeleting}
               >

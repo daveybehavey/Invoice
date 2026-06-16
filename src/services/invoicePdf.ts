@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
 import type { FinishedInvoice, InvoiceLineItem } from "../models/invoice.js";
+import { buildPaymentMethodPdfLabel } from "./paymentMethods.js";
 
 type InvoicePdfInput = {
   invoice: FinishedInvoice;
@@ -43,11 +44,49 @@ type PdfRenderState = {
   regularFont: PDFFont;
   boldFont: PDFFont;
   accent: ReturnType<typeof resolveAccentPalette>;
+  styleProfile: PdfStyleProfile;
   cursorY: number;
   invoiceNumberLabel: string;
   documentTitle: string;
   documentNumberLabel: string;
   spacingScale: number;
+};
+
+type PdfStyleProfile = {
+  documentTitleSize: number;
+  documentTitleCenteredSize: number;
+  businessNameSize: number;
+  businessSupportingColor: ReturnType<typeof rgb>;
+  dividerColor: ReturnType<typeof rgb>;
+  dividerThickness: number;
+  metaFill: ReturnType<typeof rgb>;
+  metaBorder: ReturnType<typeof rgb>;
+  metaLabelColor: ReturnType<typeof rgb>;
+  addressFill: ReturnType<typeof rgb>;
+  addressBorder: ReturnType<typeof rgb>;
+  addressTitleFill: ReturnType<typeof rgb> | null;
+  addressTitleColor: ReturnType<typeof rgb>;
+  tableHeaderFill: ReturnType<typeof rgb>;
+  tableHeaderBorder: ReturnType<typeof rgb>;
+  tableHeaderText: ReturnType<typeof rgb>;
+  groupFill: ReturnType<typeof rgb>;
+  groupBorder: ReturnType<typeof rgb>;
+  groupText: ReturnType<typeof rgb>;
+  rowDividerColor: ReturnType<typeof rgb>;
+  totalsFill: ReturnType<typeof rgb>;
+  totalsBorder: ReturnType<typeof rgb>;
+  totalsRule: ReturnType<typeof rgb>;
+  totalHighlightFill: ReturnType<typeof rgb> | null;
+  totalHighlightBorder: ReturnType<typeof rgb> | null;
+  notesFill: ReturnType<typeof rgb>;
+  notesBorder: ReturnType<typeof rgb>;
+  paymentFill: ReturnType<typeof rgb>;
+  paymentBorder: ReturnType<typeof rgb>;
+  registrationFill: ReturnType<typeof rgb>;
+  registrationBorder: ReturnType<typeof rgb>;
+  sectionTitleColor: ReturnType<typeof rgb>;
+  footerRuleColor: ReturnType<typeof rgb>;
+  footerTextColor: ReturnType<typeof rgb>;
 };
 
 function resolveDocumentTypeLabels(documentType?: string) {
@@ -64,6 +103,7 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
   const regularFont = await doc.embedFont(StandardFonts.Helvetica);
   const boldFont = await doc.embedFont(StandardFonts.HelveticaBold);
   const accent = resolveAccentPalette(input.accentColor);
+  const styleProfile = resolveStyleProfile(input.stylePreset, accent);
   const styleScale = resolveStyleScale(input.stylePreset);
   const spacingScale = resolveSpacingScale(input.spacingDensity);
 
@@ -74,6 +114,7 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
     regularFont,
     boldFont,
     accent,
+    styleProfile,
     cursorY: PAGE_TOP,
     invoiceNumberLabel: input.invoice.invoiceNumber?.trim() || "Draft",
     documentTitle: resolveDocumentTypeLabels(input.invoice.documentType).title,
@@ -103,6 +144,9 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
   if (input.notesVisible !== false) {
     renderNotes(state, { notes: input.invoice.notes ?? "", styleScale });
   }
+  renderPaymentMethods(state, {
+    paymentMethods: Array.isArray(input.invoice.paymentMethods) ? input.invoice.paymentMethods : []
+  });
   renderPaymentLink(state, { paymentLinkUrl: input.invoice.paymentLinkUrl ?? "", styleScale });
   renderFooter(state, { fromLines });
 
@@ -137,9 +181,11 @@ function renderHeader(
     return;
   }
   const { fromLines: splitFromLines, issueDate: splitIssueDate, dueDate: splitDueDate, logo: splitLogo } = options;
-  const { page, regularFont, boldFont, accent } = state;
+  const { page, regularFont, boldFont, styleProfile } = state;
   const spacingScale = state.spacingScale;
   let leftCursor = PAGE_TOP;
+  const rightColumnWidth = 220;
+  const rightColumnX = PAGE_WIDTH - PAGE_MARGIN_X - rightColumnWidth;
 
   if (splitLogo) {
     const scaled = splitLogo.scale(1);
@@ -163,7 +209,7 @@ function renderHeader(
   page.drawText(businessName, {
     x: PAGE_MARGIN_X,
     y: leftCursor - 16,
-    size: 14 * styleScale,
+    size: styleProfile.businessNameSize * styleScale,
     font: boldFont,
     color: SLATE_900
   });
@@ -176,37 +222,43 @@ function renderHeader(
       y: leftCursor - 10,
       size: 9.5 * styleScale,
       font: regularFont,
-      color: SLATE_600
+      color: styleProfile.businessSupportingColor
     });
     leftCursor -= 13 * spacingScale;
   }
 
   const title = state.documentTitle;
-  const titleSize = 30 * styleScale;
+  const titleSize = styleProfile.documentTitleSize * styleScale;
   const titleWidth = boldFont.widthOfTextAtSize(title, titleSize);
-  const titleX = PAGE_WIDTH - PAGE_MARGIN_X - titleWidth;
+  const titleX = rightColumnX + Math.max(0, rightColumnWidth - titleWidth);
+  const titleBaselineY = PAGE_TOP - titleSize;
   page.drawText(title, {
     x: titleX,
-    y: PAGE_TOP - titleSize,
+    y: titleBaselineY,
     size: titleSize,
     font: boldFont,
     color: SLATE_900
   });
 
-  const metaBoxWidth = 216;
+  const metaBoxWidth = rightColumnWidth;
   const hasDueDate = Boolean(splitDueDate);
   const metaBoxHeight = hasDueDate ? 78 : 56;
-  const metaBoxX = PAGE_WIDTH - PAGE_MARGIN_X - metaBoxWidth;
-  const metaBoxY = PAGE_TOP - titleSize - 72 * spacingScale;
+  const metaBoxX = rightColumnX;
+  const metaBoxTop = titleBaselineY - 36 * spacingScale;
+  const metaBoxY = metaBoxTop - metaBoxHeight;
+  const metaTextWidth = metaBoxWidth - 28;
+  const invoiceNumberSize = fitTextSizeToWidth(regularFont, state.invoiceNumberLabel, metaTextWidth, 10.5, 8.25);
+  const issueDateSize = fitTextSizeToWidth(regularFont, splitIssueDate, metaTextWidth, 10.5, 8.25);
+  const dueDateSize = fitTextSizeToWidth(regularFont, splitDueDate, metaTextWidth, 10.5, 8.25);
 
   page.drawRectangle({
     x: metaBoxX,
     y: metaBoxY,
     width: metaBoxWidth,
     height: metaBoxHeight,
-    borderColor: SLATE_200,
+    borderColor: styleProfile.metaBorder,
     borderWidth: 1,
-    color: SURFACE
+    color: styleProfile.metaFill
   });
 
   page.drawText(state.documentNumberLabel, {
@@ -214,12 +266,12 @@ function renderHeader(
     y: metaBoxY + metaBoxHeight - 16,
     size: 9,
     font: boldFont,
-    color: SLATE_500
+    color: styleProfile.metaLabelColor
   });
   page.drawText(state.invoiceNumberLabel, {
-    x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(state.invoiceNumberLabel, 10.5),
+    x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(state.invoiceNumberLabel, invoiceNumberSize),
     y: metaBoxY + metaBoxHeight - 17,
-    size: 10.5,
+    size: invoiceNumberSize,
     font: regularFont,
     color: SLATE_900
   });
@@ -229,12 +281,12 @@ function renderHeader(
     y: metaBoxY + (hasDueDate ? 34 : 14),
     size: 9,
     font: boldFont,
-    color: SLATE_500
+    color: styleProfile.metaLabelColor
   });
   page.drawText(splitIssueDate, {
-    x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(splitIssueDate, 10.5),
+    x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(splitIssueDate, issueDateSize),
     y: metaBoxY + (hasDueDate ? 33 : 13),
-    size: 10.5,
+    size: issueDateSize,
     font: regularFont,
     color: SLATE_900
   });
@@ -245,12 +297,12 @@ function renderHeader(
       y: metaBoxY + 12,
       size: 9,
       font: boldFont,
-      color: SLATE_500
+      color: styleProfile.metaLabelColor
     });
     page.drawText(splitDueDate, {
-      x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(splitDueDate, 10.5),
+      x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(splitDueDate, dueDateSize),
       y: metaBoxY + 11,
-      size: 10.5,
+      size: dueDateSize,
       font: regularFont,
       color: SLATE_900
     });
@@ -260,8 +312,8 @@ function renderHeader(
   page.drawLine({
     start: { x: PAGE_MARGIN_X, y: dividerY },
     end: { x: PAGE_WIDTH - PAGE_MARGIN_X, y: dividerY },
-    thickness: 1.2,
-    color: accent.primary
+    thickness: styleProfile.dividerThickness,
+    color: styleProfile.dividerColor
   });
 
   state.cursorY = dividerY - 18 * spacingScale;
@@ -278,7 +330,7 @@ function renderCenteredHeader(
   }
 ): void {
   const { fromLines, issueDate, dueDate, logo, styleScale } = options;
-  const { page, regularFont, boldFont, accent } = state;
+  const { page, regularFont, boldFont, styleProfile } = state;
   const spacingScale = state.spacingScale;
   let cursorY = PAGE_TOP;
 
@@ -301,7 +353,7 @@ function renderCenteredHeader(
   }
 
   const businessName = fromLines[0] || "Your Business";
-  const businessNameSize = 14 * styleScale;
+  const businessNameSize = styleProfile.businessNameSize * styleScale;
   page.drawText(businessName, {
     x: (PAGE_WIDTH - boldFont.widthOfTextAtSize(businessName, businessNameSize)) / 2,
     y: cursorY - businessNameSize,
@@ -318,16 +370,17 @@ function renderCenteredHeader(
       y: cursorY - lineSize,
       size: lineSize,
       font: regularFont,
-      color: SLATE_600
+      color: styleProfile.businessSupportingColor
     });
     cursorY -= 13 * spacingScale;
   }
 
   const title = state.documentTitle;
-  const titleSize = 30 * styleScale;
+  const titleSize = styleProfile.documentTitleCenteredSize * styleScale;
+  const titleBaselineY = cursorY - titleSize - 4;
   page.drawText(title, {
     x: (PAGE_WIDTH - boldFont.widthOfTextAtSize(title, titleSize)) / 2,
-    y: cursorY - titleSize - 4,
+    y: titleBaselineY,
     size: titleSize,
     font: boldFont,
     color: SLATE_900
@@ -338,16 +391,21 @@ function renderCenteredHeader(
   const hasDueDate = Boolean(dueDate);
   const metaBoxHeight = hasDueDate ? 78 : 56;
   const metaBoxX = (PAGE_WIDTH - metaBoxWidth) / 2;
-  const metaBoxY = cursorY - metaBoxHeight;
+  const metaBoxTop = titleBaselineY - 28 * spacingScale;
+  const metaBoxY = metaBoxTop - metaBoxHeight;
+  const metaTextWidth = metaBoxWidth - 28;
+  const invoiceNumberSize = fitTextSizeToWidth(regularFont, state.invoiceNumberLabel, metaTextWidth, 10.5, 8.25);
+  const issueDateSize = fitTextSizeToWidth(regularFont, issueDate, metaTextWidth, 10.5, 8.25);
+  const dueDateSize = fitTextSizeToWidth(regularFont, dueDate, metaTextWidth, 10.5, 8.25);
 
   page.drawRectangle({
     x: metaBoxX,
     y: metaBoxY,
     width: metaBoxWidth,
     height: metaBoxHeight,
-    borderColor: SLATE_200,
+    borderColor: styleProfile.metaBorder,
     borderWidth: 1,
-    color: SURFACE
+    color: styleProfile.metaFill
   });
 
   page.drawText(state.documentNumberLabel, {
@@ -355,12 +413,12 @@ function renderCenteredHeader(
     y: metaBoxY + metaBoxHeight - 16,
     size: 9,
     font: boldFont,
-    color: SLATE_500
+    color: styleProfile.metaLabelColor
   });
   page.drawText(state.invoiceNumberLabel, {
-    x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(state.invoiceNumberLabel, 10.5),
+    x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(state.invoiceNumberLabel, invoiceNumberSize),
     y: metaBoxY + metaBoxHeight - 17,
-    size: 10.5,
+    size: invoiceNumberSize,
     font: regularFont,
     color: SLATE_900
   });
@@ -370,12 +428,12 @@ function renderCenteredHeader(
     y: metaBoxY + (hasDueDate ? 34 : 14),
     size: 9,
     font: boldFont,
-    color: SLATE_500
+    color: styleProfile.metaLabelColor
   });
   page.drawText(issueDate, {
-    x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(issueDate, 10.5),
+    x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(issueDate, issueDateSize),
     y: metaBoxY + (hasDueDate ? 33 : 13),
-    size: 10.5,
+    size: issueDateSize,
     font: regularFont,
     color: SLATE_900
   });
@@ -386,12 +444,12 @@ function renderCenteredHeader(
       y: metaBoxY + 12,
       size: 9,
       font: boldFont,
-      color: SLATE_500
+      color: styleProfile.metaLabelColor
     });
     page.drawText(dueDate, {
-      x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(dueDate, 10.5),
+      x: metaBoxX + metaBoxWidth - 12 - regularFont.widthOfTextAtSize(dueDate, dueDateSize),
       y: metaBoxY + 11,
-      size: 10.5,
+      size: dueDateSize,
       font: regularFont,
       color: SLATE_900
     });
@@ -401,8 +459,8 @@ function renderCenteredHeader(
   page.drawLine({
     start: { x: PAGE_MARGIN_X, y: dividerY },
     end: { x: PAGE_WIDTH - PAGE_MARGIN_X, y: dividerY },
-    thickness: 1.2,
-    color: accent.primary
+    thickness: styleProfile.dividerThickness,
+    color: styleProfile.dividerColor
   });
 
   state.cursorY = dividerY - 18 * spacingScale;
@@ -453,7 +511,7 @@ function drawAddressBlock(
   }
 ): void {
   const { x, top, width, height, title, lines } = options;
-  const { page, regularFont, boldFont, accent } = state;
+  const { page, regularFont, boldFont, styleProfile } = state;
   const spacingScale = state.spacingScale;
   const bottom = top - height;
 
@@ -462,17 +520,27 @@ function drawAddressBlock(
     y: bottom,
     width,
     height,
-    borderColor: SLATE_200,
+    borderColor: styleProfile.addressBorder,
     borderWidth: 1,
-    color: rgb(1, 1, 1)
+    color: styleProfile.addressFill
   });
+
+  if (styleProfile.addressTitleFill) {
+    page.drawRectangle({
+      x: x + 10,
+      y: top - 23,
+      width: Math.min(width - 20, Math.max(56, boldFont.widthOfTextAtSize(title, 9) + 14)),
+      height: 14,
+      color: styleProfile.addressTitleFill
+    });
+  }
 
   page.drawText(title, {
     x: x + 10,
     y: top - 16,
     size: 9,
     font: boldFont,
-    color: accent.text
+    color: styleProfile.addressTitleColor
   });
 
   let lineY = top - 32 * spacingScale;
@@ -486,6 +554,21 @@ function drawAddressBlock(
     });
     lineY -= 13 * spacingScale;
   }
+}
+
+function fitTextSizeToWidth(
+  font: PDFFont,
+  text: string,
+  maxWidth: number,
+  baseSize: number,
+  minSize: number
+): number {
+  const safeText = String(text ?? "");
+  let size = baseSize;
+  while (size > minSize && font.widthOfTextAtSize(safeText, size) > maxWidth) {
+    size -= 0.25;
+  }
+  return Number(size.toFixed(2));
 }
 
 function renderLineItemsSection(
@@ -508,8 +591,8 @@ function renderLineItemsSection(
         y: state.cursorY - 18 * spacingScale,
         width: CONTENT_WIDTH,
         height: 18 * spacingScale,
-        color: state.accent.soft,
-        borderColor: state.accent.border,
+        color: state.styleProfile.groupFill,
+        borderColor: state.styleProfile.groupBorder,
         borderWidth: 0.5
       });
       state.page.drawText(group.label, {
@@ -517,7 +600,7 @@ function renderLineItemsSection(
         y: state.cursorY - 13.5 * spacingScale,
         size: 9.5,
         font: state.boldFont,
-        color: state.accent.text
+        color: state.styleProfile.groupText
       });
       state.cursorY -= 24 * spacingScale;
     }
@@ -545,7 +628,7 @@ function renderLineItemsSection(
         start: { x: PAGE_MARGIN_X, y: state.cursorY + 3 * spacingScale },
         end: { x: PAGE_WIDTH - PAGE_MARGIN_X, y: state.cursorY + 3 * spacingScale },
         thickness: 0.7,
-        color: SLATE_200
+        color: state.styleProfile.rowDividerColor
       });
 
       let textY = state.cursorY - 9 * spacingScale;
@@ -591,8 +674,8 @@ function drawTableHeader(state: PdfRenderState): void {
     y: state.cursorY - 18 * spacingScale,
     width: CONTENT_WIDTH,
     height: 18 * spacingScale,
-    color: SURFACE,
-    borderColor: SLATE_200,
+    color: state.styleProfile.tableHeaderFill,
+    borderColor: state.styleProfile.tableHeaderBorder,
     borderWidth: 1
   });
   state.page.drawText("Description", {
@@ -600,14 +683,14 @@ function drawTableHeader(state: PdfRenderState): void {
     y: state.cursorY - 13.5 * spacingScale,
     size: 9,
     font: state.boldFont,
-    color: SLATE_500
+    color: state.styleProfile.tableHeaderText
   });
   state.page.drawText("Amount", {
     x: PAGE_WIDTH - PAGE_MARGIN_X - 10 - state.boldFont.widthOfTextAtSize("Amount", 9),
     y: state.cursorY - 13.5 * spacingScale,
     size: 9,
     font: state.boldFont,
-    color: SLATE_500
+    color: state.styleProfile.tableHeaderText
   });
   state.cursorY -= 24 * spacingScale;
 }
@@ -628,8 +711,8 @@ function renderTotalsPanel(
   const balanceDue = normalizeMoneyValue(invoice.balanceDue, total);
 
   ensureVerticalSpace(state, 132 * spacingScale, true);
-  const panelWidth = 216;
-  const panelHeight = (discount > 0 ? 112 : 96) * spacingScale;
+  const panelWidth = 244;
+  const panelHeight = discount > 0 ? 118 : 104;
   const panelX = PAGE_WIDTH - PAGE_MARGIN_X - panelWidth;
   const panelY = state.cursorY - panelHeight;
 
@@ -638,58 +721,79 @@ function renderTotalsPanel(
     y: panelY,
     width: panelWidth,
     height: panelHeight,
-    color: SURFACE,
-    borderColor: state.accent.border,
+    color: state.styleProfile.totalsFill,
+    borderColor: state.styleProfile.totalsBorder,
     borderWidth: 1
   });
 
-  let lineY = panelY + panelHeight - 18 * spacingScale;
-  drawTotalsRow(state, panelX, lineY, "Subtotal", formatMoney(subtotal), false);
-  lineY -= 16 * spacingScale;
+  let lineY = panelY + panelHeight - 20;
+  drawTotalsRow(state, panelX, panelWidth, lineY, "Subtotal", formatMoney(subtotal), false);
+  lineY -= 18;
 
   if (discount > 0) {
-    drawTotalsRow(state, panelX, lineY, "Discount", `-${formatMoney(discount)}`, false);
-    lineY -= 16 * spacingScale;
+    drawTotalsRow(state, panelX, panelWidth, lineY, "Discount", `-${formatMoney(discount)}`, false);
+    lineY -= 18;
   }
 
-  drawTotalsRow(state, panelX, lineY, "Tax", formatMoney(tax), false);
-  lineY -= 20 * spacingScale;
+  drawTotalsRow(state, panelX, panelWidth, lineY, "Tax", formatMoney(tax), false);
+  lineY -= 22;
 
   state.page.drawLine({
-    start: { x: panelX + 10, y: lineY + 8 * spacingScale },
-    end: { x: panelX + panelWidth - 10, y: lineY + 8 * spacingScale },
+    start: { x: panelX + 10, y: lineY + 11 },
+    end: { x: panelX + panelWidth - 10, y: lineY + 11 },
     thickness: 0.8,
-    color: SLATE_300
+    color: state.styleProfile.totalsRule
   });
 
-  drawTotalsRow(state, panelX, lineY - 4 * spacingScale, "Total", formatMoney(total), true);
-  lineY -= 22 * spacingScale;
+  if (state.styleProfile.totalHighlightFill && state.styleProfile.totalHighlightBorder) {
+    state.page.drawRectangle({
+      x: panelX + 8,
+      y: lineY - 13,
+      width: panelWidth - 16,
+      height: 26,
+      color: state.styleProfile.totalHighlightFill,
+      borderColor: state.styleProfile.totalHighlightBorder,
+      borderWidth: 0.6
+    });
+  }
 
-  drawTotalsRow(state, panelX, lineY - 2 * spacingScale, "Balance due", formatMoney(balanceDue), false);
-  state.cursorY = panelY - 18 * spacingScale;
+  drawTotalsRow(state, panelX, panelWidth, lineY - 5, "Total", formatMoney(total), true);
+  lineY -= 26;
+
+  drawTotalsRow(state, panelX, panelWidth, lineY - 2, "Balance due", formatMoney(balanceDue), false);
+  state.cursorY = panelY - 18;
 }
 
 function drawTotalsRow(
   state: PdfRenderState,
   panelX: number,
+  panelWidth: number,
   baselineY: number,
   label: string,
   value: string,
   emphasize: boolean
 ): void {
   const labelSize = emphasize ? 10.5 : 10;
-  const valueSize = emphasize ? 15 : 10.5;
+  const valueSize = fitTextSize(
+    value,
+    state.boldFont,
+    emphasize ? 14 : 10.5,
+    emphasize ? 12.75 : 10,
+    panelWidth * (emphasize ? 0.44 : 0.42)
+  );
   const labelColor = emphasize ? SLATE_900 : SLATE_600;
   const valueColor = emphasize ? state.accent.primary : SLATE_900;
+  const leftPadding = 12;
+  const rightPadding = 16;
   state.page.drawText(label, {
-    x: panelX + 12,
+    x: panelX + leftPadding,
     y: baselineY,
     size: labelSize,
     font: emphasize ? state.boldFont : state.regularFont,
     color: labelColor
   });
   state.page.drawText(value, {
-    x: panelX + 204 - state.boldFont.widthOfTextAtSize(value, valueSize),
+    x: panelX + panelWidth - rightPadding - state.boldFont.widthOfTextAtSize(value, valueSize),
     y: baselineY - (emphasize ? 1 : 0),
     size: valueSize,
     font: state.boldFont,
@@ -719,9 +823,9 @@ function renderNotes(
     y: state.cursorY - (noteLines.length * 12 + 16) * spacingScale,
     width: CONTENT_WIDTH,
     height: (noteLines.length * 12 + 16) * spacingScale,
-    borderColor: SLATE_200,
+    borderColor: state.styleProfile.notesBorder,
     borderWidth: 1,
-    color: rgb(1, 1, 1)
+    color: state.styleProfile.notesFill
   });
 
   let y = state.cursorY - 12 * spacingScale;
@@ -772,9 +876,9 @@ function renderBusinessRegistrations(
     y: state.cursorY - (registrationLines.length * 12 + 16) * state.spacingScale,
     width: CONTENT_WIDTH * 0.56,
     height: (registrationLines.length * 12 + 16) * state.spacingScale,
-    borderColor: SLATE_200,
+    borderColor: state.styleProfile.registrationBorder,
     borderWidth: 1,
-    color: SURFACE
+    color: state.styleProfile.registrationFill
   });
 
   let y = state.cursorY - 12 * state.spacingScale;
@@ -812,9 +916,9 @@ function renderPaymentLink(
     y: state.cursorY - (textLines.length * 12 + 16) * spacingScale,
     width: CONTENT_WIDTH,
     height: (textLines.length * 12 + 16) * spacingScale,
-    borderColor: state.accent.border,
+    borderColor: state.styleProfile.paymentBorder,
     borderWidth: 1,
-    color: SURFACE
+    color: state.styleProfile.paymentFill
   });
 
   let y = state.cursorY - 12 * spacingScale;
@@ -829,6 +933,72 @@ function renderPaymentLink(
     y -= 12 * spacingScale;
   }
   state.cursorY = y - 8 * spacingScale;
+}
+
+function renderPaymentMethods(
+  state: PdfRenderState,
+  options: {
+    paymentMethods: Array<{
+      kind?: string;
+      label?: string;
+      details?: string;
+      enabled?: boolean;
+    }>;
+  }
+): void {
+  const methods = (Array.isArray(options.paymentMethods) ? options.paymentMethods : []).filter(
+    (method) => method?.enabled !== false && (String(method?.label ?? "").trim() || String(method?.details ?? "").trim())
+  );
+  if (methods.length === 0) {
+    return;
+  }
+
+  const spacingScale = state.spacingScale;
+  ensureVerticalSpace(state, (28 + methods.length * 54) * spacingScale, true);
+  drawSectionTitle(state, "Payment instructions");
+
+  for (const method of methods) {
+    const label = String(method.label ?? "").trim() || buildPaymentMethodPdfLabel(method.kind);
+    const details = String(method.details ?? "")
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter(Boolean);
+    const detailLines =
+      details.length > 0
+        ? details.flatMap((line) => wrapTextToWidth(line, state.regularFont, 9.5, CONTENT_WIDTH - 28, 6))
+        : ["Manual payment instructions."];
+    const cardHeight = (20 + detailLines.length * 11) * spacingScale;
+    ensureVerticalSpace(state, cardHeight + 8 * spacingScale, true);
+    state.page.drawRectangle({
+      x: PAGE_MARGIN_X,
+      y: state.cursorY - cardHeight,
+      width: CONTENT_WIDTH,
+      height: cardHeight,
+      borderColor: state.styleProfile.paymentBorder,
+      borderWidth: 1,
+      color: state.styleProfile.paymentFill
+    });
+    state.page.drawText(label, {
+      x: PAGE_MARGIN_X + 10,
+      y: state.cursorY - 14 * spacingScale,
+      size: 10.5,
+      font: state.boldFont,
+      color: state.accent.text
+    });
+    let y = state.cursorY - 27 * spacingScale;
+    for (const line of detailLines) {
+      state.page.drawText(line, {
+        x: PAGE_MARGIN_X + 10,
+        y,
+        size: 9.5,
+        font: state.regularFont,
+        color: SLATE_700
+      });
+      y -= 11 * spacingScale;
+    }
+    state.cursorY = state.cursorY - cardHeight - 8 * spacingScale;
+  }
 }
 
 function renderFooter(state: PdfRenderState, options: { fromLines: string[] }): void {
@@ -846,14 +1016,14 @@ function renderFooter(state: PdfRenderState, options: { fromLines: string[] }): 
     start: { x: PAGE_MARGIN_X, y: y + 14 },
     end: { x: PAGE_WIDTH - PAGE_MARGIN_X, y: y + 14 },
     thickness: 0.8,
-    color: SLATE_200
+    color: state.styleProfile.footerRuleColor
   });
   state.page.drawText(footerLine, {
     x: PAGE_MARGIN_X,
     y,
     size: 9,
     font: state.regularFont,
-    color: SLATE_500
+    color: state.styleProfile.footerTextColor
   });
 }
 
@@ -864,7 +1034,7 @@ function drawSectionTitle(state: PdfRenderState, title: string): void {
     y: state.cursorY - 2 * state.spacingScale,
     size: 10,
     font: state.boldFont,
-    color: state.accent.text
+    color: state.styleProfile.sectionTitleColor
   });
   state.cursorY -= 16 * state.spacingScale;
 }
@@ -983,6 +1153,20 @@ function truncateText(value: string, font: PDFFont, fontSize: number, maxWidth: 
   return `${output}...`;
 }
 
+function fitTextSize(
+  value: string,
+  font: PDFFont,
+  preferredSize: number,
+  minimumSize: number,
+  maxWidth: number
+): number {
+  let size = preferredSize;
+  while (size > minimumSize && font.widthOfTextAtSize(value, size) > maxWidth) {
+    size -= 0.25;
+  }
+  return size;
+}
+
 function resolveAccentPalette(value?: string): {
   primary: ReturnType<typeof rgb>;
   soft: ReturnType<typeof rgb>;
@@ -1021,6 +1205,130 @@ function resolveStyleScale(stylePreset?: string): number {
     return 1.03;
   }
   return 1;
+}
+
+function resolveStyleProfile(
+  stylePreset: string | undefined,
+  accent: ReturnType<typeof resolveAccentPalette>
+): PdfStyleProfile {
+  if (stylePreset === "compact") {
+    return {
+      documentTitleSize: 22,
+      documentTitleCenteredSize: 22,
+      businessNameSize: 13,
+      businessSupportingColor: SLATE_500,
+      dividerColor: SLATE_300,
+      dividerThickness: 0.8,
+      metaFill: SURFACE,
+      metaBorder: SLATE_200,
+      metaLabelColor: SLATE_500,
+      addressFill: rgb(1, 1, 1),
+      addressBorder: SLATE_200,
+      addressTitleFill: SURFACE,
+      addressTitleColor: SLATE_700,
+      tableHeaderFill: SURFACE,
+      tableHeaderBorder: SLATE_200,
+      tableHeaderText: SLATE_600,
+      groupFill: SURFACE,
+      groupBorder: SLATE_200,
+      groupText: SLATE_700,
+      rowDividerColor: SLATE_200,
+      totalsFill: SURFACE,
+      totalsBorder: SLATE_200,
+      totalsRule: SLATE_300,
+      totalHighlightFill: rgb(248 / 255, 250 / 255, 252 / 255),
+      totalHighlightBorder: SLATE_200,
+      notesFill: rgb(1, 1, 1),
+      notesBorder: SLATE_200,
+      paymentFill: SURFACE,
+      paymentBorder: SLATE_200,
+      registrationFill: SURFACE,
+      registrationBorder: SLATE_200,
+      sectionTitleColor: SLATE_700,
+      footerRuleColor: SLATE_200,
+      footerTextColor: SLATE_500
+    };
+  }
+
+  if (stylePreset === "spacious") {
+    return {
+      documentTitleSize: 34,
+      documentTitleCenteredSize: 36,
+      businessNameSize: 15.5,
+      businessSupportingColor: SLATE_700,
+      dividerColor: accent.primary,
+      dividerThickness: 1.8,
+      metaFill: accent.soft,
+      metaBorder: accent.border,
+      metaLabelColor: accent.text,
+      addressFill: rgb(252 / 255, 252 / 255, 252 / 255),
+      addressBorder: accent.border,
+      addressTitleFill: accent.soft,
+      addressTitleColor: accent.text,
+      tableHeaderFill: accent.soft,
+      tableHeaderBorder: accent.border,
+      tableHeaderText: accent.text,
+      groupFill: accent.soft,
+      groupBorder: accent.border,
+      groupText: accent.text,
+      rowDividerColor: accent.border,
+      totalsFill: accent.soft,
+      totalsBorder: accent.border,
+      totalsRule: accent.border,
+      totalHighlightFill: rgb(
+        Math.min(1, accent.soft.red + 0.03),
+        Math.min(1, accent.soft.green + 0.03),
+        Math.min(1, accent.soft.blue + 0.03)
+      ),
+      totalHighlightBorder: accent.border,
+      notesFill: rgb(252 / 255, 252 / 255, 252 / 255),
+      notesBorder: accent.border,
+      paymentFill: accent.soft,
+      paymentBorder: accent.border,
+      registrationFill: rgb(252 / 255, 252 / 255, 252 / 255),
+      registrationBorder: accent.border,
+      sectionTitleColor: accent.text,
+      footerRuleColor: accent.border,
+      footerTextColor: SLATE_600
+    };
+  }
+
+  return {
+    documentTitleSize: 30,
+    documentTitleCenteredSize: 30,
+    businessNameSize: 14,
+    businessSupportingColor: SLATE_600,
+    dividerColor: accent.primary,
+    dividerThickness: 1.2,
+    metaFill: SURFACE,
+    metaBorder: SLATE_200,
+    metaLabelColor: SLATE_500,
+    addressFill: rgb(1, 1, 1),
+    addressBorder: SLATE_200,
+    addressTitleFill: accent.soft,
+    addressTitleColor: accent.text,
+    tableHeaderFill: SURFACE,
+    tableHeaderBorder: SLATE_200,
+    tableHeaderText: SLATE_500,
+    groupFill: accent.soft,
+    groupBorder: accent.border,
+    groupText: accent.text,
+    rowDividerColor: SLATE_200,
+    totalsFill: SURFACE,
+    totalsBorder: accent.border,
+    totalsRule: SLATE_300,
+    totalHighlightFill: null,
+    totalHighlightBorder: null,
+    notesFill: rgb(1, 1, 1),
+    notesBorder: SLATE_200,
+    paymentFill: SURFACE,
+    paymentBorder: accent.border,
+    registrationFill: SURFACE,
+    registrationBorder: SLATE_200,
+    sectionTitleColor: accent.text,
+    footerRuleColor: SLATE_200,
+    footerTextColor: SLATE_500
+  };
 }
 
 function resolveSpacingScale(spacingDensity?: string): number {

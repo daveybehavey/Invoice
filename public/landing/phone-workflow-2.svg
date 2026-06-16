@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" role="img" aria-labelledby="title desc">
+  <title id="title">NoteBill phone workflow review and save</title>
+  <desc id="desc">A polished phone-style mockup showing review before save and the reusable invoice handoff.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#fff9f0"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+    <linearGradient id="phone" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#3d6f61"/>
+      <stop offset="100%" stop-color="#163b32"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f7fbf8"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="900" rx="48" fill="url(#bg)"/>
+  <circle cx="980" cy="160" r="160" fill="#f1dbc2" opacity=".8"/>
+  <circle cx="210" cy="150" r="120" fill="#dfeee4" opacity=".8"/>
+  <rect x="366" y="86" width="468" height="724" rx="56" fill="url(#phone)"/>
+  <rect x="398" y="130" width="404" height="628" rx="28" fill="#12201d"/>
+  <rect x="414" y="146" width="372" height="596" rx="24" fill="#fffdf8"/>
+  <text x="600" y="196" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" fill="#173f34">Review first</text>
+  <text x="600" y="229" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#61746d">Save only after the money looks right</text>
+  <rect x="440" y="275" width="320" height="86" rx="18" fill="#f7fbf8" stroke="#d8e6de"/>
+  <text x="464" y="309" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#173f34">Invoice total</text>
+  <text x="464" y="336" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#61746d">Labor, parts, tax, due date, and notes</text>
+  <rect x="440" y="377" width="320" height="116" rx="18" fill="url(#card)" stroke="#d8e6de"/>
+  <text x="464" y="411" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#173f34">One reusable invoice</text>
+  <text x="464" y="439" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#61746d">Save once, reopen later, keep the workflow attached.</text>
+  <text x="464" y="464" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#61746d">Library, payment link, and client portal stay close.</text>
+  <rect x="440" y="522" width="148" height="44" rx="22" fill="#17493c"/>
+  <text x="514" y="550" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#ffffff">Save draft</text>
+  <rect x="598" y="522" width="162" height="44" rx="22" fill="#ffffff" stroke="#cfded6"/>
+  <text x="679" y="550" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#173f34">Open library</text>
+  <rect x="440" y="582" width="320" height="94" rx="18" fill="#ffffff" stroke="#d8e6de"/>
+  <text x="464" y="618" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#173f34">Nothing sends automatically</text>
+  <text x="464" y="646" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#61746d">You approve the handoff before the invoice leaves.</text>
+  <text x="600" y="844" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#173f34">Review, save, and keep the handoff clean</text>
+</svg>

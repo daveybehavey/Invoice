@@ -8,6 +8,7 @@
     );
   }
   const apiFetch = requestIdentity.apiFetch ?? window.fetch.bind(window);
+  const revenueAnalytics = window.InvoiceRevenueAnalytics;
   const onboardingUtils = window.InvoiceOnboardingState;
   if (!onboardingUtils) {
     throw new Error(
@@ -92,6 +93,13 @@
     );
   }
 
+  const importCleanupUtils = window.InvoiceImportCleanupUtils;
+  if (!importCleanupUtils) {
+    throw new Error(
+      "Missing /utils/importCleanup.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
+    );
+  }
+
   const {
     formatRateToken,
     cloneJson,
@@ -131,10 +139,22 @@
     buildDecisionAckMessage
   } = intakeControllerUtils;
 
+  const trackRevenueSignalOnce = (event, source) => {
+    revenueAnalytics?.trackRevenueSignalOnce?.(event, source);
+  };
+
   const { buildDecisionKeywordSets, getLineItemStatus, buildReviewSnapshotModel } =
     intakeReviewModelUtils;
   const { ReviewSnapshotCard } = intakeReviewComponents;
   const { IntakeDecisionPanel } = intakeDecisionComponents;
+  const {
+    buildImportCoverageSummary,
+    buildImportDraftComparison,
+    buildImportCleanupReadinessLabel,
+    buildImportSourceCoverageLabel,
+    buildImportSourceCoverageGapLabel,
+    buildImportCleanupPairingLabel
+  } = importCleanupUtils;
 
   const accountPlanUtils = window.InvoiceAccountPlanUtils;
   if (!accountPlanUtils) {
@@ -151,7 +171,13 @@
       "Missing /utils/billingActions.js load. Ensure it is loaded before /features/intake/aiIntake.jsx."
     );
   }
-  const { hasStripeCheckout, startUpgradeCheckout, readBillingNoticeFromUrl } = billingActions;
+  const {
+    hasStripeCheckout,
+    getGooglePlaySubscriptionPlans,
+    startUpgradeCheckout,
+    readBillingNoticeFromUrl,
+    getBillingEnvironment
+  } = billingActions;
 
   const businessProfileUtils = window.InvoiceBusinessProfile;
   if (!businessProfileUtils) {
@@ -202,6 +228,26 @@
     "Client asked for no tax this time.",
     "Payment due in 14 days."
   ].join("\n");
+  const QUICK_START_EXAMPLES = [
+    {
+      id: "contractor",
+      label: "Contractor job",
+      note:
+        "Apr 18 - Jordan Lee, 44 Maple Ave.\nRepaired leaking kitchen sink.\n2.25 hours at $95/hr.\nReplaced supply line $18.50 and washer kit $7.\nClient asked for no tax this time.\nPayment due in 14 days."
+    },
+    {
+      id: "service",
+      label: "Service call",
+      note:
+        "May 2 - AC tune-up for a repeat client.\n2 hours labor at $110/hr.\nFilter replacement $24.\nCustomer wants the invoice sent today."
+    },
+    {
+      id: "repeat",
+      label: "Repeat client",
+      note:
+        "Monthly lawn maintenance for 123 Oak St.\nThis is the regular recurring visit.\nInclude the usual rate and note the next service date."
+    }
+  ];
   const PAYMENT_TERM_LINE_PATTERN =
     /^(due on receipt|payment due|payment is due|please remit payment|net\s*\d+|payable within)/i;
   const PAYMENT_SCHEDULE_LINE_PATTERN =
@@ -321,6 +367,18 @@
   };
 
 function AIIntake() {
+  const findVisibleIntakeInput = () => {
+    const inputs = Array.from(document.querySelectorAll('textarea[data-intake-input="true"]'));
+    return (
+      inputs.find((candidate) => {
+        if (!(candidate instanceof HTMLElement)) {
+          return false;
+        }
+        const style = window.getComputedStyle(candidate);
+        return style.display !== "none" && style.visibility !== "hidden" && candidate.offsetParent !== null;
+      }) ?? inputs[0]
+    );
+  };
   const navigate = useNavigate();
   const legacyDraftStorageKey = "invoiceDraft";
   const draftStorageKey =
@@ -374,6 +432,8 @@ function AIIntake() {
   );
   const [billieUndoState, setBillieUndoState] = useState(null);
   const [billieChangePreview, setBillieChangePreview] = useState([]);
+  const [showCompactBillieComposerDetails, setShowCompactBillieComposerDetails] = useState(false);
+  const [showCompactBillieComposerExpanded, setShowCompactBillieComposerExpanded] = useState(false);
   const [recentlyChangedLines, setRecentlyChangedLines] = useState({
     ids: [],
     descriptions: []
@@ -383,6 +443,9 @@ function AIIntake() {
   const [showDecisionWhy, setShowDecisionWhy] = useState(false);
   const [optimisticDecisionState, setOptimisticDecisionState] = useState(null);
   const [recentClientContext, setRecentClientContext] = useState([]);
+  useEffect(() => {
+    trackRevenueSignalOnce("first_draft_started", "ai_intake_open");
+  }, []);
   const [savedLaborRate, setSavedLaborRate] = useState(() => {
     const scopedRate = readStoredLaborRate(laborRateStorageKey);
     if (scopedRate !== null) {
@@ -402,6 +465,7 @@ function AIIntake() {
   });
   const [wizardStepsExpanded, setWizardStepsExpanded] = useState(false);
   const [starterGuideActive, setStarterGuideActive] = useState(false);
+  const [quickBuildMode, setQuickBuildMode] = useState(false);
   const [billieChipTrayExpanded, setBillieChipTrayExpanded] = useState(false);
   const [voiceNoteBusy, setVoiceNoteBusy] = useState(false);
   const [voiceNoteError, setVoiceNoteError] = useState("");
@@ -424,7 +488,7 @@ function AIIntake() {
     setInputValue(prefill);
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
-        const input = document.getElementById("ai-intake-input");
+        const input = findVisibleIntakeInput();
         if (input instanceof HTMLTextAreaElement) {
           input.focus();
           input.setSelectionRange(input.value.length, input.value.length);
@@ -445,7 +509,7 @@ function AIIntake() {
     setInputValue(prefill);
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
-        const input = document.getElementById("ai-intake-input");
+        const input = findVisibleIntakeInput();
         if (input instanceof HTMLTextAreaElement) {
           input.focus();
           input.setSelectionRange(input.value.length, input.value.length);
@@ -468,7 +532,7 @@ function AIIntake() {
     setInputValue(prefill);
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
-        const input = document.getElementById("ai-intake-input");
+        const input = findVisibleIntakeInput();
         if (input instanceof HTMLTextAreaElement) {
           input.focus();
           input.setSelectionRange(input.value.length, input.value.length);
@@ -489,7 +553,7 @@ function AIIntake() {
     setInputValue(prefill);
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
-        const input = document.getElementById("ai-intake-input");
+        const input = findVisibleIntakeInput();
         if (input instanceof HTMLTextAreaElement) {
           input.focus();
           input.setSelectionRange(input.value.length, input.value.length);
@@ -510,7 +574,7 @@ function AIIntake() {
     setInputValue(prefill);
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
-        const input = document.getElementById("ai-intake-input");
+        const input = findVisibleIntakeInput();
         if (input instanceof HTMLTextAreaElement) {
           input.focus();
           input.setSelectionRange(input.value.length, input.value.length);
@@ -522,6 +586,16 @@ function AIIntake() {
     if (!importDraftComparison) {
       return;
     }
+    const capturedContextLines = importCoverageSummary
+      ? Array.isArray(importCoverageSummary.captured)
+        ? importCoverageSummary.captured.map((item) => String(item ?? "").trim()).filter(Boolean)
+        : []
+      : [];
+    const cleanupContextLines = importCoverageSummary
+      ? Array.isArray(importCoverageSummary.cleanup)
+        ? importCoverageSummary.cleanup.map((item) => String(item ?? "").trim()).filter(Boolean)
+        : []
+      : [];
     const sourceLines = Array.isArray(importDraftComparison.sourceSessions)
       ? importDraftComparison.sourceSessions.flatMap((session) => {
           const header = `${session.date}${session.taskCount ? ` · ${session.taskCount} task${session.taskCount === 1 ? "" : "s"}` : ""}`;
@@ -546,11 +620,80 @@ function AIIntake() {
       draftLines.length > 0
         ? `Draft line items:\n${draftLines.map((line) => `- ${line}`).join("\n")}`
         : "Draft line items: none yet"
+    }${
+      capturedContextLines.length > 0
+        ? `\n\nCaptured context:\n${capturedContextLines.map((line) => `- ${line}`).join("\n")}`
+        : ""
+    }${
+      cleanupContextLines.length > 0
+        ? `\n\nStill needs cleanup:\n${cleanupContextLines.map((line) => `- ${line}`).join("\n")}`
+        : ""
     }`;
     setInputValue(prefill);
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
-        const input = document.getElementById("ai-intake-input");
+        const input = findVisibleIntakeInput();
+        if (input instanceof HTMLTextAreaElement) {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      });
+    }
+  };
+  const applyImportStudioCleanupRowToInput = (session, draftLineItem) => {
+    if (!session) {
+      return;
+    }
+    const sourceHeader = `${session.date}${session.taskCount ? ` · ${session.taskCount} task${session.taskCount === 1 ? "" : "s"}` : ""}`;
+    const sourcePreviewLines = Array.isArray(session.taskPreview)
+      ? session.taskPreview.map((item) => String(item ?? "").trim()).filter(Boolean)
+      : [];
+    const draftDescription = typeof draftLineItem?.description === "string" ? draftLineItem.description.trim() : "";
+    const draftDetail = typeof draftLineItem?.detail === "string" ? draftLineItem.detail.trim() : "";
+    const prefill = `Use this cleanup row to finish the import comparison:\n\nSource session:\n- ${sourceHeader}${
+      sourcePreviewLines.length > 0 ? `\n${sourcePreviewLines.map((line) => `  - ${line}`).join("\n")}` : ""
+    }\n\nDraft line item:\n${
+      draftDescription ? `- ${draftDescription}${draftDetail ? ` · ${draftDetail}` : ""}` : "- No matching draft line item yet."
+    }`;
+    setInputValue(prefill);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        const input = findVisibleIntakeInput();
+        if (input instanceof HTMLTextAreaElement) {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
+      });
+    }
+  };
+  const applyImportStudioCleanupMapToInput = () => {
+    if (!importDraftComparison || !Array.isArray(importDraftComparison.sourceSessions) || importDraftComparison.sourceSessions.length === 0) {
+      return;
+    }
+    const sourceLines = importDraftComparison.sourceSessions.flatMap((session) => {
+      const header = `${session.date}${session.taskCount ? ` · ${session.taskCount} task${session.taskCount === 1 ? "" : "s"}` : ""}`;
+      const previewLines = Array.isArray(session.taskPreview) ? session.taskPreview : [];
+      return [header, ...previewLines.map((item) => `  - ${item}`)];
+    });
+    const draftLines = Array.isArray(importDraftComparison.draftLineItems)
+      ? importDraftComparison.draftLineItems.map((item) => {
+          const detail = typeof item?.detail === "string" && item.detail.trim() ? ` · ${item.detail.trim()}` : "";
+          return `${item.description}${detail}`;
+        })
+      : [];
+    const prefill = `Use this cleanup map to finish the import comparison:\n\n${
+      sourceLines.length > 0
+        ? `Source sessions:\n${sourceLines.map((line) => `- ${line}`).join("\n")}`
+        : "Source sessions: none yet"
+    }\n\n${
+      draftLines.length > 0
+        ? `Draft line items:\n${draftLines.map((line) => `- ${line}`).join("\n")}`
+        : "Draft line items: none yet"
+    }`;
+    setInputValue(prefill);
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        const input = findVisibleIntakeInput();
         if (input instanceof HTMLTextAreaElement) {
           input.focus();
           input.setSelectionRange(input.value.length, input.value.length);
@@ -718,6 +861,38 @@ function AIIntake() {
     const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`;
     window.history.replaceState({}, "", nextUrl);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("mode") !== "quick") {
+      return;
+    }
+    setQuickBuildMode(true);
+    setStarterGuideActive(false);
+    params.delete("mode");
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`;
+    window.history.replaceState({}, "", nextUrl);
+  }, []);
+
+  useEffect(() => {
+    if (!quickBuildMode) {
+      return;
+    }
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      const input = findVisibleIntakeInput();
+      if (input instanceof HTMLTextAreaElement) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    });
+  }, [quickBuildMode]);
 
   const currentReviewClientName =
     typeof finishedInvoice?.customerName === "string" ? finishedInvoice.customerName.trim() : "";
@@ -1451,113 +1626,27 @@ function AIIntake() {
     hasQualityBlockers ||
     auditStatus === "timed_out" ||
     auditStatus === "failed";
-  const importCoverageSummary = importStudioContext
-    ? {
-        captured: [
-          importStudioContext.fileName ? `File: ${importStudioContext.fileName}` : null,
-          importStudioContext.preview ? "Source preview loaded" : null,
-          "Original text stays available for cleanup"
-        ].filter(Boolean),
-        cleanup: [
-          `${importStudioContext.openDecisionCount} decision${importStudioContext.openDecisionCount === 1 ? "" : "s"} pending`,
-          `${importStudioContext.unparsedCount} uncaptured line${importStudioContext.unparsedCount === 1 ? "" : "s"}`,
-          `${importStudioContext.assumptionCount} assumption${importStudioContext.assumptionCount === 1 ? "" : "s"}`,
-          importStudioContext.qualityBlockerCount > 0
-            ? `${importStudioContext.qualityBlockerCount} quality blocker${importStudioContext.qualityBlockerCount === 1 ? "" : "s"}`
-            : null,
-          importStudioContext.needsFollowUp ? "Missing money details still need a reply" : null
-        ].filter(Boolean)
-      }
-    : null;
-  const importDraftComparison = importStudioContext
-    ? {
-        sourceSessions: Array.isArray(structuredInvoice?.workSessions)
-          ? structuredInvoice.workSessions
-              .map((session, index) => {
-                const date = typeof session?.date === "string" ? session.date.trim() : "";
-                const taskCount = Array.isArray(session?.tasks) ? session.tasks.length : 0;
-                const taskPreview = Array.isArray(session?.tasks)
-                  ? session.tasks
-                      .map((task) => (typeof task?.description === "string" ? task.description.trim() : ""))
-                      .filter(Boolean)
-                      .slice(0, 2)
-                  : [];
-                return date
-                  ? {
-                      id: `source-session-${index}`,
-                      date,
-                      taskCount,
-                      taskPreview
-                    }
-                  : null;
-              })
-              .filter(Boolean)
-          : [],
-        draftLineItems: Array.isArray(finishedInvoice?.lineItems)
-          ? finishedInvoice.lineItems
-              .map((item, index) => {
-                const description =
-                  typeof item?.description === "string" && item.description.trim()
-                    ? item.description.trim()
-                    : `Line item ${index + 1}`;
-                const quantity = Number.isFinite(item?.quantity) ? Number(item.quantity) : null;
-                const unitPrice = Number.isFinite(item?.unitPrice) ? Number(item.unitPrice) : null;
-                const amount = Number.isFinite(item?.amount) ? Number(item.amount) : null;
-                const parts = [];
-                if (quantity !== null && unitPrice !== null) {
-                  parts.push(`${quantity} × ${unitPrice}`);
-                } else if (quantity !== null) {
-                  parts.push(`Qty ${quantity}`);
-                } else if (unitPrice !== null) {
-                  parts.push(`Rate ${unitPrice}`);
-                }
-                if (amount !== null) {
-                  parts.push(`Total ${amount}`);
-                }
-                return {
-                  id: item?.id ?? `draft-line-${index}`,
-                  description,
-                  detail: parts.join(" • ")
-                };
-              })
-              .filter(Boolean)
-          : [],
-        clientName:
-          typeof finishedInvoice?.customerName === "string" && finishedInvoice.customerName.trim()
-            ? finishedInvoice.customerName.trim()
-            : typeof structuredInvoice?.customerName === "string" && structuredInvoice.customerName.trim()
-              ? structuredInvoice.customerName.trim()
-              : "",
-        lineItemCount: Array.isArray(finishedInvoice?.lineItems) ? finishedInvoice.lineItems.length : 0,
-        noteCount:
-          typeof finishedInvoice?.notes === "string" && finishedInvoice.notes.trim()
-            ? 1
-            : 0,
-        totalLabel: (() => {
-          const totalValue = Number(finishedInvoice?.total);
-          if (!Number.isFinite(totalValue)) {
-            return "";
-          }
-          const currencyCode =
-            typeof finishedInvoice?.currency === "string" && finishedInvoice.currency.trim().length === 3
-              ? finishedInvoice.currency.trim().toUpperCase()
-              : "USD";
-          try {
-            return new Intl.NumberFormat([], { style: "currency", currency: currencyCode }).format(totalValue);
-          } catch (_error) {
-            return totalValue.toFixed(2);
-          }
-        })(),
-        statusLabel:
-          finishedInvoice
-            ? finishedInvoice.status === "estimate"
-              ? "Estimate draft"
-              : finishedInvoice.status === "partial"
-                ? "Partial payment draft"
-                : "Invoice draft"
-            : "Waiting for the cleaned draft"
-      }
-    : null;
+  const importCoverageSummary = buildImportCoverageSummary(importStudioContext);
+  const importDraftComparison = buildImportDraftComparison(structuredInvoice, finishedInvoice, importStudioContext);
+  const importCleanupReadinessLabel = importDraftComparison
+    ? buildImportCleanupReadinessLabel(importDraftComparison.taskCoverageRatio)
+    : "";
+  const importSourceCoverageLabel = importDraftComparison
+    ? buildImportSourceCoverageLabel(
+        importDraftComparison.sourceCoverageCount,
+        importDraftComparison.sourceSessionCount
+      )
+    : "";
+  const importSourceCoverageGapLabel = importDraftComparison
+    ? buildImportSourceCoverageGapLabel(importDraftComparison.sourceCoverageGapCount)
+    : "";
+  const importCleanupPairingLabel = importDraftComparison
+    ? buildImportCleanupPairingLabel(
+        importDraftComparison.pairedRowCount,
+        importDraftComparison.sourceSessionCount,
+        importDraftComparison.draftLineItemCount
+      )
+    : "";
   const needsLaborPricing = intakeReadiness.needsFollowUp;
   const needsLaborHoursOnly = intakeReadiness.needsLaborHoursOnly;
   const showConfirmDetails =
@@ -1670,11 +1759,14 @@ function AIIntake() {
   const displayOpenDecisionCount = decisionApplyPending
     ? Math.max(0, openDecisionCount - optimisticHiddenCount)
     : openDecisionCount;
+  const canGenerateInvoice = intakeReadiness.canGenerate;
   const quickDecisionHeading = decisionApplyPending
     ? "Applying decision"
     : displayOpenDecisionCount > 0
-      ? "Needs your call"
-      : "Tax choice";
+      ? "Needs a choice"
+      : canGenerateInvoice
+        ? "Ready to generate"
+        : "Review needed";
   const quickReplyLabel = needsLaborHoursOnly
     ? "Suggested hours"
     : needsLaborPricing
@@ -1691,6 +1783,7 @@ function AIIntake() {
     : intakePhase === "awaiting_follow_up"
       ? "Waiting for your pricing input"
       : "Ready for notes";
+  const quickModeLanding = quickBuildMode && !inputValue.trim() && !hasReviewCard && !followUp;
   const billieWorkspaceVisible = hasReviewCard && intakePhase !== "awaiting_follow_up";
   const showBillieComposer = (showChatInput || billieWorkspaceVisible) && intakePhase !== "awaiting_follow_up";
   const billieActionChips = billieWorkspaceVisible
@@ -1731,7 +1824,6 @@ function AIIntake() {
   const hasHiddenBillieActionChips =
     isCompactViewport && billieActionChips.length > visibleBillieActionChips.length;
   const canSendWhileTyping = false;
-  const canGenerateInvoice = intakeReadiness.canGenerate;
   const ctaDisabled = !canGenerateInvoice;
   const ctaHelper = intakeReadiness.helperText;
   const hasDecisionPrimaryPath = intakeReadiness.lockReason === "open_decisions";
@@ -1744,6 +1836,12 @@ function AIIntake() {
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
   const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
   const showUpgradeAction = planLimitReached && (Boolean(upgradeUrl) || useStripeUpgradeAction);
+  const billingEnvironment = getBillingEnvironment(accountPlan);
+  const googlePlaySubscriptionPlans = getGooglePlaySubscriptionPlans(accountPlan);
+  const upgradeActionLabel =
+    billingEnvironment?.mode === "google-play" ? "Upgrade in Google Play" : "Upgrade to Pro";
+  const billingEnvironmentHint =
+    billingEnvironment?.hint || "Use the billing path that matches this device when you are ready to save.";
   const showIntakePlanBanner = hasReviewCard && planLimitReached;
   const reviewDetailsToggleLabel = reviewCardCollapsed ? "Show review details" : "Hide review details";
   const showContextDetailsToggle = hasReviewCard && hasVisibleDetails;
@@ -1776,7 +1874,7 @@ function AIIntake() {
     handleGenerateInvoice();
   };
 
-  const handleUpgradeAction = async () => {
+  const handleUpgradeAction = async (basePlanId = "") => {
     if (!showUpgradeAction || billingBusy) {
       return;
     }
@@ -1785,6 +1883,7 @@ function AIIntake() {
     try {
       if (useStripeUpgradeAction) {
         await startUpgradeCheckout(accountPlan, {
+          basePlanId,
           successPath: "/ai-intake?billing=success",
           cancelPath: "/ai-intake?billing=cancelled"
         });
@@ -1807,18 +1906,10 @@ function AIIntake() {
     setInputValue(nextValue);
     if (hasReviewCard) {
       setShowChatInput(true);
+      setShowCompactBillieComposerExpanded(true);
     }
     setTimeout(() => {
-      const inputs = Array.from(document.querySelectorAll("textarea#ai-intake-input"));
-      const input =
-        inputs.find((candidate) => {
-          const element = candidate;
-          if (!(element instanceof HTMLElement)) {
-            return false;
-          }
-          const style = window.getComputedStyle(element);
-          return style.display !== "none" && style.visibility !== "hidden" && element.offsetParent !== null;
-        }) ?? inputs[0];
+      const input = findVisibleIntakeInput();
       if (input) {
         input.focus();
         if (typeof input.setSelectionRange === "function") {
@@ -2006,6 +2097,22 @@ function AIIntake() {
     completeOnboardingStep("capture_notes");
   };
 
+  const handleLoadQuickStartExample = (example) => {
+    if (!example?.note) {
+      return;
+    }
+    setInputValue(example.note);
+    setStarterGuideActive(true);
+    setVoiceNoteNotice(`Loaded ${example.label.toLowerCase()}. Review it, then generate the draft.`);
+    completeOnboardingStep("capture_notes");
+    window.requestAnimationFrame(() => {
+      const input = findVisibleIntakeInput();
+      if (input && typeof input.focus === "function") {
+        input.focus();
+      }
+    });
+  };
+
   const triggerVoiceNoteUpload = () => {
     audioUploadInputRef.current?.click();
   };
@@ -2120,8 +2227,16 @@ function AIIntake() {
   useEffect(() => {
     if (!isCompactViewport) {
       setWizardStepsExpanded(false);
+      setShowCompactBillieComposerDetails(false);
+      setShowCompactBillieComposerExpanded(false);
     }
   }, [isCompactViewport]);
+
+  useEffect(() => {
+    if (!showBillieComposer) {
+      setShowCompactBillieComposerExpanded(false);
+    }
+  }, [showBillieComposer]);
 
   useEffect(() => {
     if (!readinessDebugEnabled) {
@@ -2482,21 +2597,28 @@ function AIIntake() {
       ? reviewRepeatWorkContext.noteSuggestions.length
       : 0);
   const billieNextUpGuide = (() => {
+    if (quickModeLanding) {
+      return null;
+    }
+    if (starterGuideActive) {
+      return null;
+    }
+
     if (!inputValue.trim() && !hasReviewCard && !followUp) {
       return {
         eyebrow: "Billie next up",
-        title: "Load notes to start the draft.",
+        title: "Tell Billie what happened first.",
         detail:
-          "Paste rough job notes, add a voice note, or use the sample path so Billie has something real to organize.",
+          "Paste rough job notes, add a voice note, or use the sample path so Billie has something real to turn into a draft.",
         actions: [
           {
             id: "sample",
-            label: "Try sample notes",
+            label: "Load sample job",
             onClick: handleLoadStarterSample
           },
           {
             id: "focus-notes",
-            label: "Paste notes",
+            label: "Add my notes",
             onClick: () => focusInputWithValue("")
           }
         ]
@@ -2504,21 +2626,8 @@ function AIIntake() {
     }
 
     if (!hasReviewCard && inputValue.trim()) {
-      return {
-        eyebrow: starterGuideActive ? "Starter walkthrough" : "Billie next up",
-        title: starterGuideActive ? "Build this sample into a draft." : "Build the draft from these notes.",
-        detail: starterGuideActive
-          ? "Scan the sample job first, then let Billie turn it into a reviewable draft."
-          : "Billie has enough detail to structure a draft. Build it now so you can review the money decisions in context.",
-        actions: [
-          {
-            id: "build-draft",
-            label: isTyping ? "Building..." : "Build invoice",
-            disabled: isTyping,
-            onClick: () => handleSubmitUserMessage(inputValue)
-          }
-        ]
-      };
+      // The paste card already owns the primary Build invoice action.
+      return null;
     }
 
     if (intakePhase === "awaiting_follow_up" && followUp) {
@@ -2648,20 +2757,20 @@ function AIIntake() {
             </button>
           </div>
           <div className="text-right">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#5f8fd2]">Billie intake</p>
+            <p className="nb-kicker">Billie intake</p>
             <p className="mt-1 text-xl font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
-              Build the draft before you touch the editor.
+              {quickBuildMode ? "Tell Billie what happened and get a draft fast." : "Let Billie build the draft before you touch the editor."}
             </p>
             <p className="mt-1 text-xs text-slate-500">{intakeHeaderStatus}</p>
-            <p className="mt-2 inline-flex rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 shadow-sm">
+            <p className="mt-2 inline-flex rounded-full border border-[#d9ece4] bg-[#f2f7f3] px-2.5 py-1 text-[11px] font-semibold text-[#17493c] shadow-sm">
               Billie suggests. You approve money decisions.
             </p>
             <button
               type="button"
-              className="mt-2 inline-flex min-h-10 items-center justify-center rounded-full border border-white/70 bg-white/70 px-3 text-xs font-semibold text-slate-500 shadow-sm underline-offset-2 transition hover:bg-white/90 hover:text-slate-700 hover:underline"
+              className="mt-2 inline-flex min-h-10 items-center justify-center rounded-full border border-[#d7ded6] bg-white/82 px-3 text-xs font-semibold text-slate-500 shadow-sm underline-offset-2 transition hover:border-[#17493c]/15 hover:bg-white hover:text-slate-700 hover:underline"
               onClick={() => navigate("/")}
             >
-              {authSession?.email ? `Account: ${authSession.email}` : "Account: local mode"}
+              {authSession?.email ? `Account: ${authSession.email}` : "Account: guest mode"}
             </button>
           </div>
         </div>
@@ -2686,14 +2795,68 @@ function AIIntake() {
                   {billingNotice.message}
                 </div>
               ) : null}
+              {quickModeLanding ? (
+                <div className="nb-surface rounded-[30px] border border-[#d9ece4] bg-[#f6fbf8] p-4 md:p-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">Quick AI invoice</p>
+                  <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.16em]">
+                    <span className="rounded-full border border-[#3d6f61]/14 bg-[#eef4f0] px-2.5 py-1 text-[#17493c]">
+                      No sign-in needed to draft
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-600">
+                      Sign in later to save and sync
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-slate-700">
+                    Paste rough notes, add a voice note if that is faster, and Billie will build the first draft without asking you to sign in first.
+                  </p>
+                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                    {[
+                      ["1", "Paste notes", "Drop in the rough job details any way is easiest."],
+                      ["2", "Billie drafts", "The app organizes the draft and flags money decisions."],
+                      ["3", "Approve money", "You check the totals, then generate the invoice."]
+                    ].map(([step, title, detail]) => (
+                      <div
+                        key={step}
+                        className="rounded-[20px] border border-[#d5e5de] bg-white px-3 py-3 shadow-[0_10px_24px_rgba(20,83,45,0.04)]"
+                      >
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">
+                          Step {step}
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-900">{title}</p>
+                        <p className="mt-1 text-xs leading-5 text-slate-500">{detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                      Try a starter example
+                    </p>
+                    <div className="nb-mobile-actions mt-3">
+                      {QUICK_START_EXAMPLES.map((example) => (
+                        <button
+                          key={example.id}
+                          type="button"
+                          className="rounded-full border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] transition hover:border-[#17493c]/30 hover:bg-[#fbfcfa]"
+                          onClick={() => handleLoadQuickStartExample(example)}
+                        >
+                          {example.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-3 text-xs leading-5 text-slate-500">
+                      These are just examples. Paste your own notes any time and Billie will draft from that instead. You can keep working in guest mode and sign in later when you want saved work, billing, and repeat jobs to stay with your account.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
               {billieNextUpGuide ? (
                 <section
-                  className="nb-surface nb-surface--elevated nb-hero-glow rounded-[30px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_#f7faff_0%,_#ffffff_56%,_#edf6ff_100%)] p-5"
+                  className="nb-highlight-panel rounded-[30px] p-5 md:p-6 lg:p-7"
                   data-testid="intake-billie-next-up"
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="max-w-2xl">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                      <p className="nb-kicker">
                         {billieNextUpGuide.eyebrow}
                       </p>
                       <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
@@ -2708,7 +2871,7 @@ function AIIntake() {
                         <button
                           key={action.id}
                           type="button"
-                          className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="rounded-full border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] transition hover:border-[#17493c]/30 hover:bg-[#fbfcfa] disabled:cursor-not-allowed disabled:opacity-60"
                           onClick={action.onClick}
                           disabled={action.disabled}
                         >
@@ -2719,70 +2882,72 @@ function AIIntake() {
                   </div>
                 </section>
               ) : null}
-              <div className="nb-surface nb-surface--muted rounded-[30px] border border-white/70 bg-[linear-gradient(180deg,_rgba(255,255,255,0.88)_0%,_rgba(242,247,255,0.92)_100%)]">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                    Intake steps
+              {!quickModeLanding && !starterGuideActive ? (
+                <div className="nb-surface nb-surface--muted rounded-[30px] border border-white/70 bg-[linear-gradient(180deg,_rgba(255,255,255,0.88)_0%,_rgba(245,244,238,0.96)_100%)]">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      Intake steps
+                    </p>
+                    {isCompactViewport ? (
+                      <button
+                        type="button"
+                        className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs shadow-sm"
+                        onClick={() => setWizardStepsExpanded((current) => !current)}
+                        aria-expanded={wizardStepsExpanded}
+                        aria-controls="intake-step-details"
+                      >
+                        {wizardStepsExpanded ? "Hide steps" : "Show steps"}
+                      </button>
+                    ) : null}
+                  </div>
+                  <p className="mt-3 text-sm font-semibold text-slate-700">
+                    Step {safeWizardStepIndex + 1} of {wizardSteps.length}: {wizardStepLabel}
                   </p>
-                  {isCompactViewport ? (
-                    <button
-                      type="button"
-                      className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs shadow-sm"
-                      onClick={() => setWizardStepsExpanded((current) => !current)}
-                      aria-expanded={wizardStepsExpanded}
-                      aria-controls="intake-step-details"
-                    >
-                      {wizardStepsExpanded ? "Hide steps" : "Show steps"}
-                    </button>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{ backgroundColor: "#17493c", width: `${wizardProgressPercent}%` }}
+                    />
+                  </div>
+                  {shouldShowWizardDetails ? (
+                    <div id="intake-step-details" className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                      {wizardSteps.map((step, index) => {
+                        const status =
+                          index < safeWizardStepIndex
+                            ? "complete"
+                            : index === safeWizardStepIndex
+                              ? "active"
+                              : "upcoming";
+                        const badgeClass =
+                          status === "complete"
+                            ? "bg-[#17493c] text-white"
+                            : status === "active"
+                              ? "bg-[#e5efe9] text-[#17493c]"
+                              : "bg-slate-100 text-slate-500";
+                        return (
+                          <div key={step.id} className="flex items-center gap-2">
+                            <span
+                              className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${badgeClass}`}
+                            >
+                              {index + 1}
+                            </span>
+                            <span className="text-xs font-semibold text-slate-700">{step.label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   ) : null}
                 </div>
-                <p className="mt-3 text-sm font-semibold text-slate-700">
-                  Step {safeWizardStepIndex + 1} of {wizardSteps.length}: {wizardStepLabel}
-                </p>
-                <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
-                  <div
-                    className="h-full rounded-full transition-all duration-300"
-                    style={{ backgroundColor: "#093064", width: `${wizardProgressPercent}%` }}
-                  />
-                </div>
-                {shouldShowWizardDetails ? (
-                  <div id="intake-step-details" className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-                    {wizardSteps.map((step, index) => {
-                      const status =
-                        index < safeWizardStepIndex
-                          ? "complete"
-                          : index === safeWizardStepIndex
-                            ? "active"
-                            : "upcoming";
-                      const badgeClass =
-                        status === "complete"
-                          ? "bg-blue-800 text-white"
-                          : status === "active"
-                            ? "bg-blue-100 text-blue-900"
-                            : "bg-slate-100 text-slate-500";
-                      return (
-                        <div key={step.id} className="flex items-center gap-2">
-                          <span
-                            className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${badgeClass}`}
-                          >
-                            {index + 1}
-                          </span>
-                          <span className="text-xs font-semibold text-slate-700">{step.label}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
+              ) : null}
 
-              {onboardingStatus.visible ? (
+              {onboardingStatus.visible && !quickBuildMode ? (
                 <div
-                  className="nb-surface rounded-[30px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_rgba(255,255,255,0.96)_0%,_rgba(247,250,255,0.92)_100%)] p-5"
+                  className="nb-focus-panel rounded-[30px] p-5 md:p-6 lg:p-7"
                   data-testid="intake-onboarding-section"
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                      <p className="nb-kicker">
                         {onboardingStatus.walkthroughActive ? "Guided walkthrough" : "First invoice progress"}
                       </p>
                       <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
@@ -2790,10 +2955,15 @@ function AIIntake() {
                       </p>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {onboardingStatus.walkthroughActive
-                          ? "Stay with the sample job, review what Billie captured, and only move on once the draft feels trustworthy."
+                          ? "Stay with the sample job, review what Billie captured, and move on once the draft feels trustworthy."
                           : onboardingStatus.nextStep?.helper ||
-                          "Keep moving through the first invoice flow one clear step at a time."}
+                          "Move through the first invoice one clear step at a time."}
                       </p>
+                      {!onboardingStatus.walkthroughActive && onboardingStatus.nextStep?.id === "open_editor" ? (
+                        <p className="mt-2 text-xs leading-5 text-slate-500">
+                          The editor is where this becomes a reusable invoice in the library.
+                        </p>
+                      ) : null}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {onboardingStatus.nextStep ? (
@@ -2819,7 +2989,7 @@ function AIIntake() {
                   <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
                     <div
                       className="h-full rounded-full transition-all duration-300"
-                      style={{ backgroundColor: "#093064", width: `${onboardingStatus.progressPercent}%` }}
+                      style={{ backgroundColor: "#17493c", width: `${onboardingStatus.progressPercent}%` }}
                     />
                   </div>
                   <div className="mt-3 grid gap-2 md:grid-cols-5">
@@ -2828,7 +2998,7 @@ function AIIntake() {
                       const stepClass = step.complete
                         ? "border-emerald-200 bg-emerald-50 text-emerald-950"
                         : isNext
-                          ? "border-[#6993d2]/20 bg-[#f6f9ff] text-slate-900"
+                          ? "border-[#d5e5de] bg-[#f7faf7] text-slate-900"
                           : "border-slate-200 bg-white/82 text-slate-700";
                       return (
                         <div key={step.id} className={`rounded-2xl border px-3 py-3 ${stepClass}`}>
@@ -2845,19 +3015,19 @@ function AIIntake() {
 
               {starterGuideActive ? (
                 <div
-                  className="nb-surface nb-hero-glow rounded-[30px] border-[#6993d2]/20 bg-[linear-gradient(145deg,_#f6f9ff_0%,_#ffffff_58%,_#edf5ff_100%)] p-5"
+                  className="nb-highlight-panel rounded-[30px] p-5 md:p-6 lg:p-7"
                   data-testid="intake-starter-walkthrough"
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                      <p className="nb-kicker">
                         Starter walkthrough
                       </p>
-                      <p className="mt-2 text-lg font-semibold text-[#093064]" style={{ fontFamily: "'Fraunces', serif" }}>
-                        Follow the sample job from rough notes to a reviewed invoice.
+                      <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+                        Scan the sample notes, then press Build invoice.
                       </p>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        First move: scan the sample notes, then press Build invoice to see how Billie turns rough field notes into a draft.
+                        That shows how Billie turns rough field notes into a draft.
                       </p>
                     </div>
                     <button
@@ -2875,7 +3045,7 @@ function AIIntake() {
                         className={`rounded-2xl border px-3 py-3 ${
                           step.complete
                             ? "border-emerald-200 bg-emerald-50 text-emerald-950"
-                            : "border-slate-200 bg-white/80 text-slate-700"
+                            : "border-[#d7ded6] bg-white/82 text-slate-700"
                         }`}
                       >
                         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] opacity-70">
@@ -2893,28 +3063,28 @@ function AIIntake() {
 
               {importStudioContext ? (
                 <div
-                  className="nb-surface nb-surface--elevated rounded-[30px] border-[#6993d2]/18 bg-[linear-gradient(145deg,_#f8fbff_0%,_#ffffff_55%,_#edf6ff_100%)] p-5"
+                  className="nb-highlight-panel rounded-[30px] p-5 md:p-6 lg:p-7"
                   data-testid="import-cleanup-studio"
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="max-w-3xl">
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                      <p className="nb-kicker">
                         Import cleanup studio
                       </p>
-                      <p className="mt-2 text-lg font-semibold text-[#093064]" style={{ fontFamily: "'Fraunces', serif" }}>
-                        Keep the original import close while you clean up what Billie could not settle automatically.
+                      <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+                        Keep the original import nearby while Billie cleans up the missing pieces.
                       </p>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        NoteBill already pulled this file into review. Use the source text, unresolved decisions, and missing lines together instead of starting over.
+                        Use the source text, decisions, and uncaptured lines together instead of starting over.
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
+                        className="rounded-full border border-[#d5e5de] bg-white px-3 py-1.5 text-xs font-semibold text-[#17493c] transition hover:border-[#17493c]/30"
                         onClick={applyImportStudioSourceToInput}
                       >
-                        Use source in chat
+                        Source
                       </button>
                       {importDraftComparison ? (
                         <button
@@ -2922,7 +3092,7 @@ function AIIntake() {
                           className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
                           onClick={applyImportStudioComparisonToInput}
                         >
-                          Use compare in chat
+                          Compare
                         </button>
                       ) : null}
                       {visibleDecisionSource.length > 0 ? (
@@ -2931,7 +3101,7 @@ function AIIntake() {
                           className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
                           onClick={applyImportStudioDecisionsToInput}
                         >
-                          Use decisions in chat
+                          Decisions
                         </button>
                       ) : null}
                       {unparsedItems.length > 0 ? (
@@ -2940,7 +3110,7 @@ function AIIntake() {
                           className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
                           onClick={applyImportStudioUnparsedToInput}
                         >
-                          Use uncaptured lines
+                          Lines
                         </button>
                       ) : null}
                       {auditAssumptionItems.length > 0 ? (
@@ -2949,7 +3119,7 @@ function AIIntake() {
                           className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
                           onClick={applyImportStudioAssumptionsToInput}
                         >
-                          Use assumptions in chat
+                          Assumptions
                         </button>
                       ) : null}
                       {hasQualityBlockers ? (
@@ -2958,7 +3128,7 @@ function AIIntake() {
                           className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
                           onClick={applyImportStudioBlockersToInput}
                         >
-                          Use blockers in chat
+                          Blockers
                         </button>
                       ) : null}
                     </div>
@@ -2969,7 +3139,7 @@ function AIIntake() {
                         {importStudioContext.fileName}
                       </span>
                     ) : null}
-                    <span className="rounded-full border border-[#6993d2]/20 bg-[#f6f9ff] px-3 py-1 font-semibold text-[#093064]">
+                    <span className="rounded-full border border-[#d5e5de] bg-[#f7faf7] px-3 py-1 font-semibold text-[#17493c]">
                       {importStudioContext.openDecisionCount} decision{importStudioContext.openDecisionCount === 1 ? "" : "s"}
                     </span>
                     <span className="rounded-full border border-slate-200 bg-white px-3 py-1 font-semibold text-slate-700">
@@ -2991,8 +3161,8 @@ function AIIntake() {
                   </div>
                   {importCoverageSummary ? (
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
-                      <div className="rounded-2xl border border-[#6993d2]/18 bg-white/88 p-4">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6993d2]">
+                      <div className="rounded-2xl border border-[#d5e5de] bg-white/88 p-4">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3d6f61]">
                           Captured context
                         </p>
                         <p className="mt-2 text-sm font-semibold text-slate-900">What Billie already has from the import</p>
@@ -3004,7 +3174,7 @@ function AIIntake() {
                           ))}
                         </ul>
                       </div>
-                      <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+                      <div className="rounded-2xl border border-[#ecd6c8] bg-[#fbf4ee] p-4">
                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">
                           Still needs cleanup
                         </p>
@@ -3017,6 +3187,185 @@ function AIIntake() {
                           ))}
                         </ul>
                       </div>
+                    </div>
+                  ) : null}
+                  {importDraftComparison ? (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white/90 p-4">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                            Compare digest
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-slate-900">
+                            A quick source-to-draft read so you know what Billie captured and what still needs work.
+                          </p>
+                        </div>
+                        <p className="text-xs font-medium text-slate-500">
+                          Source and draft stay visible below for the deeper cleanup pass.
+                        </p>
+                      </div>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/90 px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                            Source sessions
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {importDraftComparison.sourceSessionCount} tracked
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/90 px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                            Source tasks
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {importDraftComparison.sourceTaskCount} captured
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/90 px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                            Draft line items
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {importDraftComparison.draftLineItemCount} built
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/90 px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                            Coverage
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {importSourceCoverageLabel}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/90 px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                            Cleanup gap
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {importSourceCoverageGapLabel}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/90 px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                            Row pairing
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {importCleanupPairingLabel || "No rows paired yet"}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/90 px-3 py-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                            Capture rate
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {importDraftComparison.taskCoverageRatio}% of task volume captured
+                          </p>
+                        </div>
+                      </div>
+                      <p className="mt-3 text-xs leading-5 text-slate-500">
+                        {importCleanupReadinessLabel}
+                      </p>
+                    </div>
+                  ) : null}
+                  {importDraftComparison && Array.isArray(importDraftComparison.sourceSessions) && importDraftComparison.sourceSessions.length > 0 ? (
+                    <div className="mt-4 rounded-2xl border border-slate-200 bg-white/90 p-4">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
+                            Cleanup map
+                          </p>
+                          <p className="mt-2 text-sm font-semibold text-slate-900">
+                            Source sessions lined up against the cleaned draft so you can see what still needs work.
+                          </p>
+                        </div>
+                        <p className="text-xs font-medium text-slate-500">
+                          Billie keeps the original source nearby while you finish the comparison.
+                        </p>
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-slate-500">
+                        Showing {Math.min(importDraftComparison.sourceSessions.length, 3)} of{" "}
+                        {importDraftComparison.sourceSessions.length} source session
+                        {importDraftComparison.sourceSessions.length === 1 ? "" : "s"}.
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
+                          onClick={applyImportStudioCleanupMapToInput}
+                        >
+                          Use cleanup map in chat
+                        </button>
+                      </div>
+                      <p className="mt-3 text-xs leading-5 text-slate-500">
+                        {importDraftComparison.pairedRowCount > 0
+                          ? `${importDraftComparison.pairedRowCount} cleanup row${
+                              importDraftComparison.pairedRowCount === 1 ? "" : "s"
+                            } already have both source and draft context.`
+                          : "No cleanup rows are paired yet, so Billie still needs the draft side for this source."}
+                      </p>
+                      <div className="mt-4 space-y-2">
+                        {importDraftComparison.sourceSessions.slice(0, 3).map((session, index) => {
+                          const draftLineItem = Array.isArray(importDraftComparison.draftLineItems)
+                            ? importDraftComparison.draftLineItems[index] ?? null
+                            : null;
+                          return (
+                            <div
+                              key={session.id || `cleanup-map-${index}`}
+                              className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/90 p-3 lg:grid-cols-2"
+                            >
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                                  Source session
+                                </p>
+                                <p className="mt-1 text-sm font-semibold text-slate-900">
+                                  {session.date} · {session.taskCount} task{session.taskCount === 1 ? "" : "s"}
+                                </p>
+                                {Array.isArray(session.taskPreview) && session.taskPreview.length > 0 ? (
+                                  <ul className="mt-2 space-y-1 text-xs leading-5 text-slate-600">
+                                    {session.taskPreview.slice(0, 2).map((task, taskIndex) => (
+                                      <li key={`${session.id || index}-task-${taskIndex}`}>{task}</li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <p className="mt-2 text-xs leading-5 text-slate-500">No task preview captured yet.</p>
+                                )}
+                              </div>
+                              <div>
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3d6f61]">
+                                  Draft line item
+                                </p>
+                                {draftLineItem ? (
+                                  <>
+                                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                                      {draftLineItem.description}
+                                    </p>
+                                    <p className="mt-2 text-xs leading-5 text-slate-600">{draftLineItem.detail}</p>
+                                  </>
+                                ) : (
+                                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                                    No matching draft line item yet. Keep Billie close to finish the capture.
+                                  </p>
+                                )}
+                              </div>
+                              <div className="lg:col-span-2 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-xs"
+                                  onClick={() => applyImportStudioCleanupRowToInput(session, draftLineItem)}
+                                >
+                                  Use row in chat
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {importDraftComparison.sourceSessions.length > 3 ? (
+                        <p className="mt-3 text-xs leading-5 text-slate-500">
+                          {importDraftComparison.sourceSessions.length - 3} more source session
+                          {importDraftComparison.sourceSessions.length - 3 === 1 ? " remains" : "s remain"} captured in the compare digest above.
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
                   {importStudioContext.preview || importDraftComparison ? (
@@ -3037,9 +3386,9 @@ function AIIntake() {
                         </div>
                       ) : null}
                       {importDraftComparison ? (
-                        <div className="rounded-2xl border border-[#6993d2]/18 bg-[#f6f9ff] p-4">
+                        <div className="rounded-2xl border border-[#d5e5de] bg-[#f7faf7] p-4">
                           <div className="flex items-center justify-between gap-2">
-                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6993d2]">
+                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#3d6f61]">
                               Current draft snapshot
                             </p>
                             <p className="text-[11px] font-medium text-slate-500">
@@ -3247,19 +3596,19 @@ function AIIntake() {
               ) : null}
 
               {wizardStep === "paste" ? (
-                <div className="nb-surface nb-surface--elevated rounded-[30px] p-5">
+                <div className="nb-surface nb-surface--elevated rounded-[30px] p-5 md:p-6 lg:p-7">
                   <p className="text-sm font-semibold text-slate-900">Paste your notes</p>
                   <p className="mt-1 text-sm text-slate-600">
                     Paste them as-is: dates, hours, rates, parts, and anything still uncertain.
                   </p>
-                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <div className="nb-mobile-actions mt-4">
                     <button
                       type="button"
                       className="nb-btn-ghost"
                       onClick={handleLoadStarterSample}
                       disabled={voiceNoteBusy || isTyping}
                     >
-                      Try sample notes
+                      Load sample notes
                     </button>
                     <input
                       ref={audioUploadInputRef}
@@ -3280,24 +3629,36 @@ function AIIntake() {
                       Upload or record an audio note. Billie will turn it into editable text first.
                     </p>
                   </div>
-                  {voiceNoteNotice ? <p className="mt-3 text-xs font-semibold text-blue-800">{voiceNoteNotice}</p> : null}
-                  {voiceNoteError ? <p className="mt-3 text-xs font-semibold text-rose-600">{voiceNoteError}</p> : null}
+                  {voiceNoteNotice ? <p className="mt-3 text-xs font-semibold text-[#17493c]">{voiceNoteNotice}</p> : null}
+                  {voiceNoteError ? (
+                    <p className="mt-3 text-xs font-semibold text-rose-600">
+                      {voiceNoteError}{" "}
+                      <a href="/support" className="underline underline-offset-2">
+                        Get support
+                      </a>
+                    </p>
+                  ) : null}
                   <textarea
                     id="ai-intake-input"
+                    data-intake-input="true"
                     rows={6}
                     className="nb-textarea mt-4 resize-none"
-                    placeholder="Example: Jan 10 fixed sink, 2h at $90/hr. Parts: washer $5. Not sure if cabinet adjustment should be billed."
+                    placeholder={
+                      quickBuildMode
+                        ? "Paste rough notes here. Billie will build the first draft fast."
+                        : "Example: Jan 10 fixed sink, 2h at $90/hr. Parts: washer $5. Not sure if cabinet adjustment should be billed."
+                    }
                     value={inputValue}
                     onChange={(event) => setInputValue(event.target.value)}
                   />
-                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <div className="nb-mobile-actions mt-4">
                     <button
                       type="button"
-                      className="nb-btn-primary inline-flex h-11 px-5 disabled:cursor-not-allowed disabled:bg-blue-300"
+                      className="nb-btn-primary inline-flex h-11 px-5 disabled:cursor-not-allowed disabled:bg-[#86ab9d]"
                       onClick={() => handleSubmitUserMessage(inputValue)}
                       disabled={!inputValue.trim() || isTyping}
                     >
-                      Build invoice
+                      {quickBuildMode ? "Generate draft" : "Build invoice"}
                     </button>
                     {isTyping ? <p className="text-xs text-slate-500">Reading your notes…</p> : null}
                   </div>
@@ -3323,9 +3684,10 @@ function AIIntake() {
                       ))}
                     </div>
                   ) : null}
-                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <div className="nb-mobile-split mt-4">
                     <textarea
-                      id="ai-intake-input"
+                      id="ai-intake-follow-up-input"
+                      data-intake-input="true"
                       rows={2}
                       className="nb-textarea flex-1 resize-none border-amber-200 bg-white/88 py-2"
                       placeholder="Reply with a rate and hours or a flat amount…"
@@ -3334,7 +3696,7 @@ function AIIntake() {
                     />
                     <button
                       type="button"
-                      className="nb-btn-primary inline-flex h-11 px-5 disabled:cursor-not-allowed disabled:bg-blue-300"
+                      className="nb-btn-primary inline-flex h-11 px-5 disabled:cursor-not-allowed disabled:bg-[#86ab9d]"
                       onClick={() => handleSubmitUserMessage(inputValue)}
                       disabled={!inputValue.trim() || isTyping}
                     >
@@ -3492,7 +3854,7 @@ function AIIntake() {
                     <div
                           className={`max-w-[85%] rounded-[24px] px-4 py-3 text-sm leading-relaxed shadow-sm ${
                         message.role === "user"
-                          ? "bg-[#093064] text-white"
+                          ? "bg-[#17493c] text-white"
                           : "nb-surface nb-surface--quiet text-slate-800"
                       }`}
                     >
@@ -3577,6 +3939,10 @@ function AIIntake() {
                 showUpgradeAction={showUpgradeAction}
                 useStripeUpgradeAction={useStripeUpgradeAction}
                 upgradeUrl={upgradeUrl}
+                upgradeActionLabel={upgradeActionLabel}
+                googlePlaySubscriptionPlans={googlePlaySubscriptionPlans}
+                billingEnvironmentMode={billingEnvironment?.mode}
+                billingEnvironmentHint={billingEnvironmentHint}
                 billingBusy={billingBusy}
                 billingError={billingError}
                 handleUpgradeAction={handleUpgradeAction}
@@ -3594,7 +3960,7 @@ function AIIntake() {
               {decisionUndoState ? (
                 <button
                   type="button"
-                  className="nb-btn-secondary pointer-events-auto rounded-full border-blue-300 bg-white px-3 py-1 text-xs text-blue-900 hover:border-blue-400 hover:text-blue-950"
+                  className="nb-btn-secondary pointer-events-auto rounded-full border-[#d5e5de] bg-white px-3 py-1 text-xs text-[#17493c] hover:border-[#bcd2c8] hover:text-[#17493c]"
                   onClick={handleUndoDecision}
                 >
                   Undo
@@ -3673,7 +4039,7 @@ function AIIntake() {
       {showBillieComposer ? (
         <form
           onSubmit={handleSend}
-          className="nb-billie-composer fixed bottom-0 left-0 right-0 border-t border-[rgba(9,48,100,0.08)] bg-white/84 backdrop-blur"
+          className="nb-billie-composer fixed bottom-0 left-0 right-0 border-t border-[rgba(23,73,60,0.08)] bg-white/84 backdrop-blur"
         >
           <div className="mx-auto max-w-6xl space-y-2 px-4 py-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -3703,6 +4069,17 @@ function AIIntake() {
                         )
                         : activeBillieStatus.text}
                 </span>
+                {isCompactViewport ? (
+                  <button
+                    type="button"
+                    className="nb-btn-secondary rounded-full px-3 py-1 text-xs"
+                    onClick={() => setShowCompactBillieComposerExpanded((current) => !current)}
+                    aria-expanded={showCompactBillieComposerExpanded}
+                    aria-controls="billie-composer-body"
+                  >
+                    {showCompactBillieComposerExpanded ? "Hide" : "Open"}
+                  </button>
+                ) : null}
                 {billieRefineSummaryLabel ? (
                   <span className="text-[11px] font-medium text-slate-500">{billieRefineSummaryLabel}</span>
                 ) : null}
@@ -3725,102 +4102,145 @@ function AIIntake() {
                 ) : null}
               </div>
             </div>
-            {billieActionChips.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {visibleBillieActionChips.map((chip) => (
-                  <button
-                    key={chip.id}
-                    type="button"
-                    className="nb-btn-secondary rounded-full px-3 py-1 text-xs disabled:cursor-not-allowed disabled:text-slate-400"
-                    onClick={() =>
-                      handleSubmitUserMessage(chip.value, {
-                        billieRefineTone: chip.tone
-                      })
-                    }
-                    disabled={isTyping}
-                  >
-                    {chip.label}
-                  </button>
-                ))}
-                {hasHiddenBillieActionChips ? (
-                  <button
-                    type="button"
-                    className="nb-btn-secondary rounded-full bg-slate-50 px-3 py-1 text-xs"
-                    onClick={() => setBillieChipTrayExpanded(true)}
-                    disabled={isTyping}
-                  >
-                    More
-                  </button>
+            {(!isCompactViewport || showCompactBillieComposerExpanded) ? (
+              <>
+                {billieActionChips.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {visibleBillieActionChips.map((chip) => (
+                      <button
+                        key={chip.id}
+                        type="button"
+                        className="nb-btn-secondary rounded-full px-3 py-1 text-xs disabled:cursor-not-allowed disabled:text-slate-400"
+                        onClick={() =>
+                          handleSubmitUserMessage(chip.value, {
+                            billieRefineTone: chip.tone
+                          })
+                        }
+                        disabled={isTyping}
+                      >
+                        {chip.label}
+                      </button>
+                    ))}
+                    {hasHiddenBillieActionChips ? (
+                      <button
+                        type="button"
+                        className="nb-btn-secondary rounded-full bg-slate-50 px-3 py-1 text-xs"
+                        onClick={() => setBillieChipTrayExpanded(true)}
+                        disabled={isTyping}
+                      >
+                        More
+                      </button>
+                    ) : null}
+                    {isCompactViewport && billieChipTrayExpanded && billieActionChips.length > 3 ? (
+                      <button
+                        type="button"
+                        className="nb-btn-secondary rounded-full bg-slate-50 px-3 py-1 text-xs"
+                        onClick={() => setBillieChipTrayExpanded(false)}
+                        disabled={isTyping}
+                      >
+                        Less
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
-                {isCompactViewport && billieChipTrayExpanded && billieActionChips.length > 3 ? (
-                  <button
-                    type="button"
-                    className="nb-btn-secondary rounded-full bg-slate-50 px-3 py-1 text-xs"
-                    onClick={() => setBillieChipTrayExpanded(false)}
-                    disabled={isTyping}
-                  >
-                    Less
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-            {billieChangePreview.length > 0 ? (
-              <div
-                className="nb-subcard px-3 py-3"
-                data-testid="billie-change-preview"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Last Billie change
-                  </p>
-                </div>
-                <div className="mt-2 space-y-3">
-                  {billieChangePreview.map((entry) => (
-                    <div key={entry.id} className="space-y-2 rounded-xl bg-white px-3 py-2 shadow-sm">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                        {entry.label}
-                      </p>
-                      <div className="space-y-1">
-                        <div>
-                          <p className="text-[11px] font-semibold text-slate-500">Before</p>
-                          <p className="text-sm text-slate-700">{entry.before}</p>
+                {billieChangePreview.length > 0 ? (
+                  isCompactViewport ? (
+                    <div className="nb-subcard px-3 py-3" data-testid="billie-change-preview">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Last Billie change
+                        </p>
+                        <button
+                          type="button"
+                          className="nb-btn-secondary rounded-full px-3 py-1 text-xs"
+                          onClick={() => setShowCompactBillieComposerDetails((current) => !current)}
+                        >
+                          {showCompactBillieComposerDetails ? "Hide" : "Show"}
+                        </button>
+                      </div>
+                      {showCompactBillieComposerDetails ? (
+                        <div className="mt-2 space-y-3">
+                          {billieChangePreview.map((entry) => (
+                            <div key={entry.id} className="space-y-2 rounded-xl bg-white px-3 py-2 shadow-sm">
+                              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                                {entry.label}
+                              </p>
+                              <div className="space-y-1">
+                                <div>
+                                  <p className="text-[11px] font-semibold text-slate-500">Before</p>
+                                  <p className="text-sm text-slate-700">{entry.before}</p>
+                                </div>
+                                <div>
+                                  <p className="text-[11px] font-semibold text-[#17493c]">After</p>
+                                  <p className="text-sm font-semibold text-slate-900">{entry.after}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                        <div>
-                          <p className="text-[11px] font-semibold text-blue-900">After</p>
-                          <p className="text-sm font-semibold text-slate-900">{entry.after}</p>
-                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div
+                      className="nb-subcard px-3 py-3"
+                      data-testid="billie-change-preview"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Last Billie change
+                        </p>
+                      </div>
+                      <div className="mt-2 space-y-3">
+                        {billieChangePreview.map((entry) => (
+                          <div key={entry.id} className="space-y-2 rounded-xl bg-white px-3 py-2 shadow-sm">
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                              {entry.label}
+                            </p>
+                            <div className="space-y-1">
+                              <div>
+                                <p className="text-[11px] font-semibold text-slate-500">Before</p>
+                                <p className="text-sm text-slate-700">{entry.before}</p>
+                              </div>
+                              <div>
+                                <p className="text-[11px] font-semibold text-[#17493c]">After</p>
+                                <p className="text-sm font-semibold text-slate-900">{entry.after}</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  ))}
+                  )
+                ) : null}
+                <div id="billie-composer-body" className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <div className="flex-1">
+                  <label className="sr-only" htmlFor="ai-intake-billie-input">
+                    Message
+                  </label>
+                  <textarea
+                    id="ai-intake-billie-input"
+                    data-intake-input="true"
+                    rows={1}
+                    className="nb-textarea max-h-32 resize-none"
+                    placeholder={
+                      intakeComplete
+                        ? "Ask Billie to polish wording. Numbers stay locked."
+                        : "Ask Billie about the draft..."
+                    }
+                    value={inputValue}
+                    onChange={(event) => setInputValue(event.target.value)}
+                  />
+                  </div>
+                  <button
+                    type="submit"
+                    className="inline-flex h-11 w-full items-center justify-center rounded-xl bg-[#17493c] px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-[#86ab9d] sm:w-auto"
+                    disabled={!inputValue.trim() || (isTyping && !canSendWhileTyping)}
+                  >
+                    Ask Billie
+                  </button>
                 </div>
-              </div>
+              </>
             ) : null}
-            <div className="flex items-center gap-3">
-              <div className="flex-1">
-              <label className="sr-only" htmlFor="ai-intake-input">
-                Message
-              </label>
-              <textarea
-                id="ai-intake-input"
-                rows={1}
-                className="nb-textarea max-h-32 resize-none"
-                placeholder={
-                  intakeComplete
-                    ? "Ask Billie to polish wording. Numbers stay locked."
-                    : "Ask Billie about the draft..."
-                }
-                value={inputValue}
-                onChange={(event) => setInputValue(event.target.value)}
-              />
-              </div>
-              <button
-                type="submit"
-                className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-800 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-blue-300"
-                disabled={!inputValue.trim() || (isTyping && !canSendWhileTyping)}
-              >
-                Ask Billie
-              </button>
-            </div>
           </div>
         </form>
       ) : null}

@@ -94,7 +94,7 @@
     const sourcePreviewList = sourceSegments.slice(0, 3);
     const polishedPreviewList = polishedDescriptions.slice(0, 3);
     const polishedPreviewText =
-      polishedPreviewList.join(", ") || "No captured draft lines yet.";
+      polishedPreviewList.join(", ") || "Your cleaned-up draft lines will show here.";
     const remainingPolishedCount = Math.max(0, polishedDescriptions.length - polishedPreviewList.length);
     const remainingSourceCount = Math.max(0, sourceSegments.length - sourcePreviewList.length);
     const cleanedLineCount = polishedDescriptions.length;
@@ -159,7 +159,7 @@
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-sm font-semibold text-slate-900">Draft snapshot</p>
                 {billieIsWorking ? (
-                  <span className="nb-chip px-2 py-0.5 normal-case tracking-normal text-sky-700">
+                  <span className="nb-chip px-2 py-0.5 normal-case tracking-normal text-[#17493c]">
                     Refining
                     <span className="ml-1 inline-flex w-4 justify-start" aria-hidden="true">
                       <span className="typing-dot">.</span>
@@ -170,7 +170,7 @@
                 ) : null}
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="nb-mobile-actions">
               <button
                 type="button"
                 className="nb-btn-secondary rounded-full px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:text-slate-300"
@@ -226,7 +226,7 @@
                 {pendingDecisionCount > 0 ? (
                   <button
                     type="button"
-                    className="ml-2 inline-flex items-center rounded-full border border-blue-300 bg-blue-100 px-2.5 py-0.5 text-[11px] font-semibold text-blue-900 shadow-sm transition hover:border-blue-400 hover:bg-blue-200"
+                    className="ml-2 inline-flex items-center rounded-full border border-[#d5e5de] bg-[#f7faf7] px-2.5 py-0.5 text-[11px] font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8] hover:bg-white"
                     onClick={() => scrollToSection(decisionsRef)}
                     disabled={isTyping}
                   >
@@ -341,7 +341,7 @@
                           ))}
                         </ul>
                       ) : (
-                        <p className="mt-1 text-xs text-slate-600">No source note lines available.</p>
+                        <p className="mt-1 text-xs text-slate-600">Your source notes will show here.</p>
                       )}
                       {remainingSourceCount > 0 ? (
                         <p className="mt-1 text-[11px] text-slate-500">+{remainingSourceCount} more</p>
@@ -358,7 +358,7 @@
                           ))}
                         </ul>
                       ) : (
-                        <p className="mt-1 text-xs text-slate-700">No captured draft lines yet.</p>
+                        <p className="mt-1 text-xs text-slate-700">Your cleaned-up draft lines will show here.</p>
                       )}
                       {remainingPolishedCount > 0 ? (
                         <p className="mt-1 text-[11px] text-slate-500">+{remainingPolishedCount} more</p>
@@ -378,15 +378,15 @@
               <div
                 className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
                   billieStatus.kind === "safe"
-                    ? "border-blue-300 bg-blue-100 text-blue-900"
+                    ? "border-[#d5e5de] bg-[#f7faf7] text-[#17493c]"
                     : billieStatus.kind === "warning"
                       ? "border-amber-200 bg-amber-50 text-amber-800"
                       : billieStatus.kind === "working"
-                        ? "border-sky-200 bg-sky-50 text-sky-700"
+                        ? "border-[#d5e5de] bg-white text-[#3d6f61]"
                         : "border-slate-200 bg-slate-50 text-slate-600"
                 }`}
               >
-                {billieStatus.kind === "safe" ? "✓ " : billieStatus.kind === "warning" ? "⚠ " : ""}
+                {billieStatus.kind === "safe" ? "OK " : billieStatus.kind === "warning" ? "Warning: " : ""}
                 <span>{billieStatus.text}</span>
                 {billieStatus.kind === "working" ? (
                   <span className="ml-1 inline-flex w-4 justify-start" aria-hidden="true">
@@ -518,7 +518,7 @@
                             Saved client match
                           </p>
                         ) : serviceMatchScore > 0 ? (
-                          <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-blue-700">
+                          <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-[#3d6f61]">
                             Saved service match
                           </p>
                         ) : null}
@@ -606,9 +606,9 @@
                         return (
                           <div
                             key={`${section.id}-${item.id ?? "item"}-${index}`}
-                            className={`flex flex-wrap items-start justify-between gap-2 rounded-xl border px-3 py-2 transition-colors ${
+                              className={`flex flex-wrap items-start justify-between gap-2 rounded-xl border px-3 py-2 transition-colors ${
                               isRecentlyChanged
-                                ? "border-blue-300 bg-blue-100/70"
+                                ? "border-[#d5e5de] bg-[#f7faf7]"
                                 : "border-slate-100 bg-slate-50"
                             }`}
                           >
@@ -616,7 +616,7 @@
                               <p className="text-sm font-semibold text-slate-800">{item.description}</p>
                               {meta ? <p className="text-xs text-slate-500">{meta}</p> : null}
                               {isRecentlyChanged ? (
-                                <p className="text-[11px] font-semibold text-blue-900">Updated by Billie</p>
+                                <p className="text-[11px] font-semibold text-[#17493c]">Updated by Billie</p>
                               ) : null}
                               {showBillieActions ? (
                                 <div className="flex flex-wrap gap-2 pt-1">
@@ -678,7 +678,7 @@
                 ))
               : null}
             {showReviewExpandedSections && hasBillieHighlights ? (
-              <p className="text-xs text-blue-900">Recent changes are highlighted for 1–2 seconds.</p>
+              <p className="text-xs text-[#17493c]">Recent changes are highlighted for 1-2 seconds.</p>
             ) : null}
           </div>
 
@@ -707,7 +707,7 @@
                 </button>
               </div>
               <p className="mt-1 text-sm text-slate-700">
-                {payload.notes || "No draft notes yet."}
+                {payload.notes || "No notes added yet."}
               </p>
               {noteSuggestions.length > 0 ? (
                 <div className="mt-3 space-y-2">
@@ -842,3 +842,4 @@
     ReviewSnapshotCard
   };
 })();
+

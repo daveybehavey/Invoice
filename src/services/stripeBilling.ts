@@ -56,6 +56,11 @@ type InvoicePaymentWebhookEffect = {
   paymentIntentId: string;
 };
 
+type SubscriptionUnlockWebhookEffect = {
+  ownerId: string;
+  source: string;
+};
+
 const STRIPE_API_VERSION: Stripe.LatestApiVersion = "2026-02-25.clover";
 
 let cachedStripeClient:
@@ -245,6 +250,7 @@ export async function processStripeWebhookEvent(input: {
   eventType: string;
   handled: boolean;
   invoicePayment?: InvoicePaymentWebhookEffect;
+  subscriptionUnlock?: SubscriptionUnlockWebhookEffect;
 }> {
   const stripe = getStripeClient();
   if (!stripe) {
@@ -258,8 +264,8 @@ export async function processStripeWebhookEvent(input: {
   const event = stripe.webhooks.constructEvent(rawPayload, input.signature, webhookSecret);
 
   if (event.type === "checkout.session.completed") {
-    await handleCheckoutSessionCompletedEvent(event.data.object as Stripe.Checkout.Session);
-    return { eventId: event.id, eventType: event.type, handled: true };
+    const subscriptionUnlock = await handleCheckoutSessionCompletedEvent(event.data.object as Stripe.Checkout.Session);
+    return { eventId: event.id, eventType: event.type, handled: true, subscriptionUnlock };
   }
 
   if (
@@ -302,7 +308,9 @@ function getStripeClient(): Stripe | null {
   return client;
 }
 
-async function handleCheckoutSessionCompletedEvent(session: Stripe.Checkout.Session): Promise<void> {
+async function handleCheckoutSessionCompletedEvent(
+  session: Stripe.Checkout.Session
+): Promise<SubscriptionUnlockWebhookEffect | undefined> {
   const customerId = typeof session.customer === "string" ? session.customer : "";
   const subscriptionId = typeof session.subscription === "string" ? session.subscription : "";
   const metadata = session.metadata ?? {};
@@ -320,6 +328,12 @@ async function handleCheckoutSessionCompletedEvent(session: Stripe.Checkout.Sess
     ownerId,
     userId
   });
+  return ownerId
+    ? {
+        ownerId,
+        source: "stripe_checkout_completed"
+      }
+    : undefined;
 }
 
 async function handleSubscriptionEvent(subscription: Stripe.Subscription): Promise<void> {

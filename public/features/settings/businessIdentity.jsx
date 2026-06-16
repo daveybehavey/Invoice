@@ -15,6 +15,12 @@
       "Missing /utils/businessProfile.js load. Ensure it is loaded before /features/settings/businessIdentity.jsx."
     );
   }
+  const paymentMethodsUtils = window.InvoicePaymentMethods;
+  if (!paymentMethodsUtils) {
+    throw new Error(
+      "Missing /utils/paymentMethods.js load. Ensure it is loaded before /features/settings/businessIdentity.jsx."
+    );
+  }
   const onboardingUtils = window.InvoiceOnboardingState;
   if (!onboardingUtils) {
     throw new Error(
@@ -60,6 +66,12 @@
     businessProfileUtils;
   const { getClientMemory, deleteClientMemoryEntry, clearClientMemory } = clientMemoryUtils;
   const { getLineItemLibrary, saveLineItemLibrary } = lineItemLibraryUtils;
+  const {
+    PAYMENT_METHOD_KIND_LABELS,
+    createPaymentMethodEntry,
+    createPaymentInstructionsStarterSet,
+    normalizePaymentMethods
+  } = paymentMethodsUtils;
   const { DEFAULT_ACCENT_COLOR, normalizeAccentColor, buildAccentPalette } = brandThemeUtils;
   const { STYLE_OPTIONS, STYLE_PRESETS } = styleCatalogUtils;
   const { readLogoFileForStorage } = logoImageUtils;
@@ -183,8 +195,8 @@
       return null;
     }
     return (
-      <div className="mt-4 rounded-[22px] border border-[#6993d2]/18 bg-[#f7faff] px-4 py-4">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Next setup step</p>
+      <div className="mt-4 rounded-[22px] border border-[#d5e5de] bg-[#f7faf7] px-4 py-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">Next setup step</p>
         <p className="mt-2 text-sm font-semibold text-slate-900">{title}</p>
         <p className="mt-1 text-xs leading-5 text-slate-600">{body}</p>
         <button
@@ -208,6 +220,7 @@
     const [logoUrl, setLogoUrl] = useState(null);
     const [businessRegistrations, setBusinessRegistrations] = useState([]);
     const [registrationBlockVisible, setRegistrationBlockVisible] = useState(true);
+    const [paymentMethods, setPaymentMethods] = useState([]);
     const [status, setStatus] = useState("");
     const [error, setError] = useState("");
 
@@ -239,6 +252,7 @@
       setStylePreset(profile.stylePreset ?? "default");
       setLogoUrl(profile.logoUrl ?? null);
       setBusinessRegistrations(Array.isArray(profile.businessRegistrations) ? profile.businessRegistrations : []);
+      setPaymentMethods(Array.isArray(profile.paymentMethods) ? profile.paymentMethods : []);
       setRegistrationBlockVisible(profile.registrationBlockVisible !== false);
     }, []);
 
@@ -257,6 +271,7 @@
           stylePreset,
           logoUrl,
           businessRegistrations,
+          paymentMethods,
           registrationBlockVisible
         });
         markSetupStep("setup_branding");
@@ -265,6 +280,7 @@
         setStylePreset(profile.stylePreset);
         setLogoUrl(profile.logoUrl);
         setBusinessRegistrations(profile.businessRegistrations ?? []);
+        setPaymentMethods(profile.paymentMethods ?? []);
         setRegistrationBlockVisible(profile.registrationBlockVisible !== false);
         setStatus("Business identity saved.");
         setError("");
@@ -281,6 +297,7 @@
       setStylePreset(resetProfile.stylePreset);
       setLogoUrl(resetProfile.logoUrl);
       setBusinessRegistrations(resetProfile.businessRegistrations ?? []);
+      setPaymentMethods(resetProfile.paymentMethods ?? []);
       setRegistrationBlockVisible(resetProfile.registrationBlockVisible !== false);
       setStatus("Defaults reset.");
       setError("");
@@ -298,6 +315,30 @@
 
     const handleRemoveRegistration = (registrationId) => {
       setBusinessRegistrations((prev) => prev.filter((entry) => entry.id !== registrationId));
+    };
+
+    const updatePaymentMethod = (methodId, field, value) => {
+      setPaymentMethods((prev) =>
+        prev.map((entry) => (entry.id === methodId ? { ...entry, [field]: value } : entry))
+      );
+    };
+
+  const handleAddPaymentMethod = (kind = "custom") => {
+      setPaymentMethods((prev) => [...prev, createPaymentMethodEntry(kind, fromDetails)]);
+    };
+
+    const handleAddPaymentStarterSet = () => {
+      setPaymentMethods((prev) => {
+        const existingKinds = new Set(prev.map((entry) => entry.kind));
+        const starterSet = createPaymentInstructionsStarterSet(fromDetails).filter(
+          (entry) => !existingKinds.has(entry.kind)
+        );
+        return [...prev, ...starterSet];
+      });
+    };
+
+    const handleRemovePaymentMethod = (methodId) => {
+      setPaymentMethods((prev) => prev.filter((entry) => entry.id !== methodId));
     };
 
     const handleLogoChange = async (event) => {
@@ -319,24 +360,26 @@
     return (
       <div className="nb-page nb-page--quiet min-h-screen">
         <main className="nb-page-shell nb-page-shell--medium max-w-4xl py-8 md:py-10">
-          <button
-            type="button"
-            className="nb-btn-ghost"
-            onClick={() => navigate("/")}
-          >
-            Back to launcher
-          </button>
-          <div className="mt-4 space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">Business identity</p>
-            <h1 className="nb-section-title text-2xl md:text-3xl">
-              Set your default invoice branding
-            </h1>
-            <p className="text-sm text-slate-600">
-              This auto-fills new drafts in AI intake and manual mode.
-            </p>
-            <p className="text-xs text-slate-500">
-              Account: {authSession?.email ? authSession.email : "local mode"}
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-2">
+              <p className="nb-kicker">Business identity</p>
+              <h1 className="nb-title max-w-3xl text-[2.2rem] md:text-5xl">
+                Set the defaults that make every invoice look like yours.
+              </h1>
+              <p className="nb-copy max-w-2xl">
+                Save the business details, branding, payment instructions, and registrations that should make every new invoice feel consistent and client-ready.
+              </p>
+              <p className="text-xs text-slate-500">
+                Account: {authSession?.email ? authSession.email : "Guest mode is on"}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="nb-btn-secondary rounded-full px-4 py-2"
+              onClick={() => navigate("/")}
+            >
+              Back to launcher
+            </button>
           </div>
           {showOnboardingCompleteBanner ? (
             <SetupContinuationBanner
@@ -345,14 +388,28 @@
             />
           ) : null}
 
-          <div className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+          <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.12fr)_380px]">
             <section className="nb-surface nb-surface--elevated space-y-4 rounded-[28px] p-4 md:p-5">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="nb-stage-card">
+                  <p className="nb-stage-card__label">1. Set the sender</p>
+                  <p className="nb-stage-card__value">Save the business details that should appear on every invoice.</p>
+                </div>
+                <div className="nb-stage-card">
+                  <p className="nb-stage-card__label">2. Shape the look</p>
+                  <p className="nb-stage-card__value">Choose a style, accent, and logo that fit your brand.</p>
+                </div>
+                <div className="nb-stage-card">
+                  <p className="nb-stage-card__label">3. Preload trust</p>
+                  <p className="nb-stage-card__value">Add payment instructions and registrations once instead of every time.</p>
+                </div>
+              </div>
               <div className="space-y-2">
                 <label className="text-sm font-semibold text-slate-900" htmlFor="business-from-details">
                   From details
                 </label>
                 <p className="text-xs text-slate-500">
-                  Company name, address, phone, email. One line per detail.
+                  Add the sender details you want clients to recognize instantly. Use one line per detail.
                 </p>
                 <textarea
                   id="business-from-details"
@@ -373,10 +430,10 @@
                       <button
                         key={option.id}
                         type="button"
-                        className={`rounded-lg border px-3 py-2 text-sm font-semibold ${
+                        className={`rounded-2xl border px-3 py-3 text-sm font-semibold transition ${
                           selected
-                            ? "border-blue-300 bg-blue-100 text-blue-900"
-                            : "border-slate-200 bg-white text-slate-700"
+                            ? "border-[#d5e5de] bg-[#f7faf7] text-[#17493c]"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-[#d5e5de]"
                         }`}
                         onClick={() => setStylePreset(option.id)}
                       >
@@ -434,19 +491,99 @@
                 ) : null}
               </div>
 
-              <div className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50/70 p-4">
+              <div
+                className="nb-focus-panel space-y-3 rounded-[24px] p-4 md:p-5"
+                data-testid="business-identity-registrations"
+              >
+                <div className="space-y-1">
+                  <label className="text-sm font-semibold text-slate-900">Payment instructions defaults</label>
+                  <p className="text-xs text-slate-500">
+                    Save the payment methods and instructions you want ready by default so clients are not left guessing how to pay.
+                  </p>
+                </div>
+                <div className="nb-mobile-actions">
+                  {Object.entries(PAYMENT_METHOD_KIND_LABELS).map(([kind, label]) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-[#d5e5de]"
+                      onClick={() => handleAddPaymentMethod(kind)}
+                    >
+                      Add {label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="rounded-full border border-[#d5e5de] bg-[#f7faf7] px-3 py-1.5 text-xs font-semibold text-[#17493c] transition hover:border-[#bcd2c8] hover:bg-white"
+                    onClick={handleAddPaymentStarterSet}
+                  >
+                    Add starter set
+                  </button>
+                </div>
+                {paymentMethods.length > 0 ? (
+                  <div className="space-y-3">
+                    {paymentMethods.map((entry) => (
+                      <div key={entry.id} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-slate-900">
+                            {PAYMENT_METHOD_KIND_LABELS[entry.kind] || "Payment method"}
+                          </p>
+                          <button
+                            type="button"
+                            className="text-xs font-semibold text-slate-500"
+                            onClick={() => handleRemovePaymentMethod(entry.id)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                        <div className="mt-3 grid gap-3">
+                          <label className="space-y-1 text-xs font-semibold text-slate-600">
+                            Label
+                            <input
+                              type="text"
+                              className="nb-input w-full rounded-xl px-3 py-2 text-sm"
+                              value={entry.label ?? ""}
+                              onChange={(event) => updatePaymentMethod(entry.id, "label", event.target.value)}
+                              placeholder="Cheque"
+                            />
+                          </label>
+                          <label className="space-y-1 text-xs font-semibold text-slate-600">
+                            Instructions
+                            <textarea
+                              rows={4}
+                              className="nb-textarea w-full resize-y rounded-xl px-3 py-2 text-sm"
+                              value={entry.details ?? ""}
+                              onChange={(event) => updatePaymentMethod(entry.id, "details", event.target.value)}
+                              placeholder="Make cheque payable to..."
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    Add cheque, e-transfer, cash, or bank transfer defaults so new invoices start ready to send.
+                  </p>
+                )}
+              </div>
+
+              <div
+                className="nb-focus-panel space-y-3 rounded-[24px] p-4 md:p-5"
+                data-testid="business-identity-payment-defaults"
+              >
                 <div className="space-y-1">
                   <label className="text-sm font-semibold text-slate-900">Registrations & tax IDs</label>
                   <p className="text-xs text-slate-500">
                     Add any business or tax registration numbers you want available on invoices. This works for Canada and international users.
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="nb-mobile-actions">
                   {REGISTRATION_PRESETS.map((preset) => (
                     <button
                       key={preset.id}
                       type="button"
-                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-[#d5e5de]"
                       onClick={() => handleAddRegistration(preset)}
                     >
                       Add {preset.label}
@@ -454,7 +591,7 @@
                   ))}
                   <button
                     type="button"
-                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
+                    className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-[#d5e5de]"
                     onClick={() => handleAddRegistration(null)}
                   >
                     Add custom
@@ -516,7 +653,7 @@
                             />
                           </label>
                         </div>
-                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                        <div className="nb-mobile-split mt-3">
                           <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
                             <input
                               type="checkbox"
@@ -538,15 +675,15 @@
                   </div>
                 ) : (
                   <p className="text-xs text-slate-500">
-                    No registrations added yet. Add only the IDs you actually need, then hide the whole block any time.
+                    Add only the registration or license IDs you actually want clients to see here. You can leave the rest out and keep this section hidden.
                   </p>
                 )}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div className="nb-mobile-actions pt-1">
                 <button
                   type="button"
-                  className="rounded-lg px-3 py-2 text-sm font-semibold text-white"
+                  className="rounded-2xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm"
                   style={{ backgroundColor: accent.primary }}
                   onClick={handleSave}
                 >
@@ -554,13 +691,13 @@
                 </button>
                 <button
                   type="button"
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700"
                   onClick={handleReset}
                 >
                   Reset
                 </button>
               </div>
-              {status ? <p className="text-xs text-blue-800">{status}</p> : null}
+              {status ? <p className="text-xs text-[#17493c]">{status}</p> : null}
               {error ? <p className="text-xs text-rose-600">{error}</p> : null}
               {showOnboardingCompleteBanner ? (
                 <SetupNextStepCard
@@ -572,8 +709,11 @@
               ) : null}
             </section>
 
-            <section className={`rounded-2xl border p-4 ${activePreset.shellClass}`}>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Preview</p>
+            <section className={`nb-highlight-panel self-start rounded-[28px] p-4 xl:sticky xl:top-24 ${activePreset.shellClass}`} data-testid="business-identity-preview">
+              <p className="nb-kicker">Preview</p>
+              <p className="mt-2 text-xs leading-5 text-slate-600">
+                This side updates as you tune the sender, payment details, and trust marks that clients see first.
+              </p>
               <div className="mt-3 space-y-4">
                 {logoUrl ? (
                   <img src={logoUrl} alt="Logo preview" className="h-10 w-auto max-w-[160px] object-contain" />
@@ -590,6 +730,23 @@
                     {fromDetails.trim() || "Your business details will appear here."}
                   </p>
                 </div>
+                {paymentMethods.length > 0 ? (
+                  <div className="rounded-lg border border-slate-200 bg-white/80 p-3">
+                    <p className={`text-xs uppercase tracking-[0.2em] ${activePreset.labelClass}`}>
+                      Payment instructions
+                    </p>
+                    <div className="mt-1 space-y-2">
+                      {paymentMethods.map((entry) => (
+                        <div key={entry.id} className="rounded-xl border border-slate-100 bg-slate-50 p-2">
+                          <p className="text-sm font-semibold text-slate-800">{entry.label}</p>
+                          <p className="mt-1 whitespace-pre-line text-xs leading-5 text-slate-600">
+                            {entry.details || "Add payment instructions here."}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 {registrationBlockVisible && businessRegistrations.some((entry) => entry.visible !== false && entry.value?.trim()) ? (
                   <div className="rounded-lg border border-slate-200 bg-white/80 p-3">
                     <p className={`text-xs uppercase tracking-[0.2em] ${activePreset.labelClass}`}>Registrations</p>
@@ -703,34 +860,43 @@
     return (
       <div className="nb-page nb-page--quiet min-h-screen">
         <main className="nb-page-shell nb-page-shell--medium max-w-5xl py-6 md:py-10">
-          <button
-            type="button"
-            className="nb-btn-ghost"
-            onClick={handleBack}
-          >
-            Back to launcher
-          </button>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-2">
+              <p className="nb-kicker">Memory controls</p>
+              <h1 className="nb-title max-w-3xl text-[2rem] md:text-5xl">
+                Review what NoteBill remembers about repeat clients.
+              </h1>
+              <p className="nb-copy max-w-2xl">
+                Keep useful repeat-client details close, remove anything stale, and make sure future reuse still feels explicit and trustworthy.
+              </p>
+              <p className="text-xs text-slate-500">
+                Account: {authSession?.email ? authSession.email : "Guest mode is on"}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="nb-btn-secondary rounded-full px-4 py-2"
+              onClick={handleBack}
+            >
+              Back to launcher
+            </button>
+          </div>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_320px]">
             <section className="nb-surface nb-surface--elevated rounded-[26px] p-4 md:rounded-[30px] md:p-6">
-              <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">Memory controls</p>
+              <p className="nb-kicker">Memory promise</p>
               <h1 className="nb-section-title mt-2 text-2xl md:text-3xl">
-                Review and clear repeat-client memory
+                Review the repeat-client details NoteBill is ready to reuse
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                NoteBill can remember repeat-client details to save typing. You can review or clear that memory
-                anytime. It never silently changes invoice totals or auto-applies hidden changes.
-              </p>
-              <p className="mt-2 text-xs text-slate-500">
-                Account: {authSession?.email ? authSession.email : "local mode"}
+                NoteBill can keep repeat-client details close so the next invoice starts faster. You can review or clear that memory anytime, and it never changes totals behind your back.
               </p>
             </section>
 
             <aside className="nb-surface nb-surface--muted rounded-[26px] p-4 md:rounded-[30px] md:p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Trust note</p>
+              <p className="nb-kicker">Trust note</p>
               <p className="mt-3 text-sm leading-6 text-slate-700">
-                Memory stays visible and removable. Billie can suggest repeat details, but money changes still
-                require explicit user action.
+                Memory stays visible and removable. Billie can help surface repeat details, but money changes still require an explicit decision from you.
               </p>
             </aside>
           </div>
@@ -748,9 +914,9 @@
               ["Prior notes", stats.withNotes],
               ["Cadences", stats.withCadence]
             ].map(([label, value]) => (
-              <div key={label} className="nb-subcard bg-white/85 p-3 text-center md:p-4">
-                <p className="text-xl font-semibold text-[#093064] md:text-2xl">{value}</p>
-                <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+              <div key={label} className="nb-stage-card">
+                <p className="nb-stage-card__value text-2xl md:text-[1.8rem]">{value}</p>
+                <p className="nb-stage-card__label mt-2">
                   {label}
                 </p>
               </div>
@@ -759,12 +925,12 @@
 
           {repeatReadiness.length > 0 ? (
             <section
-              className="nb-surface nb-surface--muted mt-5 rounded-[26px] p-4 md:rounded-[30px] md:p-5"
+              className="nb-highlight-panel mt-5 rounded-[26px] p-4 md:rounded-[30px] md:p-5"
               data-testid="client-memory-repeat-readiness"
             >
               <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Repeat readiness</p>
+                  <p className="nb-kicker">Repeat readiness</p>
                   <h2 className="mt-2 text-lg font-semibold text-slate-900">Clients closest to one-click reuse</h2>
                 </div>
                 <p className="max-w-sm text-xs leading-5 text-slate-500">
@@ -832,15 +998,22 @@
               </div>
             </div>
 
-            {status ? <p className="mt-3 text-sm font-semibold text-[#093064]">{status}</p> : null}
+            {status ? <p className="mt-3 text-sm font-semibold text-[#17493c]">{status}</p> : null}
 
             {clientMemory.length === 0 ? (
                 <div className="nb-subcard mt-5 bg-slate-50/90 p-4 md:p-5">
-                <p className="text-sm font-semibold text-slate-900">No remembered clients yet.</p>
+                <p className="text-sm font-semibold text-slate-900">Client memory will appear here as you reuse real work.</p>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  NoteBill will start building memory as you save invoices, reuse client details, or send to a
-                  client email. It only remembers what you already chose to reuse.
+                  NoteBill starts building client memory as you save invoices, reuse details, or send to a client email. It only keeps details you already chose to reuse.
                 </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" className="nb-btn-primary" onClick={() => navigate("/ai-intake")}>
+                    Start first invoice
+                  </button>
+                  <button type="button" className="nb-btn-secondary" onClick={() => navigate("/clients")}>
+                    Open client workspace
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="mt-5 grid gap-3">
@@ -862,7 +1035,7 @@
                               {tags.map((tag) => (
                                 <span
                                   key={tag}
-                                  className="rounded-full bg-[#edf5ff] px-2.5 py-1 text-xs font-semibold text-[#093064]"
+                                  className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-[#17493c] ring-1 ring-[#17493c]/10"
                                 >
                                   {tag}
                                 </span>
@@ -880,7 +1053,7 @@
                         </button>
                         <button
                           type="button"
-                          className="min-h-10 w-full rounded-full border border-[#6993d2]/20 bg-[#edf5ff] px-3 py-1.5 text-xs font-semibold text-[#093064] sm:w-auto"
+                          className="min-h-10 w-full rounded-full border border-[#d5e5de] bg-[#f7faf7] px-3 py-1.5 text-xs font-semibold text-[#17493c] sm:w-auto"
                           onClick={() => navigate(`/clients?client=${encodeURIComponent(entry.name)}`)}
                           aria-label={`Open workspace for ${entry.name}`}
                         >
@@ -889,7 +1062,7 @@
                       </div>
 
                       <details className="mt-4 rounded-2xl border border-slate-100 bg-slate-50/70 p-3">
-                        <summary className="cursor-pointer text-sm font-semibold text-[#093064]">
+                        <summary className="cursor-pointer text-sm font-semibold text-[#17493c]">
                           Show saved details
                         </summary>
                         <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -1011,31 +1184,41 @@
     return (
       <div className="nb-page nb-page--quiet min-h-screen">
         <main className="nb-page-shell nb-page-shell--medium max-w-5xl py-6 md:py-10">
-          <button
-            type="button"
-            className="nb-btn-ghost"
-            onClick={handleBack}
-          >
-            {showOnboardingCompleteBanner ? "Back to launcher" : "Back to invoice editor"}
-          </button>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-2">
+              <p className="nb-kicker">Saved services</p>
+              <h1 className="nb-title max-w-3xl text-[2rem] md:text-5xl">
+                Review the work patterns you want to reuse on future jobs.
+              </h1>
+              <p className="nb-copy max-w-2xl">
+                Keep the line items, rates, and client context that genuinely save time, and trim anything outdated before it becomes clutter.
+              </p>
+              <p className="text-xs text-slate-500">
+                Account: {authSession?.email ? authSession.email : "Guest mode is on"}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="nb-btn-secondary rounded-full px-4 py-2"
+              onClick={handleBack}
+            >
+              {showOnboardingCompleteBanner ? "Back to launcher" : "Back to invoice editor"}
+            </button>
+          </div>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_320px]">
             <section className="nb-surface nb-surface--elevated rounded-[26px] p-4 md:rounded-[30px] md:p-6">
-              <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">Saved services</p>
+              <p className="nb-kicker">Service catalog promise</p>
               <h1 className="nb-section-title mt-2 text-2xl md:text-3xl">
-                Review and reuse your service catalog
+                Review the service patterns you want ready for repeat work
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-                NoteBill saves line-item descriptions, quantities, rates, and client context you already chose to
-                reuse. You can review or clear those saved services anytime.
-              </p>
-              <p className="mt-2 text-xs text-slate-500">
-                Account: {authSession?.email ? authSession.email : "local mode"}
+                NoteBill saves the line items, rates, quantities, and client context you already chose to reuse. Review this list often so repeat work stays fast without getting messy.
               </p>
             </section>
 
             <aside className="nb-surface nb-surface--muted rounded-[26px] p-4 md:rounded-[30px] md:p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">Trust note</p>
+              <p className="nb-kicker">Trust note</p>
               <p className="mt-3 text-sm leading-6 text-slate-700">
                 Saved services are visible and removable. They can speed up repeat work, but they never change
                 totals automatically.
@@ -1056,9 +1239,9 @@
               ["With qty", stats.withQty],
               ["With client", stats.withClient]
             ].map(([label, value]) => (
-              <div key={label} className="nb-subcard bg-white/85 p-3 text-center md:p-4">
-                <p className="text-xl font-semibold text-[#093064] md:text-2xl">{value}</p>
-                <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+              <div key={label} className="nb-stage-card">
+                <p className="nb-stage-card__value text-2xl md:text-[1.8rem]">{value}</p>
+                <p className="nb-stage-card__label mt-2">
                   {label}
                 </p>
               </div>
@@ -1088,14 +1271,22 @@
               ) : null}
             </div>
 
-            {status ? <p className="mt-3 text-sm font-semibold text-[#093064]">{status}</p> : null}
+            {status ? <p className="mt-3 text-sm font-semibold text-[#17493c]">{status}</p> : null}
 
             {serviceCatalog.length === 0 ? (
               <div className="nb-subcard mt-5 bg-slate-50/90 p-4 md:p-5">
-                <p className="text-sm font-semibold text-slate-900">No saved services yet.</p>
+                <p className="text-sm font-semibold text-slate-900">Saved service patterns will build up here over time.</p>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  NoteBill will start building a service catalog as you save line items from invoices.
+                  NoteBill starts building a reusable service catalog as you save real line items from invoices, so your strongest repeat work gets easier over time.
                 </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" className="nb-btn-primary" onClick={() => navigate("/manual")}>
+                    Open blank invoice
+                  </button>
+                  <button type="button" className="nb-btn-secondary" onClick={() => navigate("/ai-intake")}>
+                    Start with Billie
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="mt-5 grid gap-3">
@@ -1118,7 +1309,7 @@
                               {tags.map((tag) => (
                                 <span
                                   key={tag}
-                                  className="rounded-full bg-[#edf5ff] px-2.5 py-1 text-xs font-semibold text-[#093064]"
+                                  className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-[#17493c] ring-1 ring-[#17493c]/10"
                                 >
                                   {tag}
                                 </span>

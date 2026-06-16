@@ -25,6 +25,10 @@ process.env.STRIPE_ENTITLEMENTS_STORE_FILE = path.join(
   os.tmpdir(),
   `invoice-stripe-entitlements-${randomUUID()}.json`
 );
+process.env.GOOGLE_PLAY_ENTITLEMENTS_STORE_FILE = path.join(
+  os.tmpdir(),
+  `invoice-google-play-entitlements-${randomUUID()}.json`
+);
 process.env.INVOICE_DELIVERY_STORE_FILE = path.join(
   os.tmpdir(),
   `invoice-delivery-store-${randomUUID()}.json`
@@ -39,13 +43,15 @@ const [
   { setAudioTranscriptionRunnerForTests, setImageOcrRunnerForTests, setJsonTaskRunnerForTests },
   { setInvoicePaymentLinkCreatorForTests },
   { resetInvoiceEmailVerificationCacheForTests },
-  { setGoogleAuthClientFactoryForTests }
+  { setGoogleAuthClientFactoryForTests },
+  { applyGooglePlaySubscriptionEntitlement, hasActiveGooglePlayEntitlement, getGooglePlayEntitlementsSummary }
 ] = await Promise.all([
   import("./server.js"),
   import("./ai/openaiClient.js"),
   import("./services/stripeBilling.js"),
   import("./services/invoiceEmailDelivery.js"),
-  import("./services/googleAuth.js")
+  import("./services/googleAuth.js"),
+  import("./services/googlePlayEntitlementsStore.js")
 ]);
 
 const storeFilePath = process.env.INVOICE_STORE_FILE;
@@ -67,6 +73,10 @@ if (!flowFrictionHistoryFilePath) {
 const stripeEntitlementsStoreFilePath = process.env.STRIPE_ENTITLEMENTS_STORE_FILE;
 if (!stripeEntitlementsStoreFilePath) {
   throw new Error("STRIPE_ENTITLEMENTS_STORE_FILE is required for tests.");
+}
+const googlePlayEntitlementsStoreFilePath = process.env.GOOGLE_PLAY_ENTITLEMENTS_STORE_FILE;
+if (!googlePlayEntitlementsStoreFilePath) {
+  throw new Error("GOOGLE_PLAY_ENTITLEMENTS_STORE_FILE is required for tests.");
 }
 const invoiceDeliveryStoreFilePath = process.env.INVOICE_DELIVERY_STORE_FILE;
 if (!invoiceDeliveryStoreFilePath) {
@@ -96,6 +106,11 @@ async function signInForTests(email: string) {
   return verifyResponse;
 }
 
+function grantProOwnerForTests(ownerId: string) {
+  const existing = process.env.INVOICE_PRO_OWNER_IDS?.trim();
+  process.env.INVOICE_PRO_OWNER_IDS = existing ? `${existing},${ownerId}` : ownerId;
+}
+
 beforeEach(async () => {
   resetInvoiceEmailVerificationCacheForTests();
   await fs.mkdir(path.dirname(storeFilePath), { recursive: true });
@@ -108,6 +123,8 @@ beforeEach(async () => {
   await fs.rm(flowFrictionHistoryFilePath, { force: true });
   await fs.mkdir(path.dirname(stripeEntitlementsStoreFilePath), { recursive: true });
   await fs.rm(stripeEntitlementsStoreFilePath, { force: true });
+  await fs.mkdir(path.dirname(googlePlayEntitlementsStoreFilePath), { recursive: true });
+  await fs.rm(googlePlayEntitlementsStoreFilePath, { force: true });
   await fs.mkdir(path.dirname(invoiceDeliveryStoreFilePath), { recursive: true });
   await fs.rm(invoiceDeliveryStoreFilePath, { force: true });
   await fs.mkdir(path.dirname(revenueSignalsStoreFilePath), { recursive: true });
@@ -132,6 +149,18 @@ beforeEach(async () => {
   delete process.env.STRIPE_PRICE_ID;
   delete process.env.STRIPE_WEBHOOK_SECRET;
   delete process.env.INVOICE_LAUNCH_REQUIRE_LIVE_BILLING;
+  delete process.env.ANDROID_APP_LINKS_PACKAGE_NAME;
+  delete process.env.ANDROID_PACKAGE_NAME;
+  delete process.env.ANDROID_APP_LINKS_SHA256_CERT_FINGERPRINTS;
+  delete process.env.ANDROID_APP_LINKS_SHA256_CERT_FINGERPRINT;
+  delete process.env.GOOGLE_PLAY_APP_SIGNING_SHA256_CERT_FINGERPRINTS;
+  delete process.env.GOOGLE_PLAY_APP_SIGNING_SHA256_CERT_FINGERPRINT;
+  delete process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON;
+  delete process.env.GOOGLE_PLAY_PACKAGE_NAME;
+  delete process.env.GOOGLE_PLAY_SUBSCRIPTION_PRODUCT_ID;
+  delete process.env.GOOGLE_PLAY_SUBSCRIPTION_BASE_PLAN_ID;
+  delete process.env.GOOGLE_PLAY_SUBSCRIPTION_OFFER_ID;
+  delete process.env.GOOGLE_PLAY_LIFETIME_PRODUCT_ID;
   delete process.env.INVOICE_EMAIL_PROVIDER;
   delete process.env.RESEND_API_KEY;
   delete process.env.SMTP2GO_API_KEY;
@@ -163,6 +192,7 @@ after(async () => {
   await fs.rm(flowFrictionReportFilePath, { force: true });
   await fs.rm(flowFrictionHistoryFilePath, { force: true });
   await fs.rm(stripeEntitlementsStoreFilePath, { force: true });
+  await fs.rm(googlePlayEntitlementsStoreFilePath, { force: true });
   await fs.rm(invoiceDeliveryStoreFilePath, { force: true });
   await fs.rm(revenueSignalsStoreFilePath, { force: true });
 });
@@ -624,6 +654,42 @@ test("revenue signal telemetry tracks activation and repeat-use milestones", asy
     });
   assert.equal(secondSave.status, 200);
 
+  const firstDraftStartedSignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "first_draft_started",
+      source: "test"
+    });
+  assert.equal(firstDraftStartedSignal.status, 200);
+
+  const firstInvoiceReopenedSignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "first_invoice_reopened",
+      source: "test"
+    });
+  assert.equal(firstInvoiceReopenedSignal.status, 200);
+
+  const firstInvoiceSentSignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "first_invoice_sent",
+      source: "test"
+    });
+  assert.equal(firstInvoiceSentSignal.status, 200);
+
+  const firstPaymentLinkSignal = await request(app)
+    .post("/api/telemetry/revenue-signals")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      event: "first_payment_link_added",
+      source: "test"
+    });
+  assert.equal(firstPaymentLinkSignal.status, 200);
+
   const repeatSignal = await request(app)
     .post("/api/telemetry/revenue-signals")
     .set("x-invoice-user-id", ownerId)
@@ -707,9 +773,14 @@ test("revenue signal telemetry tracks activation and repeat-use milestones", asy
 
   const snapshot = await request(app).get("/api/telemetry/revenue-signals");
   assert.equal(snapshot.status, 200);
+  assert.equal(snapshot.body.byEvent.first_draft_started, 1);
   assert.equal(snapshot.body.byEvent.invoice_generated, 1);
   assert.equal(snapshot.body.byEvent.invoice_saved, 2);
+  assert.equal(snapshot.body.byEvent.first_invoice_saved, 1);
   assert.equal(snapshot.body.byEvent.second_invoice_saved, 1);
+  assert.equal(snapshot.body.byEvent.first_invoice_reopened, 1);
+  assert.equal(snapshot.body.byEvent.first_invoice_sent, 1);
+  assert.equal(snapshot.body.byEvent.first_payment_link_added, 1);
   assert.equal(snapshot.body.byEvent.invoice_again_started, 1);
   assert.equal(snapshot.body.byEvent.service_memory_reused, 1);
   assert.equal(snapshot.body.byEvent.service_memory_saved, 1);
@@ -720,8 +791,13 @@ test("revenue signal telemetry tracks activation and repeat-use milestones", asy
   assert.equal(snapshot.body.byEvent.scratchpad_note_used_in_invoice, 1);
   assert.equal(snapshot.body.byEvent.billie_workspace_instruction_submitted, 1);
   assert.equal(snapshot.body.summary.ownerCount, 1);
+  assert.equal(snapshot.body.summary.draftStartedOwners, 1);
   assert.equal(snapshot.body.summary.activatedOwners, 1);
+  assert.equal(snapshot.body.summary.firstInvoiceSavedOwners, 1);
   assert.equal(snapshot.body.summary.secondInvoiceOwners, 1);
+  assert.equal(snapshot.body.summary.firstInvoiceSentOwners, 1);
+  assert.equal(snapshot.body.summary.firstPaymentLinkOwners, 1);
+  assert.equal(snapshot.body.summary.reopenedInvoiceOwners, 1);
   assert.equal(snapshot.body.summary.repeatInvoiceOwners, 1);
   assert.equal(snapshot.body.summary.serviceMemoryOwners, 1);
   assert.equal(snapshot.body.summary.serviceMemorySavedOwners, 1);
@@ -733,6 +809,103 @@ test("revenue signal telemetry tracks activation and repeat-use milestones", asy
   assert.equal(snapshot.body.summary.billieWorkspaceOwners, 1);
   assert.ok(Array.isArray(snapshot.body.recentEvents));
   assert.ok(snapshot.body.recentEvents.every((event: { ownerKey?: string }) => event.ownerKey !== ownerId));
+});
+
+test("revenue signals snapshot stays readable when stored history includes newer or unknown event names", async () => {
+  await fs.writeFile(
+    revenueSignalsStoreFilePath,
+    `${JSON.stringify(
+      {
+        totalEvents: 6,
+        byEvent: {
+          app_opened: 2,
+          first_app_opened: 1,
+          billing_plan_viewed: 1,
+          first_draft_started: 1,
+          mysterious_future_event: 1
+        },
+        owners: {
+          owner_alpha: {
+            firstSeenAt: "2026-06-10T01:00:00.000Z",
+            lastSeenAt: "2026-06-10T02:00:00.000Z",
+            appOpened: 2,
+            firstAppOpened: 1,
+            firstDraftStarted: 1,
+            billingPlanViewed: 1
+          }
+        },
+        events: [
+          {
+            at: "2026-06-10T01:00:00.000Z",
+            event: "app_opened",
+            ownerKey: "owner_alpha",
+            source: "app_lifecycle:launch"
+          },
+          {
+            at: "2026-06-10T01:01:00.000Z",
+            event: "first_app_opened",
+            ownerKey: "owner_alpha",
+            source: "app_lifecycle:launch"
+          },
+          {
+            at: "2026-06-10T01:02:00.000Z",
+            event: "billing_plan_viewed",
+            ownerKey: "owner_alpha",
+            source: "landing:phone"
+          },
+          {
+            at: "2026-06-10T01:03:00.000Z",
+            event: "first_draft_started",
+            ownerKey: "owner_alpha",
+            source: "ai_intake_open"
+          },
+          {
+            at: "2026-06-10T01:04:00.000Z",
+            event: "mysterious_future_event",
+            ownerKey: "owner_alpha",
+            source: "future"
+          }
+        ],
+        recentEvents: [
+          {
+            at: "2026-06-10T01:04:00.000Z",
+            event: "mysterious_future_event",
+            ownerKey: "owner_alpha",
+            source: "future"
+          },
+          {
+            at: "2026-06-10T01:03:00.000Z",
+            event: "first_draft_started",
+            ownerKey: "owner_alpha",
+            source: "ai_intake_open"
+          }
+        ],
+        updatedAt: "2026-06-10T01:04:00.000Z"
+      },
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+
+  const snapshot = await request(app).get("/api/telemetry/revenue-signals");
+  assert.equal(snapshot.status, 200);
+  assert.equal(snapshot.body.byEvent.app_opened, 2);
+  assert.equal(snapshot.body.byEvent.first_app_opened, 1);
+  assert.equal(snapshot.body.byEvent.first_draft_started, 1);
+  assert.equal(snapshot.body.summary.appOpenedOwners, 1);
+  assert.equal(snapshot.body.summary.firstAppOpenedOwners, 1);
+  assert.equal(snapshot.body.summary.draftStartedOwners, 1);
+  assert.equal(snapshot.body.summary.billingPlanViewedOwners, 1);
+  assert.deepEqual(snapshot.body.unknownEvents, {
+    names: ["mysterious_future_event"],
+    totalEvents: 1,
+    recentEvents: 1
+  });
+  assert.ok(
+    Array.isArray(snapshot.body.recentEvents) &&
+      snapshot.body.recentEvents.some((event: { event?: string }) => event.event === "mysterious_future_event")
+  );
 });
 
 test("system persistence endpoint reports active invoice backend", async () => {
@@ -756,6 +929,24 @@ test("system persistence endpoint reports active invoice backend", async () => {
   assert.equal(response.body.authPolicyReady, true);
   assert.equal(response.body.authWarning, null);
   assert.equal(response.body.defaultOwnerId, "local-default");
+});
+
+test("rewrite-follow-up-message rewrites reminder text without failing", async () => {
+  setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
+    return {
+      message:
+        "Hi Client,\n\nJust checking in on INV-77. It is due tomorrow. If you need another copy, I can resend it.\n\nBillie from NoteBill"
+    } as T;
+  });
+
+  const response = await request(app).post("/api/invoices/rewrite-follow-up-message").send({
+    message:
+      "Hi Client,\n\nA quick follow-up on INV-77.\nIt is due tomorrow.\nIf you need anything from me, please let me know.\n\nBillie from NoteBill",
+    tone: "Shorter"
+  });
+
+  assert.equal(response.status, 200);
+  assert.match(response.body.message, /INV-77/);
 });
 
 test("system persistence migration endpoint reports file-store summary", async () => {
@@ -2115,6 +2306,14 @@ test("export-pdf returns a downloadable pdf document", async () => {
         subtotal: 165,
         total: 165,
         balanceDue: 165,
+        paymentMethods: [
+          {
+            id: "payment-method-1",
+            kind: "cash",
+            label: "Cash",
+            details: "Cash accepted in person."
+          }
+        ],
         notes: "Thanks for your business."
       },
       fromDetails: "Acme Plumbing\n123 Main St",
@@ -2299,6 +2498,49 @@ test("export-pdf accepts hidden notes requests", async () => {
       accentColor: "#093064",
       stylePreset: "default",
       notesVisible: false
+    });
+
+  assert.equal(response.status, 200);
+  assert.match(String(response.headers["content-type"]), /^application\/pdf/);
+  assert.ok(Buffer.isBuffer(response.body));
+  assert.ok(response.body.byteLength > 200);
+});
+
+test("export-pdf accepts long split-header metadata without rejecting branded layouts", async () => {
+  const response = await request(app)
+    .post("/api/invoices/export-pdf")
+    .buffer(true)
+    .parse((res, callback) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      res.on("end", () => callback(null, Buffer.concat(chunks)));
+    })
+    .send({
+      invoice: {
+        invoiceNumber: "INV-2026-NORTH-SHORE-PAINT-CO-000184",
+        issueDate: "2026-02-27",
+        dueDate: "2026-03-13",
+        customerName: "North Shore Paint Co",
+        currency: "USD",
+        lineItems: [
+          {
+            id: "line-1",
+            type: "labor",
+            description: "Exterior repaint and prep work",
+            quantity: 1,
+            unitPrice: 1840,
+            amount: 1840
+          }
+        ],
+        subtotal: 1840,
+        total: 1840,
+        balanceDue: 1840
+      },
+      fromDetails: "Cedar & Coast Finishing\n88 Harbor Rd\nNorth Vancouver, BC",
+      billToDetails: "North Shore Paint Co\n208 Marine Dr\nNorth Vancouver, BC",
+      accentColor: "#17493c",
+      stylePreset: "bold",
+      headerLayout: "split"
     });
 
   assert.equal(response.status, 200);
@@ -2561,6 +2803,7 @@ test("status endpoint clears and restores balance when toggling paid state", asy
 
 test("send endpoint records delivery and marks invoice as sent", async () => {
   const ownerId = "delivery-owner";
+  grantProOwnerForTests(ownerId);
   const saveResponse = await request(app)
     .post("/api/invoices/save")
     .set("x-invoice-user-id", ownerId)
@@ -2620,8 +2863,286 @@ test("send endpoint records delivery and marks invoice as sent", async () => {
   assert.equal(listResponse.body.invoices[0].delivery.status, "sent");
 });
 
+test("client statement endpoint sends an account summary for open sent invoices", async () => {
+  const ownerId = "statement-owner";
+  grantProOwnerForTests(ownerId);
+
+  const firstSaveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Statement Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-STATEMENT-1",
+          issueDate: "2026-03-10",
+          dueDate: "2026-03-20",
+          customerName: "Statement Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-statement-1",
+              type: "labor",
+              description: "Spring cleanup",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          subtotal: 120,
+          total: 120,
+          balanceDue: 120
+        }
+      }
+    });
+  const firstInvoiceId = firstSaveResponse.body.invoice.invoiceId as string;
+  await request(app)
+    .post(`/api/invoices/${firstInvoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "sent" });
+
+  const secondSaveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Statement Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-STATEMENT-2",
+          issueDate: "2026-03-11",
+          dueDate: "2026-03-25",
+          customerName: "Statement Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-statement-2",
+              type: "labor",
+              description: "Follow-up repair",
+              quantity: 1,
+              unitPrice: 85,
+              amount: 85
+            }
+          ],
+          subtotal: 85,
+          total: 85,
+          balanceDue: 85
+        }
+      }
+    });
+  const secondInvoiceId = secondSaveResponse.body.invoice.invoiceId as string;
+  await request(app)
+    .post(`/api/invoices/${secondInvoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "sent" });
+
+  const response = await request(app)
+    .post("/api/clients/statement/send")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      clientName: "Statement Client",
+      recipientEmail: "billing@statement-client.example"
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.mode, "record_only");
+  assert.equal(response.body.provider, "none");
+  assert.equal(response.body.clientName, "Statement Client");
+  assert.equal(response.body.recipientEmail, "billing@statement-client.example");
+  assert.equal(response.body.openInvoiceCount, 2);
+  assert.equal(response.body.openBalance, 205);
+});
+
+test("client statement endpoint rejects clients without open sent invoices", async () => {
+  const ownerId = "statement-empty-owner";
+  grantProOwnerForTests(ownerId);
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Quiet Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-STATEMENT-QUIET-1",
+          issueDate: "2026-03-10",
+          customerName: "Quiet Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-statement-quiet-1",
+              type: "labor",
+              description: "Closed job",
+              quantity: 1,
+              unitPrice: 60,
+              amount: 60
+            }
+          ],
+          subtotal: 60,
+          total: 60,
+          balanceDue: 0
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "paid" });
+
+  const response = await request(app)
+    .post("/api/clients/statement/send")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      clientName: "Quiet Client",
+      recipientEmail: "billing@quiet-client.example"
+    });
+
+  assert.equal(response.status, 400);
+  assert.match(String(response.body.error || ""), /No open sent invoices/i);
+});
+
+test("client statement pdf endpoint returns a downloadable statement", async () => {
+  const ownerId = "statement-pdf-owner";
+  grantProOwnerForTests(ownerId);
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "PDF Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-STATEMENT-PDF-1",
+          issueDate: "2026-03-12",
+          dueDate: "2026-03-29",
+          customerName: "PDF Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-statement-pdf-1",
+              type: "labor",
+              description: "Inspection visit",
+              quantity: 1,
+              unitPrice: 95,
+              amount: 95
+            }
+          ],
+          subtotal: 95,
+          total: 95,
+          balanceDue: 95
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "sent" });
+
+  const response = await request(app)
+    .post("/api/clients/statement/export-pdf")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      clientName: "PDF Client",
+      recipientEmail: "billing@pdf-client.example"
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers["content-type"], "application/pdf");
+  assert.equal(response.headers["content-disposition"], 'attachment; filename="Client-Statement-PDF-Client.pdf"');
+  assert.ok(Buffer.isBuffer(response.body));
+  assert.ok(response.body.byteLength > 500);
+});
+
+test("client statement activity endpoint records and returns recent activity", async () => {
+  const ownerId = "statement-activity-owner";
+  grantProOwnerForTests(ownerId);
+
+  const recordResponse = await request(app)
+    .post("/api/clients/statement/activity")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      clientName: "Activity Client",
+      action: "copied_statement",
+      detail: "Statement summary copied"
+    });
+
+  assert.equal(recordResponse.status, 200);
+  assert.equal(recordResponse.body.activity.clientName, "Activity Client");
+  assert.equal(recordResponse.body.activity.action, "copied_statement");
+  assert.equal(recordResponse.body.activity.detail, "Statement summary copied");
+
+  const listResponse = await request(app)
+    .get("/api/clients/statement/activity")
+    .query({ clientName: "Activity Client" })
+    .set("x-invoice-user-id", ownerId);
+
+  assert.equal(listResponse.status, 200);
+  assert.ok(Array.isArray(listResponse.body.activities));
+  assert.equal(listResponse.body.activities[0].action, "copied_statement");
+});
+
+test("client statement recent activity endpoint returns owner activity in reverse chronological order", async () => {
+  const ownerId = "statement-recent-activity-owner";
+  grantProOwnerForTests(ownerId);
+
+  await request(app)
+    .post("/api/clients/statement/activity")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      clientName: "Recent Activity Client",
+      action: "copied_statement",
+      detail: "Statement summary copied"
+    });
+
+  await request(app)
+    .post("/api/clients/statement/activity")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      clientName: "Recent Activity Client",
+      action: "emailed_statement",
+      detail: "Statement emailed to billing@recent-activity.example",
+      recipientEmail: "billing@recent-activity.example"
+    });
+
+  const recentResponse = await request(app)
+    .get("/api/clients/statement/activity/recent")
+    .query({ limit: 8 })
+    .set("x-invoice-user-id", ownerId);
+
+  assert.equal(recentResponse.status, 200);
+  assert.ok(Array.isArray(recentResponse.body.activities));
+  assert.equal(recentResponse.body.activities[0].action, "emailed_statement");
+  assert.equal(recentResponse.body.activities[1].action, "copied_statement");
+});
+
 test("payment-link endpoint creates and persists a Stripe payment link for a saved invoice", async () => {
   const ownerId = "payment-link-owner";
+  grantProOwnerForTests(ownerId);
   setInvoicePaymentLinkCreatorForTests(async () => ({
     url: "https://pay.stripe.test/plink_123",
     paymentLinkId: "plink_123"
@@ -2657,7 +3178,15 @@ test("payment-link endpoint creates and persists a Stripe payment link for a sav
           ],
           subtotal: 220,
           total: 220,
-          balanceDue: 220
+          balanceDue: 220,
+          paymentMethods: [
+            {
+              id: "payment-method-1",
+              kind: "cheque",
+              label: "Cheque",
+              details: "Make cheques payable to Acme Plumbing.\nMail to: 123 Main St"
+            }
+          ]
         }
       }
     });
@@ -2683,10 +3212,15 @@ test("payment-link endpoint creates and persists a Stripe payment link for a sav
     getResponse.body.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl,
     "https://pay.stripe.test/plink_123"
   );
+  assert.equal(
+    getResponse.body.invoice?.invoiceData?.finishedInvoice?.paymentMethods?.[0]?.details,
+    "Make cheques payable to Acme Plumbing.\nMail to: 123 Main St"
+  );
 });
 
 test("client portal endpoint creates a tokenized customer portal link and exposes invoice history", async () => {
   const ownerId = "client-portal-owner";
+  grantProOwnerForTests(ownerId);
 
   const firstSaveResponse = await request(app)
     .post("/api/invoices/save")
@@ -2791,6 +3325,7 @@ test("client portal endpoint creates a tokenized customer portal link and expose
 
 test("send endpoint auto-creates a payment link before delivery when Stripe payments are configured", async () => {
   const ownerId = "payment-send-owner";
+  grantProOwnerForTests(ownerId);
   let createCount = 0;
   setInvoicePaymentLinkCreatorForTests(async () => {
     createCount += 1;
@@ -2852,6 +3387,7 @@ test("send endpoint auto-creates a payment link before delivery when Stripe paym
 
 test("delivery opened endpoint updates tracked delivery status", async () => {
   const ownerId = "delivery-open-owner";
+  grantProOwnerForTests(ownerId);
   const saveResponse = await request(app)
     .post("/api/invoices/save")
     .set("x-invoice-user-id", ownerId)
@@ -2913,6 +3449,7 @@ test("delivery opened endpoint updates tracked delivery status", async () => {
 
 test("send endpoint uses resend provider when configured", async () => {
   const ownerId = "delivery-provider-owner";
+  grantProOwnerForTests(ownerId);
   process.env.INVOICE_EMAIL_PROVIDER = "resend";
   process.env.RESEND_API_KEY = "re_test_key";
   process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
@@ -2985,6 +3522,7 @@ test("send endpoint uses resend provider when configured", async () => {
 
 test("send endpoint uses smtp2go provider when configured", async () => {
   const ownerId = "delivery-smtp2go-owner";
+  grantProOwnerForTests(ownerId);
   process.env.INVOICE_EMAIL_PROVIDER = "smtp2go";
   process.env.SMTP2GO_API_KEY = "smtp2go_test_key";
   process.env.INVOICE_FROM_EMAIL = "NoteBill <invoices@notebill.app>";
@@ -3057,6 +3595,7 @@ test("send endpoint uses smtp2go provider when configured", async () => {
 
 test("delivery pixel endpoint marks matching token as opened", async () => {
   const ownerId = "delivery-pixel-owner";
+  grantProOwnerForTests(ownerId);
   const saveResponse = await request(app)
     .post("/api/invoices/save")
     .set("x-invoice-user-id", ownerId)
@@ -3117,6 +3656,83 @@ test("delivery pixel endpoint marks matching token as opened", async () => {
   assert.equal(getResponse.status, 200);
   assert.equal(getResponse.body.invoice.delivery.status, "opened");
   assert.equal(getResponse.body.invoice.delivery.openCount, 1);
+});
+
+test("free plan blocks Pro-only invoice workflow endpoints", async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  const ownerId = "free-workflow-owner";
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Free Workflow Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-FREE-WORKFLOW-1",
+          issueDate: "2026-03-11",
+          customerName: "Free Workflow Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-free-workflow-1",
+              type: "labor",
+              description: "Free workflow baseline",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          subtotal: 120,
+          total: 120,
+          balanceDue: 120
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "free-client@example.com" });
+  assert.equal(sendResponse.status, 402);
+  assert.match(String(sendResponse.body.error || ""), /Upgrade to Pro/i);
+
+  const paymentLinkResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(paymentLinkResponse.status, 402);
+  assert.match(String(paymentLinkResponse.body.error || ""), /Upgrade to Pro/i);
+
+  const portalResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/client-portal-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(portalResponse.status, 402);
+  assert.match(String(portalResponse.body.error || ""), /Upgrade to Pro/i);
+
+  const duplicateResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/duplicate`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(duplicateResponse.status, 402);
+  assert.match(String(duplicateResponse.body.error || ""), /Upgrade to Pro/i);
+
+  const reminderRunResponse = await request(app)
+    .post("/api/invoices/reminders/run")
+    .set("x-invoice-user-id", ownerId)
+    .send({ dryRun: true });
+  assert.equal(reminderRunResponse.status, 402);
+  assert.match(String(reminderRunResponse.body.error || ""), /Upgrade to Pro/i);
 });
 
 test("account plan endpoint reports free-tier usage and remaining saves", async () => {
@@ -3190,6 +3806,15 @@ test("account plan endpoint reports stripe billing capabilities from env flags",
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_PRICE_ID = "price_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+  process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON = JSON.stringify({
+    client_email: "play-billing@test.dev",
+    private_key: "-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n"
+  });
+  process.env.GOOGLE_PLAY_PACKAGE_NAME = "app.notebill.app";
+  process.env.GOOGLE_PLAY_SUBSCRIPTION_PRODUCT_ID = "pro_monthly";
+  process.env.GOOGLE_PLAY_SUBSCRIPTION_BASE_PLAN_ID = "premium-monthly";
+  process.env.GOOGLE_PLAY_SUBSCRIPTION_PLAN_IDS = "premium-weekly,premium-monthly,premium-3months,premium-yearly";
+  process.env.GOOGLE_PLAY_LIFETIME_PRODUCT_ID = "notebill_premium_lifetime";
 
   const response = await request(app).get("/api/account/plan");
   assert.equal(response.status, 200);
@@ -3197,6 +3822,41 @@ test("account plan endpoint reports stripe billing capabilities from env flags",
   assert.equal(response.body.billing?.checkoutAvailable, true);
   assert.equal(response.body.billing?.portalAvailable, true);
   assert.equal(response.body.billing?.webhookAvailable, true);
+  assert.equal(response.body.billing?.googlePlay?.provider, "google_play");
+  assert.equal(response.body.billing?.googlePlay?.available, true);
+  assert.equal(response.body.billing?.googlePlay?.hasSubscriptionBasePlanId, true);
+  assert.equal(response.body.billing?.googlePlay?.hasLifetimeProductId, true);
+  assert.deepEqual(
+    response.body.billing?.googlePlay?.subscriptionPlans?.map((item: { basePlanId: string }) => item.basePlanId),
+    ["premium-weekly", "premium-monthly", "premium-3months", "premium-yearly"]
+  );
+});
+
+test("account plan endpoint includes google play recovery context when purchase history exists but none are active", async () => {
+  process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON = JSON.stringify({
+    client_email: "play-billing@test.dev",
+    private_key: "-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n"
+  });
+  process.env.GOOGLE_PLAY_PACKAGE_NAME = "app.notebill.app";
+  process.env.GOOGLE_PLAY_SUBSCRIPTION_PRODUCT_ID = "notebill_premium";
+  process.env.GOOGLE_PLAY_SUBSCRIPTION_BASE_PLAN_ID = "premium-monthly";
+  process.env.GOOGLE_PLAY_SUBSCRIPTION_PLAN_IDS = "premium-weekly,premium-monthly,premium-3months,premium-yearly";
+
+  await applyGooglePlaySubscriptionEntitlement({
+    purchaseToken: "stale-google-play-token",
+    productId: "notebill_premium",
+    packageName: "app.notebill.app",
+    ownerId: "stale-google-play-owner",
+    subscriptionState: "SUBSCRIPTION_STATE_CANCELED",
+    expiryAt: "2026-01-01T00:00:00.000Z"
+  });
+
+  const response = await request(app).get("/api/account/plan").set("x-invoice-user-id", "stale-google-play-owner");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.plan, "free");
+  assert.equal(response.body.billing?.googlePlay?.entitlements?.subscriptionCount, 1);
+  assert.equal(response.body.billing?.googlePlay?.entitlements?.activeSubscriptionCount, 0);
+  assert.match(String(response.body.billing?.googlePlay?.warning || ""), /none are active/i);
 });
 
 test("billing diagnostics endpoint reports stripe readiness + entitlement counts", async () => {
@@ -3254,6 +3914,76 @@ test("billing diagnostics endpoint reports stripe readiness + entitlement counts
   assert.equal(afterWebhook.body.warning, null);
 });
 
+test("billing diagnostics endpoint reports google play readiness from env flags", async () => {
+  process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON = JSON.stringify({
+    client_email: "play-billing@test.dev",
+    private_key: "-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n"
+  });
+  process.env.GOOGLE_PLAY_PACKAGE_NAME = "app.notebill.app";
+  process.env.GOOGLE_PLAY_SUBSCRIPTION_PRODUCT_ID = "pro_monthly";
+  process.env.GOOGLE_PLAY_SUBSCRIPTION_BASE_PLAN_ID = "premium-monthly";
+  process.env.GOOGLE_PLAY_SUBSCRIPTION_PLAN_IDS = "premium-weekly,premium-monthly,premium-3months,premium-yearly";
+  delete process.env.GOOGLE_PLAY_SUBSCRIPTION_OFFER_ID;
+  process.env.GOOGLE_PLAY_LIFETIME_PRODUCT_ID = "notebill_premium_lifetime";
+
+  const response = await request(app).get("/api/system/billing");
+  assert.equal(response.status, 200);
+  assert.equal(response.body.capabilities?.googlePlay?.provider, "google_play");
+  assert.equal(response.body.capabilities?.googlePlay?.available, true);
+  assert.equal(response.body.capabilities?.googlePlay?.hasManageUrl, true);
+  assert.equal(response.body.capabilities?.googlePlay?.subscriptionBasePlanId, "premium-monthly");
+  assert.equal(response.body.capabilities?.googlePlay?.hasSubscriptionOfferId, false);
+  assert.equal(response.body.capabilities?.googlePlay?.subscriptionOfferId, "");
+  assert.equal(response.body.capabilities?.googlePlay?.subscriptionPlans?.[0]?.label, "Weekly");
+  assert.equal(response.body.capabilities?.googlePlay?.subscriptionPlans?.[2]?.label, "3 months");
+});
+
+test("google play entitlement store expires canceled subscriptions but keeps lifetime purchases", async () => {
+  await applyGooglePlaySubscriptionEntitlement({
+    purchaseToken: "expired-canceled-token",
+    productId: "notebill_premium",
+    packageName: "app.notebill.app",
+    ownerId: "expired-google-play-owner",
+    subscriptionState: "SUBSCRIPTION_STATE_CANCELED",
+    expiryAt: "2026-01-01T00:00:00.000Z"
+  });
+  await applyGooglePlaySubscriptionEntitlement({
+    purchaseToken: "active-canceled-token",
+    productId: "notebill_premium",
+    packageName: "app.notebill.app",
+    ownerId: "active-google-play-owner",
+    subscriptionState: "SUBSCRIPTION_STATE_CANCELED",
+    expiryAt: "2999-01-01T00:00:00.000Z"
+  });
+  await applyGooglePlaySubscriptionEntitlement({
+    purchaseToken: "lifetime-token",
+    productId: "notebill_premium_lifetime",
+    packageName: "app.notebill.app",
+    ownerId: "lifetime-google-play-owner",
+    subscriptionState: "ONE_TIME_PURCHASED",
+    expiryAt: null
+  });
+
+  assert.equal(
+    await hasActiveGooglePlayEntitlement({ ownerId: "expired-google-play-owner" }),
+    false
+  );
+  assert.equal(
+    await hasActiveGooglePlayEntitlement({ ownerId: "active-google-play-owner" }),
+    true
+  );
+  assert.equal(
+    await hasActiveGooglePlayEntitlement({ ownerId: "lifetime-google-play-owner" }),
+    true
+  );
+
+  const summary = await getGooglePlayEntitlementsSummary();
+  assert.equal(summary.subscriptionCount, 3);
+  assert.equal(summary.activeSubscriptionCount, 2);
+  assert.equal(summary.byStatus.SUBSCRIPTION_STATE_CANCELED, 2);
+  assert.equal(summary.byStatus.ONE_TIME_PURCHASED, 1);
+});
+
 test("billing diagnostics flags test-mode keys when live launch billing is required", async () => {
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_PUBLISHABLE_KEY = "pk_test_placeholder";
@@ -3283,6 +4013,7 @@ test("delivery diagnostics endpoint reports provider readiness + send summary", 
   assert.match(String(baseline.body.warning || ""), /tracking-only/i);
 
   const ownerId = "delivery-diagnostics-owner";
+  grantProOwnerForTests(ownerId);
   const saveResponse = await request(app)
     .post("/api/invoices/save")
     .set("x-invoice-user-id", ownerId)
@@ -3375,6 +4106,148 @@ test("delivery diagnostics reports smtp2go provider as ready when configured", a
   assert.equal(response.body.capabilities?.launchTestRecipientConfigured, true);
   assert.equal(response.body.verification?.ready, true);
   assert.equal(response.body.warning, null);
+});
+
+test("google ads campaign watch endpoint reports the current NoteBill campaign status", async () => {
+  const previousEnv = {
+    GOOGLE_ADS_DEVELOPER_TOKEN: process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+    GOOGLE_ADS_CLIENT_ID: process.env.GOOGLE_ADS_CLIENT_ID,
+    GOOGLE_ADS_CLIENT_SECRET: process.env.GOOGLE_ADS_CLIENT_SECRET,
+    GOOGLE_ADS_REFRESH_TOKEN: process.env.GOOGLE_ADS_REFRESH_TOKEN,
+    GOOGLE_ADS_CUSTOMER_ID: process.env.GOOGLE_ADS_CUSTOMER_ID,
+    GOOGLE_ADS_LOGIN_CUSTOMER_ID: process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
+  };
+
+  process.env.GOOGLE_ADS_DEVELOPER_TOKEN = "ads_dev_token";
+  process.env.GOOGLE_ADS_CLIENT_ID = "ads_client_id";
+  process.env.GOOGLE_ADS_CLIENT_SECRET = "ads_client_secret";
+  process.env.GOOGLE_ADS_REFRESH_TOKEN = "ads_refresh_token";
+  process.env.GOOGLE_ADS_CUSTOMER_ID = "978-945-6142";
+  process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = "526-580-0864";
+
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    const url = String(input);
+    if (url === "https://www.googleapis.com/oauth2/v3/token") {
+      return new Response(JSON.stringify({ access_token: "ads_access_token" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    if (!url.includes("googleAds:search")) {
+      throw new Error(`Unexpected fetch in Google Ads campaign watch test: ${url}`);
+    }
+    const requestBody = JSON.parse(String((init as { body?: string } | undefined)?.body ?? "{}"));
+    const query = String(requestBody?.query ?? "");
+    if (query.includes("FROM campaign")) {
+      return new Response(
+        JSON.stringify({
+          results: [
+            {
+              campaign: {
+                id: "23894121994",
+                name: "NB | Search | High Intent | 2026-05-29T00-26-05-880Z-1txo9h",
+                status: "ENABLED",
+                primaryStatus: "PENDING",
+                primaryStatusReasons: ["CAMPAIGN_PENDING", "MOST_ADS_UNDER_REVIEW"],
+                servingStatus: "PENDING"
+              },
+              campaignBudget: { amountMicros: "10000000" },
+              metrics: { impressions: "0", clicks: "0", costMicros: "0", conversions: "0" }
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    }
+    if (query.includes("FROM ad_group_ad")) {
+      return new Response(
+        JSON.stringify({
+          results: [
+            {
+              adGroupAd: {
+                ad: { id: "9001", type: "RESPONSIVE_SEARCH_AD" },
+                status: "ENABLED",
+                primaryStatus: "NOT_ELIGIBLE",
+                primaryStatusReasons: ["CAMPAIGN_PENDING"],
+                policySummary: { approvalStatus: "APPROVED", reviewStatus: "REVIEWED" }
+              }
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    }
+    if (query.includes("FROM ad_group_criterion")) {
+      return new Response(
+        JSON.stringify({
+          results: [
+            {
+              adGroupCriterion: {
+                criterionId: "8001",
+                keyword: { text: "invoice app for contractors", matchType: "EXACT" },
+                status: "ENABLED",
+                primaryStatus: "NOT_ELIGIBLE",
+                primaryStatusReasons: ["CAMPAIGN_PENDING"]
+              }
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    }
+    if (query.includes("FROM ad_group")) {
+      return new Response(
+        JSON.stringify({
+          results: [
+            {
+              adGroup: {
+                id: "7001",
+                name: "contractors",
+                status: "ENABLED",
+                primaryStatus: "PENDING",
+                primaryStatusReasons: ["CAMPAIGN_PENDING"]
+              }
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }
+      );
+    }
+    throw new Error(`Unexpected query in Google Ads campaign watch test: ${query}`);
+  }) as typeof fetch;
+
+  try {
+    const response = await request(app).get("/api/system/google-ads/campaign-status");
+    assert.equal(response.status, 200);
+    assert.equal(response.body.configured, true);
+    assert.equal(response.body.customerId, "9789456142");
+    assert.equal(response.body.campaign?.name, "NB | Search | High Intent | 2026-05-29T00-26-05-880Z-1txo9h");
+    assert.equal(response.body.campaign?.status, "ENABLED");
+    assert.equal(response.body.summary?.label, "Waiting for review");
+    assert.equal(response.body.summary?.tone, "warning");
+    assert.equal(response.body.adGroups?.length, 1);
+    assert.equal(response.body.ads?.length, 1);
+    assert.equal(response.body.keywords?.length, 1);
+  } finally {
+    process.env.GOOGLE_ADS_DEVELOPER_TOKEN = previousEnv.GOOGLE_ADS_DEVELOPER_TOKEN;
+    process.env.GOOGLE_ADS_CLIENT_ID = previousEnv.GOOGLE_ADS_CLIENT_ID;
+    process.env.GOOGLE_ADS_CLIENT_SECRET = previousEnv.GOOGLE_ADS_CLIENT_SECRET;
+    process.env.GOOGLE_ADS_REFRESH_TOKEN = previousEnv.GOOGLE_ADS_REFRESH_TOKEN;
+    process.env.GOOGLE_ADS_CUSTOMER_ID = previousEnv.GOOGLE_ADS_CUSTOMER_ID;
+    process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = previousEnv.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+  }
 });
 
 test("delivery diagnostics warns when resend domain is not verified", async () => {
@@ -3471,6 +4344,7 @@ test("delivery test endpoint sends a provider-backed launch verification email v
 
 test("send-reminder endpoint reuses tracked recipient and bumps delivery/send timestamps", async () => {
   const ownerId = "delivery-reminder-owner";
+  grantProOwnerForTests(ownerId);
   const saveResponse = await request(app)
     .post("/api/invoices/save")
     .set("x-invoice-user-id", ownerId)
@@ -3533,6 +4407,7 @@ test("send-reminder endpoint reuses tracked recipient and bumps delivery/send ti
 
 test("reminder run endpoint previews and sends due reminders with overrides", async () => {
   const ownerId = "delivery-reminder-run-owner";
+  grantProOwnerForTests(ownerId);
   const saveResponse = await request(app)
     .post("/api/invoices/save")
     .set("x-invoice-user-id", ownerId)
@@ -3618,6 +4493,7 @@ test("reminder run endpoint previews and sends due reminders with overrides", as
 
 test("reminder run endpoint skips invoices with no open balance", async () => {
   const ownerId = "delivery-reminder-zero-balance-owner";
+  grantProOwnerForTests(ownerId);
   const saveResponse = await request(app)
     .post("/api/invoices/save")
     .set("x-invoice-user-id", ownerId)
@@ -3681,6 +4557,7 @@ test("reminder run endpoint skips invoices with no open balance", async () => {
 
 test("delivery diagnostics endpoint scopes reminder preview by request owner", async () => {
   const ownerId = "delivery-reminder-diagnostics-owner";
+  grantProOwnerForTests(ownerId);
   const saveResponse = await request(app)
     .post("/api/invoices/save")
     .set("x-invoice-user-id", ownerId)
@@ -4288,6 +5165,27 @@ test("auth providers endpoint reports email-link readiness and Google availabili
   assert.match(String(googleProvider?.warning ?? ""), /GOOGLE_CLIENT_ID/i);
 });
 
+test("auth providers endpoint exposes the Google client id when configured", async () => {
+  process.env.GOOGLE_CLIENT_ID = "google-client-id";
+  process.env.GOOGLE_CLIENT_SECRET = "google-client-secret";
+
+  const response = await request(app).get("/api/auth/providers");
+
+  assert.equal(response.status, 200);
+  const googleProvider = response.body.providers.find((provider: { id?: string }) => provider.id === "google");
+  assert.equal(googleProvider?.clientId, "google-client-id");
+});
+
+test("auth providers endpoint exposes the Google client id even before the secret is configured", async () => {
+  process.env.GOOGLE_CLIENT_ID = "google-client-id";
+
+  const response = await request(app).get("/api/auth/providers");
+
+  assert.equal(response.status, 200);
+  const googleProvider = response.body.providers.find((provider: { id?: string }) => provider.id === "google");
+  assert.equal(googleProvider?.clientId, "google-client-id");
+});
+
 test("auth session endpoint redirects Google sign-in callers to the dedicated start route", async () => {
   const response = await request(app).post("/api/auth/session").send({ provider: "google" });
 
@@ -4417,6 +5315,116 @@ test("google auth callback returns launcher error route when Google email is not
   const errorUrl = new URL(String(callbackResponse.headers.location));
   assert.equal(errorUrl.pathname, "/auth/google");
   assert.match(String(errorUrl.searchParams.get("error") ?? ""), /verified Google email/i);
+});
+
+test("google native auth exchange returns a hosted NoteBill session", async () => {
+  process.env.GOOGLE_CLIENT_ID = "google-client-id";
+  process.env.GOOGLE_CLIENT_SECRET = "google-client-secret";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+
+  setGoogleAuthClientFactoryForTests(() => ({
+    generateAuthUrl() {
+      return "https://accounts.google.com/o/oauth2/v2/auth";
+    },
+    async getToken() {
+      return { tokens: { id_token: "google-id-token" } };
+    },
+    async verifyIdToken() {
+      return {
+        getPayload() {
+          return {
+            iss: "https://accounts.google.com",
+            aud: "google-client-id",
+            iat: 1,
+            exp: 4_102_444_800,
+            email: "owner@gmail.com",
+            email_verified: true,
+            name: "Owner Example",
+            picture: "https://example.com/avatar.png",
+            sub: "google-sub-123"
+          };
+        }
+      };
+    }
+  }));
+
+  const response = await request(app)
+    .post("/api/auth/google/native")
+    .send({ idToken: "google-native-id-token" });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.ok, true);
+  assert.match(String(response.body.token ?? ""), /^[^.]+\.[^.]+$/);
+  assert.equal(response.body.session.email, "owner@gmail.com");
+  assert.match(String(response.body.session.userId ?? ""), /^usr_[a-f0-9]{24}$/);
+});
+
+test("google auth callback returns an app-link url for native Android return paths", async () => {
+  process.env.GOOGLE_CLIENT_ID = "google-client-id";
+  process.env.GOOGLE_CLIENT_SECRET = "google-client-secret";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+
+  setGoogleAuthClientFactoryForTests(() => ({
+    generateAuthUrl(options) {
+      return `https://accounts.google.com/o/oauth2/v2/auth?state=${encodeURIComponent(String(options.state ?? ""))}`;
+    },
+    async getToken() {
+      return {
+        tokens: {
+          id_token: "google-id-token"
+        }
+      };
+    },
+    async verifyIdToken() {
+      return {
+        getPayload() {
+          return {
+            iss: "https://accounts.google.com",
+            aud: "google-client-id",
+            iat: 1,
+            exp: 4_102_444_800,
+            email: "owner@gmail.com",
+            email_verified: true,
+            sub: "google-sub-123"
+          };
+        }
+      };
+    }
+  }));
+
+  const startResponse = await request(app).get("/api/auth/google/start?returnTo=%2Fmanual%3FnativeAuth%3D1");
+  const stateToken = new URL(String(startResponse.headers.location)).searchParams.get("state");
+  const cookieHeader = startResponse.headers["set-cookie"];
+  assert.ok(Array.isArray(cookieHeader));
+  const callbackResponse = await request(app)
+    .get(`/api/auth/google/callback?code=google-code-123&state=${encodeURIComponent(String(stateToken))}`)
+    .set("Cookie", cookieHeader as string[]);
+
+  assert.equal(callbackResponse.status, 302);
+  const completionUrl = new URL(String(callbackResponse.headers.location));
+  assert.equal(completionUrl.origin, "https://app.notebill.app");
+  assert.equal(completionUrl.pathname, "/auth/google");
+  assert.equal(completionUrl.searchParams.get("nativeAuth"), "1");
+  assert.equal(completionUrl.searchParams.get("next"), "/manual?nativeAuth=1");
+  assert.match(String(completionUrl.searchParams.get("token") ?? ""), /^[^.]+\.[^.]+$/);
+  assert.match(String(completionUrl.searchParams.get("userId") ?? ""), /^usr_[a-f0-9]{24}$/);
+});
+
+test("android app links assetlinks route returns statements when fingerprint is configured", async () => {
+  process.env.ANDROID_APP_LINKS_PACKAGE_NAME = "app.notebill.app";
+  process.env.ANDROID_APP_LINKS_SHA256_CERT_FINGERPRINTS =
+    "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99";
+
+  const response = await request(app).get("/.well-known/assetlinks.json");
+
+  assert.equal(response.status, 200);
+  assert.equal(response.type, "application/json");
+  assert.equal(Array.isArray(response.body), true);
+  assert.equal(response.body[0]?.target?.package_name, "app.notebill.app");
+  assert.deepEqual(response.body[0]?.relation, [
+    "delegate_permission/common.handle_all_urls",
+    "delegate_permission/common.get_login_creds"
+  ]);
 });
 
 test("auth session request sends a sign-in email when a provider is configured", async () => {

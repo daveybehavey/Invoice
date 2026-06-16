@@ -1,6 +1,7 @@
 import "dotenv/config";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import cors from "cors";
 import express, { NextFunction, Request, Response } from "express";
@@ -34,9 +35,14 @@ import {
   continueInvoiceAfterLaborPricing,
   createInvoiceFromInput,
   rewordFullInvoice,
+  rewriteFollowUpMessage,
   runInvoiceAuditOverlay
 } from "./services/invoicePipeline.js";
 import { buildPdfFilename, createInvoicePdfBuffer } from "./services/invoicePdf.js";
+import {
+  buildClientStatementPdfFilename,
+  createClientStatementPdfBuffer
+} from "./services/clientStatementPdf.js";
 import {
   createStripeBillingPortalSession,
   createStripeCheckoutSession,
@@ -45,6 +51,16 @@ import {
   processStripeWebhookEvent
 } from "./services/stripeBilling.js";
 import { getBillingEntitlementsSummary } from "./services/billingEntitlementsStore.js";
+import {
+  getGooglePlayBillingCapabilities,
+  getGooglePlayBillingDiagnostics,
+  verifyGooglePlayOneTimeProductPurchase,
+  verifyGooglePlaySubscriptionPurchase
+} from "./services/googlePlayBilling.js";
+import {
+  getGooglePlayVerifyDiagnostics,
+  recordGooglePlayVerifyAttempt
+} from "./services/googlePlayVerifyDiagnosticsStore.js";
 import {
   assertSavedInvoicePersistencePolicy,
   getSavedInvoiceBackend,
@@ -66,10 +82,16 @@ import {
 import {
   getInvoiceEmailCapabilities,
   getInvoiceEmailDiagnostics,
+  sendClientStatementEmail,
   sendAuthSignInEmail,
   sendInvoiceEmail,
   sendLaunchTestEmail
 } from "./services/invoiceEmailDelivery.js";
+import {
+  listClientStatementActivity,
+  listRecentClientStatementActivity,
+  recordClientStatementActivity
+} from "./services/clientStatementActivityStore.js";
 import {
   listDueInvoiceReminderCandidates,
   runDueInvoiceReminders,
@@ -98,6 +120,7 @@ import {
   buildGoogleAuthStart,
   buildGoogleAuthStateCookieHeader,
   buildGoogleAuthSuccessUrl,
+  completeGoogleNativeAuth,
   completeGoogleAuthCallback,
   GOOGLE_OAUTH_STATE_COOKIE_NAME,
   readCookieValue
@@ -107,9 +130,12 @@ import { getInvoiceAuthPolicy } from "./services/invoiceAuthPolicy.js";
 import { getInvoiceAuthProviderCapabilities } from "./services/invoiceAuthProviders.js";
 import {
   getRevenueSignalsSnapshot,
+  RevenueAttributionSchema,
   RevenueSignalNameSchema,
   trackRevenueSignal
 } from "./services/revenueSignalsStore.js";
+import { getGoogleAdsCampaignWatchSnapshot } from "./services/googleAdsCampaignWatch.js";
+import { PUBLIC_PAGE_METADATA, injectPageMetadata } from "./publicPageMetadata.js";
 
 const app = express();
 assertSavedInvoicePersistencePolicy();
@@ -127,7 +153,21 @@ const imageUpload = multer({
 });
 const port = Number(process.env.PORT ?? 3000);
 const publicDir = path.resolve(process.cwd(), "public");
+let spaShellHtmlCache: string | null = null;
 const TRANSPARENT_GIF_BUFFER = Buffer.from("R0lGODlhAQABAIABAP///wAAACwAAAAAAQABAAACAkQBADs=", "base64");
+const ANDROID_APP_LINKS_DEFAULT_PACKAGE_NAME = "app.notebill.app";
+
+function getSpaShellHtml() {
+  if (spaShellHtmlCache !== null) {
+    return spaShellHtmlCache;
+  }
+  try {
+    spaShellHtmlCache = readFileSync(path.join(publicDir, "spa-shell.html"), "utf8");
+  } catch {
+    spaShellHtmlCache = "";
+  }
+  return spaShellHtmlCache;
+}
 
 app.use(cors());
 app.post(
@@ -147,6 +187,13 @@ app.post(
       if (result.invoicePayment) {
         await markSavedInvoicePaidFromStripePayment(result.invoicePayment);
       }
+      if (result.subscriptionUnlock) {
+        await trackRevenueSignalSafely({
+          event: "pro_unlock_verified",
+          ownerId: result.subscriptionUnlock.ownerId,
+          source: result.subscriptionUnlock.source
+        });
+      }
       res.json({ ok: true, handled: result.handled, eventType: result.eventType });
     } catch (error) {
       next(error);
@@ -154,7 +201,17 @@ app.post(
   }
 );
 app.use(express.json({ limit: "4mb" }));
-app.use(express.static(publicDir));
+
+app.get("/.well-known/assetlinks.json", (_req: Request, res: Response) => {
+  const statements = buildAndroidAppLinksStatements();
+  if (!statements.length) {
+    res
+      .status(503)
+      .json({ error: "Android App Links are not configured yet. Set the Play signing fingerprint first." });
+    return;
+  }
+  res.type("application/json").send(JSON.stringify(statements, null, 2));
+});
 
 const spaRoutes = [
   "/",
@@ -163,13 +220,28 @@ const spaRoutes = [
   "/ai-intake",
   "/manual",
   "/scratchpad",
+  "/notes",
   "/import",
   "/diagnostics",
+  "/library",
+  "/stats",
+  "/prefs",
   "/settings/business",
   "/settings/memory",
   "/settings/services",
   "/clients",
   "/dashboard",
+  "/invoice-app-for-contractors",
+  "/invoice-app-for-service-businesses",
+  "/ai-invoice-app",
+  "/ai-invoicing-app",
+  "/ai-billing-app",
+  "/bill-maker-app",
+  "/mobile-billing-app",
+  "/how-to-make-an-invoice-on-your-phone",
+  "/mobile-invoice-app",
+  "/invoice-app-on-phone",
+  "/client-statements-and-follow-up",
   "/portal",
   "/privacy",
   "/help",
@@ -178,7 +250,13 @@ const spaRoutes = [
   "/data-deletion",
   "/delete-account"
 ];
-app.get(spaRoutes, (_req: Request, res: Response) => {
+app.get(spaRoutes, (req: Request, res: Response) => {
+  const metadata = PUBLIC_PAGE_METADATA[req.path as keyof typeof PUBLIC_PAGE_METADATA];
+  const spaShellHtml = getSpaShellHtml();
+  if (metadata && spaShellHtml) {
+    res.type("html").send(injectPageMetadata(spaShellHtml, req.path, metadata));
+    return;
+  }
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
@@ -190,6 +268,8 @@ app.get("/portal/:invoiceId/:token", (_req: Request, res: Response) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
+app.use(express.static(publicDir));
+
 app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
@@ -198,14 +278,27 @@ app.get("/api/account/plan", async (req: Request, res: Response, next: NextFunct
   try {
     const ownerId = getRequestOwnerId(req);
     const authSession = getAuthSessionFromRequest(req);
-    const summary = await getAccountPlanSummary({
-      ownerId,
-      authSession,
-      repository: savedInvoiceRepository
-    });
+    const [summary, googlePlayDiagnostics] = await Promise.all([
+      getAccountPlanSummary({
+        ownerId,
+        authSession,
+        repository: savedInvoiceRepository
+      }),
+      getGooglePlayBillingDiagnostics()
+    ]);
+    const stripeBilling = getStripeBillingCapabilities();
+    const googlePlayBilling = googlePlayDiagnostics.capabilities;
     res.json({
       ...summary,
-      billing: getStripeBillingCapabilities()
+      billing: {
+        ...stripeBilling,
+        provider: stripeBilling.provider !== "none" ? stripeBilling.provider : googlePlayBilling.provider,
+        googlePlay: {
+          ...googlePlayBilling,
+          entitlements: googlePlayDiagnostics.entitlements,
+          warning: googlePlayDiagnostics.warning
+        }
+      }
     });
   } catch (error) {
     next(error);
@@ -234,7 +327,8 @@ app.post("/api/billing/checkout-session", async (req: Request, res: Response, ne
     await trackRevenueSignalSafely({
       event: "checkout_started",
       ownerId,
-      source: "billing_checkout"
+      source: "billing_checkout",
+      request: req
     });
     res.json(checkoutSession);
   } catch (error) {
@@ -265,6 +359,159 @@ app.post("/api/billing/portal-session", async (req: Request, res: Response, next
   }
 });
 
+app.post("/api/billing/google-play/verify", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = z
+      .object({
+        purchaseToken: z.string().trim().min(1),
+        productId: z.string().trim().optional(),
+        packageName: z.string().trim().optional(),
+        basePlanId: z.string().trim().optional()
+      })
+      .parse(req.body ?? {});
+    const authSession = getAuthSessionFromRequest(req);
+    const ownerId = getRequestOwnerId(req);
+    await recordGooglePlayVerifyAttempt({
+      phase: "received",
+      productType: "subscription",
+      ownerId,
+      userId: authSession?.userId,
+      email: authSession?.email,
+      productId: parsedRequest.productId,
+      packageName: parsedRequest.packageName,
+      basePlanId: parsedRequest.basePlanId,
+      purchaseTokenSuffix: parsedRequest.purchaseToken.slice(-8),
+      message: "Subscription verification request received."
+    });
+    const result = await verifyGooglePlaySubscriptionPurchase({
+      purchaseToken: parsedRequest.purchaseToken,
+      productId: parsedRequest.productId,
+      packageName: parsedRequest.packageName,
+      basePlanId: parsedRequest.basePlanId,
+      ownerId,
+      userId: authSession?.userId,
+      email: authSession?.email
+    });
+    await trackRevenueSignalSafely({
+      event: "pro_unlock_verified",
+      ownerId,
+      source: `google_play_subscription:${parsedRequest.basePlanId || "default"}`,
+      request: req
+    });
+    await recordGooglePlayVerifyAttempt({
+      phase: "verified",
+      productType: "subscription",
+      ownerId,
+      userId: authSession?.userId,
+      email: authSession?.email,
+      productId: result.productId,
+      packageName: result.packageName,
+      basePlanId: result.basePlanId || parsedRequest.basePlanId || "",
+      purchaseTokenSuffix: result.purchaseToken.slice(-8),
+      subscriptionState: result.subscriptionState,
+      purchaseState: result.purchaseState || "",
+      expiryAt: result.expiryAt || "",
+      acknowledged: result.acknowledged,
+      message: "Subscription verification succeeded."
+    });
+    res.json({
+      ok: true,
+      result
+    });
+  } catch (error) {
+    const authSession = getAuthSessionFromRequest(req);
+    const ownerId = getRequestOwnerId(req);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    await recordGooglePlayVerifyAttempt({
+      phase: "failed",
+      productType: "subscription",
+      ownerId,
+      userId: authSession?.userId,
+      email: authSession?.email,
+      productId: typeof body.productId === "string" ? body.productId : "",
+      packageName: typeof body.packageName === "string" ? body.packageName : "",
+      basePlanId: typeof body.basePlanId === "string" ? body.basePlanId : "",
+      purchaseTokenSuffix: typeof body.purchaseToken === "string" ? body.purchaseToken.slice(-8) : "",
+      message: error instanceof Error ? error.message : "Subscription verification failed."
+    });
+    next(error);
+  }
+});
+
+app.post("/api/billing/google-play/lifetime/verify", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = z
+      .object({
+        purchaseToken: z.string().trim().min(1),
+        productId: z.string().trim().optional(),
+        packageName: z.string().trim().optional()
+      })
+      .parse(req.body ?? {});
+    const authSession = getAuthSessionFromRequest(req);
+    const ownerId = getRequestOwnerId(req);
+    await recordGooglePlayVerifyAttempt({
+      phase: "received",
+      productType: "one_time",
+      ownerId,
+      userId: authSession?.userId,
+      email: authSession?.email,
+      productId: parsedRequest.productId,
+      packageName: parsedRequest.packageName,
+      purchaseTokenSuffix: parsedRequest.purchaseToken.slice(-8),
+      message: "Lifetime verification request received."
+    });
+    const result = await verifyGooglePlayOneTimeProductPurchase({
+      purchaseToken: parsedRequest.purchaseToken,
+      productId: parsedRequest.productId,
+      packageName: parsedRequest.packageName,
+      ownerId,
+      userId: authSession?.userId,
+      email: authSession?.email
+    });
+    await trackRevenueSignalSafely({
+      event: "lifetime_unlock_verified",
+      ownerId,
+      source: "google_play_lifetime",
+      request: req
+    });
+    await recordGooglePlayVerifyAttempt({
+      phase: "verified",
+      productType: "one_time",
+      ownerId,
+      userId: authSession?.userId,
+      email: authSession?.email,
+      productId: result.productId,
+      packageName: result.packageName,
+      purchaseTokenSuffix: result.purchaseToken.slice(-8),
+      subscriptionState: result.subscriptionState,
+      purchaseState: result.purchaseState || "",
+      expiryAt: result.expiryAt || "",
+      acknowledged: result.acknowledged,
+      message: "Lifetime verification succeeded."
+    });
+    res.json({
+      ok: true,
+      result
+    });
+  } catch (error) {
+    const authSession = getAuthSessionFromRequest(req);
+    const ownerId = getRequestOwnerId(req);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    await recordGooglePlayVerifyAttempt({
+      phase: "failed",
+      productType: "one_time",
+      ownerId,
+      userId: authSession?.userId,
+      email: authSession?.email,
+      productId: typeof body.productId === "string" ? body.productId : "",
+      packageName: typeof body.packageName === "string" ? body.packageName : "",
+      purchaseTokenSuffix: typeof body.purchaseToken === "string" ? body.purchaseToken.slice(-8) : "",
+      message: error instanceof Error ? error.message : "Lifetime verification failed."
+    });
+    next(error);
+  }
+});
+
 app.post("/api/invoices/:id/client-portal-link", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const invoiceId = z.string().uuid().parse(req.params.id);
@@ -275,6 +522,7 @@ app.post("/api/invoices/:id/client-portal-link", async (req: Request, res: Respo
       .default({})
       .parse(req.body ?? {});
     const ownerId = getRequestOwnerId(req);
+    await requireProWorkflowAccess(req, ownerId, "Upgrade to Pro to create client portal links.");
     const savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
     if (savedInvoice.status === "deleted") {
       throw new HttpStatusError(400, "Restore this invoice before creating a portal link.");
@@ -305,7 +553,10 @@ app.post("/api/invoices/:id/client-portal-link", async (req: Request, res: Respo
 });
 
 app.get("/api/auth/providers", async (_req: Request, res: Response) => {
-  const providers = getInvoiceAuthProviderCapabilities();
+  const providers = getInvoiceAuthProviderCapabilities({
+    googleClientId: process.env.GOOGLE_CLIENT_ID,
+    googleClientSecret: process.env.GOOGLE_CLIENT_SECRET
+  });
   res.json({ providers });
 });
 
@@ -358,6 +609,44 @@ app.post("/api/auth/session", async (req: Request, res: Response, next: NextFunc
     res.json({
       emailSent: true,
       expiresAt: requested.expiresAt
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/auth/google/native", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const googleProvider = getInvoiceAuthProviderCapabilities({
+      googleClientId: process.env.GOOGLE_CLIENT_ID,
+      googleClientSecret: process.env.GOOGLE_CLIENT_SECRET
+    }).find((candidate) => candidate.id === "google");
+    if (!googleProvider?.available) {
+      throw new HttpStatusError(503, googleProvider?.warning ?? "Google Sign-In isn't available right now.");
+    }
+    const parsed = z
+      .object({
+        idToken: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim() : value),
+          z.string().min(1)
+        )
+      })
+      .parse(req.body);
+
+    const completed = await completeGoogleNativeAuth({
+      idToken: parsed.idToken
+    });
+    const created = createAuthSessionForEmail(completed.identity.email);
+    await trackRevenueSignalSafely({
+      event: "account_signed_in",
+      ownerId: created.session.userId,
+      source: "auth_google_native",
+      request: req
+    });
+    res.json({
+      ok: true,
+      token: created.token,
+      session: created.session
     });
   } catch (error) {
     next(error);
@@ -459,7 +748,8 @@ app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
     await trackRevenueSignalSafely({
       event: "account_signed_in",
       ownerId: created.session.userId,
-      source: "auth_google"
+      source: "auth_google",
+      request: req
     });
     clearStateCookie();
     res.redirect(
@@ -495,7 +785,8 @@ app.post("/api/auth/session/verify", async (req: Request, res: Response, next: N
     await trackRevenueSignalSafely({
       event: "account_signed_in",
       ownerId: created.session.userId,
-      source: "auth_verify"
+      source: "auth_verify",
+      request: req
     });
     res.json(created);
   } catch (error) {
@@ -586,16 +877,28 @@ app.get("/api/system/persistence/migration", async (_req: Request, res: Response
 
 app.get("/api/system/billing", async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    const capabilities = getStripeBillingCapabilities();
+    const stripeCapabilities = getStripeBillingCapabilities();
+    const googlePlayDiagnostics = await getGooglePlayBillingDiagnostics();
+    const googlePlayVerifyDiagnostics = await getGooglePlayVerifyDiagnostics();
     const entitlements = await getBillingEntitlementsSummary();
     const requireLiveMode = resolveLaunchRequireLiveBilling(
       process.env.INVOICE_LAUNCH_REQUIRE_LIVE_BILLING,
       process.env.NODE_ENV
     );
-    const warning = resolveBillingSystemWarning(capabilities, entitlements, { requireLiveMode });
+    const stripeWarning = resolveBillingSystemWarning(stripeCapabilities, entitlements, { requireLiveMode });
+    const primaryProvider =
+      stripeCapabilities.provider !== "none"
+        ? stripeCapabilities.provider
+        : googlePlayDiagnostics.provider;
+    const warning = stripeWarning ?? (primaryProvider === "google_play" ? googlePlayDiagnostics.warning : null);
     res.json({
-      provider: capabilities.provider,
-      capabilities,
+      provider: primaryProvider,
+      capabilities: {
+        ...stripeCapabilities,
+        provider: primaryProvider,
+        googlePlay: googlePlayDiagnostics.capabilities
+      },
+      googlePlayVerifyDiagnostics,
       entitlements,
       warning,
       launchPolicy: {
@@ -631,6 +934,15 @@ app.get("/api/system/delivery", async (req: Request, res: Response, next: NextFu
       },
       warning
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/system/google-ads/campaign-status", async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const snapshot = await getGoogleAdsCampaignWatchSnapshot();
+    res.json(snapshot);
   } catch (error) {
     next(error);
   }
@@ -819,10 +1131,14 @@ app.post("/api/telemetry/revenue-signals", async (req: Request, res: Response, n
         source: z.string().trim().min(1).max(80).optional()
       })
       .parse(req.body ?? {});
+    if (parsedRequest.event === "pro_unlock_verified" || parsedRequest.event === "lifetime_unlock_verified") {
+      throw new HttpStatusError(403, "Verified billing events can only be recorded by the billing provider.");
+    }
     await trackRevenueSignalSafely({
       event: parsedRequest.event,
       ownerId: getRequestOwnerId(req),
-      source: parsedRequest.source ?? "client"
+      source: parsedRequest.source ?? "client",
+      request: req
     });
     res.json({ ok: true });
   } catch (error) {
@@ -851,7 +1167,8 @@ app.post(
         await trackRevenueSignalSafely({
           event: "invoice_generated",
           ownerId: getRequestOwnerId(req),
-          source: "from_input"
+          source: "from_input",
+          request: req
         });
       }
 
@@ -1117,6 +1434,16 @@ app.post("/api/invoices/reword-full", async (req: Request, res: Response, next: 
   }
 });
 
+app.post("/api/invoices/rewrite-follow-up-message", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = RewriteFollowUpMessageRequestSchema.parse(req.body);
+    const message = await rewriteFollowUpMessage(parsedRequest.message, parsedRequest.tone);
+    res.json({ message });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/invoices/export-pdf", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = InvoicePdfExportRequestSchema.parse(req.body);
@@ -1160,14 +1487,24 @@ app.post("/api/invoices/save", async (req: Request, res: Response, next: NextFun
       await trackRevenueSignalSafely({
         event: "invoice_saved",
         ownerId,
-        source: "invoice_save"
+        source: "invoice_save",
+        request: req
       });
       const savedInvoiceCount = (await savedInvoiceRepository.listSavedInvoiceMetadata(false, ownerId)).length;
+      if (savedInvoiceCount === 1) {
+        await trackRevenueSignalSafely({
+          event: "first_invoice_saved",
+          ownerId,
+          source: "invoice_save",
+          request: req
+        });
+      }
       if (savedInvoiceCount === 2) {
         await trackRevenueSignalSafely({
           event: "second_invoice_saved",
           ownerId,
-          source: "invoice_save"
+          source: "invoice_save",
+          request: req
         });
       }
     }
@@ -1275,6 +1612,7 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
       })
       .parse(req.body ?? {});
     const ownerId = getRequestOwnerId(req);
+    await requireProWorkflowAccess(req, ownerId, "Upgrade to Pro to send invoices from NoteBill.");
     const existingInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
     if (existingInvoice.status === "deleted") {
       throw new HttpStatusError(400, "Restore this invoice before sending.");
@@ -1310,8 +1648,37 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
     await trackRevenueSignalSafely({
       event: "invoice_sent",
       ownerId,
-      source: "invoice_send"
+      source: "invoice_send",
+      request: req
     });
+    if (existingInvoice.status === "draft") {
+      const invoices = await savedInvoiceRepository.listSavedInvoiceMetadata(false, ownerId);
+      const sentInvoiceCount = invoices.filter(
+        (saved) => saved?.status === "sent" || saved?.status === "paid"
+      ).length;
+      if (sentInvoiceCount === 1) {
+        await trackRevenueSignalSafely({
+          event: "first_invoice_sent",
+          ownerId,
+          source: "invoice_send",
+          request: req
+        });
+      }
+    }
+    const hadPaymentLinkBeforeSend = Boolean(existingInvoice.invoiceData?.finishedInvoice?.paymentLinkUrl?.trim());
+    const hasPaymentLinkAfterSend = Boolean(invoice.invoiceData?.finishedInvoice?.paymentLinkUrl?.trim());
+    if (!hadPaymentLinkBeforeSend && hasPaymentLinkAfterSend) {
+      const invoices = await savedInvoiceRepository.listSavedInvoiceMetadata(false, ownerId);
+      const invoicesWithPaymentLinks = invoices.filter((saved) => Boolean(saved?.paymentLinkUrl?.trim())).length;
+      if (invoicesWithPaymentLinks === 1) {
+        await trackRevenueSignalSafely({
+          event: "first_payment_link_added",
+          ownerId,
+          source: "invoice_send",
+          request: req
+        });
+      }
+    }
     res.json({
       invoice,
       delivery,
@@ -1334,12 +1701,13 @@ app.post("/api/invoices/:id/payment-link", async (req: Request, res: Response, n
       .default({})
       .parse(req.body ?? {});
     const ownerId = getRequestOwnerId(req);
+    await requireProWorkflowAccess(req, ownerId, "Upgrade to Pro to create hosted payment links.");
     const savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
     if (savedInvoice.status === "deleted") {
       throw new HttpStatusError(400, "Restore this invoice before creating a payment link.");
     }
     if (!getStripeBillingCapabilities().invoicePaymentAvailable) {
-      throw new HttpStatusError(400, "Stripe invoice payments are not configured yet.");
+      throw new HttpStatusError(400, "Invoice payments are not configured yet.");
     }
     const invoice = parsedRequest.refresh
       ? await createAndPersistSavedInvoicePaymentLink({
@@ -1355,8 +1723,23 @@ app.post("/api/invoices/:id/payment-link", async (req: Request, res: Response, n
     await trackRevenueSignalSafely({
       event: "payment_link_created",
       ownerId,
-      source: "payment_link"
+      source: "payment_link",
+      request: req
     });
+    const hadPaymentLinkBefore = Boolean(savedInvoice.invoiceData?.finishedInvoice?.paymentLinkUrl?.trim());
+    const hasPaymentLinkAfter = Boolean(invoice.invoiceData?.finishedInvoice?.paymentLinkUrl?.trim());
+    if (!hadPaymentLinkBefore && hasPaymentLinkAfter) {
+      const invoices = await savedInvoiceRepository.listSavedInvoiceMetadata(false, ownerId);
+      const invoicesWithPaymentLinks = invoices.filter((saved) => Boolean(saved?.paymentLinkUrl?.trim())).length;
+      if (invoicesWithPaymentLinks === 1) {
+        await trackRevenueSignalSafely({
+          event: "first_payment_link_added",
+          ownerId,
+          source: "payment_link",
+          request: req
+        });
+      }
+    }
     res.json({
       invoice,
       paymentLinkUrl: invoice.invoiceData.finishedInvoice.paymentLinkUrl ?? ""
@@ -1386,6 +1769,7 @@ app.post("/api/invoices/:id/send-reminder", async (req: Request, res: Response, 
   try {
     const invoiceId = z.string().uuid().parse(req.params.id);
     const ownerId = getRequestOwnerId(req);
+    await requireProWorkflowAccess(req, ownerId, "Upgrade to Pro to send invoice reminders.");
     const reminder = await sendInvoiceReminderById({
       ownerId,
       invoiceId,
@@ -1395,7 +1779,8 @@ app.post("/api/invoices/:id/send-reminder", async (req: Request, res: Response, 
     await trackRevenueSignalSafely({
       event: "reminder_sent",
       ownerId,
-      source: "send_reminder"
+      source: "send_reminder",
+      request: req
     });
     res.json({
       reminder: {
@@ -1414,6 +1799,199 @@ app.post("/api/invoices/:id/send-reminder", async (req: Request, res: Response, 
   }
 });
 
+app.post("/api/clients/statement/send", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = z
+      .object({
+        clientName: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim() : value),
+          z.string().min(1).max(160)
+        ),
+        recipientEmail: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+          z.string().email()
+        )
+      })
+      .parse(req.body ?? {});
+    const ownerId = getRequestOwnerId(req);
+    await requireProWorkflowAccess(req, ownerId, "Upgrade to Pro to send client statements.");
+    const statement = await buildClientStatementForOwner(ownerId, parsedRequest.clientName, parsedRequest.recipientEmail);
+    const sendResult = await sendClientStatementEmail({
+      recipientEmail: parsedRequest.recipientEmail,
+      clientName: statement.clientName,
+      preparedAt: statement.preparedAt,
+      openBalance: statement.openBalance,
+      currency: statement.currency,
+      invoices: statement.invoices.map((invoice) => ({
+        invoiceNumber: invoice.invoiceNumber,
+        dueDate: invoice.dueDate,
+        total: invoice.total,
+        balanceDue: invoice.balanceDue,
+        currency: statement.currency
+      }))
+    });
+    await recordClientStatementActivity({
+      ownerId,
+      clientName: statement.clientName,
+      action: "emailed_statement",
+      detail: `Statement emailed to ${parsedRequest.recipientEmail}`,
+      recipientEmail: parsedRequest.recipientEmail
+    });
+    res.json({
+      clientName: statement.clientName,
+      recipientEmail: parsedRequest.recipientEmail,
+      openInvoiceCount: statement.openInvoiceCount,
+      openBalance: statement.openBalance,
+      preparedAt: statement.preparedAt,
+      mode: sendResult.mode,
+      provider: sendResult.provider,
+      warning: sendResult.warning ?? null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/clients/statement/activity", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedQuery = z
+      .object({
+        clientName: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim() : value),
+          z.string().min(1).max(160)
+        ),
+        limit: z
+          .preprocess((value) => {
+            if (typeof value === "string" && value.trim()) {
+              const parsed = Number(value);
+              return Number.isFinite(parsed) ? parsed : value;
+            }
+            return value;
+          }, z.number().int().min(1).max(20))
+          .optional()
+      })
+      .parse(req.query ?? {});
+    const ownerId = getRequestOwnerId(req);
+    const activities = await listClientStatementActivity({
+      ownerId,
+      clientName: parsedQuery.clientName,
+      limit: parsedQuery.limit ?? 8
+    });
+    res.json({ activities });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/clients/statement/activity/recent", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedQuery = z
+      .object({
+        limit: z
+          .preprocess((value) => {
+            if (typeof value === "string" && value.trim()) {
+              const parsed = Number(value);
+              return Number.isFinite(parsed) ? parsed : value;
+            }
+            return value;
+          }, z.number().int().min(1).max(20))
+          .optional()
+      })
+      .parse(req.query ?? {});
+    const ownerId = getRequestOwnerId(req);
+    const activities = await listRecentClientStatementActivity({
+      ownerId,
+      limit: parsedQuery.limit ?? 8
+    });
+    res.json({ activities });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/clients/statement/activity", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = z
+      .object({
+        clientName: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim() : value),
+          z.string().min(1).max(160)
+        ),
+        action: z.enum([
+          "viewed_statement",
+          "copied_statement",
+          "copied_follow_up",
+          "emailed_statement",
+          "printed_statement",
+          "downloaded_pdf"
+        ]),
+        detail: z.preprocess((value) => (typeof value === "string" ? value.trim() : value), z.string().min(1).max(240)),
+        recipientEmail: z
+          .preprocess((value) => (typeof value === "string" ? value.trim().toLowerCase() : value), z.string().email())
+          .optional()
+      })
+      .parse(req.body ?? {});
+    const ownerId = getRequestOwnerId(req);
+    const activity = await recordClientStatementActivity({
+      ownerId,
+      clientName: parsedRequest.clientName,
+      action: parsedRequest.action,
+      detail: parsedRequest.detail,
+      recipientEmail: parsedRequest.recipientEmail
+    });
+    res.json({ activity });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/clients/statement/export-pdf", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = z
+      .object({
+        clientName: z.preprocess(
+          (value) => (typeof value === "string" ? value.trim() : value),
+          z.string().min(1).max(160)
+        ),
+        recipientEmail: z
+          .preprocess((value) => (typeof value === "string" ? value.trim().toLowerCase() : value), z.string().email())
+          .optional()
+      })
+      .parse(req.body ?? {});
+    const ownerId = getRequestOwnerId(req);
+    await requireProWorkflowAccess(req, ownerId, "Upgrade to Pro to export client statements.");
+    const statement = await buildClientStatementForOwner(ownerId, parsedRequest.clientName, parsedRequest.recipientEmail);
+    const pdfBuffer = await createClientStatementPdfBuffer({
+      clientName: statement.clientName,
+      recipientEmail: statement.recipientEmail,
+      preparedAt: statement.preparedAt,
+      openBalance: statement.openBalance,
+      currency: statement.currency,
+      invoices: statement.invoices.map((invoice) => ({
+        invoiceNumber: invoice.invoiceNumber,
+        dueDate: invoice.dueDate,
+        total: invoice.total,
+        balanceDue: invoice.balanceDue,
+        statusLabel: invoice.statusLabel
+      }))
+    });
+    const filename = buildClientStatementPdfFilename(statement.clientName);
+    await recordClientStatementActivity({
+      ownerId,
+      clientName: statement.clientName,
+      action: "downloaded_pdf",
+      detail: `Statement PDF downloaded${parsedRequest.recipientEmail ? ` for ${parsedRequest.recipientEmail}` : ""}`,
+      recipientEmail: parsedRequest.recipientEmail
+    });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Length", String(pdfBuffer.byteLength));
+    res.status(200).send(pdfBuffer);
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/invoices/reminders/run", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = z
@@ -1426,6 +2004,7 @@ app.post("/api/invoices/reminders/run", async (req: Request, res: Response, next
       .default({})
       .parse(req.body ?? {});
     const ownerId = getRequestOwnerId(req);
+    await requireProWorkflowAccess(req, ownerId, "Upgrade to Pro to run invoice reminders.");
     if (parsedRequest.dryRun) {
       const preview = await listDueInvoiceReminderCandidates({
         ownerId,
@@ -1476,6 +2055,7 @@ app.post("/api/invoices/:id/duplicate", async (req: Request, res: Response, next
   try {
     const invoiceId = z.string().uuid().parse(req.params.id);
     const ownerId = getRequestOwnerId(req);
+    await requireProWorkflowAccess(req, ownerId, "Upgrade to Pro to duplicate saved invoices.");
     const invoice = await savedInvoiceRepository.duplicateSavedInvoice(invoiceId, ownerId);
     res.json({ invoice });
   } catch (error) {
@@ -1573,14 +2153,121 @@ async function trackRevenueSignalSafely(input: {
   event: z.infer<typeof RevenueSignalNameSchema>;
   ownerId: string;
   source: string;
+  request?: Request;
 }): Promise<void> {
   try {
-    await trackRevenueSignal(input);
+    await trackRevenueSignal({
+      event: input.event,
+      ownerId: input.ownerId,
+      source: input.source,
+      attribution: input.request ? getRequestAttribution(input.request) : undefined
+    });
   } catch (error) {
     // Revenue telemetry should never block invoice work.
     // eslint-disable-next-line no-console
     console.error("Failed to track revenue signal", error);
   }
+}
+
+function getRequestAttribution(req: Request): z.infer<typeof RevenueAttributionSchema> | undefined {
+  const encoded = asOptionalString(req.headers["x-notebill-attribution"]);
+  if (!encoded || encoded.length > 2000) {
+    return undefined;
+  }
+  try {
+    const parsed = RevenueAttributionSchema.parse(JSON.parse(decodeURIComponent(encoded)));
+    return Object.values(parsed).some(Boolean) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function requireProWorkflowAccess(req: Request, ownerId: string, message: string): Promise<void> {
+  const planSummary = await getAccountPlanSummary({
+    ownerId,
+    authSession: getAuthSessionFromRequest(req),
+    repository: savedInvoiceRepository
+  });
+  if (planSummary.plan !== "pro") {
+    throw new HttpStatusError(402, message);
+  }
+}
+
+type ClientStatementData = {
+  clientName: string;
+  recipientEmail?: string;
+  preparedAt: string;
+  openBalance: number;
+  openInvoiceCount: number;
+  currency: string;
+  invoices: Array<{
+    invoiceNumber?: string;
+    dueDate?: string | null;
+    total?: number | null;
+    balanceDue?: number | null;
+    statusLabel: string;
+  }>;
+};
+
+async function buildClientStatementForOwner(
+  ownerId: string,
+  clientName: string,
+  recipientEmail?: string
+): Promise<ClientStatementData> {
+  const invoices = await savedInvoiceRepository.listSavedInvoiceMetadata(false, ownerId);
+  const matchingInvoices = invoices.filter(
+    (invoice) =>
+      invoice.status === "sent" &&
+      Number(invoice.balanceDue ?? 0) > 0 &&
+      isSamePortalCustomer(invoice.customerName, clientName)
+  );
+  if (!matchingInvoices.length) {
+    throw new HttpStatusError(400, "No open sent invoices were found for this client.");
+  }
+  const openBalance = matchingInvoices.reduce((sum, invoice) => {
+    const amount = Number(invoice.balanceDue ?? 0);
+    return sum + (Number.isFinite(amount) ? Math.max(amount, 0) : 0);
+  }, 0);
+  return {
+    clientName,
+    recipientEmail,
+    preparedAt: new Date().toISOString(),
+    openBalance,
+    openInvoiceCount: matchingInvoices.length,
+    currency: "USD",
+    invoices: matchingInvoices
+      .sort((left, right) => String(left.dueDate ?? "").localeCompare(String(right.dueDate ?? "")))
+      .slice(0, 24)
+      .map((invoice) => ({
+        invoiceNumber: invoice.invoiceNumber,
+        dueDate: invoice.dueDate,
+        total: invoice.total,
+        balanceDue: invoice.balanceDue,
+        statusLabel: buildClientStatementInvoiceStatusLabel(invoice)
+      }))
+  };
+}
+
+function buildClientStatementInvoiceStatusLabel(
+  invoice: {
+    status?: string | null;
+    delivery?: { status?: string | null } | null;
+    total?: number | null;
+    balanceDue?: number | null;
+  }
+): string {
+  const labels: string[] = [];
+  if (invoice.delivery?.status === "opened") {
+    labels.push("Opened");
+  } else if (invoice.status === "sent") {
+    labels.push("Sent");
+  }
+  const total = Number(invoice.total ?? 0);
+  const balance = Number(invoice.balanceDue ?? total);
+  if (Number.isFinite(total) && Number.isFinite(balance) && total > balance && balance > 0) {
+    labels.push("Partial payment");
+  }
+  return labels.join(" · ") || "Open";
 }
 
 function asOptionalString(value: unknown): string | undefined {
@@ -1676,6 +2363,55 @@ function resolveDeliverySystemWarning(
   return null;
 }
 
+function buildAndroidAppLinksStatements(): Array<{
+  relation: string[];
+  target: {
+    namespace: string;
+    package_name: string;
+    sha256_cert_fingerprints: string[];
+  };
+}> {
+  const packageName =
+    asOptionalString(process.env.ANDROID_APP_LINKS_PACKAGE_NAME ?? process.env.ANDROID_PACKAGE_NAME)?.trim() ||
+    ANDROID_APP_LINKS_DEFAULT_PACKAGE_NAME;
+  const fingerprints = readAndroidAppLinksFingerprints();
+  if (!packageName || !fingerprints.length) {
+    return [];
+  }
+  return [
+    {
+      relation: [
+        "delegate_permission/common.handle_all_urls",
+        "delegate_permission/common.get_login_creds"
+      ],
+      target: {
+        namespace: "android_app",
+        package_name: packageName,
+        sha256_cert_fingerprints: fingerprints
+      }
+    }
+  ];
+}
+
+function readAndroidAppLinksFingerprints(): string[] {
+  const rawValues = [
+    process.env.ANDROID_APP_LINKS_SHA256_CERT_FINGERPRINTS,
+    process.env.ANDROID_APP_LINKS_SHA256_CERT_FINGERPRINT,
+    process.env.GOOGLE_PLAY_APP_SIGNING_SHA256_CERT_FINGERPRINTS,
+    process.env.GOOGLE_PLAY_APP_SIGNING_SHA256_CERT_FINGERPRINT
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .flatMap((value) => value.split(","));
+  const fingerprints = rawValues
+    .map((value) => value.trim().toUpperCase())
+    .filter(Boolean)
+    .map((value) => value.replace(/[^A-F0-9]/g, ""))
+    .filter(Boolean)
+    .map((value) => value.match(/.{2}/g)?.join(":") ?? value)
+    .filter(Boolean);
+  return Array.from(new Set(fingerprints));
+}
+
 function toPublicPortalInvoice(invoice: SavedInvoice) {
   const finishedInvoice = invoice.invoiceData.finishedInvoice;
   const structuredInvoice = invoice.invoiceData.structuredInvoice;
@@ -1699,6 +2435,7 @@ function toPublicPortalInvoice(invoice: SavedInvoice) {
         total: finishedInvoice.total,
         balanceDue: finishedInvoice.balanceDue,
         paymentLinkUrl: finishedInvoice.paymentLinkUrl,
+        paymentMethods: finishedInvoice.paymentMethods,
         notes: finishedInvoice.notes
       }
     }
@@ -1728,6 +2465,11 @@ function normalizePortalCustomerName(value: string | undefined): string {
 function asOptionalParseMode(value: unknown): "fast" | "full" | undefined {
   return value === "fast" || value === "full" ? value : undefined;
 }
+
+const RewriteFollowUpMessageRequestSchema = z.object({
+  message: z.string().trim().min(1).max(4000),
+  tone: z.string().trim().max(120).optional()
+});
 
 function getRequestOwnerId(req: Request): string {
   const authSession = getAuthSessionFromRequest(req);

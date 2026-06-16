@@ -61,7 +61,17 @@
     if (remaining === null || remaining > 1) {
       return "";
     }
-    return "Pro keeps sends, reminders, hosted payment links, and saved client memory in one place.";
+    return "Pro keeps sends, reminders, hosted payment links, saved client memory, and follow-up in one place.";
+  };
+
+  const getPlanFeatureHighlights = (plan) => {
+    if (!plan || typeof plan !== "object") {
+      return [];
+    }
+    if (plan.plan === "pro") {
+      return ["Unlimited saves", "Send + reminders", "Payment links", "Client memory"];
+    }
+    return ["Draft + export", "Limited monthly saves", "Guest mode available"];
   };
 
   const getPlanUsageModel = (plan) => {
@@ -113,12 +123,77 @@
     };
   };
 
+  const getBillingStatusModel = (plan) => {
+    if (!plan || typeof plan !== "object") {
+      return {
+        tierLabel: "Checking",
+        sourceLabel: "Loading billing status",
+        headline: "Checking your billing status...",
+        detail: "NoteBill is confirming the current plan and available billing controls.",
+        tone: "neutral"
+      };
+    }
+    const isPro = plan.plan === "pro";
+    const googlePlay = plan?.billing?.googlePlay ?? {};
+    const hasGooglePlay = Boolean(googlePlay?.verificationAvailable);
+    const googlePlayEntitlements = googlePlay?.entitlements ?? {};
+    const hasGooglePlayHistory =
+      Number.isFinite(googlePlayEntitlements?.subscriptionCount) &&
+      Number(googlePlayEntitlements.subscriptionCount) > 0;
+    const hasActiveGooglePlayEntitlement =
+      Number.isFinite(googlePlayEntitlements?.activeSubscriptionCount) &&
+      Number(googlePlayEntitlements.activeSubscriptionCount) > 0;
+    const googlePlayNeedsRestore =
+      !isPro &&
+      hasGooglePlay &&
+      hasGooglePlayHistory &&
+      !hasActiveGooglePlayEntitlement;
+    const hasStripe =
+      plan?.billing?.provider === "stripe" &&
+      Boolean(plan?.billing?.checkoutAvailable || plan?.billing?.portalAvailable);
+    const sourceLabel = hasGooglePlay
+      ? "Google Play ready"
+      : hasStripe
+        ? "Stripe ready"
+        : "Billing setup pending";
+    if (isPro) {
+      return {
+        tierLabel: "Pro active",
+        sourceLabel,
+        headline: "Pro is active on this account.",
+        detail:
+          "Sends, reminders, hosted payment links, client portals, duplicate invoices, and unlimited saves are unlocked.",
+        tone: "success"
+      };
+    }
+    if (googlePlayNeedsRestore) {
+      return {
+        tierLabel: "Restore recommended",
+        sourceLabel: "Google Play history found",
+        headline: "Google Play purchase history exists, but Pro is not active yet.",
+        detail:
+          "Open the installed NoteBill app and tap Restore purchases. If Google Play still says you already have this plan, that Play account is probably stuck on an older test/extension state.",
+        tone: "warning"
+      };
+    }
+    return {
+      tierLabel: "Free plan",
+      sourceLabel,
+      headline: "Free mode is safe for drafting and exporting.",
+      detail:
+        "Upgrade when you need send workflow, reminders, hosted payment links, client portals, repeat-work shortcuts, or more saved invoices. Monthly is the simple ongoing option. Lifetime is the one-and-done option for people who know they will keep using it.",
+      tone: plan.upgradeRequired ? "warning" : "neutral"
+    };
+  };
+
   window.InvoiceAccountPlanUtils = {
     formatPlanSummary,
     getPlanUpgradeUrl,
     getPlanBillingPortalUrl,
     getPlanPrelimitWarning,
     getPlanValuePitch,
-    getPlanUsageModel
+    getPlanFeatureHighlights,
+    getPlanUsageModel,
+    getBillingStatusModel
   };
 })();

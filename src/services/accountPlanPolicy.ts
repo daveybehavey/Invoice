@@ -1,6 +1,7 @@
 import type { InvoiceAuthSession } from "./authSession.js";
 import type { SavedInvoiceRepository } from "./savedInvoiceRepository.js";
 import { hasActiveStripeEntitlement } from "./billingEntitlementsStore.js";
+import { hasActiveGooglePlayEntitlement } from "./googlePlayEntitlementsStore.js";
 
 export type AccountPlanTier = "free" | "pro";
 
@@ -120,12 +121,19 @@ async function resolveAccountPlanTier(
   if (ownerId && proOwnerIds.has(ownerId.trim())) {
     return "pro";
   }
-  const hasBillingEntitlement = await hasActiveStripeEntitlement({
-    ownerId,
-    userId: authSession?.userId,
-    email: authSession?.email
-  });
-  if (hasBillingEntitlement) {
+  const [hasBillingEntitlement, hasGooglePlayEntitlement] = await Promise.all([
+    hasActiveStripeEntitlement({
+      ownerId,
+      userId: authSession?.userId,
+      email: authSession?.email
+    }),
+    hasActiveGooglePlayEntitlement({
+      ownerId,
+      userId: authSession?.userId,
+      email: authSession?.email
+    })
+  ]);
+  if (hasBillingEntitlement || hasGooglePlayEntitlement) {
     return "pro";
   }
   return "free";

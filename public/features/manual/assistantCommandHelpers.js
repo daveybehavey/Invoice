@@ -28,7 +28,9 @@
 
     const stylePresets = options.stylePresets ?? {};
     const spacingDensityPresets = options.spacingDensityPresets ?? {};
-    const hasStyleContext = /\b(template|style|layout|look|accent|color)\b/.test(normalized);
+    const hasStyleContext =
+      /\b(template|style|layout|look|accent|color|design|branding|brand|invoice feel|presentation)\b/.test(normalized) ||
+      /\b(premium|luxury|elegant|modern|professional|clean|minimal|simple|bold|dramatic|editorial|polished|branded)\b/.test(normalized);
     const hasLogoInstruction = /\blogo\b/.test(normalized);
     const styleAccents = Array.isArray(options.styleAccents) ? options.styleAccents : [];
     const result = {
@@ -54,6 +56,15 @@
       } else if (/\b(bold|spacious)\b/.test(normalized)) {
         result.stylePreset = "spacious";
         result.styleLabel = stylePresets.spacious?.label ?? "Spacious";
+      } else if (/\b(premium|luxury|elegant|editorial|dramatic)\b/.test(normalized)) {
+        result.stylePreset = "spacious";
+        result.styleLabel = stylePresets.spacious?.label ?? "Spacious";
+      } else if (/\b(modern|minimal|clean|simple|quiet|restrained)\b/.test(normalized)) {
+        result.stylePreset = "compact";
+        result.styleLabel = stylePresets.compact?.label ?? "Compact";
+      } else if (/\b(professional|polished|timeless|traditional|trustworthy)\b/.test(normalized)) {
+        result.stylePreset = "default";
+        result.styleLabel = stylePresets.default?.label ?? "Classic";
       }
     }
 
@@ -65,16 +76,22 @@
       result.accentLabel = matchedAccent.label;
     }
 
-    if (/\bheader\b/.test(normalized) && /\b(center|centered|stacked)\b/.test(normalized)) {
+    if (
+      (/\bheader\b/.test(normalized) && /\b(center|centered|stacked)\b/.test(normalized)) ||
+      /\b(centered|editorial|formal masthead)\b/.test(normalized)
+    ) {
       result.headerLayout = "centered";
       result.headerLabel = "Centered";
-    } else if (/\bheader\b/.test(normalized) && /\bsplit\b/.test(normalized)) {
+    } else if (
+      (/\bheader\b/.test(normalized) && /\bsplit\b/.test(normalized)) ||
+      /\b(traditional layout|classic layout|left-right)\b/.test(normalized)
+    ) {
       result.headerLayout = "split";
       result.headerLabel = "Split";
     }
 
     const hasSpacingInstruction =
-      /\b(spacing|density|padding)\b/.test(normalized) || /breathing room/.test(normalized);
+      /\b(spacing|density|padding|room|rhythm)\b/.test(normalized) || /breathing room/.test(normalized);
     if (hasSpacingInstruction && /\b(tight|tighter|dense|denser)\b/.test(normalized)) {
       result.spacingDensity = "tight";
       result.spacingLabel = spacingDensityPresets.tight?.label ?? "Tight";
@@ -85,6 +102,15 @@
       result.spacingDensity = "airy";
       result.spacingLabel = spacingDensityPresets.airy?.label ?? "Airy";
     } else if (hasSpacingInstruction && /\b(standard|balanced|normal)\b/.test(normalized)) {
+      result.spacingDensity = "balanced";
+      result.spacingLabel = spacingDensityPresets.balanced?.label ?? "Balanced";
+    } else if (/\b(premium|luxury|elegant|airy|breathing room)\b/.test(normalized)) {
+      result.spacingDensity = "airy";
+      result.spacingLabel = spacingDensityPresets.airy?.label ?? "Airy";
+    } else if (/\b(compact|minimal|tight|dense|efficient)\b/.test(normalized)) {
+      result.spacingDensity = "tight";
+      result.spacingLabel = spacingDensityPresets.tight?.label ?? "Tight";
+    } else if (/\b(professional|balanced|standard|steady)\b/.test(normalized)) {
       result.spacingDensity = "balanced";
       result.spacingLabel = spacingDensityPresets.balanced?.label ?? "Balanced";
     }

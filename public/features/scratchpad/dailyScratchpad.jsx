@@ -2,6 +2,7 @@
   const { useNavigate } = ReactRouterDOM;
   const { useEffect, useMemo, useRef, useState } = React;
   const requestIdentity = window.InvoiceRequestIdentity;
+  const revenueAnalytics = window.InvoiceRevenueAnalytics;
   if (!requestIdentity) {
     throw new Error(
       "Missing /utils/requestIdentity.js load. Ensure it is loaded before /features/scratchpad/dailyScratchpad.jsx."
@@ -90,14 +91,7 @@
   };
 
   const trackRevenueSignal = (event, source) => {
-    void requestIdentity.apiFetch("/api/telemetry/revenue-signals", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        event,
-        source
-      })
-    }).catch(() => {});
+    revenueAnalytics?.trackRevenueSignal?.(event, source);
   };
 
   const buildDraftFromNote = (noteText) => ({
@@ -143,6 +137,7 @@
     const scratchpadStorageKey =
       requestIdentity.getScopedStorageKey?.("invoiceScratchpad") ?? "invoiceScratchpad";
     const voiceUploadInputRef = useRef(null);
+    const noteInputRef = useRef(null);
     const [noteText, setNoteText] = useState("");
     const [noteSourceLabel, setNoteSourceLabel] = useState("");
     const [tagText, setTagText] = useState("");
@@ -551,18 +546,32 @@
       flashStatus("Cleared scratchpad.");
     };
 
+    const focusNoteComposer = () => {
+      noteInputRef.current?.focus();
+    };
+
+    const loadSampleScratchpadNote = () => {
+      setNoteText(
+        "Client: Maple Street Dental\nPulled signage vinyl, patched wall anchors, and reinstalled lobby panel.\n2.5 hours on site.\nUsed replacement fasteners and adhesive strips.\nNeed to confirm parking reimbursement."
+      );
+      setTagText("maple street dental, signage, labor");
+      setNoteSourceLabel("sample note");
+      flashStatus("Loaded a sample note. Tweak it, then save when it feels like yours.");
+      window.setTimeout(() => noteInputRef.current?.focus(), 0);
+    };
+
     return (
-      <div className="nb-page min-h-screen bg-gradient-to-b from-[#f8fbff] to-[#edf3fb] text-slate-900">
-        <main className="nb-page-shell nb-page-shell--medium max-w-4xl py-8 md:py-12">
+      <div className="nb-page nb-page--quiet min-h-screen text-slate-900">
+        <main className="nb-page-shell nb-page-shell--medium max-w-5xl py-8 md:py-12">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#6993d2]">
+              <p className="nb-kicker">
                 Daily scratchpad
               </p>
-              <h1 className="mt-2 text-3xl text-slate-900 md:text-5xl" style={{ fontFamily: "'Fraunces', serif" }}>
+              <h1 className="nb-title mt-2 text-3xl md:text-5xl">
                 Capture work fast. Invoice later.
               </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 md:text-base">
+              <p className="nb-copy mt-2 max-w-2xl">
                 Keep a running note during the day, then turn any note into a draft invoice when you&apos;re ready.
               </p>
             </div>
@@ -576,12 +585,27 @@
           </div>
 
           <section className="nb-surface nb-surface--elevated mt-6 rounded-[32px] p-4 md:p-6">
+            <div className="mb-4 grid gap-3 md:grid-cols-3">
+              <div className="nb-stage-card">
+                <p className="nb-stage-card__label">Capture quickly</p>
+                <p className="nb-stage-card__value">Dump notes, voice memos, and rough tags without slowing down.</p>
+              </div>
+              <div className="nb-stage-card">
+                <p className="nb-stage-card__label">Group the work</p>
+                <p className="nb-stage-card__value">Use sessions and tags to keep repeat jobs easy to find later.</p>
+              </div>
+              <div className="nb-stage-card">
+                <p className="nb-stage-card__label">Choose the handoff</p>
+                <p className="nb-stage-card__value">Jump straight into the editor or let Billie structure the draft first.</p>
+              </div>
+            </div>
             <div className="grid gap-4 md:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)]">
               <div className="space-y-3">
                 <label className="block text-sm font-semibold text-slate-700" htmlFor="scratchpad-note">
                   New note
                 </label>
                 <textarea
+                  ref={noteInputRef}
                   id="scratchpad-note"
                   rows={7}
                   className="nb-input min-h-[180px] w-full rounded-[24px] px-4 py-3 text-base leading-6"
@@ -599,7 +623,7 @@
                   value={tagText}
                   onChange={(event) => setTagText(event.target.value)}
                 />
-                <div className="flex flex-wrap gap-2">
+                <div className="nb-mobile-actions">
                   <button
                     type="button"
                     className="nb-btn-primary rounded-full px-4 py-2"
@@ -651,7 +675,7 @@
                   Voice memos can be uploaded or recorded here, then transcribed into editable scratchpad text.
                 </p>
                 {noteSourceLabel ? (
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
                     {noteSourceLabel} ready to save
                   </p>
                 ) : null}
@@ -659,8 +683,8 @@
                 {voiceNoteError ? <p className="text-sm text-rose-600">{voiceNoteError}</p> : null}
               </div>
 
-              <div className="rounded-[26px] border border-[#6993d2]/18 bg-white/80 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Today</p>
+              <div className="nb-highlight-panel rounded-[26px] p-4">
+                <p className="nb-kicker">Today</p>
                 <p className="mt-2 text-2xl font-semibold text-slate-900">{noteCountLabel}</p>
                 <p className="mt-1 text-sm leading-6 text-slate-600">
                   These notes stay on this device and can be moved into an invoice later.
@@ -673,8 +697,8 @@
                         type="button"
                         className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
                           activeTagFilter.toLowerCase() === tag.toLowerCase()
-                            ? "bg-[#093064] text-white"
-                            : "bg-[#edf3fb] text-[#093064]"
+                            ? "bg-[#17493c] text-white"
+                            : "bg-white text-[#17493c]"
                         }`}
                         onClick={() => handleToggleFilter(tag)}
                       >
@@ -684,19 +708,19 @@
                   </div>
                 ) : null}
                 {selectedVisibleNotes.length > 0 ? (
-                  <div className="mt-4 rounded-[22px] border border-[#6993d2]/18 bg-[#f6f9ff] p-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                  <div className="mt-4 rounded-[22px] border border-[#d5e5de] bg-white/85 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
                       Selected notes
                     </p>
                     <p className="mt-2 text-sm font-semibold text-slate-900">{multiNoteSelectionLabel}</p>
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="nb-mobile-actions mt-3">
                       <button
                         type="button"
                         className="nb-btn-primary rounded-full px-3 py-1.5 text-sm disabled:opacity-60"
                         onClick={handleUseSelectedNotes}
                         disabled={busyId === "selected-notes"}
                       >
-                        {busyId === "selected-notes" ? "Opening..." : "Use selected in invoice"}
+                        {busyId === "selected-notes" ? "Opening..." : "Open selected in editor"}
                       </button>
                       <button
                         type="button"
@@ -723,7 +747,7 @@
                     onClick={() => handleUseNote(latestNote)}
                     disabled={busyId === latestNote.id}
                   >
-                    {busyId === latestNote.id ? "Opening..." : "Use latest note"}
+                    {busyId === latestNote.id ? "Opening..." : "Open latest in editor"}
                   </button>
                 ) : null}
               </div>
@@ -733,10 +757,10 @@
           <section className="nb-surface mt-5 rounded-[30px] p-4 md:p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6993d2]">Running notes</p>
+                <p className="nb-kicker">Running notes</p>
                 <p className="mt-1 text-sm text-slate-600">Tap any note to turn it into a draft invoice.</p>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="nb-mobile-actions">
                 <button
                   type="button"
                   className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
@@ -759,17 +783,17 @@
             {visibleNotes.length > 0 ? (
               <div className="mt-4 space-y-3">
                 {groupedVisibleNotes.map((group) => (
-                  <section key={group.label} className="rounded-[28px] border border-slate-200 bg-white/80 p-3 md:p-4">
+                  <section key={group.label} className="rounded-[28px] border border-slate-200 bg-white/84 p-3 shadow-sm md:p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
                           {group.label}
                         </p>
                         <p className="mt-1 text-sm text-slate-600">
                           {group.notes.length} note{group.notes.length === 1 ? "" : "s"} in this session
                         </p>
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="nb-mobile-actions">
                         <button
                           type="button"
                           className="nb-btn-secondary rounded-full px-3 py-1.5 text-sm"
@@ -793,7 +817,7 @@
                           onClick={() => handleUseSessionNotes(group.notes)}
                           disabled={busyId === "selected-notes"}
                         >
-                          {busyId === "selected-notes" ? "Opening..." : "Use session in invoice"}
+                          {busyId === "selected-notes" ? "Opening..." : "Open session in editor"}
                         </button>
                         <button
                           type="button"
@@ -811,7 +835,7 @@
                           key={note.id}
                           className={`rounded-[24px] border p-4 shadow-sm transition ${
                             selectedNoteIds.includes(note.id)
-                              ? "border-[#6993d2]/35 bg-[#f6f9ff]"
+                              ? "border-[#d5e5de] bg-[#f7faf7]"
                               : "border-slate-200 bg-slate-50/90"
                           }`}
                         >
@@ -820,7 +844,7 @@
                               <div className="flex flex-wrap items-center gap-2">
                                 <input
                                   type="checkbox"
-                                  className="h-4 w-4 rounded border-slate-300 text-[#093064]"
+                                  className="h-4 w-4 rounded border-slate-300 text-[#17493c]"
                                   checked={selectedNoteIds.includes(note.id)}
                                   onChange={() => toggleNoteSelection(note.id)}
                                 />
@@ -830,7 +854,7 @@
                               </div>
                               <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-800">{note.text}</p>
                               {note.sourceLabel ? (
-                                <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                                <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
                                   {note.sourceLabel}
                                 </p>
                               ) : null}
@@ -840,7 +864,7 @@
                                     <button
                                       key={`${note.id}:${tag}`}
                                       type="button"
-                                      className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-[#093064] ring-1 ring-[#093064]/10"
+                                      className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-[#17493c] ring-1 ring-[#17493c]/10"
                                       onClick={() => handleToggleFilter(tag)}
                                     >
                                       #{tag}
@@ -849,14 +873,14 @@
                                 </div>
                               ) : null}
                             </div>
-                            <div className="flex flex-wrap gap-2">
+                            <div className="nb-mobile-actions">
                               <button
                                 type="button"
                                 className="nb-btn-primary rounded-full px-3 py-1.5 text-sm disabled:opacity-60"
                                 onClick={() => handleUseNote(note)}
                                 disabled={busyId === note.id}
                               >
-                                {busyId === note.id ? "Opening..." : "Use in invoice"}
+                                {busyId === note.id ? "Opening..." : "Open in editor"}
                               </button>
                               <button
                                 type="button"
@@ -890,9 +914,40 @@
               </div>
             ) : (
               <div className="mt-4 rounded-[24px] border border-dashed border-slate-300 bg-white/70 p-6 text-sm text-slate-600">
-                {activeTagFilter
-                  ? `No notes tagged #${activeTagFilter} yet. Clear the filter or add a note with that tag.`
-                  : "No notes yet. Save a quick thought and it will show up here."}
+                <p className="text-sm font-semibold text-slate-900">
+                  {activeTagFilter ? `Nothing tagged #${activeTagFilter} yet` : "No scratchpad notes yet"}
+                </p>
+                <p className="mt-2 leading-6">
+                  {activeTagFilter
+                    ? `Clear the filter or add a note with #${activeTagFilter} so this lane starts filling in.`
+                    : "Use this as a parking lot for rough job details, then turn the best note into an invoice or Billie draft later."}
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="nb-btn-primary rounded-full px-4 py-2 text-sm"
+                    onClick={focusNoteComposer}
+                  >
+                    Capture first note
+                  </button>
+                  {!activeTagFilter ? (
+                    <button
+                      type="button"
+                      className="nb-btn-secondary rounded-full px-4 py-2 text-sm"
+                      onClick={loadSampleScratchpadNote}
+                    >
+                      Load sample note
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="nb-btn-secondary rounded-full px-4 py-2 text-sm"
+                      onClick={() => setActiveTagFilter("")}
+                    >
+                      Clear tag filter
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </section>

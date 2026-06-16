@@ -55,6 +55,48 @@
     return trimmed.length > 0 ? trimmed : null;
   };
 
+  const PAYMENT_METHOD_KIND_LABELS = {
+    cheque: "Cheque",
+    etransfer: "E-transfer",
+    bank_transfer: "Bank transfer",
+    cash: "Cash",
+    custom: "Custom"
+  };
+
+  const normalizePaymentMethodKind = (value) => {
+    const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+    return PAYMENT_METHOD_KIND_LABELS[normalized] ? normalized : "custom";
+  };
+
+  const normalizePaymentMethod = (value, index = 0) => {
+    const entry = value && typeof value === "object" ? value : {};
+    const kind = normalizePaymentMethodKind(entry.kind);
+    const label = normalizeText(entry.label).replace(/\n+/g, " ").trim();
+    const instructionsSource =
+      typeof entry.details === "string"
+        ? entry.details
+        : typeof entry.instructions === "string"
+          ? entry.instructions
+          : "";
+    const details = normalizeText(instructionsSource);
+    const enabled = entry.enabled !== false;
+    if (!label && !details) {
+      return null;
+    }
+    return {
+      id: typeof entry.id === "string" && entry.id.trim() ? entry.id.trim() : `payment-method-${index + 1}`,
+      kind,
+      label: label || PAYMENT_METHOD_KIND_LABELS[kind] || "Payment method",
+      details,
+      enabled
+    };
+  };
+
+  const normalizePaymentMethods = (value) =>
+    (Array.isArray(value) ? value : [])
+      .map((entry, index) => normalizePaymentMethod(entry, index))
+      .filter(Boolean);
+
   const normalizeBusinessRegistration = (value, index = 0) => {
     const entry = value && typeof value === "object" ? value : {};
     const label = normalizeText(entry.label).replace(/\n+/g, " ").trim();
@@ -92,6 +134,7 @@
       stylePreset: normalizeStylePreset(profile.stylePreset),
       logoUrl: normalizeLogoUrl(profile.logoUrl),
       businessRegistrations: normalizeBusinessRegistrations(profile.businessRegistrations),
+      paymentMethods: normalizePaymentMethods(profile.paymentMethods),
       registrationBlockVisible: profile.registrationBlockVisible !== false
     };
   };
@@ -188,6 +231,13 @@
       nextDraft.businessRegistrations = profile.businessRegistrations;
     } else {
       nextDraft.businessRegistrations = draftRegistrations;
+    }
+
+    const draftPaymentMethods = normalizePaymentMethods(nextDraft.paymentMethods);
+    if (draftPaymentMethods.length === 0 && profile.paymentMethods.length > 0) {
+      nextDraft.paymentMethods = profile.paymentMethods;
+    } else {
+      nextDraft.paymentMethods = draftPaymentMethods;
     }
 
     if (typeof nextDraft.registrationBlockVisible !== "boolean") {

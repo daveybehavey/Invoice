@@ -1,4 +1,4 @@
-(() => {
+﻿(() => {
   const { useEffect, useRef, useState } = React;
   const requestIdentity = window.InvoiceRequestIdentity;
   const apiFetch = requestIdentity?.apiFetch ?? window.fetch.bind(window);
@@ -30,6 +30,24 @@
       "Missing /utils/accountPlan.js load. Ensure it is loaded before /features/manual/inspectorPanel.jsx."
     );
   }
+  const paymentMethodsUtils = window.InvoicePaymentMethods;
+  if (!paymentMethodsUtils) {
+    throw new Error(
+      "Missing /utils/paymentMethods.js load. Ensure it is loaded before /features/manual/inspectorPanel.jsx."
+    );
+  }
+  const paymentProgressUtils = window.InvoicePaymentProgressUtils;
+  if (!paymentProgressUtils) {
+    throw new Error(
+      "Missing /utils/paymentProgress.js load. Ensure it is loaded before /features/manual/inspectorPanel.jsx."
+    );
+  }
+  const estimateWorkflowUtils = window.InvoiceEstimateWorkflowUtils;
+  if (!estimateWorkflowUtils) {
+    throw new Error(
+      "Missing /utils/estimateWorkflow.js load. Ensure it is loaded before /features/manual/inspectorPanel.jsx."
+    );
+  }
   const billingActions = window.InvoiceBillingActions;
   if (!billingActions) {
     throw new Error(
@@ -45,7 +63,11 @@
     getPlanPrelimitWarning,
     getPlanUsageModel
   } = accountPlanUtils;
-  const { hasStripeCheckout, hasStripePortal, startUpgradeCheckout, openBillingPortal } = billingActions;
+  const { getPaymentMethodDisplayData } = paymentMethodsUtils;
+  const { buildPaymentProgressSummary } = paymentProgressUtils;
+  const { buildEstimateWorkflowSummary } = estimateWorkflowUtils;
+  const { hasStripeCheckout, hasStripePortal, getGooglePlaySubscriptionPlans, startUpgradeCheckout, openBillingPortal, getBillingEnvironment } =
+    billingActions;
   const { DEFAULT_ACCENT_COLOR, buildAccentPalette } = brandThemeUtils;
   const {
     STYLE_PRESETS,
@@ -56,9 +78,13 @@
   } = styleCatalogUtils;
 
   const BILLIE_STYLE_ACCENTS = [
-    { label: "Navy", value: "#093064", matches: [/navy/, /dark blue/, /deep blue/] },
-    { label: "Blue", value: "#6993D2", matches: [/\bblue\b/, /accent blue/, /clean blue/] },
-    { label: "Light blue", value: "#ACCCF0", matches: [/light blue/, /sky blue/, /pale blue/] }
+    { label: "Navy", value: "#093064", matches: [/\bnavy\b/, /dark blue/, /deep blue/] },
+    { label: "Forest", value: "#14532d", matches: [/\bforest\b/, /\bgreen\b/, /\bemerald\b/] },
+    { label: "Sage", value: "#5a9c69", matches: [/\bsage\b/, /muted green/, /soft green/] },
+    { label: "Mint", value: "#d7f1dd", matches: [/\bmint\b/, /light green/, /pale green/] },
+    { label: "Teal", value: "#0f766e", matches: [/\bteal\b/, /blue green/, /ocean/] },
+    { label: "Rose", value: "#be123c", matches: [/\brose\b/, /burgundy/, /\bred\b/] },
+    { label: "Charcoal", value: "#111827", matches: [/\bcharcoal\b/, /\bblack\b/, /slate/] }
   ];
   const HEADER_LAYOUT_OPTIONS = [
     { id: "split", label: "Split" },
@@ -72,7 +98,7 @@
       stylePreset: "default",
       headerLayout: "split",
       spacingDensity: "balanced",
-      accentColor: "#093064"
+      accentColor: "#14532d"
     },
     {
       id: "field-estimate",
@@ -90,7 +116,7 @@
       stylePreset: "spacious",
       headerLayout: "centered",
       spacingDensity: "airy",
-      accentColor: "#6993D2"
+      accentColor: "#5a9c69"
     }
   ];
 
@@ -204,6 +230,10 @@ function InspectorPanel({
   statusUpdateLoading,
   statusUpdateError,
   onUpdateSavedInvoiceStatus,
+  savedEstimateReviewState,
+  estimateReviewUpdateLoading,
+  estimateReviewUpdateError,
+  onUpdateSavedEstimateReviewState,
   previewData,
   toneSource,
   onPolishDescriptions,
@@ -246,6 +276,16 @@ function InspectorPanel({
   const assistantRequestIdRef = useRef(0);
   const handledAssistantCommandRef = useRef("");
   const assistantQuickActions = [
+    {
+      id: "premium-look",
+      label: "Premium look",
+      instruction: "Make this invoice feel premium with a centered header, airy spacing, and a navy accent."
+    },
+    {
+      id: "clean-minimal-look",
+      label: "Clean minimal look",
+      instruction: "Use a clean minimal layout with tighter spacing and a charcoal accent."
+    },
     {
       id: "formal-descriptions",
       label: "Formal descriptions",
@@ -295,7 +335,7 @@ function InspectorPanel({
   ];
   const styleOptions = STYLE_OPTIONS;
   const toneOptions = ["Formal", "Neutral", "Friendly"];
-  const accentSwatches = ["#093064", "#6993D2", "#ACCCF0", "#1d4ed8", "#be123c", "#111827"];
+  const accentSwatches = ["#093064", "#14532d", "#5a9c69", "#d7f1dd", "#0f766e", "#be123c", "#111827"];
   const activeStyleOption = styleOptions.find((option) => option.id === stylePreset) ?? styleOptions[0] ?? null;
   const activeHeaderLayoutLabel =
     HEADER_LAYOUT_OPTIONS.find((option) => option.id === headerLayout)?.label ?? "Split";
@@ -337,8 +377,16 @@ function InspectorPanel({
   const planWarning = !planLimitReached ? getPlanPrelimitWarning(accountPlan) : "";
   const planUpgradeUrl = getPlanUpgradeUrl(accountPlan);
   const planBillingPortalUrl = getPlanBillingPortalUrl(accountPlan);
+  const googlePlayEntitlements = accountPlan?.billing?.googlePlay?.entitlements ?? {};
+  const googlePlayRecoveryState =
+    accountPlan?.plan === "free" &&
+    Number.isFinite(googlePlayEntitlements?.subscriptionCount) &&
+    Number(googlePlayEntitlements.subscriptionCount) > 0 &&
+    (!Number.isFinite(googlePlayEntitlements?.activeSubscriptionCount) ||
+      Number(googlePlayEntitlements.activeSubscriptionCount) <= 0);
   const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
-  const useStripePortalAction = accountPlan?.plan === "pro" && hasStripePortal(accountPlan);
+  const useStripePortalAction =
+    (accountPlan?.plan === "pro" || googlePlayRecoveryState) && hasStripePortal(accountPlan);
   const planUsageToneClass =
     planUsage?.statusTone === "limit"
       ? "nb-usage-meter--limit"
@@ -348,7 +396,22 @@ function InspectorPanel({
   const showUpgradeAction =
     accountPlan?.plan === "free" && (Boolean(planUpgradeUrl) || useStripeUpgradeAction);
   const showBillingPortalAction =
-    accountPlan?.plan === "pro" && (Boolean(planBillingPortalUrl) || useStripePortalAction);
+    (accountPlan?.plan === "pro" || googlePlayRecoveryState) &&
+    (Boolean(planBillingPortalUrl) || useStripePortalAction);
+  const billingEnvironment = getBillingEnvironment(accountPlan);
+  const googlePlaySubscriptionPlans = getGooglePlaySubscriptionPlans(accountPlan);
+  const hasGooglePlayPlanChoices =
+    billingEnvironment?.mode === "google-play" && googlePlaySubscriptionPlans.length > 1;
+  const upgradeActionLabel =
+    billingEnvironment?.mode === "google-play" ? "Upgrade in Google Play" : "Upgrade plan";
+  const manageBillingLabel =
+    billingEnvironment?.mode === "google-play" ? "Manage in Google Play" : "Manage billing";
+  const billingEnvironmentHint =
+    billingEnvironment?.hint || "Use the billing controls that match this device.";
+  const recoveryEnvironmentHint = googlePlayRecoveryState
+    ? "Google Play already knows about purchase history on this account. Restore purchases from the launcher first, or open Google Play management to inspect the subscription state."
+    : "";
+  const showInstalledAppGuard = billingEnvironment?.mode === "android-browser";
   const invoiceStatusStyles = {
     draft: "nb-chip nb-chip--soft normal-case tracking-normal",
     sent: "nb-chip nb-chip--info normal-case tracking-normal",
@@ -357,11 +420,12 @@ function InspectorPanel({
   const canMarkSent = invoiceStatus === "draft" || invoiceStatus === "paid";
   const canMarkPaid = invoiceStatus === "sent";
   const canMarkDraft = invoiceStatus === "sent" || invoiceStatus === "paid";
-  const handleUpgradeAction = async () => {
+  const handleUpgradeAction = async (basePlanId = "") => {
     setBillingBusy(true);
     setBillingError("");
     try {
       await startUpgradeCheckout(accountPlan, {
+        basePlanId,
         successPath: "/manual?billing=success",
         cancelPath: "/manual?billing=cancelled"
       });
@@ -1033,10 +1097,10 @@ function InspectorPanel({
       .map((item, index) => `${index + 1}. ${item.description.trim()}`)
       .join("\n");
     if (toneAction === "descriptions") {
-      return descriptionLines || "No descriptions yet.";
+      return descriptionLines || "No line item descriptions yet.";
     }
     const notesText = previewNotes?.trim() ? previewNotes.trim() : "No notes yet.";
-    return `Descriptions:\n${descriptionLines || "No descriptions yet."}\n\nNotes:\n${notesText}`;
+    return `Descriptions:\n${descriptionLines || "No line item descriptions yet."}\n\nNotes:\n${notesText}`;
   };
 
   const activeContent = tabs.find((tab) => tab.id === activeTab)?.content ?? "";
@@ -1110,6 +1174,7 @@ function InspectorPanel({
   const previewBillToDetails = previewData?.billToDetails?.trim() || "Add client details";
   const previewNotes = previewData?.notes?.trim() || "Add payment terms or a note.";
   const previewPaymentLink = previewData?.paymentLinkUrl?.trim() || "";
+  const previewPaymentMethods = Array.isArray(previewData?.paymentMethods) ? previewData.paymentMethods : [];
   const previewPaymentRecords = Array.isArray(previewData?.paymentRecords) ? previewData.paymentRecords : paymentRecords;
   const previewBalanceDue = Number.isFinite(previewData?.balanceDue) ? previewData.balanceDue : previewTotal;
   const previewAmountPaid = Number.isFinite(previewData?.amountPaid)
@@ -1120,9 +1185,11 @@ function InspectorPanel({
     return sum + (Number.isFinite(amount) ? Math.max(amount, 0) : 0);
   }, 0);
   const previewLatestPayment = previewPaymentRecords[0] ?? null;
-  const previewPaymentProgress = Number.isFinite(previewTotal) && previewTotal > 0
-    ? Math.max(0, Math.min(100, (previewPaymentsTotal / previewTotal) * 100))
-    : 0;
+  const previewPaymentProgressSummary = buildPaymentProgressSummary(previewTotal, previewBalanceDue, previewPaymentRecords, {
+    timelineLimit: 3
+  });
+  const previewEstimateWorkflowSummary =
+    documentType === "estimate" ? buildEstimateWorkflowSummary(previewData ?? {}) : null;
   const hasClientDetails = Boolean(previewData?.billToDetails?.trim());
   const hasBillableLineItem = parsedLineItems.some(
     (item) => !item.placeholder && item.description?.trim() && Number.isFinite(item.amount) && item.amount > 0
@@ -1169,6 +1236,8 @@ function InspectorPanel({
       : previewAmountPaid > 0 && previewBalanceDue > 0
         ? "nb-chip nb-chip--info normal-case tracking-normal"
         : "nb-chip nb-chip--warning normal-case tracking-normal";
+  const activeTabButtonId = `invoice-workspace-tab-${activeTab}`;
+  const activeTabPanelId = `invoice-workspace-panel-${activeTab}`;
 
   useEffect(() => {
     const requestId = assistantCommandRequest?.id;
@@ -1222,13 +1291,18 @@ function InspectorPanel({
     <>
       <div className="nb-surface nb-surface--elevated flex h-full min-h-0 flex-col rounded-[28px] p-0 md:rounded-[30px]">
         {!hideInternalTabs ? (
-          <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[rgba(9,48,100,0.08)] bg-white/88 px-4 py-3 backdrop-blur">
-            <div className="flex gap-2">
+          <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[rgba(23,73,60,0.08)] bg-white/88 px-4 py-3 backdrop-blur">
+            <div className="flex flex-wrap gap-2" role="tablist" aria-label="Invoice workspace panels">
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
+                  id={`invoice-workspace-tab-${tab.id}`}
                   type="button"
-                  className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+                  role="tab"
+                  aria-selected={activeTab === tab.id}
+                  aria-controls={`invoice-workspace-panel-${tab.id}`}
+                  tabIndex={activeTab === tab.id ? 0 : -1}
+                  className={`min-h-11 rounded-lg px-3 py-1.5 text-sm font-semibold ${
                     activeTab === tab.id ? "" : "text-slate-600"
                   }`}
                   style={activeTab === tab.id ? accentButtonStyle : undefined}
@@ -1241,7 +1315,7 @@ function InspectorPanel({
             {showCloseButton ? (
               <button
                 type="button"
-                className="text-sm font-semibold text-slate-600"
+                className="nb-btn-ghost shrink-0"
                 onClick={onClose}
               >
                 Close
@@ -1249,18 +1323,23 @@ function InspectorPanel({
             ) : null}
           </div>
         ) : null}
-        <div className={`flex-1 overflow-y-auto px-4 py-5 text-sm text-slate-600 ${hideInternalTabs ? "pt-4" : ""}`}>
+        <div
+          id={activeTabPanelId}
+          role="tabpanel"
+          aria-labelledby={activeTabButtonId}
+          className={`flex-1 overflow-y-auto px-4 py-5 text-sm text-slate-600 ${hideInternalTabs ? "pt-4" : ""}`}
+        >
           {activeTab === "style" ? (
             <div className="space-y-4">
-              <div className="rounded-2xl border border-slate-200 bg-[radial-gradient(circle_at_top_left,rgba(105,147,210,0.16),transparent_56%),linear-gradient(180deg,#ffffff_0%,#f8fbff_100%)] p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
-                  Layout Studio Lite
+                <div className="rounded-2xl border border-slate-200 bg-[radial-gradient(circle_at_top_left,rgba(90,156,105,0.16),transparent_56%),linear-gradient(180deg,#ffffff_0%,#f8fff8_100%)] p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#5a9c69]">
+                  Layout Studio
                 </p>
                 <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
                   <div className="max-w-[22rem] space-y-2">
-                    <p className="text-lg font-semibold text-slate-900">Make the invoice feel more like your work.</p>
+                    <p className="text-lg font-semibold text-slate-900">Shape a look that feels like your business.</p>
                     <p className="text-xs leading-5 text-slate-600">
-                      Start with a recipe, then fine-tune the template, accent, header, spacing, logo, and notes.
+                      Start with a base style, then mix accent, header, spacing, logo, notes, and Billie prompts into a reusable invoice look.
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2 text-[11px] font-semibold">
@@ -1399,8 +1478,8 @@ function InspectorPanel({
                 )}
               </div>
               <div>
-                <p className="text-sm font-semibold text-slate-900">Templates</p>
-                <p className="mt-1 text-xs text-slate-500">Pick the base invoice personality before fine-tuning the layout.</p>
+                <p className="text-sm font-semibold text-slate-900">Base styles</p>
+                <p className="mt-1 text-xs text-slate-500">These are starting points, not limits. Mix them with spacing, header, color, and Billie edits.</p>
                 <div className="mt-3 grid gap-3">
                   {styleOptions.map((option) => {
                     const preview = templatePreviews[option.id] ?? templatePreviews.default;
@@ -1488,10 +1567,10 @@ function InspectorPanel({
                   <input
                     type="color"
                     className="h-8 w-10 rounded border border-slate-200 bg-white p-1"
-                    value={accentColor ?? "#6993d2"}
+                    value={accentColor ?? "#5a9c69"}
                     onChange={(event) => onAccentColorChange?.(event.target.value)}
                   />
-                  <span className="font-mono text-[11px] text-slate-500">{accentColor ?? "#6993d2"}</span>
+                  <span className="font-mono text-[11px] text-slate-500">{accentColor ?? "#5a9c69"}</span>
                 </label>
               </div>
               <div className="space-y-2">
@@ -1725,7 +1804,7 @@ function InspectorPanel({
             <div>
               <p className="text-sm font-semibold text-slate-900">Edit with Billie</p>
               <p className="mt-1 text-xs text-slate-500">
-                Ask for changes without retyping. Billie will only adjust what you request.
+                Ask for wording or design changes without retyping. Billie only adjusts the parts you request.
               </p>
             </div>
             <div className="space-y-2">
@@ -1790,7 +1869,7 @@ function InspectorPanel({
                 ) : (
                   <p className="text-xs text-slate-500">
                     Ask for changes like “Make descriptions more formal.” or “Set payment link to
-                    https://pay.example.com/invoice/123”.
+                    https://pay.example.com/invoice/123”. You can also say “Make this feel premium with a centered header and navy accent.”
                   </p>
                 )}
               </div>
@@ -1972,7 +2051,7 @@ function InspectorPanel({
                 ) : null}
               </div>
               <p className="text-xs text-slate-500">
-                Store this invoice so you can reopen or duplicate it later.
+                Save it once so you can reopen it, send it, export it, and manage the next steps from the library.
               </p>
               {planSummary ? (
                 <p className={`text-xs ${planLimitReached ? "font-semibold text-amber-700" : "text-slate-500"}`}>
@@ -2005,7 +2084,7 @@ function InspectorPanel({
                     onClick={handleBillingAction}
                     disabled={billingBusy}
                   >
-                    {billingBusy ? "Opening billing..." : "Manage billing"}
+                    {billingBusy ? "Opening billing..." : manageBillingLabel}
                   </button>
                 ) : (
                   <a
@@ -2014,24 +2093,69 @@ function InspectorPanel({
                     rel="noreferrer"
                     className="inline-flex text-xs font-semibold text-slate-600 underline-offset-2 hover:text-slate-800 hover:underline"
                   >
-                    Manage billing
+                    {manageBillingLabel}
                   </a>
                 )
               ) : null}
+              {recoveryEnvironmentHint ? (
+                <p className="text-xs leading-5 text-amber-700">{recoveryEnvironmentHint}</p>
+              ) : null}
               {planLimitReached ? (
-                <div className="nb-banner nb-banner--warning px-2 py-2">
+                <div className="nb-banner nb-banner--warning px-2 py-2" role="status" aria-live="polite">
                   <p className="text-xs font-semibold text-amber-900">
                     Save limit reached. Update existing invoices or upgrade to save more.
                   </p>
+                  {showInstalledAppGuard ? (
+                    <div className="nb-platform-guard mt-2" role="status" aria-live="polite">
+                      <p className="nb-platform-guard__eyebrow">Open the app</p>
+                      <p className="nb-platform-guard__title">Google Play upgrades only work inside the installed NoteBill app.</p>
+                      <p className="nb-platform-guard__copy">
+                        Keep editing here if you want, then open the Android app icon when you are ready to upgrade and save more invoices.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="mt-1 text-[11px] leading-5 text-amber-800">{recoveryEnvironmentHint || billingEnvironmentHint}</p>
+                  )}
                   {showUpgradeAction ? (
-                    useStripeUpgradeAction ? (
+                    hasGooglePlayPlanChoices ? (
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        {googlePlaySubscriptionPlans.map((option) => (
+                          <button
+                            key={option.basePlanId}
+                            type="button"
+                            className={`rounded-[18px] border px-3 py-3 text-left transition ${
+                              option.isDefault
+                                ? "border-amber-300 bg-amber-50 shadow-[0_14px_30px_rgba(217,119,6,0.12)]"
+                                : "border-amber-200 bg-white/90 hover:border-amber-300 hover:bg-white"
+                            } disabled:cursor-not-allowed disabled:opacity-60`}
+                            onClick={() => handleUpgradeAction(option.basePlanId)}
+                            disabled={billingBusy}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm font-semibold text-amber-950">{option.label}</span>
+                              {option.badge || option.isDefault ? (
+                                <span className="rounded-full border border-amber-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-900">
+                                  {option.badge || "Default"}
+                                </span>
+                              ) : null}
+                            </div>
+                            {option.cadenceLabel ? (
+                              <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-800">
+                                {option.cadenceLabel}
+                              </p>
+                            ) : null}
+                            <p className="mt-2 text-xs leading-5 text-amber-900/80">{option.description}</p>
+                          </button>
+                        ))}
+                      </div>
+                    ) : useStripeUpgradeAction ? (
                       <button
                         type="button"
                         className="nb-btn-secondary mt-2 inline-flex rounded-lg px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                         onClick={handleUpgradeAction}
                         disabled={billingBusy}
                       >
-                        {billingBusy ? "Opening..." : "Upgrade plan"}
+                        {billingBusy ? "Opening..." : upgradeActionLabel}
                       </button>
                     ) : (
                       <a
@@ -2040,13 +2164,25 @@ function InspectorPanel({
                         rel="noreferrer"
                         className="nb-btn-secondary mt-2 inline-flex rounded-lg px-2 py-1 text-xs"
                       >
-                        Upgrade plan
+                        {upgradeActionLabel}
                       </a>
                     )
                   ) : null}
                 </div>
               ) : null}
-              {billingError ? <p className="text-xs text-rose-600">{billingError}</p> : null}
+              {billingError ? (
+                <p className="text-xs text-rose-600" role="alert">
+                  {billingError}{" "}
+                  <a href="/support" className="font-semibold underline underline-offset-2">
+                    Get support
+                  </a>
+                </p>
+              ) : null}
+              {!billingError && recoveryEnvironmentHint ? (
+                <p className="text-xs text-amber-700" role="status">
+                  {recoveryEnvironmentHint}
+                </p>
+              ) : null}
               <button
                 type="button"
                 className="w-full rounded-lg px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
@@ -2056,10 +2192,17 @@ function InspectorPanel({
               >
                 {saveLabel}
               </button>
-              {saveError ? <p className="text-xs text-rose-600">{saveError}</p> : null}
+              {saveError ? (
+                <p className="text-xs text-rose-600" role="alert">
+                  {saveError}{" "}
+                  <a href="/support" className="font-semibold underline underline-offset-2">
+                    Get support
+                  </a>
+                </p>
+              ) : null}
               {saveNeedsAuth ? (
                 <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
-                  <p className="text-xs text-slate-600">Sign in, then retry save.</p>
+                  <p className="text-xs text-slate-600">Sign in once, then save this draft to your account.</p>
                   {saveAuthHint ? <p className="text-xs text-slate-500">{saveAuthHint}</p> : null}
                   <div className="flex flex-wrap gap-2">
                     <button
@@ -2067,7 +2210,7 @@ function InspectorPanel({
                       className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700"
                       onClick={onGoToLauncherSignIn}
                     >
-                      Go to launcher sign-in
+                      Open sign-in
                     </button>
                     <button
                       type="button"
@@ -2134,8 +2277,32 @@ function InspectorPanel({
               <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
                 <p className="text-sm font-semibold text-slate-900">Estimate mode</p>
                 <p className="text-xs leading-5 text-slate-500">
-                  Estimates stay outside the send, payment, and status workflow until you convert them into invoices.
+                  {previewEstimateWorkflowSummary?.actionHint ||
+                    "Estimates stay outside the send, payment, and status workflow until you convert them into invoices."}
                 </p>
+                <div className="flex flex-wrap gap-2">
+                  <span className={invoiceStatusStyles[savedEstimateReviewState] ?? invoiceStatusStyles.draft}>
+                    Review: {savedEstimateReviewState || "draft"}
+                  </span>
+                  <button
+                    type="button"
+                    className="nb-btn-secondary rounded-lg px-3 py-2 text-xs disabled:cursor-not-allowed disabled:text-blue-300"
+                    onClick={() =>
+                      onUpdateSavedEstimateReviewState(savedEstimateReviewState === "approved" ? "needs_review" : "approved")
+                    }
+                    disabled={estimateReviewUpdateLoading}
+                  >
+                    {estimateReviewUpdateLoading
+                      ? "Saving..."
+                      : savedEstimateReviewState === "approved"
+                        ? "Mark needs review"
+                        : "Mark approved"}
+                  </button>
+                </div>
+                <p className="text-xs leading-5 text-slate-500">
+                  {previewEstimateWorkflowSummary?.nextStepLabel || "Next step: convert it when the work is ready to bill."}
+                </p>
+                {estimateReviewUpdateError ? <p className="text-xs text-rose-600">{estimateReviewUpdateError}</p> : null}
               </div>
             ) : null}
             {savedInvoiceId && documentType !== "estimate" ? (
@@ -2207,14 +2374,25 @@ function InspectorPanel({
                       {formatPreviewMoney(previewPaymentsTotal)} recorded
                     </span>
                   </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-[#6993d2] to-[#093064]"
-                      style={{ width: `${previewPaymentProgress}%` }}
-                    />
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="nb-chip nb-chip--info normal-case tracking-normal text-[11px]">
+                      {previewPaymentProgressSummary.milestoneLabel}
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      Keep deposits and milestone payments honest as work moves forward.
+                    </span>
                   </div>
+                  <p className="mt-1 text-[11px] font-medium text-slate-500">
+                    {previewPaymentProgressSummary.nextStepLabel}
+                  </p>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-[#5a9c69] to-[#14532d]"
+                    style={{ width: `${previewPaymentProgressSummary.progressPercent}%` }}
+                  />
+                </div>
                   <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                    {previewPaymentProgress.toFixed(0)}% complete
+                    {previewPaymentProgressSummary.progressPercent.toFixed(0)}% complete
                   </p>
                   <div className="mt-2 grid gap-2 sm:grid-cols-3">
                     <div className="rounded-md bg-slate-50 px-2 py-2">
@@ -2232,6 +2410,26 @@ function InspectorPanel({
                       </p>
                     </div>
                   </div>
+                  {previewPaymentMethods.length > 0 ? (
+                    <div className="mt-3 rounded-md border border-emerald-100 bg-emerald-50/70 px-2 py-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                        Payment instructions
+                      </p>
+                      <div className="mt-2 space-y-2">
+                        {previewPaymentMethods.map((method, index) => {
+                          const { label, details } = getPaymentMethodDisplayData(method);
+                          return (
+                            <div key={method?.id || `${label}-${index}`} className="rounded-md bg-white px-2 py-2">
+                              <p className="text-sm font-semibold text-slate-900">{label}</p>
+                              <p className="mt-1 whitespace-pre-line text-xs leading-5 text-slate-600">
+                                {details || "Add payment instructions."}
+                              </p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
                 {previewPaymentRecords.length > 0 ? (
                   <div className="space-y-2">
@@ -2273,7 +2471,7 @@ function InspectorPanel({
                   <div>
                     <p className="text-sm font-semibold text-slate-900">Online payment</p>
                     <p className="text-xs text-slate-500">
-                      Create a Stripe checkout link and include it in sends and exports.
+                      Create a checkout link and include it in sends and exports.
                     </p>
                   </div>
                   {previewPaymentLink ? (
@@ -2307,7 +2505,14 @@ function InspectorPanel({
                     </a>
                   ) : null}
                 </div>
-                {paymentLinkError ? <p className="text-xs text-rose-600">{paymentLinkError}</p> : null}
+                {paymentLinkError ? (
+                  <p className="text-xs text-rose-600">
+                    {paymentLinkError}{" "}
+                    <a href="/support" className="font-semibold underline underline-offset-2">
+                      Get support
+                    </a>
+                  </p>
+                ) : null}
               </div>
             ) : null}
             <div className="space-y-2">
@@ -2356,7 +2561,8 @@ function InspectorPanel({
         className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
         role="dialog"
         aria-modal="true"
-        aria-label="Template preview"
+        aria-labelledby="template-preview-title"
+        aria-describedby="template-preview-description"
         onClick={() => setPreviewTemplateId(null)}
       >
         <div
@@ -2368,7 +2574,12 @@ function InspectorPanel({
               <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-400">
                 Template preview
               </p>
-              <p className="text-lg font-semibold text-slate-900">{previewTemplate.label}</p>
+              <p id="template-preview-title" className="text-lg font-semibold text-slate-900">
+                {previewTemplate.label}
+              </p>
+              <p id="template-preview-description" className="mt-1 text-xs text-slate-500">
+                Preview the selected invoice template, then close this dialog to keep editing.
+              </p>
             </div>
             <button
               type="button"

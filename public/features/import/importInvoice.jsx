@@ -43,7 +43,7 @@
       "Missing /utils/billingActions.js load. Ensure it is loaded before /features/import/importInvoice.jsx."
     );
   }
-  const { hasStripeCheckout, startUpgradeCheckout, readBillingNoticeFromUrl } = billingActions;
+  const { hasStripeCheckout, startUpgradeCheckout, readBillingNoticeFromUrl, getBillingEnvironment } = billingActions;
 
 function ImportInvoice() {
   const navigate = useNavigate();
@@ -140,6 +140,11 @@ function ImportInvoice() {
   const planWarning = getPlanPrelimitWarning(accountPlan);
   const upgradeUrl = getPlanUpgradeUrl(accountPlan);
   const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
+  const billingEnvironment = getBillingEnvironment(accountPlan);
+  const upgradeActionLabel =
+    billingEnvironment?.mode === "google-play" ? "Upgrade in Google Play" : "Upgrade plan";
+  const billingEnvironmentHint =
+    billingEnvironment?.hint || "Use the billing path that matches this device when you are ready to save imports.";
   const usageToneClass =
     planUsage?.statusTone === "limit"
       ? "nb-usage-meter--limit"
@@ -247,16 +252,16 @@ function ImportInvoice() {
       return null;
     }
     const isAmber = tone === "amber";
-    const borderClass = isAmber ? "border-amber-200" : "border-sky-200";
-    const textClass = isAmber ? "text-amber-700" : "text-sky-800";
-    const bodyTextClass = isAmber ? "text-amber-800" : "text-sky-900";
+    const borderClass = isAmber ? "border-[#ecd6c8]" : "border-[#d5e5de]";
+    const textClass = isAmber ? "text-[#b86a34]" : "text-[#3d6f61]";
+    const bodyTextClass = isAmber ? "text-[#8a4f25]" : "text-[#17493c]";
     const buttonClass = isAmber
-      ? "rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800 hover:border-amber-300 disabled:cursor-not-allowed disabled:text-amber-400"
-      : "rounded-full border border-sky-200 bg-white px-3 py-1 text-xs font-semibold text-sky-900 hover:border-sky-300 disabled:cursor-not-allowed disabled:text-sky-400";
-    const itemBorderClass = isAmber ? "border-amber-100 bg-amber-50" : "border-sky-100 bg-sky-50";
+      ? "rounded-full border border-[#ecd6c8] bg-white px-3 py-1 text-xs font-semibold text-[#8a4f25] hover:border-[#d8b8a3] disabled:cursor-not-allowed disabled:text-[#c59a79]"
+      : "rounded-full border border-[#d5e5de] bg-white px-3 py-1 text-xs font-semibold text-[#17493c] hover:border-[#bcd2c8] disabled:cursor-not-allowed disabled:text-[#8ba89a]";
+    const itemBorderClass = isAmber ? "border-[#f0dfd3] bg-[#fcf7f2]" : "border-[#deebe5] bg-[#f7faf7]";
     const chipClass = isAmber
-      ? "rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-amber-700"
-      : "rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-sky-700";
+      ? "rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-[#b86a34]"
+      : "rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-[#3d6f61]";
     return (
       <div className={`nb-subcard ${borderClass} bg-white px-3 py-3`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -294,7 +299,7 @@ function ImportInvoice() {
               {lineItemPreview.items.map((item) => (
                 <div key={item.id} className={`rounded-xl border px-3 py-2 ${itemBorderClass}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className={`text-sm font-semibold ${isAmber ? "text-amber-950" : "text-sky-950"}`}>{item.label}</p>
+                    <p className={`text-sm font-semibold ${isAmber ? "text-[#5d3418]" : "text-[#17493c]"}`}>{item.label}</p>
                     <span className={chipClass}>{item.kind}</span>
                   </div>
                   {item.meta ? <p className={`mt-1 text-xs ${bodyTextClass}`}>{item.meta}</p> : null}
@@ -307,7 +312,7 @@ function ImportInvoice() {
               </p>
             ) : null}
             {lineItemPreview.followUpMessage ? (
-              <p className={`text-xs font-medium ${isAmber ? "text-amber-900" : "text-sky-950"}`}>
+              <p className={`text-xs font-medium ${isAmber ? "text-[#6d3c1d]" : "text-[#17493c]"}`}>
                 {lineItemPreview.followUpMessage}
               </p>
             ) : null}
@@ -739,30 +744,32 @@ function ImportInvoice() {
 
   return (
     <div className="nb-page nb-page--quiet min-h-screen">
-      <main className="nb-page-shell nb-page-shell--narrow max-w-3xl py-10">
-        <button
-          type="button"
-          className="nb-btn-ghost"
-          onClick={() => navigate("/")}
-        >
-          Back to launcher
-        </button>
-        <div className="mt-4 space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-blue-800">
-            Legacy import
-          </p>
-          <p className="nb-assistant-chip nb-assistant-chip--ready inline-flex text-xs normal-case tracking-normal">
-            <span className="nb-assistant-chip__dot" aria-hidden="true" />
-            Billie review ready
-          </p>
-          <h1 className="nb-section-title text-2xl">Upload old invoice files or photo notes</h1>
-          <p className="text-sm text-slate-600">
-            Older PDFs, CSVs, text files, and photo notes can be imported directly or previewed first.
-            Imported content stays editable so Billie can help polish the draft later.
-          </p>
+      <main className="nb-page-shell nb-page-shell--narrow max-w-4xl py-10">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-2">
+            <p className="nb-kicker">
+              Legacy import
+            </p>
+            <p className="nb-assistant-chip nb-assistant-chip--ready inline-flex text-xs normal-case tracking-normal">
+              <span className="nb-assistant-chip__dot" aria-hidden="true" />
+              Billie review ready
+            </p>
+            <h1 className="nb-title max-w-3xl text-[2.2rem] md:text-5xl">Bring old files forward without rebuilding them from scratch.</h1>
+            <p className="nb-copy max-w-2xl">
+              Older PDFs, CSVs, text files, and photo notes can be imported directly or previewed first.
+              Imported content stays editable so Billie can help polish the draft later.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="nb-btn-secondary rounded-full px-4 py-2"
+            onClick={() => navigate("/")}
+          >
+            Back to launcher
+          </button>
         </div>
         {planSummary ? (
-          <div className="nb-surface nb-surface--muted mt-4 rounded-[26px] px-4 py-3">
+          <div className="nb-focus-panel mt-4 rounded-[26px] px-4 py-3">
             <p className="text-sm font-semibold text-slate-900">{planSummary}</p>
             {planWarning && !planLimitReached ? (
               <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
@@ -787,22 +794,23 @@ function ImportInvoice() {
                 New saves are locked on free plan this month. You can still import and edit.
               </p>
             ) : null}
+            <p className="mt-1 text-xs leading-5 text-slate-500">{billingEnvironmentHint}</p>
             {planLimitReached && (useStripeUpgradeAction || upgradeUrl) ? (
               useStripeUpgradeAction ? (
                 <button
                   type="button"
-                  className="mt-2 inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-blue-800 hover:border-blue-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mt-2 inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-[#17493c] hover:border-[#d5e5de] disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={handleUpgradeAction}
                   disabled={billingBusy}
                 >
-                  {billingBusy ? "Opening..." : "Upgrade plan"}
+                  {billingBusy ? "Opening..." : upgradeActionLabel}
                 </button>
               ) : (
                 <a
-                  className="mt-2 inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-blue-800 hover:border-blue-200"
+                  className="mt-2 inline-flex rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-[#17493c] hover:border-[#d5e5de]"
                   href={upgradeUrl}
                 >
-                  Upgrade plan
+                  {upgradeActionLabel}
                 </a>
               )
             ) : null}
@@ -821,9 +829,23 @@ function ImportInvoice() {
         ) : null}
 
         <div className="nb-surface nb-surface--elevated mt-6 space-y-6 rounded-[30px] p-6">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="nb-stage-card">
+              <p className="nb-stage-card__label">1. Gather the source</p>
+              <p className="nb-stage-card__value">Drop the file you already have.</p>
+            </div>
+            <div className="nb-stage-card">
+              <p className="nb-stage-card__label">2. Review the text</p>
+              <p className="nb-stage-card__value">Check OCR or extracted wording before anything is saved.</p>
+            </div>
+            <div className="nb-stage-card">
+              <p className="nb-stage-card__label">3. Choose the handoff</p>
+              <p className="nb-stage-card__value">Build straight to the editor or keep Billie beside the cleanup.</p>
+            </div>
+          </div>
           <div
             className={`relative rounded-[28px] border-2 border-dashed px-6 py-8 text-center transition ${
-              dragActive ? "border-blue-400 bg-blue-100/60" : "border-slate-200 bg-slate-50/60"
+              dragActive ? "border-[#17493c]/40 bg-[#edf5f0]" : "border-slate-200 bg-slate-50/60"
             }`}
             onDragOver={(event) => {
               event.preventDefault();
@@ -843,7 +865,7 @@ function ImportInvoice() {
               onChange={handleFileChange}
             />
             <div className="mx-auto flex max-w-sm flex-col items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-blue-800 shadow-sm">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-[#17493c] shadow-sm">
                 <UploadIcon className="h-6 w-6" />
               </div>
               <div className="space-y-1">
@@ -990,20 +1012,20 @@ function ImportInvoice() {
           ) : null}
 
           {selectedFile && !isImageFile(selectedFile) ? (
-            <div className="space-y-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-4">
-              <p className="text-sm font-semibold text-sky-950">Preview extracted text (optional)</p>
-              <p className="text-xs text-sky-900">
+            <div className="nb-focus-panel space-y-3 rounded-xl px-4 py-4">
+              <p className="text-sm font-semibold text-[#17493c]">Preview extracted text (optional)</p>
+              <p className="text-xs text-slate-600">
                 Check what Billie will parse before building the draft. You can edit the extracted text if needed.
               </p>
               {isExtracting ? (
-                <p className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs text-sky-900">
+                <p className="rounded-xl border border-[#d5e5de] bg-white px-3 py-2 text-xs text-[#17493c]">
                   Reading text from document...
                 </p>
               ) : null}
               {hasReviewedText ? (
                 <textarea
                   rows={6}
-                  className="w-full resize-none rounded-xl border border-sky-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className="nb-textarea w-full resize-none border-[#d5e5de] bg-white px-4 py-3"
                   placeholder="Review and edit extracted text if needed."
                   value={reviewedText}
                   onChange={(event) => {
@@ -1013,14 +1035,14 @@ function ImportInvoice() {
                   disabled={isExtracting || isUploading}
                 />
               ) : (
-                <p className="rounded-xl border border-sky-200 bg-white px-3 py-2 text-xs text-sky-900">
+                <p className="rounded-xl border border-[#d5e5de] bg-white px-3 py-2 text-xs text-[#17493c]">
                   Preview extracted text if you want to check it before building the draft.
                 </p>
               )}
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  className="rounded-full border border-sky-200 bg-white px-3 py-1 text-xs font-semibold text-sky-900 hover:border-sky-300 disabled:cursor-not-allowed disabled:text-sky-400"
+                  className="rounded-full border border-[#d5e5de] bg-white px-3 py-1 text-xs font-semibold text-[#17493c] hover:border-[#bcd2c8] disabled:cursor-not-allowed disabled:text-[#8ba89a]"
                   onClick={handlePreviewUploadText}
                   disabled={isExtracting || isUploading}
                 >
@@ -1038,7 +1060,7 @@ function ImportInvoice() {
             </p>
             <textarea
               rows={3}
-              className="mt-3 w-full resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+              className="nb-textarea mt-3 w-full resize-none"
               placeholder="Example: This invoice includes a revised hourly rate."
               value={notes}
               onChange={(event) => {
@@ -1054,12 +1076,12 @@ function ImportInvoice() {
             </div>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="nb-mobile-actions">
             {selectedFile && hasReviewedText ? (
               <>
                 <button
                   type="button"
-                  className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-800 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-blue-300"
+                  className="nb-btn-primary inline-flex h-11 items-center justify-center rounded-xl px-5 text-sm disabled:cursor-not-allowed disabled:bg-[#86ab9d]"
                   onClick={handleBuildFromReviewedText}
                   disabled={
                     !selectedFile ||
@@ -1073,7 +1095,7 @@ function ImportInvoice() {
                 </button>
                 <button
                   type="button"
-                  className="inline-flex h-11 items-center justify-center rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-900 shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:border-blue-100 disabled:text-blue-300"
+                  className="nb-btn-secondary inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => handleBuildFromReviewedText({ openBillieCleanup: true })}
                   disabled={
                     !selectedFile ||
@@ -1089,7 +1111,7 @@ function ImportInvoice() {
             ) : (
               <button
                 type="button"
-                className="inline-flex h-11 items-center justify-center rounded-xl bg-blue-800 px-5 text-sm font-semibold text-white shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-blue-300"
+                className="nb-btn-primary inline-flex h-11 items-center justify-center rounded-xl px-5 text-sm disabled:cursor-not-allowed disabled:bg-[#86ab9d]"
                 onClick={handleUpload}
                 disabled={!selectedFile || isUploading || isExtracting}
               >

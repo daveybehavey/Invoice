@@ -21,6 +21,12 @@
   ],
   "vars": {
     "APP_BASE_URL": "https://app.notebill.app",
+    "GOOGLE_ADS_CUSTOMER_ID": "978-945-6142",
+    "GOOGLE_ADS_LOGIN_CUSTOMER_ID": "526-580-0864",
+    "GOOGLE_PLAY_LIFETIME_PRODUCT_ID": "notebill_premium_lifetime",
+    "GOOGLE_PLAY_PACKAGE_NAME": "app.notebill.app",
+    "GOOGLE_PLAY_SUBSCRIPTION_BASE_PLAN_ID": "premium-monthly",
+    "GOOGLE_PLAY_SUBSCRIPTION_PLAN_IDS": "premium-weekly,premium-monthly,premium-3months,premium-yearly",
     "INVOICE_EMAIL_PROVIDER": "smtp2go",
     "INVOICE_FROM_EMAIL": "NoteBill <invoices@notebill.app>",
     "INVOICE_LAUNCH_TEST_EMAIL": "davidiheslop@gmail.com",
@@ -33,6 +39,11 @@
   },
   "secrets": {
     "required": [
+      "GOOGLE_ADS_DEVELOPER_TOKEN",
+      "GOOGLE_ADS_CLIENT_ID",
+      "GOOGLE_ADS_CLIENT_SECRET",
+      "GOOGLE_ADS_REFRESH_TOKEN",
+      "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON",
       "OPENAI_API_KEY",
       "INVOICE_SESSION_SECRET",
       "INVOICE_STORE_POSTGRES_URL",
@@ -51,6 +62,11 @@
     "directory": "./public",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/health"]
+    "run_worker_first": [
+      "/api/*",
+      "/health",
+      "/.well-known/*"
+    ]
   }
 }
+

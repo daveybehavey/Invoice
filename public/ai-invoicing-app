@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI invoice generator for freelancers and contractors | NoteBill</title>
+    <meta name="description" content="AI invoice generator for rough notes, cleaner drafts, and a visible review before you save or send." />
+    <meta name="theme-color" content="#14532d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="robots" content="index,follow,max-image-preview:large" />
+    <meta property="og:title" content="AI invoice generator for freelancers and contractors | NoteBill" />
+    <meta property="og:description" content="AI invoice generator for rough notes, cleaner drafts, and a visible review before you save or send." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://app.notebill.app/ai-invoicing-app" />
+    <meta property="og:image" content="https://app.notebill.app/icons/notebill-512.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="AI invoice generator for freelancers and contractors | NoteBill" />
+    <meta name="twitter:description" content="AI invoice generator for rough notes, cleaner drafts, and a visible review before you save or send." />
+    <meta name="twitter:image" content="https://app.notebill.app/icons/notebill-512.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="NoteBill" />
+    <link rel="canonical" href="https://app.notebill.app/ai-invoicing-app" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/notebill-192.png" />
+    <link rel="apple-touch-icon" href="/icons/notebill-192.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "NoteBill",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Web, Android",
+        "url": "https://app.notebill.app/",
+        "description": "Turn rough job notes into clean invoices, statements, and follow-up with a phone-first AI invoice app.",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "NoteBill",
+          "url": "https://app.notebill.app/"
+        }
+      }
+    </script>
+    <link rel="stylesheet" href="/dist/app.css" />
+  </head>
+  <body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+    <script src="/dist/vendor/react.production.min.js"></script>
+    <script src="/dist/vendor/react-dom.production.min.js"></script>
+    <script src="/dist/vendor/router.umd.min.js"></script>
+    <script src="/dist/vendor/react-router.production.min.js"></script>
+    <script src="/dist/vendor/react-router-dom.production.min.js"></script>
+    <script src="/utils/formatters.js"></script>
+    <script src="/utils/accountPlan.js"></script>
+    <script src="/utils/billingActions.js"></script>
+    <script src="/utils/intakeHelpers.js"></script>
+    <script src="/dist/build-meta.js"></script>
+    <script src="/dist/runtime-config.js"></script>
+    <script src="/utils/googleAnalytics.js"></script>
+    <script src="/utils/revenueAnalytics.js"></script>
+    <script src="/utils/inAppReview.js"></script>
+    <script src="/utils/requestIdentity.js"></script>
+    <script src="/utils/onboardingState.js"></script>
+    <script src="/utils/billieTelemetry.js"></script>
+    <script src="/utils/clientMemory.js"></script>
+    <script src="/utils/lineItemLibrary.js"></script>
+    <script src="/utils/paymentProgress.js"></script>
+    <script src="/utils/estimateWorkflow.js"></script>
+    <script src="/utils/recurring.js"></script>
+    <script src="/utils/registerServiceWorker.js"></script>
+    <script src="/features/intake/readiness.js"></script>
+    <script src="/dist/ui/primitives.js"></script>
+    <script src="/dist/features/launcher/launcherSections.js"></script>
+    <script src="/features/launcher/launcherHelpers.js"></script>
+    <script src="/dist/launcher.js"></script>
+  </body>
+</html>

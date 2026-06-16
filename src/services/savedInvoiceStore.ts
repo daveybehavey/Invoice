@@ -26,10 +26,6 @@ type SavedInvoiceCollection = z.infer<typeof SavedInvoiceCollectionSchema>;
 
 let mutationQueue: Promise<void> = Promise.resolve();
 
-export function getSavedInvoiceStoreFilePath(): string {
-  return storeFilePath;
-}
-
 export async function getSavedInvoiceStoreSummary(): Promise<{
   filePath: string;
   invoiceCount: number;

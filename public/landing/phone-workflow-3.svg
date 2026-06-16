@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" role="img" aria-labelledby="title desc">
+  <title id="title">NoteBill phone workflow follow-up and payment</title>
+  <desc id="desc">A polished phone-style mockup showing follow-up, reminders, and payment handoff close together.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#f4f7ff"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+    <linearGradient id="phone" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0%" stop-color="#243b78"/>
+      <stop offset="100%" stop-color="#111d47"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="900" rx="48" fill="url(#bg)"/>
+  <circle cx="180" cy="170" r="120" fill="#dce8ff" opacity=".85"/>
+  <circle cx="1010" cy="160" r="160" fill="#d9f1e8" opacity=".7"/>
+  <rect x="366" y="86" width="468" height="724" rx="56" fill="url(#phone)"/>
+  <rect x="398" y="130" width="404" height="628" rx="28" fill="#101735"/>
+  <rect x="414" y="146" width="372" height="596" rx="24" fill="#f9fbff"/>
+  <text x="600" y="196" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="700" fill="#1a2d62">Follow-up stays close</text>
+  <text x="600" y="228" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#5f6f8d">Reminder and payment paths in one place</text>
+  <rect x="440" y="276" width="320" height="84" rx="18" fill="#ffffff" stroke="#d7e0f1"/>
+  <text x="464" y="310" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#1a2d62">Open balance</text>
+  <text x="464" y="337" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#667492">Invoice opened, payment still pending</text>
+  <rect x="440" y="378" width="320" height="98" rx="18" fill="#eef4ff" stroke="#d7e0f1"/>
+  <text x="464" y="412" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#1a2d62">Next step</text>
+  <text x="464" y="439" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#667492">Send a focused reminder or open the payment path.</text>
+  <rect x="440" y="504" width="152" height="44" rx="22" fill="#17493c"/>
+  <text x="516" y="532" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#ffffff">Send reminder</text>
+  <rect x="604" y="504" width="156" height="44" rx="22" fill="#ffffff" stroke="#d7e0f1"/>
+  <text x="682" y="532" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="15" font-weight="700" fill="#1a2d62">Mark paid</text>
+  <rect x="440" y="566" width="320" height="110" rx="18" fill="#ffffff" stroke="#d7e0f1"/>
+  <text x="464" y="602" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#1a2d62">Collections stays calm</text>
+  <text x="464" y="630" font-family="Arial, Helvetica, sans-serif" font-size="14" fill="#667492">Delivery, reminders, and paid state stay in one lane.</text>
+  <text x="600" y="844" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" fill="#1a2d62">Follow-up feels clear instead of scattered</text>
+</svg>

@@ -28,20 +28,32 @@ type RequestIdentityHarness = {
   getSessionToken(): string | null;
   resolveApiUrl(input: RequestInfo | URL): RequestInfo | URL;
   apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  getPublicGoogleClientId(): string;
   getGoogleAuthStartUrl(returnTo?: string): RequestInfo | URL;
   loadAuthProviders(): Promise<Array<{ id: string; available: boolean }>>;
   requestSignInLink(email: string, provider?: string): Promise<unknown>;
+  completeNativeGoogleSignIn(options?: { clientId?: string }): Promise<{ userId: string; email: string; expiresAt: string }>;
   completeRedirectSignIn(
     token: string,
     session: { userId: string; email: string; expiresAt: string }
   ): { userId: string; email: string; expiresAt: string };
+  getFirstTouchAttribution(): Record<string, string> | null;
 };
 
 type WindowHarness = {
   localStorage: StorageHarness;
   crypto: { randomUUID(): string };
-  location: { origin: string };
-  Capacitor?: { isNativePlatform?: () => boolean };
+  location: { origin: string; pathname?: string; search?: string };
+  InvoicePublicConfig?: { googleClientId?: string };
+  Capacitor?: {
+    getPlatform?: () => string;
+    isNativePlatform?: () => boolean;
+    Plugins?: {
+      GoogleAuth?: {
+        signIn(options: { serverClientId: string }): Promise<{ idToken?: string | null } | null>;
+      };
+    };
+  };
   WEBVIEW_SERVER_URL?: string;
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   InvoiceRequestIdentity?: RequestIdentityHarness;
@@ -160,6 +172,31 @@ test("request identity rewrites local Capacitor API calls to the production API 
   assert.equal(fetchCalls[0].init?.method, "POST");
 });
 
+test("request identity rewrites capacitor localhost API calls to the production API origin", async () => {
+  const { requestIdentity, fetchCalls } = loadRequestIdentity({
+    windowOverrides: {
+      location: { origin: "capacitor://localhost" },
+      Capacitor: {},
+      WEBVIEW_SERVER_URL: "capacitor://localhost"
+    }
+  });
+
+  assert.equal(
+    requestIdentity.resolveApiUrl("/api/billing/google-play/lifetime/verify"),
+    "https://app.notebill.app/api/billing/google-play/lifetime/verify"
+  );
+
+  await requestIdentity.apiFetch("/api/billing/google-play/lifetime/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ purchaseToken: "tok_test" })
+  });
+
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0].input, "https://app.notebill.app/api/billing/google-play/lifetime/verify");
+  assert.equal(fetchCalls[0].init?.method, "POST");
+});
+
 test("request identity keeps relative API calls relative outside Capacitor local origin", async () => {
   const { requestIdentity, fetchCalls } = loadRequestIdentity();
 
@@ -169,6 +206,30 @@ test("request identity keeps relative API calls relative outside Capacitor local
 
   assert.equal(fetchCalls.length, 1);
   assert.equal(fetchCalls[0].input, "/api/invoices/from-input");
+});
+
+test("request identity persists first-touch campaign attribution and forwards it to APIs", async () => {
+  const { requestIdentity, fetchCalls, localStorage } = loadRequestIdentity({
+    windowOverrides: {
+      location: {
+        origin: "https://app.notebill.app",
+        pathname: "/mobile-invoice-app",
+        search: "?gclid=test-click&utm_source=google&utm_medium=cpc&utm_campaign=invoice-app"
+      }
+    }
+  });
+
+  await requestIdentity.apiFetch("/api/invoices/from-input");
+
+  const attribution = requestIdentity.getFirstTouchAttribution();
+  assert.equal(attribution?.gclid, "test-click");
+  assert.equal(attribution?.landingPath, "/mobile-invoice-app");
+  assert.equal(JSON.parse(localStorage.dump().invoiceFirstTouchAttribution).utmSource, "google");
+  const headers = new Headers(fetchCalls[0].init?.headers);
+  assert.equal(
+    JSON.parse(decodeURIComponent(headers.get("x-notebill-attribution") || "")).utmCampaign,
+    "invoice-app"
+  );
 });
 
 test("request identity apiFetch attaches auth and owner headers for Request inputs", async () => {
@@ -229,6 +290,98 @@ test("request identity resolves Google auth start URL through the shared API ori
     requestIdentity.getGoogleAuthStartUrl("/manual"),
     "https://app.notebill.app/api/auth/google/start?returnTo=%2Fmanual"
   );
+});
+
+test("request identity can complete native Google sign-in through the app bridge", async () => {
+  const activeSession = {
+    userId: "usr_google_native",
+    email: "owner@example.com",
+    expiresAt: new Date(Date.now() + 60_000).toISOString()
+  };
+  const { requestIdentity, localStorage, fetchCalls } = loadRequestIdentity({
+    windowOverrides: {
+      Capacitor: {
+        Plugins: {
+          GoogleAuth: {
+            async signIn() {
+              return { idToken: "google-native-id-token" };
+            }
+          }
+        }
+      }
+    },
+    fetchImpl: async (input) => {
+      if (String(input) === "/api/auth/google/native") {
+        return new Response(
+          JSON.stringify({
+            token: "native-session-token",
+            session: activeSession
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" }
+          }
+        );
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  });
+
+  const session = await requestIdentity.completeNativeGoogleSignIn({
+    clientId: "google-client-id"
+  });
+
+  assert.equal(JSON.stringify(session), JSON.stringify(activeSession));
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0].input, "/api/auth/google/native");
+  const stored = localStorage.dump();
+  assert.equal(stored.invoiceSessionToken, "native-session-token");
+  assert.match(String(stored.invoiceAuthSession ?? ""), /owner@example\.com/);
+});
+
+test("request identity can use the public runtime Google client id for native sign-in", async () => {
+  const activeSession = {
+    userId: "usr_google_native",
+    email: "owner@example.com",
+    expiresAt: new Date(Date.now() + 60_000).toISOString()
+  };
+  let receivedClientId = "";
+  const { requestIdentity } = loadRequestIdentity({
+    windowOverrides: {
+      InvoicePublicConfig: {
+        googleClientId: "runtime-google-client-id"
+      },
+      Capacitor: {
+        Plugins: {
+          GoogleAuth: {
+            async signIn(options) {
+              receivedClientId = options.serverClientId;
+              return { idToken: "google-native-id-token" };
+            }
+          }
+        }
+      }
+    },
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          token: "native-session-token",
+          session: activeSession
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        }
+      )
+  });
+
+  assert.equal(requestIdentity.getPublicGoogleClientId(), "runtime-google-client-id");
+  await requestIdentity.completeNativeGoogleSignIn();
+
+  assert.equal(receivedClientId, "runtime-google-client-id");
 });
 
 test("request identity can store a hosted redirect sign-in session", () => {

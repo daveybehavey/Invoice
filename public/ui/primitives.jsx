@@ -170,7 +170,7 @@
         className={`${cardBase} ${
           disabled
             ? "nb-surface cursor-not-allowed opacity-70"
-            : "nb-surface nb-surface--elevated nb-hero-glow rounded-[30px] hover:-translate-y-1"
+            : "nb-surface nb-surface--elevated nb-hero-glow rounded-[26px] hover:-translate-y-1"
         }`}
         onClick={disabled ? undefined : onClick}
         disabled={disabled}
@@ -178,22 +178,24 @@
       >
         <div className="flex items-start justify-between gap-4">
           <div
-            className={`flex h-12 w-12 items-center justify-center rounded-[20px] border ${
-              disabled ? "border-slate-200 bg-slate-100" : "border-[#4f8b5f]/12 bg-[linear-gradient(135deg,_#ecf8ee_0%,_#ffffff_100%)] shadow-[0_14px_32px_rgba(20,83,45,0.08)]"
+            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[18px] border ${
+              disabled
+                ? "border-slate-200 bg-slate-100"
+                : "border-[#17493c]/10 bg-[linear-gradient(135deg,_#f7fbf8_0%,_#ffffff_100%)] shadow-[0_12px_28px_rgba(25,35,31,0.08)]"
             }`}
           >
             {React.cloneElement(icon, { className: iconClass })}
           </div>
-          <div className="min-w-0 flex-1 space-y-1 text-left">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-              NoteBill path
+          <div className="min-w-0 flex-1 space-y-1.5 text-left">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+              Workflow
             </p>
-            <div className="flex items-center gap-2">
-              <h2 className="text-[1.05rem] font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-[1rem] font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
                 {title}
               </h2>
               {badge ? (
-                <span className="nb-chip border-0 bg-[linear-gradient(135deg,_#14532d_0%,_#4f8b5f_100%)] px-2 py-0.5 text-[10px] text-white shadow-[0_10px_26px_rgba(20,83,45,0.16)]">
+                <span className="nb-chip border-0 bg-[linear-gradient(135deg,_#17493c_0%,_#3d6f61_100%)] px-2 py-0.5 text-[10px] text-white shadow-[0_10px_24px_rgba(23,73,60,0.15)]">
                   {badge}
                 </span>
               ) : null}
@@ -201,7 +203,7 @@
             <p className="max-w-md text-sm leading-6 text-slate-600">{description}</p>
           </div>
           {!disabled ? (
-            <div className="mt-0.5 hidden rounded-full border border-[#4f8b5f]/18 bg-white/88 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#14532d] shadow-sm sm:block">
+            <div className="mt-0.5 hidden rounded-full border border-[#17493c]/12 bg-white/92 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#17493c] shadow-sm sm:block">
               Open
             </div>
           ) : null}

@@ -1,5 +1,5 @@
 (() => {
-  const DEFAULT_ACCENT_COLOR = "#6993d2";
+  const DEFAULT_ACCENT_COLOR = "#5a9c69";
 
   const normalizeAccentColor = (value) => {
     const raw = typeof value === "string" ? value.trim() : "";
@@ -47,8 +47,8 @@
       soft: `rgba(${r}, ${g}, ${b}, 0.12)`,
       border: `rgba(${r}, ${g}, ${b}, 0.35)`,
       muted: `rgba(${r}, ${g}, ${b}, 0.18)`,
-      text: isLightAccent ? "#093064" : `rgba(${r}, ${g}, ${b}, 0.92)`,
-      buttonText: isLightAccent ? "#093064" : "#ffffff"
+      text: isLightAccent ? "#14532d" : `rgba(${r}, ${g}, ${b}, 0.92)`,
+      buttonText: isLightAccent ? "#14532d" : "#ffffff"
     };
   };
 

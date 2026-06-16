@@ -131,6 +131,16 @@ export const PaymentRecordSchema = z.object({
   note: OptionalString
 });
 
+export const PaymentMethodKindSchema = z.enum(["cheque", "etransfer", "bank_transfer", "cash", "custom"]);
+
+export const PaymentMethodSchema = z.object({
+  id: z.string().min(1),
+  kind: PaymentMethodKindSchema,
+  label: OptionalString,
+  details: OptionalString,
+  enabled: z.boolean().optional().default(true)
+});
+
 export const FinishedInvoiceSchema = z.object({
   documentType: InvoiceDocumentTypeSchema,
   invoiceNumber: OptionalString,
@@ -149,7 +159,8 @@ export const FinishedInvoiceSchema = z.object({
   subtotal: OptionalNumber,
   total: OptionalNumber,
   balanceDue: OptionalNumber,
-  paymentRecords: z.array(PaymentRecordSchema).default([])
+  paymentRecords: z.array(PaymentRecordSchema).default([]),
+  paymentMethods: z.array(PaymentMethodSchema).default([])
 });
 
 export const RecordPaymentRequestSchema = z.object({
@@ -330,9 +341,15 @@ export const RecentClientContextItemSchema = z.object({
 export type StructuredInvoice = z.infer<typeof StructuredInvoiceSchema>;
 export type Task = z.infer<typeof TaskSchema>;
 export type Material = z.infer<typeof MaterialSchema>;
-export type FinishedInvoice = z.infer<typeof FinishedInvoiceSchema>;
+type FinishedInvoiceOutput = z.infer<typeof FinishedInvoiceSchema>;
+export type FinishedInvoice = Omit<
+  FinishedInvoiceOutput,
+  "documentType" | "paymentRecords" | "paymentMethods"
+> &
+  Partial<Pick<FinishedInvoiceOutput, "documentType" | "paymentRecords" | "paymentMethods">>;
 export type InvoiceLineItem = z.infer<typeof InvoiceLineItemSchema>;
 export type PaymentRecord = z.infer<typeof PaymentRecordSchema>;
+export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
 export type InvoiceDocumentType = z.infer<typeof InvoiceDocumentTypeSchema>;
 export type LaborPricingChoice = z.infer<typeof LaborPricingChoiceSchema>;
 export type SavedInvoice = z.infer<typeof SavedInvoiceSchema>;

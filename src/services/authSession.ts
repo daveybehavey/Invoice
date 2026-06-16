@@ -95,7 +95,7 @@ export function getAuthSessionFromRequest(req: Request): InvoiceAuthSession | nu
   return verifySessionToken(token);
 }
 
-export function getAuthTokenFromRequest(req: Request): string | null {
+function getAuthTokenFromRequest(req: Request): string | null {
   const authorization = req.headers.authorization;
   if (typeof authorization === "string" && authorization.startsWith(AUTH_HEADER_PREFIX)) {
     const token = authorization.slice(AUTH_HEADER_PREFIX.length).trim();
@@ -114,7 +114,7 @@ export function getAuthTokenFromRequest(req: Request): string | null {
   return null;
 }
 
-export function verifySessionToken(token: string): InvoiceAuthSession | null {
+function verifySessionToken(token: string): InvoiceAuthSession | null {
   const payload = readSignedPayload(token);
   if (!payload) {
     return null;

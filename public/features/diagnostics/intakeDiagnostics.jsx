@@ -142,6 +142,36 @@
     };
   }
 
+  function readClientRuntimeStatus() {
+    const capacitor = window.Capacitor;
+    const platform =
+      typeof capacitor?.getPlatform === "function"
+        ? capacitor.getPlatform()
+        : capacitor?.isNativePlatform?.()
+          ? "native"
+          : "web";
+    const nativePlatform = Boolean(capacitor?.isNativePlatform?.());
+    const serviceWorkerStatus = (() => {
+      if (!("serviceWorker" in navigator)) {
+        return "unsupported";
+      }
+      return navigator.serviceWorker.controller ? "controlled" : "not controlled";
+    })();
+    const buildId = window.InvoiceBuildMeta?.buildId || "";
+    const googleClientId = window.InvoicePublicConfig?.googleClientId || "";
+    const authSession = requestIdentity?.getAuthSession?.() ?? null;
+    return {
+      buildId,
+      googleClientConfigured: Boolean(googleClientId),
+      signedIn: Boolean(authSession?.email),
+      signedInEmail: authSession?.email || "",
+      platform,
+      nativePlatform,
+      serviceWorkerStatus,
+      locationOrigin: window.location?.origin || ""
+    };
+  }
+
   function IntakeDiagnostics() {
     const navigate = useNavigate();
     const [loading, setLoading] = useState(true);
@@ -472,6 +502,11 @@
     const formatLatency = (value) =>
       billieTelemetryUtils?.formatDuration?.(value) ||
       (Number.isFinite(value) ? `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}s` : "n/a");
+    const clientRuntimeStatus = readClientRuntimeStatus();
+    const googlePlayInfo = billingInfo?.capabilities?.googlePlay ?? {};
+    const googlePlayPlanCount = Array.isArray(googlePlayInfo?.subscriptionPlans)
+      ? googlePlayInfo.subscriptionPlans.length
+      : 0;
 
     return (
       <div className="nb-page nb-page--quiet min-h-screen">
@@ -494,11 +529,81 @@
             </button>
           </div>
 
+          <section className="nb-surface mt-4 rounded-[28px] p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                  System status
+                </p>
+                <h1 className="mt-1 text-2xl font-semibold text-slate-900">Runtime truth</h1>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+                  Fast internal view of the deployed backend, bundled app assets, auth surface, and billing readiness.
+                </p>
+              </div>
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
+                {launchReady ? "Launch ready" : "Needs attention"}
+              </span>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+              <StatusPill
+                label="Build"
+                value={clientRuntimeStatus.buildId ? clientRuntimeStatus.buildId.slice(0, 19).replace("T", " ") : "n/a"}
+                tone={clientRuntimeStatus.buildId ? "green" : "amber"}
+              />
+              <StatusPill
+                label="Platform"
+                value={clientRuntimeStatus.nativePlatform ? `Native ${clientRuntimeStatus.platform}` : clientRuntimeStatus.platform}
+                tone={clientRuntimeStatus.nativePlatform ? "green" : "slate"}
+              />
+              <StatusPill
+                label="Auth session"
+                value={clientRuntimeStatus.signedIn ? "Signed in" : "Guest"}
+                tone={clientRuntimeStatus.signedIn ? "green" : "amber"}
+              />
+              <StatusPill
+                label="Google client"
+                value={clientRuntimeStatus.googleClientConfigured ? "Configured" : "Missing"}
+                tone={clientRuntimeStatus.googleClientConfigured ? "green" : "amber"}
+              />
+              <StatusPill
+                label="Google Play verify"
+                value={googlePlayInfo?.verificationAvailable ? "Ready" : "Unavailable"}
+                tone={googlePlayInfo?.verificationAvailable ? "green" : "amber"}
+              />
+              <StatusPill
+                label="Play plans"
+                value={`${googlePlayPlanCount || 0} plan${googlePlayPlanCount === 1 ? "" : "s"}`}
+                tone={googlePlayPlanCount > 0 ? "green" : "amber"}
+              />
+              <StatusPill
+                label="Storage"
+                value={systemInfo?.invoiceStoreBackend || "n/a"}
+                tone={persistenceReady ? "green" : "amber"}
+              />
+              <StatusPill
+                label="Service worker"
+                value={clientRuntimeStatus.serviceWorkerStatus}
+                tone={clientRuntimeStatus.serviceWorkerStatus === "controlled" ? "green" : "slate"}
+              />
+            </div>
+            <div className="mt-3 rounded-2xl border border-slate-200 bg-white/80 p-3 text-xs leading-5 text-slate-500">
+              <p>
+                Origin: <span className="font-semibold text-slate-700">{clientRuntimeStatus.locationOrigin || "n/a"}</span>
+              </p>
+              <p>
+                Account:{" "}
+                <span className="font-semibold text-slate-700">
+                  {clientRuntimeStatus.signedInEmail || "guest mode"}
+                </span>
+              </p>
+            </div>
+          </section>
+
           <div className="nb-surface mt-4 rounded-[28px] p-5">
             <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
               Internal diagnostics
             </p>
-            <h1 className="mt-1 text-2xl font-semibold text-slate-900">Intake telemetry</h1>
+            <h2 className="mt-1 text-2xl font-semibold text-slate-900">Intake telemetry</h2>
             <p className="mt-2 text-sm text-slate-600">
               Internal-only view of OCR confidence and friction checks for messy-input flow quality.
             </p>
@@ -756,7 +861,7 @@
               </button>
             </div>
             {launchEmailResult ? (
-              <p className={`mt-2 text-xs ${launchEmailResult.ok ? "text-emerald-700" : "text-rose-700"}`}>
+              <p className={`mt-2 text-xs ${launchEmailResult.ok ? "text-emerald-700" : "text-rose-700"}`} role={launchEmailResult.ok ? "status" : "alert"} aria-live="polite">
                 {launchEmailResult.ok
                   ? `Launch test email sent to ${launchEmailResult.recipientEmail} (${launchEmailResult.mode}).`
                   : launchEmailResult.error}
@@ -823,6 +928,37 @@
             <p className="mt-1 text-xs text-slate-500">
               Last entitlement update: {billingInfo?.entitlements?.updatedAt || "n/a"}
             </p>
+            {billingInfo?.googlePlayVerifyDiagnostics?.lastAttempt ? (
+              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/70 p-4 text-xs text-amber-950">
+                <p className="font-semibold uppercase tracking-[0.16em] text-amber-700">Last Google Play verify attempt</p>
+                <p className="mt-2">
+                  {billingInfo.googlePlayVerifyDiagnostics.lastAttempt.phase}{" "}
+                  {billingInfo.googlePlayVerifyDiagnostics.lastAttempt.productType}
+                  {" Â· "}
+                  {billingInfo.googlePlayVerifyDiagnostics.lastAttempt.occurredAt || "n/a"}
+                </p>
+                <p className="mt-1 break-all">
+                  Product: {billingInfo.googlePlayVerifyDiagnostics.lastAttempt.productId || "n/a"}
+                  {" Â· "}
+                  Token suffix: {billingInfo.googlePlayVerifyDiagnostics.lastAttempt.purchaseTokenSuffix || "n/a"}
+                </p>
+                <p className="mt-1 break-all">
+                  Package: {billingInfo.googlePlayVerifyDiagnostics.lastAttempt.packageName || "n/a"}
+                  {billingInfo.googlePlayVerifyDiagnostics.lastAttempt.basePlanId
+                    ? ` Â· Base plan: ${billingInfo.googlePlayVerifyDiagnostics.lastAttempt.basePlanId}`
+                    : ""}
+                </p>
+                <p className="mt-1 break-all">
+                  State: {billingInfo.googlePlayVerifyDiagnostics.lastAttempt.subscriptionState || "n/a"}
+                  {billingInfo.googlePlayVerifyDiagnostics.lastAttempt.purchaseState
+                    ? ` Â· Purchase state: ${billingInfo.googlePlayVerifyDiagnostics.lastAttempt.purchaseState}`
+                    : ""}
+                  {" Â· "}
+                  Ack: {billingInfo.googlePlayVerifyDiagnostics.lastAttempt.acknowledged ? "yes" : "no"}
+                </p>
+                <p className="mt-1 break-all">{billingInfo.googlePlayVerifyDiagnostics.lastAttempt.message || "No message."}</p>
+              </div>
+            ) : null}
             {billingInfo?.warning ? (
               <p className="mt-2 text-xs text-amber-700">{billingInfo.warning}</p>
             ) : null}
@@ -891,7 +1027,7 @@
               </button>
             </div>
             {reminderActionResult ? (
-              <p className={`mt-2 text-xs ${reminderActionResult?.error ? "text-rose-700" : "text-slate-600"}`}>
+              <p className={`mt-2 text-xs ${reminderActionResult?.error ? "text-rose-700" : "text-slate-600"}`} role={reminderActionResult?.error ? "alert" : "status"} aria-live="polite">
                 {reminderActionResult?.error
                   ? reminderActionResult.error
                   : reminderActionResult.mode === "preview"
@@ -905,7 +1041,7 @@
           </div>
 
           {error ? (
-            <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+            <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700" role="alert">
               {error}
             </div>
           ) : null}
@@ -968,6 +1104,8 @@
                     ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                     : "border-amber-200 bg-amber-50 text-amber-700"
                 }`}
+                role={exportResult.exported ? "status" : "alert"}
+                aria-live="polite"
               >
                 Export result: {exportResult.reason}
                 {exportResult.provider ? ` (${exportResult.provider})` : ""}
@@ -1121,3 +1259,4 @@
     IntakeDiagnostics
   };
 })();
+

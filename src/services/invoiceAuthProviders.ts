@@ -13,6 +13,7 @@ export type InvoiceAuthProviderCapability = {
   implemented: boolean;
   configured: boolean;
   available: boolean;
+  clientId?: string;
   warning?: string;
 };
 
@@ -34,6 +35,7 @@ export function getInvoiceAuthProviderCapabilities(
     clientId: input.googleClientId,
     clientSecret: input.googleClientSecret
   });
+  const googleClientId = normalizeText(input.googleClientId);
 
   return [
     {
@@ -56,7 +58,12 @@ export function getInvoiceAuthProviderCapabilities(
       implemented: true,
       configured: googleReadiness.configured,
       available: googleReadiness.available,
+      clientId: googleClientId || undefined,
       warning: googleReadiness.warning
     }
   ];
+}
+
+function normalizeText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }

@@ -8,6 +8,8 @@
     );
   }
   const apiFetch = requestIdentity?.apiFetch ?? window.fetch.bind(window);
+  const revenueAnalytics = window.InvoiceRevenueAnalytics;
+  const inAppReview = window.InvoiceInAppReview;
   const onboardingUtils = window.InvoiceOnboardingState;
   if (!onboardingUtils) {
     throw new Error(
@@ -56,6 +58,12 @@
       "Missing /utils/businessProfile.js load. Ensure it is loaded before /features/manual/manualInvoiceCanvas.jsx."
     );
   }
+  const paymentMethodsUtils = window.InvoicePaymentMethods;
+  if (!paymentMethodsUtils) {
+    throw new Error(
+      "Missing /utils/paymentMethods.js load. Ensure it is loaded before /features/manual/manualInvoiceCanvas.jsx."
+    );
+  }
   const clientMemoryUtils = window.InvoiceClientMemory;
   if (!clientMemoryUtils) {
     throw new Error(
@@ -81,6 +89,13 @@
   const { DEFAULT_ACCENT_COLOR, normalizeAccentColor, buildAccentPalette } = brandThemeUtils;
   const { STYLE_PRESETS, SPACING_DENSITY_PRESETS } = styleCatalogUtils;
   const { getBusinessProfile, applyBusinessProfileToDraft } = businessProfileUtils;
+  const {
+    PAYMENT_METHOD_KIND_LABELS,
+    normalizePaymentMethodKind,
+    normalizePaymentMethods,
+    createPaymentMethodEntry,
+    createPaymentInstructionsStarterSet
+  } = paymentMethodsUtils;
   const { rememberClientDetails, getClientDefaultNotes, getClientMemory } = clientMemoryUtils;
   const { getLineItemLibrary, rememberLineItems } = lineItemLibraryUtils;
   const { readLogoFileForStorage } = logoImageUtils;
@@ -108,6 +123,8 @@
   const billieWorkspaceStorageKey = requestIdentity.getScopedStorageKey?.("billieWorkspaceInstruction") ?? "billieWorkspaceInstruction";
   const favoriteLayoutStudioStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceFavoriteLayoutStudio") ?? "invoiceFavoriteLayoutStudio";
+  const invoicePresetStorageKey =
+    requestIdentity.getScopedStorageKey?.("invoiceQuickPreset") ?? "invoiceQuickPreset";
   const readBillieWorkspaceInstruction = () => {
     try {
       const raw = window.localStorage.getItem(billieWorkspaceStorageKey);
@@ -157,15 +174,55 @@
       // Best-effort only.
     }
   };
+  const readSavedInvoicePreset = () => {
+    try {
+      const raw = window.localStorage.getItem(invoicePresetStorageKey);
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+      return {
+        label: typeof parsed.label === "string" && parsed.label.trim() ? parsed.label : "Saved invoice preset",
+        documentType: parsed.documentType === "estimate" ? "estimate" : "invoice",
+        stylePreset: typeof parsed.stylePreset === "string" ? parsed.stylePreset : "default",
+        headerLayout: parsed.headerLayout === "centered" ? "centered" : "split",
+        spacingDensity:
+          parsed.spacingDensity === "tight" || parsed.spacingDensity === "airy" ? parsed.spacingDensity : "balanced",
+        accentColor: normalizeAccentColor(parsed.accentColor ?? DEFAULT_ACCENT_COLOR),
+        logoVisible: parsed.logoVisible !== false,
+        notesVisible: parsed.notesVisible !== false,
+        notesText: typeof parsed.notesText === "string" ? parsed.notesText.trim() : "",
+        paymentMethods: normalizePaymentMethods(parsed.paymentMethods)
+      };
+    } catch (_error) {
+      return null;
+    }
+  };
+  const writeSavedInvoicePreset = (value) => {
+    try {
+      if (!value) {
+        window.localStorage.removeItem(invoicePresetStorageKey);
+        return;
+      }
+      window.localStorage.setItem(invoicePresetStorageKey, JSON.stringify(value));
+    } catch (_error) {
+      // Best-effort only.
+    }
+  };
   const trackRevenueSignal = (event, source) => {
-    void apiFetch("/api/telemetry/revenue-signals", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        event,
-        source
-      })
-    }).catch(() => {});
+    revenueAnalytics?.trackRevenueSignal?.(event, source);
+  };
+  const trackRevenueSignalOnce = (event, source) => {
+    revenueAnalytics?.trackRevenueSignalOnce?.(event, source);
+  };
+  const markReviewMilestone = (milestone) => {
+    inAppReview?.markReviewMilestone?.(milestone);
+  };
+  const maybeRequestInAppReview = (trigger) => {
+    void inAppReview?.maybeRequestInAppReview?.(trigger);
   };
 
   const PAYMENT_TERM_QUICK_PICKS = [
@@ -266,6 +323,69 @@
       label: "Landscaping",
       lineItem: "Landscaping service",
       text: "Trade template: Landscaping\nLandscaping scope: trim, cleanup, hauling, and site finish."
+    }
+  ];
+
+  const INVOICE_PRESET_QUICK_PICKS = [
+    {
+      id: "preset-service",
+      label: "Service invoice",
+      documentType: "invoice",
+      stylePreset: "default",
+      headerLayout: "split",
+      spacingDensity: "balanced",
+      accentColor: "#14532d",
+      notesText: "Service invoice prepared for a repeat visit.\nPayment due on receipt."
+    },
+    {
+      id: "preset-estimate",
+      label: "Estimate starter",
+      documentType: "estimate",
+      stylePreset: "compact",
+      headerLayout: "centered",
+      spacingDensity: "airy",
+      accentColor: "#5a9c69",
+      notesText: "Estimate prepared for review.\nValid for 14 days.\nPlease approve to schedule work."
+    },
+    {
+      id: "preset-recurring",
+      label: "Recurring job",
+      documentType: "invoice",
+      stylePreset: "spacious",
+      headerLayout: "split",
+      spacingDensity: "tight",
+      accentColor: "#5a9c69",
+      notesText: "Recurring maintenance visit.\nPayment due on receipt."
+    },
+    {
+      id: "preset-retainer",
+      label: "Retainer",
+      documentType: "invoice",
+      stylePreset: "compact",
+      headerLayout: "centered",
+      spacingDensity: "balanced",
+      accentColor: "#0f766e",
+      notesText: "Retainer invoice.\nWork starts after payment is received."
+    },
+    {
+      id: "preset-milestone",
+      label: "Milestone",
+      documentType: "invoice",
+      stylePreset: "spacious",
+      headerLayout: "split",
+      spacingDensity: "balanced",
+      accentColor: "#14532d",
+      notesText: "Milestone billing.\nRecord deposits and progress payments as the job moves forward."
+    },
+    {
+      id: "preset-field",
+      label: "Field visit",
+      documentType: "invoice",
+      stylePreset: "default",
+      headerLayout: "split",
+      spacingDensity: "airy",
+      accentColor: "#5a9c69",
+      notesText: "Field visit and service call.\nPayment due on receipt."
     }
   ];
 
@@ -402,6 +522,9 @@ function ManualInvoiceCanvas() {
   const [billToDetails, setBillToDetails] = useState(() => initialDraft?.billToDetails ?? "");
   const [notes, setNotes] = useState(() => initialDraft?.notes ?? "");
   const [paymentLinkUrl, setPaymentLinkUrl] = useState(() => initialDraft?.paymentLinkUrl ?? "");
+  const [paymentMethods, setPaymentMethods] = useState(() =>
+    normalizePaymentMethods(initialDraft?.paymentMethods ?? seededDraft?.paymentMethods)
+  );
   const [paymentRecords, setPaymentRecords] = useState(() =>
     Array.isArray(initialDraft?.paymentRecords) ? initialDraft.paymentRecords : []
   );
@@ -430,6 +553,7 @@ function ManualInvoiceCanvas() {
     searchParams.get("tab") === "assistant" ? "assistant" : "style"
   );
   const [savedFavoriteLayoutStudio, setSavedFavoriteLayoutStudio] = useState(() => readFavoriteLayoutStudio());
+  const [savedInvoicePreset, setSavedInvoicePreset] = useState(() => readSavedInvoicePreset());
   const [draftStatus, setDraftStatus] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -441,8 +565,22 @@ function ManualInvoiceCanvas() {
   const [savedInvoiceStatus, setSavedInvoiceStatus] = useState(
     () => initialDraft?.savedInvoiceStatus ?? (initialDraft?.savedInvoiceId ? "draft" : "")
   );
+  useEffect(() => {
+    if (savedInvoiceId) {
+      return;
+    }
+    trackRevenueSignalOnce("first_draft_started", "manual_open");
+  }, [savedInvoiceId]);
+  const [savedEstimateReviewState, setSavedEstimateReviewState] = useState(
+    () =>
+      initialDraft?.invoiceData?.finishedInvoice?.estimateReviewState ??
+      initialDraft?.estimateReviewState ??
+      ""
+  );
   const [statusUpdateLoading, setStatusUpdateLoading] = useState(false);
   const [statusUpdateError, setStatusUpdateError] = useState("");
+  const [estimateReviewUpdateLoading, setEstimateReviewUpdateLoading] = useState(false);
+  const [estimateReviewUpdateError, setEstimateReviewUpdateError] = useState("");
   const [paymentLinkBusy, setPaymentLinkBusy] = useState(false);
   const [paymentLinkError, setPaymentLinkError] = useState("");
   const [paymentRecordBusy, setPaymentRecordBusy] = useState(false);
@@ -475,6 +613,19 @@ function ManualInvoiceCanvas() {
   const billieWorkspaceSource = ["intake", "import", "library"].includes(searchParams.get("source") || "")
     ? searchParams.get("source")
     : "";
+  const libraryOpenCue =
+    billieWorkspaceSource === "library" && savedInvoiceId
+      ? {
+          eyebrow: "Opened from library",
+          title: "Your saved invoice is open in the editor.",
+          detail: "Next: add a payment link, create the client portal, or export/share the PDF.",
+          actionLabel: "Jump to handoff",
+          onAction: () => {
+            document.getElementById("manual-send-payment-handoff")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }
+      : null;
+  const libraryAutoJumpRef = useRef(false);
   const refreshOnboardingStatus = (sessionOverride) => {
     setOnboardingStatus(
       buildOnboardingStatus({
@@ -489,13 +640,76 @@ function ManualInvoiceCanvas() {
   const [sharePackBusy, setSharePackBusy] = useState(false);
   const [sharePackNotice, setSharePackNotice] = useState("");
   const [sharePackPreview, setSharePackPreview] = useState("");
+  const [showSourceTransparencyComparison, setShowSourceTransparencyComparison] = useState(false);
   const importSourcePreview = useMemo(() => {
     const trimmed = String(importSourceText ?? "").trim();
     if (!trimmed) {
       return "";
     }
-    return trimmed.length > 420 ? `${trimmed.slice(0, 420).trimEnd()}…` : trimmed;
+    return trimmed.length > 420 ? `${trimmed.slice(0, 420).trimEnd()}...` : trimmed;
   }, [importSourceText]);
+  const sourcePreviewLines = useMemo(
+    () =>
+      String(importSourceText ?? "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean),
+    [importSourceText]
+  );
+  const sourcePreviewList = useMemo(() => sourcePreviewLines.slice(0, 4), [sourcePreviewLines]);
+  const remainingSourceCount = Math.max(0, sourcePreviewLines.length - sourcePreviewList.length);
+  const polishedPreviewList = useMemo(() => {
+    const draftLines = [];
+    lineItems.forEach((item) => {
+      const description = String(item?.description ?? "").trim();
+      if (description) {
+        draftLines.push(description);
+      }
+    });
+    const trimmedNotes = String(notes ?? "").trim();
+    if (trimmedNotes) {
+      draftLines.push(trimmedNotes);
+    }
+    return draftLines.slice(0, 4);
+  }, [lineItems, notes]);
+  const remainingPolishedCount = useMemo(() => {
+    const lineCount = lineItems.reduce((count, item) => count + (String(item?.description ?? "").trim() ? 1 : 0), 0);
+    const noteCount = String(notes ?? "").trim() ? 1 : 0;
+    return Math.max(0, lineCount + noteCount - polishedPreviewList.length);
+  }, [lineItems, notes, polishedPreviewList.length]);
+  const cleanedLineCount = useMemo(
+    () => lineItems.reduce((count, item) => count + (String(item?.description ?? "").trim() ? 1 : 0), 0),
+    [lineItems]
+  );
+  const polishedPreviewText = useMemo(() => {
+    if (polishedPreviewList.length === 0) {
+      return "Your cleaned-up draft lines will show here.";
+    }
+    const headline = polishedPreviewList[0];
+    return `${headline}${remainingPolishedCount > 0 ? ` (+${remainingPolishedCount} more)` : ""}`;
+  }, [polishedPreviewList, remainingPolishedCount]);
+  const sourceTransparencyLabel =
+    billieWorkspaceSource === "intake"
+      ? "From your notes"
+      : billieWorkspaceSource === "library"
+        ? "From the saved invoice"
+        : "From the imported source";
+  const sourceTransparencyIntro =
+    billieWorkspaceSource === "intake"
+      ? "Keep the original notes close while you make the draft client-ready."
+      : billieWorkspaceSource === "library"
+        ? "Reopened work keeps the earlier draft trail close while you polish the client-facing version."
+        : "Keep the original imported text close while you clean up the draft.";
+  const shouldShowSourceTransparency = Boolean(importSourcePreview);
+  useEffect(() => {
+    if (!libraryOpenCue || libraryAutoJumpRef.current) {
+      return;
+    }
+    libraryAutoJumpRef.current = true;
+    window.requestAnimationFrame(() => {
+      document.getElementById("manual-send-payment-handoff")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }, [libraryOpenCue]);
   const receiptCaptureInputRef = useRef(null);
   const voiceNoteInputRef = useRef(null);
   const [assistantWorkspaceRuntime, setAssistantWorkspaceRuntime] = useState({
@@ -551,12 +765,52 @@ function ManualInvoiceCanvas() {
     setSavedFavoriteLayoutStudio(null);
     setDraftStatus("Cleared your saved favorite invoice look.");
   };
+  const handleSaveInvoicePreset = () => {
+    const nextPreset = {
+      label: "Saved invoice preset",
+      documentType,
+      stylePreset,
+      headerLayout,
+      spacingDensity,
+      accentColor,
+      logoVisible,
+      notesVisible,
+      notesText: notesVisible ? notes.trim().slice(0, 240) : "",
+      paymentMethods: normalizePaymentMethods(paymentMethods)
+    };
+    writeSavedInvoicePreset(nextPreset);
+    setSavedInvoicePreset(nextPreset);
+    setDraftStatus("Saved this invoice setup as a reusable preset.");
+  };
+  const handleApplySavedInvoicePreset = () => {
+    if (!savedInvoicePreset) {
+      return;
+    }
+    setDocumentType(savedInvoicePreset.documentType === "estimate" ? "estimate" : "invoice");
+    setStylePreset(savedInvoicePreset.stylePreset);
+    setHeaderLayout(savedInvoicePreset.headerLayout);
+    setSpacingDensity(savedInvoicePreset.spacingDensity);
+    setAccentColor(savedInvoicePreset.accentColor);
+    setLogoVisible(savedInvoicePreset.logoVisible !== false);
+    setNotesVisible(savedInvoicePreset.notesVisible !== false);
+    setPaymentMethods(normalizePaymentMethods(savedInvoicePreset.paymentMethods));
+    if (savedInvoicePreset.notesText) {
+      setNotes((current) => mergeSuggestedNotes(current, savedInvoicePreset.notesText));
+      setNotesVisible(true);
+    }
+    setDraftStatus("Applied your saved invoice preset.");
+  };
+  const handleClearSavedInvoicePreset = () => {
+    writeSavedInvoicePreset(null);
+    setSavedInvoicePreset(null);
+    setDraftStatus("Cleared your saved invoice preset.");
+  };
   const emailLinkSaveProvider = Array.isArray(saveAuthProviders)
     ? saveAuthProviders.find((provider) => provider?.id === "email_link")
     : null;
   const saveAuthHint = emailLinkSaveProvider?.available
-    ? "Use launcher sign-in to send yourself an email link, then retry save here."
-    : emailLinkSaveProvider?.warning || "Use launcher sign-in, then retry save here.";
+    ? "Open sign-in, send yourself a secure link, then come right back to save this draft."
+    : emailLinkSaveProvider?.warning || "Open sign-in, then come right back and save.";
 
   useEffect(() => {
     if (searchParams.get("source") === "import") {
@@ -772,6 +1026,24 @@ function ManualInvoiceCanvas() {
       .filter(({ entry, leadSavedItem }) => Boolean(entry?.details) && Boolean(leadSavedItem))
       .slice(0, 2);
   };
+  const isBlankDraftLineItem = (item) =>
+    !String(item?.description ?? "").trim() &&
+    String(item?.qty ?? "").trim() === "" &&
+    String(item?.rate ?? "").trim() === "";
+  const hasMeaningfulDraftLineItems = (items) =>
+    (Array.isArray(items) ? items : []).some(
+      (item) =>
+        String(item?.description ?? "").trim() ||
+        String(item?.qty ?? "").trim() ||
+        String(item?.rate ?? "").trim()
+    );
+  const buildDraftLineItemsFromSavedBundle = (savedItems) =>
+    (Array.isArray(savedItems) ? savedItems : []).map((item, index) => ({
+      id: `line-${Date.now()}-${index}`,
+      description: item?.description ?? "",
+      qty: item?.qty ?? "",
+      rate: item?.rate ?? ""
+    }));
 
   const getLineAmount = (item) => parseNumber(item.qty) * parseNumber(item.rate);
   const subtotal = lineItems.reduce((sum, item) => sum + getLineAmount(item), 0);
@@ -792,6 +1064,7 @@ function ManualInvoiceCanvas() {
     billToDetails,
     notes,
     paymentLinkUrl,
+    paymentMethods,
     paymentRecords,
     amountPaid,
     taxRate,
@@ -824,6 +1097,31 @@ function ManualInvoiceCanvas() {
     typeof value === "string" ? value.trim().replace(/\s+/g, " ").toLocaleLowerCase() : "";
   const primaryBillToName = getPrimaryBillToName(billToDetails);
   const clientDefaultNotes = getClientDefaultNotes(primaryBillToName);
+  const currentClientMemoryEntry = useMemo(() => {
+    const normalizedName = normalizeMemoryText(primaryBillToName);
+    if (!normalizedName) {
+      return null;
+    }
+    return (
+      clientMemoryList.find((entry) => normalizeMemoryText(entry?.name) === normalizedName) ?? null
+    );
+  }, [clientMemoryList, primaryBillToName]);
+  const currentClientSavedBundle = useMemo(() => {
+    const normalizedName = normalizeMemoryText(primaryBillToName);
+    if (!normalizedName) {
+      return [];
+    }
+    return savedLineItemLibrary
+      .filter((entry) => normalizeMemoryText(entry?.clientName) === normalizedName)
+      .sort((left, right) => {
+        const usageDelta = Number(right?.usageCount ?? 0) - Number(left?.usageCount ?? 0);
+        if (usageDelta !== 0) {
+          return usageDelta;
+        }
+        return String(right?.updatedAt ?? "").localeCompare(String(left?.updatedAt ?? ""));
+      })
+      .slice(0, 3);
+  }, [primaryBillToName, savedLineItemLibrary]);
   const normalizedBillToSearch = primaryBillToName.toLocaleLowerCase();
   const currentServiceMemoryCandidate = lineItems.find(
     (item) => `${item?.description ?? ""}`.trim() && `${item?.rate ?? ""}`.trim()
@@ -865,6 +1163,44 @@ function ManualInvoiceCanvas() {
     () => buildRepeatClientQuickFillOptions(clientMemorySuggestions, savedLineItemLibrary),
     [clientMemorySuggestions, savedLineItemLibrary]
   );
+  const autoPrefilledClientRef = useRef("");
+  useEffect(() => {
+    const normalizedName = normalizeMemoryText(primaryBillToName);
+    if (!normalizedName) {
+      autoPrefilledClientRef.current = "";
+      return;
+    }
+    if (autoPrefilledClientRef.current === normalizedName) {
+      return;
+    }
+    const appliedParts = [];
+    if (!notes.trim() && currentClientMemoryEntry?.defaultNotes) {
+      setNotes(currentClientMemoryEntry.defaultNotes);
+      setNotesVisible(true);
+      appliedParts.push("saved note");
+    }
+    if (!hasMeaningfulDraftLineItems(lineItems) && currentClientSavedBundle.length > 0) {
+      setLineItems(buildDraftLineItemsFromSavedBundle(currentClientSavedBundle));
+      appliedParts.push(
+        currentClientSavedBundle.length > 1
+          ? `${currentClientSavedBundle.length} saved services`
+          : currentClientSavedBundle[0]?.description || "saved service"
+      );
+    }
+    if (appliedParts.length === 0) {
+      return;
+    }
+    autoPrefilledClientRef.current = normalizedName;
+    setTimedDraftStatus(
+      currentClientMemoryEntry?.recipientEmail
+        ? `Loaded ${appliedParts.join(" and ")} for ${primaryBillToName}. Saved recipient ${currentClientMemoryEntry.recipientEmail} is ready when you send.`
+        : `Loaded ${appliedParts.join(" and ")} for ${primaryBillToName}.`
+    );
+    trackRevenueSignal("client_memory_reused", "manual_client_memory_autofill");
+    if (currentClientSavedBundle.length > 0) {
+      trackRevenueSignal("service_memory_reused", "manual_client_memory_autofill");
+    }
+  }, [currentClientMemoryEntry, currentClientSavedBundle, lineItems, notes, primaryBillToName]);
   const noteSuggestions = useMemo(() => {
     const currentNotes = typeof notes === "string" ? notes.trim().toLowerCase() : "";
     const seenNoteTexts = new Set();
@@ -1099,12 +1435,23 @@ function ManualInvoiceCanvas() {
       return "";
     }
     const invoice = editableResult.invoice;
+    const paymentMethodLines = Array.isArray(invoice.paymentMethods)
+      ? invoice.paymentMethods
+          .filter((method) => method?.enabled !== false && (method?.label || method?.details))
+          .map((method) => {
+            const kindLabel = PAYMENT_METHOD_KIND_LABELS[normalizePaymentMethodKind(method.kind)] || "Payment method";
+            const label = typeof method.label === "string" && method.label.trim() ? method.label.trim() : kindLabel;
+            const details = typeof method.details === "string" ? method.details.trim() : "";
+            return details ? `${label}: ${details.replace(/\n+/g, " | ")}` : label;
+          })
+      : [];
     const shareLines = [
       `Invoice ${invoice.invoiceNumber || "Draft"}`,
       invoice.customerName ? `Client: ${invoice.customerName}` : "",
       `Total: ${formatMoney(invoice.total ?? 0)}`,
       invoice.dueDate ? `Due date: ${invoice.dueDate}` : "",
       invoice.paymentLinkUrl ? `Payment link: ${invoice.paymentLinkUrl}` : "",
+      paymentMethodLines.length > 0 ? `Payment instructions:\n- ${paymentMethodLines.join("\n- ")}` : "",
       invoice.portalAccessToken ? `Client portal: ${window.location.origin}/portal/${savedInvoiceId}/${encodeURIComponent(invoice.portalAccessToken)}` : "",
       invoice.notes ? `Notes: ${invoice.notes}` : ""
     ].filter(Boolean);
@@ -1122,8 +1469,8 @@ function ManualInvoiceCanvas() {
     try {
       setSharePackPreview(sharePackText);
       void navigator.clipboard?.writeText?.(sharePackText).catch(() => {});
-      setSharePackNotice("Share pack copied. Paste it into email or chat.");
-      setTimedDraftStatus("Copied share pack");
+      setSharePackNotice("Share pack copied. Next: paste it into email, text, or chat.");
+      setTimedDraftStatus("Share pack copied");
     } catch (error) {
       setSharePackNotice(error?.message || "Could not copy the share pack.");
     } finally {
@@ -1350,12 +1697,64 @@ function ManualInvoiceCanvas() {
     setTimedDraftStatus(`${template.label} template applied`);
     trackRevenueSignal("trade_template_applied", "manual_trade_template_quick_pick");
   };
+  const handleApplyInvoicePreset = (preset) => {
+    if (!preset) {
+      return;
+    }
+    setDocumentType(preset.documentType === "estimate" ? "estimate" : "invoice");
+    setStylePreset(typeof preset.stylePreset === "string" ? preset.stylePreset : "default");
+    setHeaderLayout(preset.headerLayout === "centered" ? "centered" : "split");
+    setSpacingDensity(
+      preset.spacingDensity === "tight" || preset.spacingDensity === "airy" ? preset.spacingDensity : "balanced"
+    );
+    setAccentColor(normalizeAccentColor(preset.accentColor ?? DEFAULT_ACCENT_COLOR));
+    if (typeof preset.logoVisible === "boolean") {
+      setLogoVisible(preset.logoVisible);
+    }
+    if (typeof preset.notesVisible === "boolean") {
+      setNotesVisible(preset.notesVisible);
+    }
+    if (typeof preset.notesText === "string" && preset.notesText.trim()) {
+      setNotes((current) => mergeSuggestedNotes(current, preset.notesText));
+      setNotesVisible(true);
+    }
+    setTimedDraftStatus(`${preset.label} preset applied`);
+    trackRevenueSignal("invoice_preset_applied", "manual_invoice_preset_quick_pick");
+  };
   const handleApplyClientMemory = (entry) => {
     if (!entry?.details) {
       return;
     }
     setBillToDetails(entry.details);
-    setTimedDraftStatus(`Applied client details for ${entry.name || "saved client"}`);
+    if (!notes.trim() && entry.defaultNotes) {
+      setNotes(entry.defaultNotes);
+      setNotesVisible(true);
+    }
+    const matchingSavedItems = savedLineItemLibrary
+      .filter((item) => normalizeMemoryText(item?.clientName) === normalizeMemoryText(entry?.name))
+      .sort((left, right) => {
+        const usageDelta = Number(right?.usageCount ?? 0) - Number(left?.usageCount ?? 0);
+        if (usageDelta !== 0) {
+          return usageDelta;
+        }
+        return String(right?.updatedAt ?? "").localeCompare(String(left?.updatedAt ?? ""));
+      })
+      .slice(0, 3);
+    if (!hasMeaningfulDraftLineItems(lineItems) && matchingSavedItems.length > 0) {
+      setLineItems(buildDraftLineItemsFromSavedBundle(matchingSavedItems));
+    }
+    const statusParts = [`Applied client details for ${entry.name || "saved client"}`];
+    if (!notes.trim() && entry.defaultNotes) {
+      statusParts.push("included saved note");
+    }
+    if (!hasMeaningfulDraftLineItems(lineItems) && matchingSavedItems.length > 0) {
+      statusParts.push(
+        matchingSavedItems.length > 1
+          ? `loaded ${matchingSavedItems.length} saved services`
+          : `loaded ${matchingSavedItems[0]?.description || "saved service"}`
+      );
+    }
+    setTimedDraftStatus(statusParts.join(" • "));
     void apiFetch("/api/telemetry/revenue-signals", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1439,6 +1838,42 @@ function ManualInvoiceCanvas() {
     setAccentColor(normalizeAccentColor(nextColor));
   };
 
+  const createPaymentMethodTemplate = (kind) => {
+    const invoiceLabel = invoiceNumber?.trim() || "invoice number";
+    return createPaymentMethodEntry(kind, fromDetails, { invoiceLabel });
+  };
+  const handleAddPaymentMethod = (kind) => {
+    setPaymentMethods((current) => [...normalizePaymentMethods(current), createPaymentMethodTemplate(kind)]);
+  };
+  const handleUpdatePaymentMethod = (paymentMethodId, field, value) => {
+    setPaymentMethods((current) =>
+      normalizePaymentMethods(current).map((method) =>
+        method.id === paymentMethodId ? { ...method, [field]: value } : method
+      )
+    );
+  };
+  const handleUpdatePaymentMethodKind = (paymentMethodId, nextKind) => {
+    const normalizedKind = normalizePaymentMethodKind(nextKind);
+    setPaymentMethods((current) =>
+      normalizePaymentMethods(current).map((method) => {
+        if (method.id !== paymentMethodId) {
+          return method;
+        }
+        const currentDefaultLabel = PAYMENT_METHOD_KIND_LABELS[method.kind] || "Payment method";
+        const nextDefaultLabel = PAYMENT_METHOD_KIND_LABELS[normalizedKind] || "Payment method";
+        const shouldRelabel = !method.label || method.label === currentDefaultLabel;
+        return {
+          ...method,
+          kind: normalizedKind,
+          label: shouldRelabel ? nextDefaultLabel : method.label
+        };
+      })
+    );
+  };
+  const handleRemovePaymentMethod = (paymentMethodId) => {
+    setPaymentMethods((current) => normalizePaymentMethods(current).filter((method) => method.id !== paymentMethodId));
+  };
+
   const buildRewriteInvoicePayload = () => {
     const itemsWithDescriptions = lineItems.filter((item) => item.description.trim().length > 0);
     if (itemsWithDescriptions.length === 0) {
@@ -1466,7 +1901,8 @@ function ManualInvoiceCanvas() {
       subtotal,
       total,
       balanceDue,
-      paymentRecords
+      paymentRecords,
+      paymentMethods: normalizePaymentMethods(paymentMethods)
     };
     return { invoice };
   };
@@ -1498,7 +1934,8 @@ function ManualInvoiceCanvas() {
       subtotal,
       total,
       balanceDue,
-      paymentRecords
+      paymentRecords,
+      paymentMethods: normalizePaymentMethods(paymentMethods)
     };
     return { invoice };
   };
@@ -1550,6 +1987,9 @@ function ManualInvoiceCanvas() {
     }
     if (updatedInvoice.paymentLinkUrl !== undefined) {
       setPaymentLinkUrl(updatedInvoice.paymentLinkUrl ?? "");
+    }
+    if (updatedInvoice.paymentMethods !== undefined) {
+      setPaymentMethods(normalizePaymentMethods(updatedInvoice.paymentMethods));
     }
     if (updatedInvoice.portalAccessToken !== undefined) {
       setPortalAccessToken(updatedInvoice.portalAccessToken ?? "");
@@ -1629,6 +2069,9 @@ function ManualInvoiceCanvas() {
       spacingDensity,
       stylePreset,
       accentColor,
+      estimateReviewState: documentType === "estimate" ? savedEstimateReviewState : undefined,
+      estimateReviewUpdatedAt:
+        documentType === "estimate" ? initialDraft?.invoiceData?.finishedInvoice?.estimateReviewUpdatedAt ?? "" : undefined,
       timeCapture: {
         description: timeCaptureDescription,
         rate: timeCaptureRate,
@@ -1741,7 +2184,7 @@ function ManualInvoiceCanvas() {
       document.body.removeChild(link);
       window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1000);
       completeOnboardingStep("export_pdf");
-      setDraftStatus("PDF download started");
+      setDraftStatus("PDF is downloading");
       if (clearStatusTimeoutRef.current) {
         window.clearTimeout(clearStatusTimeoutRef.current);
       }
@@ -1766,6 +2209,16 @@ function ManualInvoiceCanvas() {
     notes: notes?.trim() || undefined
   });
 
+  const buildFinishedInvoiceForSave = (baseInvoice) => {
+    const nextInvoice = { ...baseInvoice };
+    if (documentType === "estimate" && savedEstimateReviewState) {
+      nextInvoice.estimateReviewState = savedEstimateReviewState;
+      nextInvoice.estimateReviewUpdatedAt =
+        initialDraft?.invoiceData?.finishedInvoice?.estimateReviewUpdatedAt ?? new Date().toISOString();
+    }
+    return nextInvoice;
+  };
+
   const handleSaveInvoice = async () => {
     const editableResult = buildEditableInvoicePayload();
     if (editableResult.error) {
@@ -1777,7 +2230,7 @@ function ManualInvoiceCanvas() {
     const currentSession = requestIdentity.getAuthSession?.() ?? authSession;
     if (saveAuthRequiredPolicy && !currentSession?.userId) {
       setSaveNeedsAuth(true);
-      setSaveError("Sign in required to save invoices.");
+      setSaveError("Sign in required to save this invoice.");
       setSaveStatus("");
       return;
     }
@@ -1801,7 +2254,7 @@ function ManualInvoiceCanvas() {
           sourceType: "text_input",
           invoiceData: {
             structuredInvoice: buildStructuredInvoiceFromDraft(),
-            finishedInvoice: editableResult.invoice
+            finishedInvoice: buildFinishedInvoiceForSave(editableResult.invoice)
           }
         })
       });
@@ -1825,7 +2278,13 @@ function ManualInvoiceCanvas() {
         setSavedInvoiceId(nextId);
       }
       setSavedInvoiceStatus(payload?.invoice?.status ?? "draft");
+      setSavedEstimateReviewState(
+        payload?.invoice?.invoiceData?.finishedInvoice?.estimateReviewState ?? savedEstimateReviewState
+      );
       setPaymentRecords(payload?.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? paymentRecords);
+      setPaymentMethods(
+        normalizePaymentMethods(payload?.invoice?.invoiceData?.finishedInvoice?.paymentMethods ?? paymentMethods)
+      );
       setPortalAccessToken(payload?.invoice?.invoiceData?.finishedInvoice?.portalAccessToken ?? portalAccessToken);
       setClientMemoryList(
         rememberClientDetails(billToDetails, {
@@ -1838,16 +2297,17 @@ function ManualInvoiceCanvas() {
         })
       );
       completeOnboardingStep("save_invoice");
+      markReviewMilestone("invoice_saved");
       setSaveNeedsAuth(false);
-      setSaveStatus("Saved");
-      window.setTimeout(() => setSaveStatus(""), 1500);
+      setSaveStatus(hasSavedDraft ? "Draft updates saved" : "Draft saved to library");
+      window.setTimeout(() => setSaveStatus(""), 2200);
       void refreshAccountPlan();
     } catch (error) {
       console.error("Failed to save invoice", error);
       const status = Number(error?.status ?? error?.statusCode ?? 0);
       if (status === 401) {
         setSaveNeedsAuth(true);
-        setSaveError("Sign in required to save invoices.");
+        setSaveError("Sign in required to save this invoice.");
       } else if (status === 402) {
         setSaveNeedsAuth(false);
         setSaveError(error?.message || "Free plan save limit reached.");
@@ -1883,8 +2343,15 @@ function ManualInvoiceCanvas() {
       const appliedStatus = payload?.invoice?.status ?? nextStatus;
       setSavedInvoiceStatus(appliedStatus);
       setPaymentRecords(payload?.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? paymentRecords);
+      setPaymentMethods(
+        normalizePaymentMethods(payload?.invoice?.invoiceData?.finishedInvoice?.paymentMethods ?? paymentMethods)
+      );
       setSaveStatus(
-        appliedStatus === "paid" ? "Marked paid" : appliedStatus === "sent" ? "Marked sent" : "Marked draft"
+        appliedStatus === "paid"
+          ? "Invoice marked paid"
+          : appliedStatus === "sent"
+            ? "Invoice marked sent"
+            : "Invoice moved back to draft"
       );
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {
@@ -1920,17 +2387,86 @@ function ManualInvoiceCanvas() {
       }
       const nextPaymentLink = payload?.paymentLinkUrl ?? payload?.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl ?? "";
       setPaymentLinkUrl(nextPaymentLink);
-      setSaveStatus(nextPaymentLink ? "Hosted payment link ready" : "Hosted payment link unchanged");
+      if (nextPaymentLink) {
+        markReviewMilestone("payment_link_added");
+        maybeRequestInAppReview("payment_link_added");
+      }
+      setSaveStatus(nextPaymentLink ? "Payment link ready" : "Payment link already ready");
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {
       const message = String(error?.message || "Couldn't create payment link.");
+      const status = Number(error?.status ?? error?.statusCode ?? 0);
       setPaymentLinkError(
-        message.includes("Stripe invoice payments are not configured yet.")
+        status === 402
+          ? "Hosted payment links are a Pro workflow. Upgrade to unlock payment links, invoice sends, reminders, client portals, and repeat-work shortcuts."
+          : message.includes("Invoice payments are not configured yet.")
           ? "Hosted payment links are not configured on this build yet. You can still share the client portal, copy the share pack, or send the invoice manually."
           : message
       );
     } finally {
       setPaymentLinkBusy(false);
+    }
+  };
+
+  const handleUpdateSavedEstimateReviewState = async (nextReviewState) => {
+    if (!savedInvoiceId) {
+      setEstimateReviewUpdateError("Save estimate first to track review state.");
+      return;
+    }
+    if (documentType !== "estimate") {
+      setEstimateReviewUpdateError("Switch this draft to estimate mode before updating review state.");
+      return;
+    }
+    setEstimateReviewUpdateLoading(true);
+    setEstimateReviewUpdateError("");
+    setSaveError("");
+    try {
+      const editableResult = buildEditableInvoicePayload();
+      if (editableResult.error) {
+        throw new Error(editableResult.error);
+      }
+      const response = await apiFetch("/api/invoices/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          confirmSave: true,
+          invoiceId: savedInvoiceId,
+          sourceType: "text_input",
+          invoiceData: {
+            structuredInvoice: buildStructuredInvoiceFromDraft(),
+            finishedInvoice: {
+              ...buildFinishedInvoiceForSave(editableResult.invoice),
+              estimateReviewState: nextReviewState,
+              estimateReviewUpdatedAt: new Date().toISOString()
+            }
+          }
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const requestError = new Error(payload?.error || "Couldn't update estimate review state.");
+        requestError.status = response.status;
+        throw requestError;
+      }
+      setSavedEstimateReviewState(nextReviewState);
+      setSavedInvoiceStatus(payload?.invoice?.status ?? savedInvoiceStatus);
+      setPaymentMethods(
+        normalizePaymentMethods(payload?.invoice?.invoiceData?.finishedInvoice?.paymentMethods ?? paymentMethods)
+      );
+      setSaveStatus(
+        nextReviewState === "approved"
+          ? "Marked estimate approved"
+          : "Marked estimate needs review"
+      );
+      window.setTimeout(() => setSaveStatus(""), 1500);
+    } catch (error) {
+      const status = Number(error?.status ?? error?.statusCode ?? 0);
+      if (status === 401) {
+        setSaveNeedsAuth(true);
+      }
+      setEstimateReviewUpdateError(error?.message || "Couldn't update estimate review state.");
+    } finally {
+      setEstimateReviewUpdateLoading(false);
     }
   };
 
@@ -1955,6 +2491,9 @@ function ManualInvoiceCanvas() {
         throw requestError;
       }
       setPaymentRecords(payload?.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? []);
+      setPaymentMethods(
+        normalizePaymentMethods(payload?.invoice?.invoiceData?.finishedInvoice?.paymentMethods ?? paymentMethods)
+      );
       setSavedInvoiceStatus(payload?.invoice?.status ?? savedInvoiceStatus);
       setSaveStatus(
         payload?.invoice?.status === "paid"
@@ -1990,8 +2529,11 @@ function ManualInvoiceCanvas() {
         throw requestError;
       }
       setPaymentRecords(payload?.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? []);
+      setPaymentMethods(
+        normalizePaymentMethods(payload?.invoice?.invoiceData?.finishedInvoice?.paymentMethods ?? paymentMethods)
+      );
       setSavedInvoiceStatus(payload?.invoice?.status ?? savedInvoiceStatus);
-      setSaveStatus("Payment removed");
+      setSaveStatus("Payment record removed");
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {
       setPaymentRecordError(error?.message || "Couldn't remove payment.");
@@ -2024,24 +2566,54 @@ function ManualInvoiceCanvas() {
       if (nextToken) {
         setPortalAccessToken(nextToken);
       }
+      setPaymentMethods(
+        normalizePaymentMethods(payload?.invoice?.invoiceData?.finishedInvoice?.paymentMethods ?? paymentMethods)
+      );
       setSaveStatus(nextToken ? "Client portal ready" : "Client portal unchanged");
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {
-      setClientPortalError(error?.message || "Couldn't create client portal link.");
+      const status = Number(error?.status ?? error?.statusCode ?? 0);
+      setClientPortalError(
+        status === 402
+          ? "Client portal links are a Pro workflow. Upgrade to unlock client portals, hosted payment links, sends, reminders, and repeat-work shortcuts."
+          : error?.message || "Couldn't create client portal link."
+      );
     } finally {
       setClientPortalBusy(false);
     }
   };
 
+  const hasClientDetails = Boolean(String(billToDetails ?? "").trim());
+  const hasBillableLineItem = lineItems.some((item) => {
+    const description = String(item?.description ?? "").trim();
+    const amount = getLineAmount(item);
+    return description && amount > 0;
+  });
+  const hasSavedDraft = Boolean(savedInvoiceId);
+  const hostedHandoffLocked = hasSavedDraft && hostedPaymentLinkUnavailable;
+  const hasHostedPaymentLink = Boolean(String(paymentLinkUrl ?? "").trim());
+  const hasClientPortal = Boolean(String(clientPortalUrl ?? "").trim());
+  const isSavingDraft = saveStatus === "Saving..." || saveStatus === "Updating...";
+  const saveDraftActionLabel = isSavingDraft
+    ? saveStatus
+    : hasSavedDraft
+      ? "Update saved invoice"
+      : "Save first invoice";
+  const saveDraftHelperLabel = hasSavedDraft
+    ? "Saved invoices reopen from the library with links, portal access, and follow-up status still attached."
+    : "Saving adds this invoice to the library so you can reopen it later without losing the payment, portal, or follow-up setup.";
+  const shouldShowSaveNextMove = !savedInvoiceId && !onboardingStatus.visible;
+  const onboardingPrimaryStepId = onboardingStatus.nextStep?.id || "";
+
   const billieNextMoves = useMemo(() => {
     const moves = [];
-    if (!savedInvoiceId) {
+    if (shouldShowSaveNextMove) {
       moves.push({
         id: "save",
-        label: "Save this draft",
-        helper: "Keep this invoice reusable in the library before you move into links, reminders, or portal sharing.",
-        actionLabel: saveStatus === "Saving..." ? "Saving..." : "Save draft",
-        busy: saveStatus === "Saving...",
+        label: "Save this first invoice",
+        helper: "Add this to the library so it becomes reusable and unlocks the payment-link, portal, and follow-up steps.",
+        actionLabel: saveDraftActionLabel,
+        busy: isSavingDraft,
         onClick: () => {
           void handleSaveInvoice();
         }
@@ -2084,13 +2656,13 @@ function ManualInvoiceCanvas() {
       });
     }
     if (savedInvoiceId && moves.length < 3) {
-      moves.push({
-        id: "open-library",
-        label: "Open in library",
-        helper: "Jump into the operations view to track send, delivery, reminders, and repeat work from one place.",
-        actionLabel: "Open library",
-        busy: false,
-        onClick: () => navigate("/invoices")
+        moves.push({
+          id: "open-library",
+          label: "Open in library",
+          helper: "Jump into the operations view to reopen the saved invoice, track send and delivery, and keep follow-up in one place.",
+          actionLabel: "View library",
+          busy: false,
+          onClick: () => navigate("/invoices")
       });
     }
     if (moves.length < 3 && primaryBillToName) {
@@ -2114,18 +2686,10 @@ function ManualInvoiceCanvas() {
     paymentLinkBusy,
     paymentLinkUrl,
     primaryBillToName,
+    shouldShowSaveNextMove,
     saveStatus,
     savedInvoiceId
   ]);
-  const hasClientDetails = Boolean(String(billToDetails ?? "").trim());
-  const hasBillableLineItem = lineItems.some((item) => {
-    const description = String(item?.description ?? "").trim();
-    const amount = getLineAmount(item);
-    return description && amount > 0;
-  });
-  const hasSavedDraft = Boolean(savedInvoiceId);
-  const hasHostedPaymentLink = Boolean(String(paymentLinkUrl ?? "").trim());
-  const hasClientPortal = Boolean(String(clientPortalUrl ?? "").trim());
   const handoffStages = [
     {
       label: "Send-ready basics",
@@ -2143,11 +2707,23 @@ function ManualInvoiceCanvas() {
     },
     {
       label: "Payment link",
-      value: hasHostedPaymentLink ? "Hosted link ready" : hasSavedDraft ? "Create link" : "Save first"
+      value: hasHostedPaymentLink
+        ? "Hosted link ready"
+        : hostedHandoffLocked
+          ? "Upgrade to unlock"
+          : hasSavedDraft
+            ? "Create link"
+            : "Save first"
     },
     {
       label: "Client portal",
-      value: hasClientPortal ? "Portal ready" : hasSavedDraft ? "Create portal" : "Save first"
+      value: hasClientPortal
+        ? "Portal ready"
+        : hostedHandoffLocked
+          ? "Upgrade to unlock"
+          : hasSavedDraft
+            ? "Create portal"
+            : "Save first"
     }
   ];
   const onboardingContextCue = useMemo(() => {
@@ -2187,28 +2763,31 @@ function ManualInvoiceCanvas() {
     if (!hasSavedDraft) {
       return {
         eyebrow: "Right now",
-        title: "Your draft is ready to save.",
+        title: "Step 1: save the invoice.",
         detail:
-          "Save it once so the library, hosted payment link, and client portal unlock for this invoice.",
-        actions: [
-          {
-            id: "save-draft",
-            label: saveStatus === "Saving..." ? "Saving..." : "Save draft",
-            disabled: saveStatus === "Saving...",
-            onClick: () => {
-              void handleSaveInvoice();
-            }
-          }
-        ]
+          "Saving makes this reusable and unlocks the library, payment link, client portal, and cleaner follow-up path.",
+        actions:
+          onboardingPrimaryStepId === "save_invoice"
+            ? []
+            : [
+                {
+                  id: "save-draft",
+                  label: saveDraftActionLabel,
+                  disabled: isSavingDraft,
+                  onClick: () => {
+                    void handleSaveInvoice();
+                  }
+                }
+              ]
       };
     }
 
     if (!hasHostedPaymentLink && !hasClientPortal) {
       return {
         eyebrow: "Nice progress",
-        title: "The draft is saved. Add the customer handoff pieces next.",
+        title: "Step 2: add the customer handoff pieces.",
         detail:
-          "Create the hosted payment link and client portal before you send so the invoice feels complete on first delivery.",
+          "Create the payment link and client portal before you send so the first delivery already feels complete and easy to pay from.",
         actions: [
           {
             id: "payment-link",
@@ -2238,7 +2817,7 @@ function ManualInvoiceCanvas() {
     if (hasHostedPaymentLink && !hasClientPortal) {
       return {
         eyebrow: "Nice progress",
-        title: "Payment link is ready. Add the portal to finish the handoff.",
+        title: "Step 3: add the portal to finish the handoff.",
         detail:
           "The payment step is covered. Create the client portal next so customers also have a clean review page.",
         actions: [
@@ -2268,7 +2847,7 @@ function ManualInvoiceCanvas() {
     if (!hasHostedPaymentLink && hasClientPortal) {
       return {
         eyebrow: "Nice progress",
-        title: "Portal is ready. Add the payment link before you send.",
+        title: "Step 2: add the payment link before you send.",
         detail:
           "The client can review the invoice already. Add the hosted payment link so paying feels just as polished.",
         actions: [
@@ -2291,9 +2870,9 @@ function ManualInvoiceCanvas() {
 
     return {
       eyebrow: "Ready to send",
-      title: "Everything needed for a polished handoff is ready.",
+      title: "Step 4: share or export with confidence.",
       detail:
-        "Copy the share pack or export the PDF next. You already have the saved draft, payment link, and portal in place.",
+        "Copy the share pack or export the PDF next. You already have the saved draft, payment link, and portal in place, so the customer path should feel complete.",
       actions: [
         {
           id: "share-pack",
@@ -2331,7 +2910,8 @@ function ManualInvoiceCanvas() {
     onboardingStatus.visible,
     navigate,
     paymentLinkBusy,
-    saveStatus,
+    isSavingDraft,
+    saveDraftActionLabel,
     sharePackBusy
   ]);
 
@@ -2429,7 +3009,7 @@ function ManualInvoiceCanvas() {
             },
             {
               id: "library-follow-up",
-              label: "Sharpen follow-up tone",
+              label: "Sharpen send tone",
               instruction: "Make the notes and invoice language feel clearer before I send or follow up."
             },
             {
@@ -2544,7 +3124,7 @@ function ManualInvoiceCanvas() {
     await refreshAccountPlan();
     if (authRequired && !session?.userId) {
       setSaveNeedsAuth(true);
-      setSaveError("Sign in required to save invoices.");
+      setSaveError("Sign in required to save this invoice.");
       setSaveStatus("");
       return;
     }
@@ -2626,7 +3206,7 @@ function ManualInvoiceCanvas() {
 
   return (
     <div className="nb-page nb-page--manual min-h-screen" style={{ backgroundImage: `radial-gradient(circle at top, ${accent.muted} 0%, rgba(248,250,252,0) 46%)` }}>
-      <main className="nb-page-shell nb-page-shell--wide mx-auto flex w-full flex-col pb-24 md:grid md:grid-cols-[minmax(0,1fr)_320px] md:gap-6 md:pb-8">
+      <main className="nb-page-shell nb-page-shell--wide mx-auto flex w-full flex-col pb-44 md:grid md:grid-cols-[minmax(0,1fr)_320px] md:gap-6 md:pb-8">
         {billingNotice ? (
           <div
             className={`nb-banner mb-4 text-sm font-medium md:col-span-2 ${
@@ -2643,6 +3223,33 @@ function ManualInvoiceCanvas() {
             {importedDraftNotice}
           </div>
         ) : null}
+        {libraryOpenCue ? (
+          <section className="nb-surface nb-surface--elevated nb-hero-glow mb-4 rounded-[28px] p-4 md:col-span-2 no-print">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
+                  {libraryOpenCue.eyebrow}
+                </p>
+                <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+                  {libraryOpenCue.title}
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  {libraryOpenCue.detail}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="nb-btn-primary rounded-full px-4 py-2 text-sm"
+                  style={accentButtonStyle}
+                  onClick={libraryOpenCue.onAction}
+                >
+                  {libraryOpenCue.actionLabel}
+                </button>
+              </div>
+            </div>
+          </section>
+        ) : null}
         {searchParams.get("source") === "import" && importSourcePreview ? (
           <section
             className="nb-surface nb-surface--elevated mb-4 rounded-[28px] p-4 md:col-span-2 no-print"
@@ -2650,7 +3257,7 @@ function ManualInvoiceCanvas() {
           >
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div className="max-w-3xl">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
                   Import cleanup
                 </p>
                 <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
@@ -2671,7 +3278,7 @@ function ManualInvoiceCanvas() {
                 </button>
               </div>
             </div>
-            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+            <div className="nb-focus-panel mt-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
                   Imported source
@@ -2685,6 +3292,86 @@ function ManualInvoiceCanvas() {
               <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700">
                 {importSourcePreview}
               </p>
+            </div>
+          </section>
+        ) : null}
+        {shouldShowSourceTransparency ? (
+          <section
+            className="nb-surface nb-surface--elevated mb-4 rounded-[28px] p-4 md:col-span-2 no-print"
+            data-testid="manual-source-transparency-card"
+          >
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-3xl">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
+                  Before and after
+                </p>
+                <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
+                  Keep the original source close before you send.
+                </p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">
+                  {sourceTransparencyIntro}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs"
+                  onClick={() => setShowSourceTransparencyComparison((prev) => !prev)}
+                >
+                  {showSourceTransparencyComparison ? "Hide full comparison" : "Show full comparison"}
+                </button>
+              </div>
+            </div>
+            <div className="mt-4 rounded-xl border border-slate-100 bg-white px-3 py-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Before and after
+              </p>
+              <p className="mt-1 text-xs text-slate-600">
+                <span className="font-semibold text-slate-700">Cleaned lines:</span> {cleanedLineCount}
+              </p>
+              <p className="mt-1 text-xs text-slate-600">{importSourcePreview}</p>
+              {showSourceTransparencyComparison ? (
+                <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      {sourceTransparencyLabel}
+                    </p>
+                    {sourcePreviewList.length > 0 ? (
+                      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-slate-600">
+                        {sourcePreviewList.map((line, index) => (
+                          <li key={`manual-source-line-${index}`}>{line}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-1 text-xs text-slate-600">Your source notes will show here.</p>
+                    )}
+                    {remainingSourceCount > 0 ? (
+                      <p className="mt-1 text-[11px] text-slate-500">+{remainingSourceCount} more</p>
+                    ) : null}
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      Client-facing draft
+                    </p>
+                    {polishedPreviewList.length > 0 ? (
+                      <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-slate-700">
+                        {polishedPreviewList.map((line, index) => (
+                          <li key={`manual-draft-line-${index}`}>{line}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-1 text-xs text-slate-700">Your cleaned-up draft lines will show here.</p>
+                    )}
+                    {remainingPolishedCount > 0 ? (
+                      <p className="mt-1 text-[11px] text-slate-500">+{remainingPolishedCount} more</p>
+                    ) : null}
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-slate-700">
+                  {polishedPreviewText}
+                </p>
+              )}
             </div>
           </section>
         ) : null}
@@ -2762,7 +3449,7 @@ function ManualInvoiceCanvas() {
               <>
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="max-w-2xl">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                    <p className="nb-kicker">
                       {onboardingStatus.walkthroughActive ? "Guided walkthrough" : "First invoice progress"}
                     </p>
                     <p className="mt-2 text-xl font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
@@ -2772,15 +3459,15 @@ function ManualInvoiceCanvas() {
                       {onboardingStatus.walkthroughActive
                         ? "You made it to the editor. Save this draft first, then export the PDF so you finish the full first-invoice loop."
                         : onboardingStatus.nextStep?.helper ||
-                        "You are in the editor now. Save and export to finish the first complete loop."}
+                        "You are in the editor now. Save, add the handoff pieces, and export to finish the first complete loop."}
                     </p>
                     {!authSession?.userId ? (
                       <p className="mt-2 text-xs leading-5 text-slate-500">
-                        Optional: sign in from the launcher if you want saved work tied to your email before public launch.
+                        Optional: sign in if you want this draft, billing, and repeat-work setup to stay with your account.
                       </p>
                     ) : null}
                   </div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="nb-mobile-actions">
                     {onboardingStatus.nextStep ? (
                       <button
                         type="button"
@@ -2810,12 +3497,12 @@ function ManualInvoiceCanvas() {
                 </div>
                 {onboardingContextCue ? (
                   <div
-                    className="mt-4 rounded-[26px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_#f7faff_0%,_#ffffff_56%,_#edf6ff_100%)] px-4 py-4 shadow-sm"
+                    className="nb-highlight-panel mt-4 rounded-[26px] px-4 py-4 shadow-sm"
                     data-testid="manual-onboarding-next-cue"
                   >
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                       <div className="max-w-2xl">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                        <p className="nb-kicker">
                           {onboardingContextCue.eyebrow}
                         </p>
                         <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
@@ -2825,12 +3512,12 @@ function ManualInvoiceCanvas() {
                           {onboardingContextCue.detail}
                         </p>
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="nb-mobile-actions">
                         {onboardingContextCue.actions.map((action) => (
                           <button
                             key={action.id}
                             type="button"
-                            className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                             onClick={action.onClick}
                             disabled={action.disabled}
                           >
@@ -2847,7 +3534,7 @@ function ManualInvoiceCanvas() {
                     const stepClass = step.complete
                       ? "border-emerald-200 bg-emerald-50 text-emerald-950"
                       : isNext
-                        ? "border-[#6993d2]/20 bg-[#f6f9ff] text-slate-900"
+                        ? "border-[#d5e5de] bg-[#f7faf7] text-slate-900"
                         : "border-slate-200 bg-white/82 text-slate-700";
                     return (
                       <div key={step.id} className={`rounded-2xl border px-3 py-3 ${stepClass}`}>
@@ -2877,7 +3564,7 @@ function ManualInvoiceCanvas() {
             </button>
             <button
               type="button"
-              className="inline-flex min-h-10 items-center justify-center rounded-full border border-white/70 bg-white/70 px-3 text-xs font-semibold text-slate-500 shadow-sm underline-offset-2 transition hover:bg-white/90 hover:text-slate-700 hover:underline"
+              className="nb-shell-utility underline-offset-2 transition hover:underline"
               onClick={() => navigate("/help")}
             >
               Help center
@@ -2885,33 +3572,33 @@ function ManualInvoiceCanvas() {
           </div>
           <button
             type="button"
-            className="inline-flex min-h-10 items-center justify-center rounded-full border border-white/70 bg-white/70 px-3 text-xs font-semibold text-slate-500 shadow-sm underline-offset-2 transition hover:bg-white/90 hover:text-slate-700 hover:underline"
+            className="nb-shell-utility underline-offset-2 transition hover:underline"
             onClick={() => navigate("/")}
           >
-            {authSession?.email ? `Account: ${authSession.email}` : "Account: local mode"}
+            {authSession?.email ? `Account: ${authSession.email}` : "Account: guest session"}
           </button>
         </div>
-        <section
-          className="nb-assistant-panel nb-hero-glow nb-reveal-up mb-4 rounded-[34px] p-5 md:col-span-2 no-print"
-          data-testid="manual-billie-workspace"
-        >
+          <section
+            className="nb-assistant-panel nb-hero-glow nb-reveal-up mb-4 rounded-[34px] p-4 md:col-span-2 md:p-5 lg:p-6 no-print"
+            data-testid="manual-billie-workspace"
+          >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="max-w-2xl space-y-2">
-              <div className="inline-flex rounded-full border border-[#6993d2]/12 bg-white/76 px-3 py-1 shadow-sm">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.26em] text-[#5f8fd2]">
+              <div className="inline-flex rounded-full border border-[#d5e5de] bg-white/76 px-3 py-1 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.26em] text-[#3d6f61]">
                   Work with Billie
                 </p>
               </div>
               <div className="space-y-1">
-                <h2 className="text-2xl font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
-                  Refine the invoice without leaving the draft.
+                <h2 className="text-xl font-semibold text-slate-900 md:text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>
+                  Refine the invoice here, then move straight into save or send.
                 </h2>
                 <p className="text-sm leading-6 text-slate-600">
                   {billieWorkspaceSource === "intake"
-                    ? "Continue from intake review with Billie so the draft feels polished before you save, send, or share it."
+                    ? "Polish the intake draft before you save, send, or share it."
                     : billieWorkspaceSource === "library"
-                      ? "Continue from saved work with Billie so the reopened draft feels polished before you send, remind, or reuse it."
-                    : "Ask Billie to polish wording and presentation while keeping money changes guarded."}
+                      ? "Polish reopened work before you send, remind, or reuse it."
+                    : "Ask Billie to improve wording or presentation while keeping money changes guarded."}
                 </p>
               </div>
             </div>
@@ -2930,7 +3617,7 @@ function ManualInvoiceCanvas() {
           {billieWorkspaceExpanded ? (
             <>
               {billieWorkspaceSource === "intake" ? (
-                <div className="mt-4 rounded-2xl border border-[#6993d2]/18 bg-white/72 px-4 py-3 text-sm text-slate-600">
+                <div className="mt-4 rounded-2xl border border-[#d5e5de] bg-white/72 px-4 py-3 text-sm text-slate-600">
                   <p className="font-semibold text-slate-900">Continue from intake review</p>
                   <p className="mt-1">
                     Billie already helped structure the draft. Use these starter actions to tighten wording and notes
@@ -2938,7 +3625,7 @@ function ManualInvoiceCanvas() {
                   </p>
                 </div>
               ) : billieWorkspaceSource === "import" ? (
-                <div className="mt-4 rounded-2xl border border-[#6993d2]/18 bg-white/72 px-4 py-3 text-sm text-slate-600">
+                <div className="mt-4 rounded-2xl border border-[#d5e5de] bg-white/72 px-4 py-3 text-sm text-slate-600">
                   <p className="font-semibold text-slate-900">Continue from imported source</p>
                   <p className="mt-1">
                     Billie can clean up the imported draft while you keep the original source text close for reference.
@@ -2946,7 +3633,7 @@ function ManualInvoiceCanvas() {
                   </p>
                 </div>
               ) : billieWorkspaceSource === "library" ? (
-                <div className="mt-4 rounded-2xl border border-[#6993d2]/18 bg-white/72 px-4 py-3 text-sm text-slate-600">
+                <div className="mt-4 rounded-2xl border border-[#d5e5de] bg-white/72 px-4 py-3 text-sm text-slate-600">
                   <p className="font-semibold text-slate-900">Continue from saved work</p>
                   <p className="mt-1">
                     Billie reopened the draft with the saved invoice intact. Use these starter actions to tighten the
@@ -2954,7 +3641,7 @@ function ManualInvoiceCanvas() {
                   </p>
                 </div>
               ) : null}
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="nb-mobile-actions mt-4">
                 {billieWorkspaceActions.map((action) => (
                   <button
                     key={action.id}
@@ -2971,8 +3658,8 @@ function ManualInvoiceCanvas() {
               <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-start">
                 <textarea
                   rows={2}
-                  className="nb-textarea min-h-[88px] flex-1 resize-none px-3 py-3"
-                  placeholder="Ask Billie to refine wording, notes, or safe presentation changes…"
+                  className="nb-textarea min-h-[72px] flex-1 resize-none px-3 py-3"
+                  placeholder="Ask Billie to refine wording, notes, or safe design changes..."
                   value={billieWorkspaceInstruction}
                   onChange={(event) => {
                     setBillieWorkspaceInstruction(event.target.value);
@@ -3055,23 +3742,23 @@ function ManualInvoiceCanvas() {
         </section>
         {billieNextMoves.length > 0 ? (
           <section
-            className="mb-4 rounded-[30px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_#f7faff_0%,_#ffffff_56%,_#edf6ff_100%)] p-5 md:col-span-2 no-print shadow-sm"
+            className="nb-highlight-panel mb-4 rounded-[30px] p-5 md:col-span-2 md:p-6 lg:p-7 no-print shadow-sm"
             data-testid="manual-billie-next-moves"
           >
             <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
+                <p className="nb-kicker">
                   Billie next moves
                 </p>
-                <p className="mt-2 text-base text-slate-600" style={{ fontFamily: "'Fraunces', serif" }}>
-                  Keep this draft moving with the next highest-value step.
+                <p className="mt-2 text-sm text-slate-600 md:text-base" style={{ fontFamily: "'Fraunces', serif" }}>
+                  Keep the draft moving with the next highest-value step.
                 </p>
               </div>
               <p className="text-xs font-medium text-slate-500">
                 Explicit only. Nothing auto-runs.
               </p>
             </div>
-            <div className="mt-3 grid gap-3 lg:grid-cols-3">
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {billieNextMoves.map((move) => (
                 <div
                   key={move.id}
@@ -3081,7 +3768,7 @@ function ManualInvoiceCanvas() {
                   <p className="mt-1 text-xs leading-5 text-slate-600">{move.helper}</p>
                   <button
                     type="button"
-                    className="mt-3 rounded-full border border-[#6993d2]/22 bg-[#f6f9ff] px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={move.onClick}
                     disabled={move.busy}
                   >
@@ -3130,7 +3817,10 @@ function ManualInvoiceCanvas() {
               <button
                 type="button"
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
-                onClick={() => setInspectorOpen(true)}
+                onClick={() => {
+                  setActiveInspectorTab("export");
+                  setInspectorOpen(true);
+                }}
               >
                 Customize / Export
               </button>
@@ -3627,14 +4317,14 @@ function ManualInvoiceCanvas() {
                           </p>
                           <button
                             type="button"
-                            className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 transition hover:border-blue-300 hover:text-blue-900"
+                            className="inline-flex rounded-full border border-[#d5e5de] bg-[#f7faf7] px-2.5 py-1 text-[11px] font-semibold text-[#17493c] transition hover:border-[#bcd2c8] hover:text-[#12372d]"
                             onClick={() => handleApplySuggestedRate(item.id, rateSuggestion)}
                             aria-label={`Apply suggested rate $${rateSuggestion.rate.toFixed(2)} to line ${index + 1}`}
                           >
                             {`Use suggested $${rateSuggestion.rate.toFixed(2)}/hr`}
                           </button>
                           {rateSuggestion.confidence === "high" ? (
-                            <span className="text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-[#3d6f61]">
                               High confidence
                             </span>
                           ) : null}
@@ -3753,14 +4443,14 @@ function ManualInvoiceCanvas() {
                               </p>
                               <button
                                 type="button"
-                                className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-800 transition hover:border-blue-300 hover:text-blue-900"
+                                className="inline-flex rounded-full border border-[#d5e5de] bg-[#f7faf7] px-2.5 py-1 text-[11px] font-semibold text-[#17493c] transition hover:border-[#bcd2c8] hover:text-[#12372d]"
                                 onClick={() => handleApplySuggestedRate(item.id, rateSuggestion)}
                                 aria-label={`Apply suggested rate $${rateSuggestion.rate.toFixed(2)} to line ${index + 1}`}
                               >
                                 {`Use suggested $${rateSuggestion.rate.toFixed(2)}/hr`}
                               </button>
                               {rateSuggestion.confidence === "high" ? (
-                                <span className="text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-[#3d6f61]">
                                   High confidence
                                 </span>
                               ) : null}
@@ -3840,7 +4530,7 @@ function ManualInvoiceCanvas() {
                             Client match
                           </span>
                         ) : serviceMatchScore > 0 ? (
-                          <span className="mt-1 inline-flex rounded-full border border-blue-300 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+                          <span className="mt-1 inline-flex rounded-full border border-[#d5e5de] bg-[#f7faf7] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#3d6f61]">
                             Service match
                           </span>
                         ) : null}
@@ -3885,7 +4575,7 @@ function ManualInvoiceCanvas() {
                               Client match
                             </span>
                           ) : serviceMatchScore > 0 ? (
-                            <span className="mt-1 inline-flex rounded-full border border-blue-300 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+                            <span className="mt-1 inline-flex rounded-full border border-[#d5e5de] bg-[#f7faf7] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#3d6f61]">
                               Service match
                             </span>
                           ) : null}
@@ -4125,6 +4815,64 @@ function ManualInvoiceCanvas() {
                   </div>
                 </div>
               </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 no-print">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                      Invoice presets
+                    </p>
+                    <p className="mt-1 hidden text-xs text-emerald-800 sm:block">
+                      Jump into a reusable setup for estimates, service visits, and recurring work.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
+                    {INVOICE_PRESET_QUICK_PICKS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        className="min-h-10 rounded-full border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 sm:text-xs"
+                        onClick={() => handleApplyInvoicePreset(preset)}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                  <button
+                    type="button"
+                    className="min-h-10 rounded-full border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 sm:text-xs"
+                    onClick={handleSaveInvoicePreset}
+                  >
+                    Save current setup
+                  </button>
+                  <button
+                    type="button"
+                    className="min-h-10 rounded-full border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 sm:text-xs disabled:opacity-50"
+                    disabled={!savedInvoicePreset}
+                    onClick={handleApplySavedInvoicePreset}
+                  >
+                    Apply saved preset
+                  </button>
+                  <button
+                    type="button"
+                    className="min-h-10 rounded-full border border-emerald-100 bg-emerald-100 px-3 py-2 text-sm font-semibold text-emerald-900 transition hover:border-emerald-200 hover:bg-emerald-200 sm:text-xs disabled:opacity-50"
+                    disabled={!savedInvoicePreset}
+                    onClick={handleClearSavedInvoicePreset}
+                  >
+                    Clear saved preset
+                  </button>
+                  {savedInvoicePreset ? (
+                    <span className="text-xs font-medium text-emerald-800">
+                      Saved preset: {savedInvoicePreset.label}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-emerald-800">
+                      Saved presets can restore the setup you like best.
+                    </span>
+                  )}
+                </div>
+              </div>
               <div className="rounded-xl border border-slate-200 bg-white/70 p-3 no-print">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -4163,40 +4911,77 @@ function ManualInvoiceCanvas() {
             </section>
 
             <section
-              className="rounded-[30px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_#f7faff_0%,_#ffffff_56%,_#edf6ff_100%)] p-5 no-print shadow-sm"
+              className="nb-highlight-panel no-print p-5"
+              id="manual-send-payment-handoff"
               data-testid="manual-send-payment-handoff"
             >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6993d2]">
-                    Send & payment handoff
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
+                    Send & pay
                   </p>
                   <h3 className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
-                    Make the customer handoff feel complete before you leave the editor.
+                    Finish the handoff before you leave the editor.
                   </h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Billie keeps the handoff explicit: first make the invoice send-ready, then save it, then add the payment and portal steps you want.
+                    Save first. Then add the payment link, add the portal, and export or share once the first customer path feels complete.
+                  </p>
+                  <p className="mt-2 text-xs font-medium uppercase tracking-[0.16em] text-slate-500">
+                    Best order: Save -&gt; Payment link -&gt; Portal -&gt; Share
                   </p>
                 </div>
                 <p className="text-xs font-medium text-slate-500">
-                  Nothing here sends automatically.
+                  Nothing sends automatically.
                 </p>
               </div>
+              {!hasSavedDraft ? (
+                <div className="mt-3 rounded-[22px] border border-[#d9ece4] bg-[#f6fbf8] p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">
+                    First invoice path
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-700">
+                    Saving makes this reusable and unlocks the library, payment link, client portal, and follow-up view.
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-3 rounded-[22px] border border-[#d9ece4] bg-[#f6fbf8] p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">
+                    Best next move
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-700">
+                    If this invoice is about to go out, add the payment link or portal now so the first send already feels easy to pay from and easy to reopen later.
+                  </p>
+                </div>
+              )}
               <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                 {handoffStages.map((stage) => (
-                  <div key={stage.label} className="rounded-2xl border border-white/80 bg-white px-3 py-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
-                      {stage.label}
-                    </p>
-                    <p className="mt-1 text-xs font-semibold text-slate-800">{stage.value}</p>
+                  <div key={stage.label} className="nb-stage-card">
+                    <p className="nb-stage-card__label">{stage.label}</p>
+                    <p className="nb-stage-card__value">{stage.value}</p>
                   </div>
                 ))}
               </div>
-              <div className="mt-3 flex flex-wrap gap-2">
+              {hostedHandoffLocked ? (
+                <div className="mt-3 rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
+                  <p className="font-semibold uppercase tracking-[0.18em] text-amber-700">Pro handoff</p>
+                  <p className="mt-1">
+                    Payment links and client portals are Pro. Open plan &amp; billing to unlock them, or keep using
+                    share pack and PDF export.
+                  </p>
+                  <button
+                    type="button"
+                    className="mt-3 rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 transition hover:border-amber-400 hover:bg-amber-100"
+                    onClick={() => navigate("/")}
+                  >
+                    Open plan &amp; billing
+                  </button>
+                </div>
+              ) : null}
+              <div className="nb-mobile-actions mt-3">
                 {!hasClientDetails ? (
                   <button
                     type="button"
-                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35"
+                    className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs"
                     onClick={() => {
                       document.querySelector('textarea[placeholder="Client Name"]')?.focus();
                     }}
@@ -4207,7 +4992,7 @@ function ManualInvoiceCanvas() {
                 {!hasBillableLineItem ? (
                   <button
                     type="button"
-                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35"
+                    className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs"
                     onClick={() => {
                       document.querySelector('input[placeholder="Description"]')?.focus();
                     }}
@@ -4218,56 +5003,65 @@ function ManualInvoiceCanvas() {
                 {!hasSavedDraft && hasClientDetails && hasBillableLineItem ? (
                   <button
                     type="button"
-                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => {
                       void handleSaveInvoice();
                     }}
-                    disabled={saveStatus === "Saving..."}
+                    disabled={isSavingDraft}
                   >
-                    {saveStatus === "Saving..." ? "Saving..." : "Save draft"}
+                    {isSavingDraft ? saveDraftActionLabel : "Save draft first"}
                   </button>
                 ) : null}
-                {hasSavedDraft && !hasHostedPaymentLink ? (
+                {hasSavedDraft && !hasHostedPaymentLink && !hostedHandoffLocked ? (
                   <button
                     type="button"
-                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => {
                       void handleGeneratePaymentLink();
                     }}
                     disabled={paymentLinkBusy}
                   >
-                    {paymentLinkBusy ? "Creating..." : "Create payment link"}
+                    {paymentLinkBusy ? "Creating..." : "Add payment link next"}
                   </button>
                 ) : null}
-                {hasSavedDraft && !hasClientPortal ? (
+                {hasSavedDraft && !hasClientPortal && !hostedHandoffLocked ? (
                   <button
                     type="button"
-                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => {
                       void handleGenerateClientPortalLink();
                     }}
                     disabled={clientPortalBusy}
                   >
-                    {clientPortalBusy ? "Creating..." : "Create client portal"}
+                    {clientPortalBusy ? "Creating..." : "Add client portal next"}
+                  </button>
+                ) : null}
+                {hasSavedDraft ? (
+                  <button
+                    type="button"
+                    className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => navigate(`/invoices?open=${encodeURIComponent(savedInvoiceId)}`)}
+                  >
+                    Open saved invoice
                   </button>
                 ) : null}
                 {hasBillableLineItem ? (
                   <button
                     type="button"
-                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={handleCopySharePack}
                     disabled={sharePackBusy}
                   >
-                    {sharePackBusy ? "Copying..." : "Copy share pack"}
+                    {sharePackBusy ? "Copying..." : "Copy share pack to send"}
                   </button>
                 ) : null}
               </div>
-              {hasSavedDraft && !hasHostedPaymentLink && hostedPaymentLinkUnavailable && !paymentLinkError ? (
-                <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium leading-5 text-amber-900">
-                  {hostedPaymentLinkUnavailableMessage}
+              {!hasSavedDraft && hasClientDetails && hasBillableLineItem ? (
+                <p className="mt-3 text-xs leading-5 text-slate-500">
+                  {saveDraftHelperLabel}
                 </p>
               ) : null}
-              {paymentLinkError ? (
+              {paymentLinkError && !hostedHandoffLocked ? (
                 <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium leading-5 text-amber-900">
                   {paymentLinkError}
                 </p>
@@ -4312,6 +5106,104 @@ function ManualInvoiceCanvas() {
               {paymentLinkError ? (
                 <p className="text-xs font-medium leading-5 text-amber-700">{paymentLinkError}</p>
               ) : null}
+            </section>
+
+            <section className="space-y-3" data-testid="manual-payment-methods">
+              <div className="flex items-center justify-between gap-3">
+                <label className={`${activePreset.textClass} ${activePreset.labelClass}`}>Payment instructions</label>
+                <span className="text-[11px] font-semibold text-slate-400">Optional</span>
+              </div>
+              <p className="text-xs leading-5 text-slate-500">
+                Add the manual ways this client can pay you. No card numbers are stored here, only instructions.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(PAYMENT_METHOD_KIND_LABELS).map(([kind, label]) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    className="nb-btn-ghost px-3 py-1.5 text-xs"
+                    style={{ color: accent.primary }}
+                    onClick={() => handleAddPaymentMethod(kind)}
+                  >
+                    Add {label}
+                  </button>
+                ))}
+              </div>
+              {paymentMethods.length > 0 ? (
+                <div className="space-y-3">
+                  {paymentMethods.map((method, index) => (
+                    <div
+                      key={method.id}
+                      data-testid={`payment-method-card-${index + 1}`}
+                      className="nb-focus-panel"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                            Payment method {index + 1}
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {PAYMENT_METHOD_KIND_LABELS[method.kind] || "Payment method"}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
+                          onClick={() => handleRemovePaymentMethod(method.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <div className="mt-3 grid gap-3">
+                        <label className="space-y-1">
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                            Method type
+                          </span>
+                          <select
+                            className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
+                            value={method.kind}
+                            onChange={(event) => handleUpdatePaymentMethodKind(method.id, event.target.value)}
+                          >
+                            {Object.entries(PAYMENT_METHOD_KIND_LABELS).map(([kind, label]) => (
+                              <option key={kind} value={kind}>
+                                {label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                            Label
+                          </span>
+                          <input
+                            className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
+                            value={method.label}
+                            onChange={(event) => handleUpdatePaymentMethod(method.id, "label", event.target.value)}
+                            placeholder="Cheque, e-transfer, cash..."
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                            Instructions
+                          </span>
+                          <textarea
+                            rows={4}
+                            className={`w-full ${activePreset.inputClass} ${activePreset.textClass}`}
+                            value={method.details}
+                            onChange={(event) => handleUpdatePaymentMethod(method.id, "details", event.target.value)}
+                            placeholder="Add payee name, e-transfer email, mailing address, or custom instructions."
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="nb-empty px-4 py-4 text-sm text-slate-600">
+                  Add cheque, e-transfer, cash, or bank transfer instructions so the invoice can travel with the
+                  right payment path.
+                </div>
+              )}
             </section>
 
             <section className="space-y-2">
@@ -4446,6 +5338,10 @@ function ManualInvoiceCanvas() {
             statusUpdateLoading={statusUpdateLoading}
             statusUpdateError={statusUpdateError}
             onUpdateSavedInvoiceStatus={handleUpdateSavedInvoiceStatus}
+            savedEstimateReviewState={savedEstimateReviewState}
+            estimateReviewUpdateLoading={estimateReviewUpdateLoading}
+            estimateReviewUpdateError={estimateReviewUpdateError}
+            onUpdateSavedEstimateReviewState={handleUpdateSavedEstimateReviewState}
             previewData={previewData}
             toneSource={{ lineItems, notes }}
             onPolishDescriptions={handlePolishDescriptions}
@@ -4463,7 +5359,7 @@ function ManualInvoiceCanvas() {
         </div>
       </main>
 
-      <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white md:hidden no-print">
+      <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-[rgba(23,73,60,0.08)] bg-[rgba(251,250,246,0.96)] md:hidden no-print backdrop-blur-xl">
         <div className="mx-auto max-w-6xl px-4 py-2">
           <p className="mb-1 text-center text-[11px] font-semibold text-slate-500">
             {isMobileInspectorOpen ? `${activeMobileTabLabel} panel open` : "Invoice tools"}
@@ -4475,7 +5371,7 @@ function ManualInvoiceCanvas() {
                 <button
                   key={tab.id}
                   type="button"
-                  className={`flex min-w-[68px] flex-col items-center gap-0.5 rounded-lg px-2 py-1 text-xs font-semibold transition ${
+                  className={`flex min-w-[68px] flex-col items-center gap-0.5 rounded-2xl px-2 py-1.5 text-xs font-semibold transition ${
                     isActive ? "" : "text-slate-500"
                   }`}
                   style={isActive ? accentGhostButtonStyle : undefined}
@@ -4503,8 +5399,8 @@ function ManualInvoiceCanvas() {
             aria-label="Close tools panel"
             onClick={() => setInspectorOpen(false)}
           />
-          <div className="absolute inset-x-0 bottom-0 max-h-[82vh] rounded-t-2xl border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-2">
+          <div className="absolute inset-x-0 bottom-0 max-h-[82vh] rounded-t-[28px] border border-[rgba(23,73,60,0.08)] bg-[rgba(255,255,255,0.98)] shadow-xl backdrop-blur-xl">
+            <div className="flex items-center justify-between border-b border-[rgba(23,73,60,0.08)] px-4 py-2">
               <span className="text-sm font-semibold text-slate-700">{activeMobileTabLabel}</span>
               <button
                 type="button"
@@ -4575,6 +5471,10 @@ function ManualInvoiceCanvas() {
                 statusUpdateLoading={statusUpdateLoading}
                 statusUpdateError={statusUpdateError}
                 onUpdateSavedInvoiceStatus={handleUpdateSavedInvoiceStatus}
+                savedEstimateReviewState={savedEstimateReviewState}
+                estimateReviewUpdateLoading={estimateReviewUpdateLoading}
+                estimateReviewUpdateError={estimateReviewUpdateError}
+                onUpdateSavedEstimateReviewState={handleUpdateSavedEstimateReviewState}
                 previewData={previewData}
                 toneSource={{ lineItems, notes }}
                 onPolishDescriptions={handlePolishDescriptions}

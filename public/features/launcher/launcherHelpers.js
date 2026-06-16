@@ -5,7 +5,7 @@
       "Missing /utils/billingActions.js load. Ensure it is loaded before /features/launcher/launcherHelpers.js."
     );
   }
-  const { readBillingNoticeFromUrl } = billingActions;
+  const { readBillingNoticeFromUrl, getBillingEnvironment } = billingActions;
 
   const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
@@ -14,16 +14,16 @@
   const buildLauncherOptions = ({ navigate, icons }) => [
     {
       key: "ai",
-      title: "Start with Billie",
-      description: "Paste rough job notes. Billie builds a draft you review before anything changes.",
+      title: "Quick AI invoice",
+      description: "Fastest path. Paste rough job notes and let Billie shape the first draft before you review anything sensitive.",
       icon: icons.sparkles,
-      onClick: () => navigate("/ai-intake"),
+      onClick: () => navigate("/ai-intake?mode=quick"),
       disabled: false
     },
     {
       key: "scratchpad",
       title: "Daily scratchpad",
-      description: "Capture work during the day, then turn those notes into an invoice.",
+      description: "Capture work as it happens, then turn the day into an invoice when you are ready to clean it up.",
       icon: icons.notebook,
       onClick: () => navigate("/scratchpad"),
       disabled: false
@@ -31,15 +31,15 @@
     {
       key: "import",
       title: "Legacy import",
-      description: "Bring in old PDFs, images, text files, or spreadsheets and keep editing.",
+      description: "Bring in PDFs, photos, spreadsheets, or copied text when the job already exists somewhere else.",
       icon: icons.upload,
       onClick: () => navigate("/import"),
       disabled: false
     },
     {
       key: "manual",
-      title: "Blank Invoice",
-      description: "Start from scratch with a clean invoice canvas.",
+      title: "Blank invoice",
+      description: "Open a clean canvas when you already know exactly what the invoice should say.",
       icon: icons.pencil,
       onClick: () => navigate("/manual"),
       disabled: false
@@ -47,7 +47,7 @@
     {
       key: "library",
       title: "Library",
-      description: "Reopen drafts, track sent invoices, and handle follow-up work.",
+      description: "Reopen drafts, track delivery, and handle the invoices that still need attention after the first save.",
       icon: icons.archive,
       onClick: () => navigate("/invoices"),
       disabled: false
@@ -55,7 +55,7 @@
     {
       key: "identity",
       title: "Branding",
-      description: "Set your logo, colors, and business defaults once.",
+      description: "Set your logo, colors, and business defaults so every invoice starts cleaner.",
       icon: icons.swatch,
       onClick: () => navigate("/settings/business"),
       disabled: false
@@ -99,20 +99,39 @@
     upgradeUrl,
     billingPortalUrl,
     hasStripeCheckout,
-    hasStripePortal
+    hasStripePortal,
+    hasGooglePlayLifetimePurchase,
+    hasGooglePlayRestore
   }) => {
+    const googlePlayEntitlements = accountPlan?.billing?.googlePlay?.entitlements ?? {};
+    const googlePlayRecoveryState =
+      accountPlan?.plan === "free" &&
+      Number.isFinite(googlePlayEntitlements?.subscriptionCount) &&
+      Number(googlePlayEntitlements.subscriptionCount) > 0 &&
+      (!Number.isFinite(googlePlayEntitlements?.activeSubscriptionCount) ||
+        Number(googlePlayEntitlements.activeSubscriptionCount) <= 0);
     const useStripeUpgradeAction = accountPlan?.plan === "free" && hasStripeCheckout(accountPlan);
-    const useStripePortalAction = accountPlan?.plan === "pro" && hasStripePortal(accountPlan);
+    const useStripePortalAction =
+      (accountPlan?.plan === "pro" || googlePlayRecoveryState) && hasStripePortal(accountPlan);
     const showUpgradeAction =
       accountPlan?.plan === "free" && (Boolean(upgradeUrl) || useStripeUpgradeAction);
+    const showLifetimePurchaseAction =
+      accountPlan?.plan === "free" && hasGooglePlayLifetimePurchase(accountPlan);
     const showBillingPortalAction =
-      accountPlan?.plan === "pro" && (Boolean(billingPortalUrl) || useStripePortalAction);
+      (accountPlan?.plan === "pro" || googlePlayRecoveryState) &&
+      (Boolean(billingPortalUrl) || useStripePortalAction);
+    const showRestorePurchasesAction = hasGooglePlayRestore(accountPlan);
+    const billingEnvironment = getBillingEnvironment(accountPlan);
     return {
       useStripeUpgradeAction,
       useStripePortalAction,
       showUpgradeAction,
+      showLifetimePurchaseAction,
       showBillingPortalAction,
-      hasPlanActions: showUpgradeAction || showBillingPortalAction
+      showRestorePurchasesAction,
+      hasPlanActions:
+        showUpgradeAction || showLifetimePurchaseAction || showBillingPortalAction || showRestorePurchasesAction,
+      billingEnvironment
     };
   };
 

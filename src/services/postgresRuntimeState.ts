@@ -1,11 +1,11 @@
 import { Client } from "pg";
 import { z } from "zod";
 
-export type RuntimeStateBackend = "file" | "postgres";
+type RuntimeStateBackend = "file" | "postgres";
 
 let snapshotTableReadyPromise: Promise<void> | null = null;
 
-export function resolveRuntimeStateBackend(): RuntimeStateBackend {
+function resolveRuntimeStateBackend(): RuntimeStateBackend {
   const override = normalizeBackendValue(process.env.INVOICE_RUNTIME_STORE_BACKEND);
   if (override) {
     return override === "postgres" && resolveRuntimeStatePostgresUrl() ? "postgres" : "file";
@@ -34,7 +34,7 @@ function createRuntimeStatePostgresClient(): Client {
   return new Client({ connectionString });
 }
 
-export async function ensureRuntimeSnapshotTable(): Promise<void> {
+async function ensureRuntimeSnapshotTable(): Promise<void> {
   if (!snapshotTableReadyPromise) {
     snapshotTableReadyPromise = createRuntimeSnapshotTable();
   }

@@ -70,6 +70,3 @@ export function loadSystemPrompt(): string {
   return cachedSystemPrompt;
 }
 
-export function clearSystemPromptCache(): void {
-  cachedSystemPrompt = null;
-}

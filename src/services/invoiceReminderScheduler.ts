@@ -25,7 +25,7 @@ export type ReminderCandidate = {
   reason: ReminderCandidateReason;
 };
 
-export type ReminderRunResult = {
+type ReminderRunResult = {
   settings: InvoiceReminderSettings;
   scannedCount: number;
   dueCount: number;
@@ -52,9 +52,9 @@ type ReminderContext = {
   now?: Date;
 };
 
-export type ReminderCandidateReason = "past_due" | "follow_up_window" | "cooldown";
+type ReminderCandidateReason = "past_due" | "follow_up_window" | "cooldown";
 
-export type ReminderTiming = {
+type ReminderTiming = {
   dueDate?: string;
   nextReminderAt: string;
   nextReminderAtMs: number;
@@ -64,7 +64,7 @@ export type ReminderTiming = {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-export function resolveInvoiceReminderSettings(
+function resolveInvoiceReminderSettings(
   overrides?: Partial<InvoiceReminderSettings>
 ): InvoiceReminderSettings {
   const dueAfterDays = normalizePositiveInteger(

@@ -140,6 +140,28 @@ export async function completeGoogleAuthCallback(
   };
 }
 
+export async function completeGoogleNativeAuth(input: {
+  idToken: string;
+}): Promise<{ identity: GoogleAuthIdentity }> {
+  const idToken = readOptionalValue(input.idToken);
+  if (!idToken) {
+    throw new Error("Google Sign-In did not return an ID token.");
+  }
+  const client = createGoogleAuthClient({
+    clientId: requireGoogleClientId(),
+    clientSecret: requireGoogleClientSecret(),
+    redirectUri: buildGoogleRedirectUri("https://app.notebill.app")
+  });
+  const ticket = await client.verifyIdToken({
+    idToken,
+    audience: requireGoogleClientId()
+  });
+  const payload = ticket.getPayload();
+  return {
+    identity: toGoogleAuthIdentity(payload)
+  };
+}
+
 export function buildGoogleRedirectUri(baseUrl: string): string {
   return `${normalizeBaseUrl(baseUrl)}${GOOGLE_OAUTH_CALLBACK_PATH}`;
 }
@@ -189,13 +211,20 @@ export function buildGoogleAuthSuccessUrl(input: {
   session: { userId: string; email: string; expiresAt: string };
   returnPath?: string;
 }): string {
+  const normalizedReturnPath = sanitizeInternalReturnPath(input.returnPath);
   const params = new URLSearchParams({
     token: input.token,
     userId: input.session.userId,
     email: input.session.email,
     expiresAt: input.session.expiresAt,
-    next: sanitizeInternalReturnPath(input.returnPath)
+    next: normalizedReturnPath
   });
+  if (isNativeGoogleAuthReturnPath(normalizedReturnPath)) {
+    return buildNativeGoogleAuthUrl({
+      baseUrl: input.baseUrl,
+      params
+    });
+  }
   return `${normalizeBaseUrl(input.baseUrl)}${GOOGLE_OAUTH_COMPLETE_PATH}#${params.toString()}`;
 }
 
@@ -204,10 +233,17 @@ export function buildGoogleAuthErrorUrl(input: {
   error: string;
   returnPath?: string;
 }): string {
+  const normalizedReturnPath = sanitizeInternalReturnPath(input.returnPath);
   const params = new URLSearchParams({
     error: input.error,
-    next: sanitizeInternalReturnPath(input.returnPath)
+    next: normalizedReturnPath
   });
+  if (isNativeGoogleAuthReturnPath(normalizedReturnPath)) {
+    return buildNativeGoogleAuthUrl({
+      baseUrl: input.baseUrl,
+      params
+    });
+  }
   return `${normalizeBaseUrl(input.baseUrl)}${GOOGLE_OAUTH_COMPLETE_PATH}?${params.toString()}`;
 }
 
@@ -225,6 +261,21 @@ export function sanitizeInternalReturnPath(value: string | undefined): string {
   } catch {
     return "/";
   }
+}
+
+function isNativeGoogleAuthReturnPath(value: string): boolean {
+  try {
+    const parsed = new URL(value, "https://notebill.local");
+    return parsed.searchParams.get("nativeAuth") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function buildNativeGoogleAuthUrl(input: { baseUrl: string; params: URLSearchParams }): string {
+  const params = new URLSearchParams(input.params);
+  params.set("nativeAuth", "1");
+  return `${normalizeBaseUrl(input.baseUrl)}${GOOGLE_OAUTH_COMPLETE_PATH}?${params.toString()}`;
 }
 
 export function setGoogleAuthClientFactoryForTests(

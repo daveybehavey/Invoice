@@ -60,6 +60,10 @@
     showUpgradeAction,
     useStripeUpgradeAction,
     upgradeUrl,
+    upgradeActionLabel,
+    googlePlaySubscriptionPlans,
+    billingEnvironmentMode,
+    billingEnvironmentHint,
     billingBusy,
     billingError,
     handleUpgradeAction
@@ -73,6 +77,11 @@
         : planUsage?.statusTone === "warning"
           ? "nb-usage-meter--warning"
           : "";
+    const showInstalledAppGuard = billingEnvironmentMode === "android-browser";
+    const hasGooglePlayPlanChoices =
+      billingEnvironmentMode === "google-play" &&
+      Array.isArray(googlePlaySubscriptionPlans) &&
+      googlePlaySubscriptionPlans.length > 1;
     return (
       <div className={`space-y-2 ${hasReviewCard ? "mt-0 sm:mt-3" : "mt-2 sm:mt-3"}`}>
         <section
@@ -518,7 +527,7 @@
               <p className="text-xs text-slate-500">{ctaHelper}</p>
             ) : null}
             {planLimitReached ? (
-              <div className="nb-banner nb-banner--warning rounded-xl p-3">
+              <div className="nb-banner nb-banner--warning rounded-xl p-3" role="status" aria-live="polite">
                 <p className="text-sm font-semibold text-amber-900">Free plan limit reached</p>
                 {planSummary ? (
                   <p className="mt-1 text-xs font-semibold text-amber-800">{planSummary}</p>
@@ -539,18 +548,60 @@
                   </div>
                 ) : null}
                 <p className="mt-1 text-xs text-amber-800">
-                  You can keep generating drafts. Saving a new invoice is locked until you upgrade.
+                  You can keep generating drafts. Upgrade when you are ready to save this as a real reusable invoice and unlock the full follow-up workflow.
                 </p>
+                {showInstalledAppGuard ? (
+                  <div className="nb-platform-guard mt-3" role="status" aria-live="polite">
+                    <p className="nb-platform-guard__eyebrow">Installed app required</p>
+                    <p className="nb-platform-guard__title">Open the installed NoteBill app for Google Play upgrades.</p>
+                    <p className="nb-platform-guard__copy">
+                      This Android browser view can still draft and review. Billing belongs in the real app so Google Play can finish the upgrade.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-[11px] leading-5 text-amber-800">{billingEnvironmentHint}</p>
+                )}
                 {showUpgradeAction ? (
                   <div className="mt-2">
-                    {useStripeUpgradeAction ? (
+                    {hasGooglePlayPlanChoices ? (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {googlePlaySubscriptionPlans.map((option) => (
+                          <button
+                            key={option.basePlanId}
+                            type="button"
+                            className={`rounded-[18px] border px-3 py-3 text-left transition ${
+                              option.isDefault
+                                ? "border-amber-300 bg-amber-50 shadow-[0_14px_30px_rgba(217,119,6,0.12)]"
+                                : "border-amber-200 bg-white/90 hover:border-amber-300 hover:bg-white"
+                            } disabled:cursor-not-allowed disabled:opacity-60`}
+                            onClick={() => handleUpgradeAction(option.basePlanId)}
+                            disabled={billingBusy}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm font-semibold text-amber-950">{option.label}</span>
+                              {option.badge || option.isDefault ? (
+                                <span className="rounded-full border border-amber-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-900">
+                                  {option.badge || "Default"}
+                                </span>
+                              ) : null}
+                            </div>
+                            {option.cadenceLabel ? (
+                              <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-800">
+                                {option.cadenceLabel}
+                              </p>
+                            ) : null}
+                            <p className="mt-2 text-xs leading-5 text-amber-900/80">{option.description}</p>
+                          </button>
+                        ))}
+                      </div>
+                    ) : useStripeUpgradeAction ? (
                       <button
                         type="button"
                         className="nb-btn-secondary rounded-full px-3 py-1 text-xs disabled:cursor-not-allowed disabled:text-amber-300"
                         onClick={handleUpgradeAction}
                         disabled={billingBusy}
                       >
-                        {billingBusy ? "Opening..." : "Upgrade plan"}
+                        {billingBusy ? "Opening..." : upgradeActionLabel}
                       </button>
                     ) : (
                       <a
@@ -559,12 +610,19 @@
                         rel="noreferrer"
                         className="nb-btn-secondary inline-flex rounded-full px-3 py-1 text-xs"
                       >
-                        Upgrade plan
+                        {upgradeActionLabel}
                       </a>
                     )}
                   </div>
                 ) : null}
-                {billingError ? <p className="mt-2 text-xs text-rose-700">{billingError}</p> : null}
+                {billingError ? (
+                  <p className="mt-2 text-xs text-rose-700" role="alert">
+                    {billingError}{" "}
+                    <a href="/support" className="font-semibold underline underline-offset-2">
+                      Get support
+                    </a>
+                  </p>
+                ) : null}
               </div>
             ) : planWarning ? (
               <div className="nb-banner nb-banner--warning rounded-xl p-3">

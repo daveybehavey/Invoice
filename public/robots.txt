@@ -1,0 +1,17 @@
+User-agent: *
+Allow: /
+
+Disallow: /portal/
+Disallow: /auth/
+Disallow: /manual
+Disallow: /import
+Disallow: /diagnostics
+Disallow: /settings/
+Disallow: /clients
+Disallow: /dashboard
+Disallow: /scratchpad
+Disallow: /notes
+Disallow: /invoices
+Disallow: /library
+
+Sitemap: https://app.notebill.app/sitemap.xml

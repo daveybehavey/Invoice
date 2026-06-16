@@ -42,7 +42,7 @@ const BillingEntitlementsSnapshotSchema = z.object({
 
 type BillingEntitlementsSnapshot = z.infer<typeof BillingEntitlementsSnapshotSchema>;
 
-export type BillingEntitlementsSummary = {
+type BillingEntitlementsSummary = {
   updatedAt: string;
   customerCount: number;
   subscriptionCount: number;
@@ -161,7 +161,7 @@ export async function applySubscriptionEntitlement(input: {
   });
 }
 
-export async function getBillingEntitlementsSnapshot(): Promise<BillingEntitlementsSnapshot> {
+async function getBillingEntitlementsSnapshot(): Promise<BillingEntitlementsSnapshot> {
   return readSnapshot();
 }
 
