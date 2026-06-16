@@ -594,8 +594,50 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
    - Added regression coverage for status/balance consistency and launcher action visibility.
 
 ## Next (current priorities)
-1. Optional modularization continuation
-   - Continue splitting large frontend orchestration files into focused modules/hooks as non-blocking hygiene work.
+1. Mobile revenue proof (active watch)
+   - Keep the single `NB | Mobile` lane running and judge it on real `pro_unlock_verified` signal, search-term quality, and whether paid traffic turns into trustworthy unlocks.
+   - Do not broaden campaigns or spin up more paid lanes until the current mobile test proves itself.
+
+2. Android / web parity for trust and conversion
+   - Keep public Android releases synced closely to the live web product so first-session, billing, save/reopen, send, and follow-up improvements do not drift between surfaces.
+   - Use real-device sanity passes after production uploads to catch mobile-specific crowding or trust issues before they compound.
+
+3. First-session and paid-user confidence
+   - Keep reducing hesitation in the first three minutes: first draft, first save, first reopen, and first send.
+   - Favor changes that make the product feel calmer, more obvious, and safer to rely on without adding random scope.
+
+4. Draft recovery inbox
+   - Surface stale unfinished drafts with one-tap resume actions and lightweight guidance.
+   - This is the strongest low-complexity retention win we can build while ad/install signal is still maturing.
+
+5. Sender / recipient handoff confidence
+   - Keep improving send wording, recipient confidence, portal clarity, and payment-path trust so the invoice feels credible the moment it leaves the app.
+   - This work supports both free-to-paid confidence and long-term retention.
+
+6. Android install growth prep
+   - Prepare a separate Android-install acquisition lane instead of mixing install goals into the current web revenue test.
+   - Best next pieces: custom Play listing alignment, install-focused creative, install-quality event tracking, and in-app review prompts after real success moments.
+   - Use `docs/android-install-growth-plan.md` as the source of truth before launching any install-spend test.
+
+7. Optional modularization continuation
+   - Continue splitting large frontend orchestration files into focused modules/hooks only as non-blocking hygiene work.
+   - This stays below conversion, retention, trust, and growth-learning work.
+
+## Current execution view
+### Now
+- Watch the live mobile revenue lane without overreacting.
+- Keep public Android and web in sync.
+- Fix only high-signal friction that affects trust, save/reopen confidence, send, payment, or follow-up.
+
+### Parallel while signal gathers
+- Build Draft Recovery Inbox.
+- Tighten sender/recipient trust surfaces.
+- Prepare Android install growth assets, custom store-listing direction, and install-quality measurement.
+
+### Later after signal is clearer
+- Decide whether to launch a separate Android install campaign.
+- Decide whether to expand beyond the `NB | Mobile` revenue lane.
+- Resume larger structural cleanup only if it clearly helps iteration speed.
 
 ## Success Criteria (lean)
 - Users can complete a messy intake without confusion.
@@ -604,7 +646,7 @@ AI feels like ChatGPT: powerful intake, explicit money decisions, and a safe edi
 - Testing remains deterministic.
 
 ## V1 Status
-Production Beta – Feature Complete.
+Production Beta - Feature Complete.
 
 ## V2 Backlog (Strategic Planning Only - Not Active Roadmap Tasks)
 This backlog is planning-only. Items below are intentionally not scheduled and do not change V1 scope.
@@ -723,3 +765,4 @@ Ordered by leverage (highest first); complexity is the tie-breaker.
    - Estimated complexity: High
    - Impact score: Retention
    - Dependency: Mobile wrapper baseline + server conflict strategy
+

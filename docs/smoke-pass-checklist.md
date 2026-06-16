@@ -20,6 +20,7 @@ For a copy-paste tester handoff, use `docs/tester-packet.md`.
 - Confirm the app lands on the launcher without a blank screen or blocked auth wall.
 - Confirm the main start path is obvious without reading documentation.
 - Optional: sign in with email-link auth. Enter an email inbox you control, open the secure link, and return to the app. There is no password.
+- If Pro should already be active on this account, confirm the account strip reflects that clearly after sign-in.
 
 Pass bar:
 - App installs, opens, and reaches the main flow without help.
@@ -45,6 +46,7 @@ Pass bar:
 - Save to the library.
 - Reopen the saved invoice and confirm status, totals, and details persisted.
 - Export/download the PDF.
+- Fully close and reopen the app, then confirm the invoice and plan state still look correct.
 
 Pass bar:
 - A tester can create, save, reopen, and export a PDF invoice without help.
@@ -54,6 +56,7 @@ Pass bar:
 
 - Optional: send the invoice by email if delivery is configured.
 - Optional: create/open a hosted payment link if Stripe payments are configured.
+- Optional: restore Google Play purchases and confirm Pro reappears cleanly.
 - Optional: mark sent, mark paid, and run reminder controls to confirm status copy is clear.
 - Optional: copy a reminder note and confirm it reads like something a real business could send.
 
@@ -106,6 +109,7 @@ Pass bar:
 - Time to send-ready invoice.
 - Any UI flashes, blank loaders, or stuck states.
 - Any moment where the tester asks, "What do I do now?"
+- Any moment where plan state, payment state, or follow-up state feels unclear.
 - Screenshots for confusing review, payment, sign-in, or reminder states.
 
 ## Pass Bar

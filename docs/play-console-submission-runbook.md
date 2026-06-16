@@ -154,14 +154,13 @@ Do not claim:
 
 ### Copy-paste release notes
 
-Use this for the first Android closed test release:
+Use this for the current public Android release:
 
 ```text
-NoteBill is ready for its first Android test build.
-
-This version focuses on fast invoice creation from rough notes, manual review and editing, saved drafts, PDF export, scratchpad capture, repeat-client memory, and feedback tools.
-
-Please report anything confusing, broken, slow, or visually off.
+Fixed Google Play billing and restore so Pro unlocks more reliably.
+Improved paid-plan recovery after reinstall or reopening the app.
+Polished onboarding, library, and manual invoice flow to feel cleaner and easier to use.
+General stability and workflow improvements.
 ```
 
 ### Copy-paste app access note

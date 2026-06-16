@@ -6,10 +6,13 @@ This checklist is for shipping `NoteBill` to the Google Play Store from a Window
 
 - Confirm latest signed bundle exists:
   - `android/app/build/outputs/bundle/release/app-release.aab`
-- For the V2 candidate, use the archived named file:
-  - `android/app/build/outputs/bundle/release/app-release-2.0.0.aab`
-- If uploading an older named bundle, use the exact archived file:
-  - `android/app/build/outputs/bundle/release/app-release-1.0.13.aab`
+- Confirm latest native debug symbols zip exists:
+  - `android/app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip`
+- Upload the latest archived named bundle, not just `app-release.aab`.
+- Upload the latest archived native symbols zip alongside the bundle when Play Console asks for debug symbols.
+- Current public-ready bundle:
+  - `android/app/build/outputs/bundle/release/app-release-2.1.48.aab`
+  - `android/app/build/outputs/native-debug-symbols/release/native-debug-symbols-2.1.48.zip`
 - Confirm package/application id is correct:
   - `app.notebill.app`
 - Confirm the Android `versionCode` is higher than any bundle already uploaded to Play Console.
@@ -28,13 +31,9 @@ This checklist is for shipping `NoteBill` to the Google Play Store from a Window
 ## Build steps on Windows
 
 ```powershell
-cd C:\Users\david\OneDrive\Desktop\Invoice
+cd C:\Users\david\Desktop\Invoice
 npm run check:android-release
-npx cap sync android
-cd android
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
-$env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
-.\gradlew bundleRelease
+npm run bundle:android:release
 ```
 
 ## App content checks
@@ -48,7 +47,7 @@ $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 ## Functional smoke pass on Android
 
 - Launch the app from a fresh install
-- Verify sign-in by email works if auth is required
+- Verify sign-in by email works if auth is used
 - Paste messy notes and generate an invoice
 - Import a PDF or image invoice and confirm extraction works
 - If audio-note upload is intended for release, verify it works on-device
@@ -57,7 +56,8 @@ $env:PATH = "$env:JAVA_HOME\bin;$env:PATH"
 - Duplicate a saved invoice
 - Export or print PDF successfully
 - Verify invoice status changes work
-- If billing is enabled, open upgrade flow and confirm redirect behavior
+- If billing is enabled, confirm Google Play restore unlocks Pro correctly
+- If billing is enabled, confirm Pro remains active after reinstall and reopen
 - If invoice payment links are enabled, create one and verify it opens correctly
 
 ## Store listing assets
@@ -79,7 +79,8 @@ Current generated asset pack:
 - `marketing/play-store/phone-02-ai-intake.png`
 - `marketing/play-store/phone-03-manual-editor.png`
 - `marketing/play-store/phone-04-invoice-library.png`
-- `marketing/play-store/phone-05-import.png`
+- `marketing/play-store/phone-05-help-center.png`
+- `marketing/play-store/phone-06-import.png`
 
 Regenerate after UI changes:
 
@@ -99,6 +100,7 @@ npm run assets:play-store
 - Upload privacy policy URL
 - Upload the `.aab`
 - Review release notes
+- Confirm the release notes match the current public build, not an older closed-test draft
 
 ## Quality / policy checks
 
@@ -112,5 +114,5 @@ npm run assets:play-store
 
 - Add an internal release-notes template
 - Add a privacy-policy draft to the repo if the website copy is not written yet
-- Capture final screenshots from an Android emulator or physical device with consistent framing
+- Regenerate final screenshots from the current polished build before production listing updates
 - Run one final smoke pass using the exact release build uploaded to Play

@@ -42,6 +42,11 @@ Before opening Xcode/Android Studio, confirm:
 4. Stripe and delivery are both on production credentials.
 5. Export/send/save flows have been smoke-tested on a phone-sized viewport.
 
+## Cheapest iOS build path
+If you want the lowest-cost no-Mac route for iOS/TestFlight, start here:
+
+- [iOS GitHub Actions cheap path](./ios-github-actions-cheap-path.md)
+
 ## Guardrails
 - Keep money logic server-side and deterministic.
 - Keep auth/session checks enforced in API responses.

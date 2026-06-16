@@ -215,7 +215,7 @@ Testers reported that NoteBill performed well across the tested devices and Andr
 ### What changes did you make based on testing?
 
 ```text
-Based on testing and internal verification, I improved launch readiness materials, tightened the store listing draft and screenshot plan, strengthened first-run guidance around the sample-notes path, and continued polishing review cues so users can understand Billie-assisted changes before saving or sending.
+Based on testing and internal verification, I fixed Google Play billing and restore reliability, strengthened first-run guidance around the sample-notes path, tightened the save/send/payment handoff, and polished the store listing and screenshots so the public app better matches the current product.
 ```
 
 ### How did you decide the app was ready for production?
