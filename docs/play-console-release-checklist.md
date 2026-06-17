@@ -6,9 +6,9 @@ Use this when the Android bundle is uploaded and you want the shortest path to r
 
 - App: `NoteBill`
 - Package: `app.notebill.app`
-- Version: `2.1.26`
-- Version code: `54`
-- Bundle: `android/app/build/outputs/bundle/release/app-release-2.1.26.aab`
+- Version: `2.1.50`
+- Version code: `78`
+- Bundle: `android/app/build/outputs/bundle/release/app-release-2.1.50.aab`
 
 ## What is already done
 
@@ -44,4 +44,3 @@ Use this when the Android bundle is uploaded and you want the shortest path to r
 1. Finish GA4 key event marking and Google Ads conversion import.
 2. Keep the launch packet and Play listing copy aligned with the latest product state.
 3. Be ready for the real-device billing proof window when your subscription expires.
-

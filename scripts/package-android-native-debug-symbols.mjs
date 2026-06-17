@@ -9,16 +9,15 @@ const execFileAsync = promisify(execFile);
 const repoRoot = process.cwd();
 const androidDir = path.join(repoRoot, "android");
 const gradlePath = path.join(androidDir, "app", "build.gradle");
-const nativeLibDir = path.join(
+const nativeDebugMetadataDir = path.join(
   androidDir,
   "app",
   "build",
   "intermediates",
-  "merged_native_libs",
+  "native_debug_metadata",
   "release",
-  "mergeReleaseNativeLibs",
+  "extractReleaseNativeDebugMetadata",
   "out",
-  "lib"
 );
 const symbolOutputDir = path.join(androidDir, "app", "build", "outputs", "native-debug-symbols", "release");
 
@@ -41,8 +40,8 @@ async function fileExists(filePath) {
   }
 }
 
-async function listNativeLibraries() {
-  if (!(await fileExists(nativeLibDir))) {
+async function collectFiles(currentDir) {
+  if (!(await fileExists(currentDir))) {
     return [];
   }
   const results = [];
@@ -54,26 +53,26 @@ async function listNativeLibraries() {
         await walk(nextPath);
         continue;
       }
-      if (entry.isFile() && entry.name.toLowerCase().endsWith(".so")) {
+      if (entry.isFile()) {
         results.push(nextPath);
       }
     }
   }
-  await walk(nativeLibDir);
+  await walk(currentDir);
   return results;
 }
 
-async function packageZip(zipPath, libSourceDir) {
+async function packageZip(zipPath, sourceDir, rootName = null) {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "notebill-native-symbols-"));
   try {
-    const stagedLibDir = path.join(tempDir, "lib");
-    await fs.cp(libSourceDir, stagedLibDir, { recursive: true });
+    const stagedDir = rootName ? path.join(tempDir, rootName) : tempDir;
+    await fs.cp(sourceDir, stagedDir, { recursive: true });
 
     if (process.platform === "win32") {
       const script = [
         "$ErrorActionPreference='Stop'",
         `$zipPath = ${JSON.stringify(zipPath)}`,
-        `$source = ${JSON.stringify(path.join(tempDir, "lib"))}`,
+        `$source = ${JSON.stringify(rootName ? path.join(tempDir, rootName) : path.join(tempDir, "*"))}`,
         "if (Test-Path $zipPath) { Remove-Item $zipPath -Force }",
         "Compress-Archive -Path $source -DestinationPath $zipPath -Force"
       ].join("; ");
@@ -84,7 +83,7 @@ async function packageZip(zipPath, libSourceDir) {
       return;
     }
 
-    await execFileAsync("zip", ["-r", zipPath, "lib"], {
+    await execFileAsync("zip", ["-r", zipPath, rootName ?? "."], {
       cwd: tempDir,
       maxBuffer: 16 * 1024 * 1024
     });
@@ -99,16 +98,31 @@ async function main() {
     throw new Error("Unable to determine Android version name from build.gradle");
   }
 
-  const nativeLibraries = await listNativeLibraries();
-  if (nativeLibraries.length === 0) {
-    throw new Error(`No native release libraries found at ${nativeLibDir}`);
-  }
-
   await fs.mkdir(symbolOutputDir, { recursive: true });
   const zipPath = path.join(symbolOutputDir, "native-debug-symbols.zip");
   const archivedZipPath = path.join(symbolOutputDir, `native-debug-symbols-${versionName}.zip`);
+  const nativeDebugFiles = await collectFiles(nativeDebugMetadataDir);
 
-  await packageZip(zipPath, nativeLibDir);
+  if (nativeDebugFiles.length === 0) {
+    await fs.rm(zipPath, { force: true });
+    await fs.rm(archivedZipPath, { force: true });
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          skipped: true,
+          versionName,
+          reason:
+            "No native debug metadata files were generated for this release build. Do not upload a native debug symbols zip to Play Console for this build."
+        },
+        null,
+        2
+      )
+    );
+    return;
+  }
+
+  await packageZip(zipPath, nativeDebugMetadataDir);
   await fs.copyFile(zipPath, archivedZipPath);
   const stats = await fs.stat(archivedZipPath);
 
@@ -117,7 +131,7 @@ async function main() {
       {
         ok: true,
         versionName,
-        nativeLibraryCount: nativeLibraries.length,
+        nativeDebugFileCount: nativeDebugFiles.length,
         zip: {
           path: zipPath,
           archivedPath: archivedZipPath,

@@ -9,10 +9,10 @@ This checklist is for shipping `NoteBill` to the Google Play Store from a Window
 - Confirm latest native debug symbols zip exists:
   - `android/app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip`
 - Upload the latest archived named bundle, not just `app-release.aab`.
-- Upload the latest archived native symbols zip alongside the bundle when Play Console asks for debug symbols.
+- Upload the latest archived native symbols zip alongside the bundle only when the packaging script actually generated native debug metadata for that build.
 - Current public-ready bundle:
-  - `android/app/build/outputs/bundle/release/app-release-2.1.48.aab`
-  - `android/app/build/outputs/native-debug-symbols/release/native-debug-symbols-2.1.48.zip`
+  - `android/app/build/outputs/bundle/release/app-release-2.1.50.aab`
+  - Native debug symbols were not generated for `2.1.50`, so do not upload a symbols zip for this build.
 - Confirm package/application id is correct:
   - `app.notebill.app`
 - Confirm the Android `versionCode` is higher than any bundle already uploaded to Play Console.
