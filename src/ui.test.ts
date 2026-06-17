@@ -867,7 +867,7 @@ test("guided walkthrough stays active from launcher through manual editor", asyn
     await page.getByRole("button", { name: "Build invoice" }).last().click();
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Generate Invoice" }).click();
-    await page.waitForURL(/\/manual$/, { timeout: 10000 });
+    await page.waitForURL(/\/manual\?source=intake$/, { timeout: 10000 });
 
     const manualOnboarding = page.getByTestId("manual-onboarding-section");
     await manualOnboarding.waitFor({ state: "visible" });
@@ -966,6 +966,7 @@ test("intake can hand off directly into manual Billie workspace", async () => {
   const page = await context.newPage();
   try {
     await openIntake(page);
+    await page.getByRole("button", { name: "Load sample notes" }).click();
     await page.getByRole("button", { name: "Build invoice" }).click();
     await page.getByRole("button", { name: "Open Billie workspace" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Open Billie workspace" }).click();
@@ -983,15 +984,43 @@ test("intake can hand off directly into manual Billie workspace", async () => {
       .getByRole("button", { name: "Polish intake draft" })
       .waitFor({ state: "visible" });
     const transparencyCard = page.locator('[data-testid="manual-source-transparency-card"]');
-    await transparencyCard.getByText("Before and after").waitFor({ state: "visible" });
+    await transparencyCard.getByText("Keep the original source close before you send.").waitFor({ state: "visible" });
     await transparencyCard.getByText(/Cleaned lines:/i).waitFor({ state: "visible" });
     await transparencyCard.getByRole("button", { name: "Show full comparison" }).click();
     await transparencyCard.getByText(/From your notes/i).waitFor({ state: "visible" });
     await transparencyCard.getByText(/Client-facing draft/i).waitFor({ state: "visible" });
     await expectValueEquals(
       page.locator('[data-testid="manual-billie-workspace"]').getByPlaceholder(/Ask Billie to refine wording/i),
-      "Refine the line item wording and notes so this invoice feels polished and client-ready. Keep numbers unchanged."
+      "Refine the line item wording so this invoice feels polished and client-ready. Keep numbers unchanged."
     );
+  } finally {
+    await context.close();
+  }
+});
+
+test("intake generate invoice keeps the manual editor in intake handoff mode", async () => {
+  useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await openIntake(page);
+    await page.getByRole("button", { name: "Load sample notes" }).click();
+    await page.getByRole("button", { name: "Build invoice" }).click();
+    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Generate Invoice" }).click();
+
+    await page.waitForURL(/\/manual\?source=intake$/, { timeout: 10000 });
+    await page.getByText("Draft ready for Billie handoff from intake review.").waitFor({ state: "visible" });
+    await page.getByText("Continue from intake review").waitFor({ state: "visible" });
+    await page
+      .getByText(
+        "Billie already helped structure the draft. Use these starter actions to tighten wording and notes before you move into save, payment, or portal handoff."
+      )
+      .waitFor({ state: "visible" });
+    await page
+      .locator('[data-testid="manual-billie-workspace"]')
+      .getByRole("button", { name: "Polish intake draft" })
+      .waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -4512,7 +4541,7 @@ test("manual layout studio recipes apply grouped style controls quickly", async 
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByText("Layout Studio").waitFor({ state: "visible" });
+    await page.getByRole("tabpanel").getByText("Layout Studio", { exact: true }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Premium handoff" }).click();
 
     await page.locator("[data-header-layout='centered']").first().waitFor({ state: "visible" });
@@ -4525,6 +4554,22 @@ test("manual layout studio recipes apply grouped style controls quickly", async 
       undefined,
       { timeout: 10000 }
     );
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual billie workspace exposes layout-studio entry and safe look guidance", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByTestId("manual-billie-workspace").getByText("Billie can help with the look too").waitFor({
+      state: "visible"
+    });
+    await page.getByRole("button", { name: "Open Layout Studio" }).click();
+    await page.getByRole("tabpanel").getByText("Layout Studio", { exact: true }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Save current look" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }

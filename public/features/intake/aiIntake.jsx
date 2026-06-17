@@ -2045,7 +2045,7 @@ function AIIntake() {
       );
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
       completeOnboardingStep("open_editor");
-      navigate("/manual");
+      navigate("/manual?source=intake");
     } catch (error) {
       console.error("Failed to seed draft", error);
       appendAiMessage("Something went wrong while creating the draft.");

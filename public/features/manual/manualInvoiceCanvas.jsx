@@ -2966,6 +2966,11 @@ function ManualInvoiceCanvas() {
             id: "intake-refine-notes",
             label: "Refine notes",
             instruction: "Make the notes more professional."
+          },
+          {
+            id: "intake-premium-look",
+            label: "Premium look",
+            instruction: "Make this invoice feel premium with a centered header, airy spacing, and a navy accent."
           }
         ]
       : billieWorkspaceSource === "import"
@@ -2992,6 +2997,11 @@ function ManualInvoiceCanvas() {
               id: "import-refine-notes",
               label: "Refine notes",
               instruction: "Make the imported notes more professional."
+            },
+            {
+              id: "import-clean-minimal",
+              label: "Clean minimal look",
+              instruction: "Use a clean minimal layout with tighter spacing and a charcoal accent."
             }
           ]
       : billieWorkspaceSource === "library"
@@ -3016,6 +3026,11 @@ function ManualInvoiceCanvas() {
               id: "library-refine-notes",
               label: "Refine notes",
               instruction: "Make the notes more professional."
+            },
+            {
+              id: "library-premium-look",
+              label: "Premium look",
+              instruction: "Make this invoice feel premium with a centered header, airy spacing, and a navy accent."
             }
           ]
         : [
@@ -3038,6 +3053,16 @@ function ManualInvoiceCanvas() {
             id: "refine-notes",
             label: "Refine notes",
             instruction: "Make the notes more professional."
+          },
+          {
+            id: "premium-look",
+            label: "Premium look",
+            instruction: "Make this invoice feel premium with a centered header, airy spacing, and a navy accent."
+          },
+          {
+            id: "clean-minimal-look",
+            label: "Clean minimal look",
+            instruction: "Use a clean minimal layout with tighter spacing and a charcoal accent."
           }
         ];
 
@@ -3591,28 +3616,41 @@ function ManualInvoiceCanvas() {
               </div>
               <div className="space-y-1">
                 <h2 className="text-xl font-semibold text-slate-900 md:text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>
-                  Refine the invoice here, then move straight into save or send.
+                  Refine the invoice wording or look here, then move straight into save or send.
                 </h2>
                 <p className="text-sm leading-6 text-slate-600">
                   {billieWorkspaceSource === "intake"
                     ? "Polish the intake draft before you save, send, or share it."
                     : billieWorkspaceSource === "library"
                       ? "Polish reopened work before you send, remind, or reuse it."
-                    : "Ask Billie to improve wording or presentation while keeping money changes guarded."}
+                    : "Ask Billie to improve wording or change the invoice look while money changes stay guarded."}
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              className="nb-btn-ghost inline-flex rounded-full px-3 py-2 text-sm font-semibold"
-              style={accentGhostButtonStyle}
-              onClick={() => {
-                setActiveInspectorTab("assistant");
-                setInspectorOpen(true);
-              }}
-            >
-              {billieWorkspaceExpanded ? "Open full Billie tools" : "Billie tools open"}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="nb-btn-ghost inline-flex rounded-full px-3 py-2 text-sm font-semibold"
+                style={accentGhostButtonStyle}
+                onClick={() => {
+                  setActiveInspectorTab("style");
+                  setInspectorOpen(true);
+                }}
+              >
+                Open Layout Studio
+              </button>
+              <button
+                type="button"
+                className="nb-btn-ghost inline-flex rounded-full px-3 py-2 text-sm font-semibold"
+                style={accentGhostButtonStyle}
+                onClick={() => {
+                  setActiveInspectorTab("assistant");
+                  setInspectorOpen(true);
+                }}
+              >
+                {billieWorkspaceExpanded ? "Open full Billie tools" : "Billie tools open"}
+              </button>
+            </div>
           </div>
           {billieWorkspaceExpanded ? (
             <>
@@ -3641,6 +3679,15 @@ function ManualInvoiceCanvas() {
                   </p>
                 </div>
               ) : null}
+              <div className="mt-4 rounded-2xl border border-[#d5e5de] bg-white/72 px-4 py-3 text-sm text-slate-600">
+                <p className="font-semibold text-slate-900">Billie can help with the look too</p>
+                <p className="mt-1">
+                  Try prompts like <span className="font-semibold text-slate-800">premium look</span>,
+                  <span className="font-semibold text-slate-800"> centered header</span>,
+                  <span className="font-semibold text-slate-800"> airy spacing</span>, or
+                  <span className="font-semibold text-slate-800"> hide notes</span>. Layout Studio gives you the same controls directly.
+                </p>
+              </div>
               <div className="nb-mobile-actions mt-4">
                 {billieWorkspaceActions.map((action) => (
                   <button
