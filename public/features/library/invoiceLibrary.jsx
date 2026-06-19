@@ -2013,24 +2013,24 @@
   ];
   const emptyLibraryStates = {
     all: {
-      title: "Your invoice library is ready for the first saved draft",
-      body: "Start from notes, the sample job, or a blank invoice. Saved drafts, sent invoices, and paid work will stack up here in one reusable workspace."
+      title: "Your invoice library is ready for the first saved invoice",
+      body: "Save a draft once and this becomes your home for reviews, follow-ups, sent invoices, and paid history. Start from real notes, the sample job, or a blank invoice."
     },
     needs_attention: {
       title: "Nothing needs attention right now",
-      body: "When an invoice needs follow-up, delivery checking, or a payment handoff, this queue will surface it first."
+      body: "When an invoice needs a reminder, delivery check, payment handoff, or client follow-up, this queue will bring it forward first."
     },
     draft: {
       title: "No saved drafts yet",
-      body: "Save a draft from the editor and it will show up here ready for review, reuse, or sending."
+      body: "Save a draft from the editor and it will show up here ready to review, reuse, send, or reopen later."
     },
     sent: {
       title: "No sent invoices",
-      body: "Invoices you mark or send as sent appear here so follow-up, payment progress, and reminders stay in one place."
+      body: "Invoices you mark or send as sent appear here so delivery checks, payment progress, and reminders stay calm and organized in one place."
     },
     paid: {
       title: "No paid invoices",
-      body: "Mark an invoice paid when the money lands. Paid work stays here as proof of completed jobs and repeat-work history."
+      body: "Mark an invoice paid when the money lands. Paid work stays here as proof of completed jobs, client history, and repeat business you can build on."
     }
   };
   const nowMs = Date.now();
@@ -5112,15 +5112,15 @@
                   }
                   if (invoice.status === "sent" && !paymentLinkReady) {
                     return {
-                      label: "Open and add payment link",
-                        detail: "This invoice is already out. Add a hosted payment link now so the next resend or reminder points to a clearer, safer payment path."
+                      label: "Open invoice and add payment link",
+                        detail: "This invoice is already out. Add a hosted payment link now so the next resend or reminder points to a clearer, easier path to payment."
                     };
                   }
                   if (invoice.status === "sent" && !clientPortalReady) {
                     return {
                       label: "Create client portal",
                         detail: paymentLinkReady
-                          ? "The payment link is ready. Add the portal next so the customer also gets a clear review surface before paying."
+                          ? "The payment link is ready. Add the portal next so the customer also gets a clear review page before paying."
                           : "Once the draft is sent, add a client portal next so the customer can review details in one place."
                     };
                   }
@@ -5128,8 +5128,8 @@
                       return {
                         label: hasDelivery ? "Track payment" : "Track the send first",
                         detail: hasDelivery
-                        ? "Delivery is recorded. Next step is watching for payment and only nudging later if the balance still sits."
-                        : "Add a tracked send so reminders and payment follow-up have better context."
+                        ? "Delivery is recorded. Next step is watching for payment and only following up later if the balance still sits."
+                        : "Add a tracked send so reminders and payment follow-up stay grounded in real delivery context."
                       };
                   }
                   if (repeatMemoryStarter) {
@@ -5146,7 +5146,7 @@
                   }
                   return {
                     label: "Open draft and finish",
-                    detail: "Confirm the details, save it, then add the payment link or portal before the first send so reopening later still feels organized and complete."
+                    detail: "Confirm the details, save it, then add the payment link or portal before the first send so reopening later still feels organized, clear, and complete."
                   };
                 })();
                 const workflowStages = [

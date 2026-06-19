@@ -2677,8 +2677,8 @@ function AIIntake() {
           intakeRepeatSuggestionCount > 0
             ? `Billie also found ${intakeRepeatSuggestionCount} repeat-work cue${
                 intakeRepeatSuggestionCount > 1 ? "s" : ""
-              } you can reuse before opening the editor.`
-            : ctaHelper || "Use the review card to check wording, notes, and any items Billie could not fully place yet.",
+              } you can reuse before you open the editor.`
+            : ctaHelper || "Check the wording, notes, and anything Billie still needs you to confirm.",
         actions: [
           !showReviewExpandedSections
             ? {
@@ -2702,12 +2702,12 @@ function AIIntake() {
         title: "The draft is ready for the editor.",
         detail:
           intakeRepeatSuggestionCount > 0
-            ? `Review the saved wording and note cues if you want, then open the editor with repeat-work context already in place.`
-            : "Billie finished the capture pass. Generate now and continue the handoff in the manual editor.",
+            ? "You can reuse the saved wording and note cues now, or open the editor and finish there."
+            : "Billie finished the capture pass. Generate now and finish the invoice in the editor.",
         actions: [
           {
             id: "generate",
-            label: "Generate Invoice",
+            label: "Open editor now",
             onClick: handleGenerateInvoice
           },
           {
@@ -2844,7 +2844,7 @@ function AIIntake() {
                       ))}
                     </div>
                     <p className="mt-3 text-xs leading-5 text-slate-500">
-                      These are just examples. Paste your own notes any time and Billie will draft from that instead. You can keep working in guest mode and sign in later when you want saved work, billing, and repeat jobs to stay with your account.
+                      These are just examples. Paste your own notes any time and Billie will draft from those instead. You can stay in guest mode for now and sign in later when you want saved work, billing, and repeat jobs tied to your account.
                     </p>
                   </div>
                 </div>
@@ -2955,9 +2955,9 @@ function AIIntake() {
                       </p>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
                         {onboardingStatus.walkthroughActive
-                          ? "Stay with the sample job, review what Billie captured, and move on once the draft feels trustworthy."
+                          ? "Stay with the sample job, confirm the draft feels right, and then use the same flow for your own work."
                           : onboardingStatus.nextStep?.helper ||
-                          "Move through the first invoice one clear step at a time."}
+                          "Keep moving one clear step at a time until this becomes a send-ready invoice."}
                       </p>
                       {!onboardingStatus.walkthroughActive && onboardingStatus.nextStep?.id === "open_editor" ? (
                         <p className="mt-2 text-xs leading-5 text-slate-500">
@@ -3018,25 +3018,18 @@ function AIIntake() {
                   className="nb-highlight-panel rounded-[30px] p-5 md:p-6 lg:p-7"
                   data-testid="intake-starter-walkthrough"
                 >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex flex-col gap-3">
                     <div>
                       <p className="nb-kicker">
-                        Starter walkthrough
+                        Sample loaded
                       </p>
                       <p className="mt-2 text-lg font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
-                        Scan the sample notes, then press Build invoice.
+                        Use the sample notes to build your first reviewed draft.
                       </p>
                       <p className="mt-2 text-sm leading-6 text-slate-600">
-                        That shows how Billie turns rough field notes into a draft.
+                        The guided walkthrough above is tracking progress. This panel is just here to keep the next sample step obvious.
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      className="nb-btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs"
-                      onClick={handleDismissWalkthrough}
-                    >
-                      Hide guide
-                    </button>
                   </div>
                   <div className="mt-3 grid gap-2 md:grid-cols-3">
                     {starterWalkthroughSteps.map((step, index) => (

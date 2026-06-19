@@ -182,7 +182,7 @@
               {onOpenBillieWorkspace ? (
                 <button
                   type="button"
-                  className="nb-btn-secondary rounded-full px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:text-slate-300"
+                  className="nb-btn-primary rounded-full px-2.5 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={onOpenBillieWorkspace}
                   disabled={isTyping}
                 >
@@ -193,56 +193,64 @@
           </div>
 
           <div className="mt-3 space-y-3">
-            <div className="nb-subcard px-3 py-2 text-sm text-slate-600">
-              {payload.customerName ? (
-                <p>
-                  <span className="font-semibold text-slate-900">Client:</span> {payload.customerName}
-                </p>
-              ) : null}
-              {payload.servicePeriodStart || payload.servicePeriodEnd ? (
-                <p className={payload.customerName ? "mt-1" : undefined}>
-                  <span className="font-semibold text-slate-900">Service period:</span>{" "}
-                  {payload.servicePeriodStart && payload.servicePeriodEnd
-                    ? payload.servicePeriodStart === payload.servicePeriodEnd
-                      ? payload.servicePeriodStart
-                      : `${payload.servicePeriodStart} to ${payload.servicePeriodEnd}`
-                    : payload.servicePeriodStart || payload.servicePeriodEnd}
-                </p>
-              ) : null}
-              <p
-                className={
-                  payload.customerName || payload.servicePeriodStart || payload.servicePeriodEnd
-                    ? "mt-1"
-                    : undefined
-                }
-              >
-                <span className="font-semibold text-slate-900">Found:</span> {foundText}
-              </p>
-              <p className="mt-1">
-                <span className="font-semibold text-slate-900">Decisions:</span> {decisionsText}
-              </p>
-              <p className="mt-1">
-                <span className="font-semibold text-slate-900">Next:</span> {nextStepText}
+            <div className="rounded-2xl border border-emerald-200 bg-[linear-gradient(145deg,_rgba(236,253,245,0.96)_0%,_rgba(255,255,255,0.98)_100%)] px-3 py-3 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="max-w-2xl">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                    Recommended next step
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900">{nextStepText}</p>
+                  {pendingDecisionCount > 0 ? (
+                    <p className="mt-2 text-xs leading-5 text-amber-700">
+                      Some amounts stay hidden until you choose Add or Skip.
+                    </p>
+                  ) : null}
+                </div>
                 {pendingDecisionCount > 0 ? (
                   <button
                     type="button"
-                    className="ml-2 inline-flex items-center rounded-full border border-[#d5e5de] bg-[#f7faf7] px-2.5 py-0.5 text-[11px] font-semibold text-[#17493c] shadow-sm transition hover:border-[#bcd2c8] hover:bg-white"
+                    className="nb-btn-primary shrink-0 rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => scrollToSection(decisionsRef)}
                     disabled={isTyping}
                   >
                     {decisionCtaLabel}
                   </button>
                 ) : null}
-              </p>
+              </div>
+            </div>
+            <div className="nb-subcard px-3 py-3 text-sm text-slate-600">
+              <div className="grid gap-2 md:grid-cols-2">
+                {payload.customerName ? (
+                  <p>
+                    <span className="font-semibold text-slate-900">Client:</span> {payload.customerName}
+                  </p>
+                ) : null}
+                {payload.servicePeriodStart || payload.servicePeriodEnd ? (
+                  <p>
+                    <span className="font-semibold text-slate-900">Service period:</span>{" "}
+                    {payload.servicePeriodStart && payload.servicePeriodEnd
+                      ? payload.servicePeriodStart === payload.servicePeriodEnd
+                        ? payload.servicePeriodStart
+                        : `${payload.servicePeriodStart} to ${payload.servicePeriodEnd}`
+                      : payload.servicePeriodStart || payload.servicePeriodEnd}
+                  </p>
+                ) : null}
+                <p>
+                  <span className="font-semibold text-slate-900">Found:</span> {foundText}
+                </p>
+                <p>
+                  <span className="font-semibold text-slate-900">Decisions:</span> {decisionsText}
+                </p>
+              </div>
               {capturedPreviewSummary ? (
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-2 text-xs text-slate-500">
                   <span className="font-semibold text-slate-700">Captured:</span>{" "}
                   {capturedPreviewSummary}
                   {capturedPreviewHiddenCount > 0 ? ` (+${capturedPreviewHiddenCount} more)` : ""}
                 </p>
               ) : null}
               {hasReviewSecondaryContent ? (
-                <p className="mt-2">
+                <div className="mt-3">
                   <button
                     type="button"
                     className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300"
@@ -251,14 +259,21 @@
                   >
                     {reviewDetailsToggleLabel}
                   </button>
-                </p>
-              ) : null}
-              {pendingDecisionCount > 0 ? (
-                <p className="mt-1 text-xs text-amber-700">
-                  Some amounts stay hidden until you choose Add or Skip.
-                </p>
+                </div>
               ) : null}
             </div>
+            {showReviewSecondary ? (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                    Supporting details
+                  </p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Check the draft details only if you want a closer review before opening the editor.
+                  </p>
+                </div>
+              </div>
+            ) : null}
             {showReviewSecondary && previewItems.length > 0 ? (
               <div className="rounded-xl border border-slate-100 bg-white px-3 py-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -441,8 +456,8 @@
                     Repeat work cues
                   </p>
                   <p className="text-xs text-emerald-900">
-                    Saved service memory can guide wording and rates. This draft stays unchanged until
-                    you edit it.
+                    Saved services and client details can guide wording and rates. This draft stays unchanged
+                    until you apply something.
                   </p>
                 </div>
                 {Object.entries(rateContextByLineId).length > 0 ? (

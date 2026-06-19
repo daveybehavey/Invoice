@@ -460,7 +460,7 @@ function describeAuthReturnPath(value) {
     return "After sign-in, you'll go straight to branding setup.";
   }
   if (path.startsWith("/settings/memory")) {
-    return "After sign-in, you'll go straight to client memory review.";
+    return "After sign-in, you'll go straight to saved client details.";
   }
   if (path.startsWith("/settings/services")) {
     return "After sign-in, you'll go straight to the service catalog.";
@@ -906,10 +906,10 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
       action: "invoice-again",
       busyId: `invoice-again:${nextRecurringCandidate.invoiceId}`,
       invoiceId: nextRecurringCandidate.invoiceId,
-      secondaryCta: recurringMemoryStarter ? "Start from memory" : undefined,
+      secondaryCta: recurringMemoryStarter ? "Start with saved details" : undefined,
       secondaryAction: recurringMemoryStarter ? "start-from-memory" : undefined,
       secondaryAriaLabel: recurringMemoryStarter
-        ? `Start upcoming repeat invoice from saved memory for ${
+        ? `Start upcoming repeat invoice with saved details for ${
             nextRecurringCandidate.customerName || "repeat client"
           }`
         : undefined,
@@ -945,10 +945,10 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
       action: "invoice-again",
       busyId: `invoice-again:${repeatCandidate.invoiceId}`,
       invoiceId: repeatCandidate.invoiceId,
-      secondaryCta: repeatMemoryStarter ? "Start from memory" : undefined,
+      secondaryCta: repeatMemoryStarter ? "Start with saved details" : undefined,
       secondaryAction: repeatMemoryStarter ? "start-from-memory" : undefined,
       secondaryAriaLabel: repeatMemoryStarter
-        ? `Start from saved memory for ${repeatCandidate.customerName || "repeat client"}`
+        ? `Start with saved details for ${repeatCandidate.customerName || "repeat client"}`
         : undefined,
       memoryClientName: repeatMemoryStarter?.entry?.name || ""
     });
@@ -2186,7 +2186,10 @@ function Launcher() {
                   ))}
                 </div>
               </div>
-              <div className="rounded-[30px] border border-[#4f8b5f]/20 bg-[#14532d] p-5 text-white shadow-[0_24px_60px_rgba(20,83,45,0.22)] md:p-6">
+              <div
+                data-testid="launcher-first-invoice-guide"
+                className="rounded-[30px] border border-[#4f8b5f]/20 bg-[#14532d] p-5 text-white shadow-[0_24px_60px_rgba(20,83,45,0.22)] md:p-6"
+              >
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#d7f1dd]">Start here</p>
                 <h2 className="mt-3 text-2xl leading-tight text-white" style={{ fontFamily: "'Fraunces', serif" }}>
                   Start with the guided sample.
@@ -2318,17 +2321,27 @@ function Launcher() {
                   className="nb-title text-[2rem] leading-[1.02] text-slate-900 md:text-6xl"
                   style={{ fontFamily: "'Fraunces', serif" }}
                 >
-                  Turn rough notes into a client-ready invoice.
+                  Turn rough job notes into a client-ready invoice on your phone.
                 </h1>
                 <p className="nb-copy mt-3 max-w-2xl md:mt-4 md:leading-7">
-                  Paste what happened. Billie builds the first draft. You approve the money decisions, then save, send, and follow up without losing the thread.
+                  Built for contractors, solo operators, and repeat service work. Paste what happened, let Billie build the first draft, approve the money decisions, then save, send, and follow up without losing the thread.
                 </p>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#3d6f61]">
+                {["Contractors", "Repeat service work", "Phone-first invoicing"].map((pill) => (
+                  <span
+                    key={pill}
+                    className="rounded-full border border-[#d5e5de] bg-white/88 px-3 py-1"
+                  >
+                    {pill}
+                  </span>
+                ))}
               </div>
               <div className="mt-5 grid gap-2 sm:grid-cols-3 md:mt-6 md:gap-3">
                 {[
-                  ["Messy input", "Notes, screenshots, PDFs, photos, or voice notes."],
-                  ["Clear review", "Approve the parts that change totals, timing, or trust."],
-                  ["Ready to send", "Save, export, send, and reopen later without a cleanup pass."]
+                  ["Messy field notes", "Job notes, screenshots, PDFs, photos, or voice notes from the field."],
+                  ["Visible money review", "Approve the parts that change totals, timing, or client trust."],
+                  ["Ready for repeat work", "Save, send, follow up, and reopen the next similar job faster."]
                 ].map(([title, copy]) => (
                   <div
                     key={title}

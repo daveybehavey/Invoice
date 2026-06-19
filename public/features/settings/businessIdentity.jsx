@@ -703,7 +703,7 @@
                 <SetupNextStepCard
                   title="Review client memory next"
                   body="After branding, make sure repeat-client details and saved notes look right before more invoices pile up."
-                  ctaLabel="Open memory"
+                  ctaLabel="Open saved details"
                   onClick={() => navigate("/settings/memory?from=onboarding-complete")}
                 />
               ) : null}
@@ -1002,9 +1002,9 @@
 
             {clientMemory.length === 0 ? (
                 <div className="nb-subcard mt-5 bg-slate-50/90 p-4 md:p-5">
-                <p className="text-sm font-semibold text-slate-900">Client memory will appear here as you reuse real work.</p>
+                <p className="text-sm font-semibold text-slate-900">Client memory starts building after the first real invoice flow.</p>
                 <p className="mt-2 text-sm leading-6 text-slate-600">
-                  NoteBill starts building client memory as you save invoices, reuse details, or send to a client email. It only keeps details you already chose to reuse.
+                  NoteBill builds client memory as you save invoices, reuse details, or send to a client email. It only keeps details you already chose to reuse, so repeat work gets faster without feeling automatic or risky.
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button type="button" className="nb-btn-primary" onClick={() => navigate("/ai-intake")}>

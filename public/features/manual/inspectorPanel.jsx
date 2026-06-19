@@ -1,4 +1,4 @@
-﻿(() => {
+(() => {
   const { useEffect, useRef, useState } = React;
   const requestIdentity = window.InvoiceRequestIdentity;
   const apiFetch = requestIdentity?.apiFetch ?? window.fetch.bind(window);
@@ -273,6 +273,7 @@ function InspectorPanel({
   const [paymentNoteInput, setPaymentNoteInput] = useState("");
   const previewCloseButtonRef = useRef(null);
   const previewFocusReturnRef = useRef(null);
+  const assistantComposerRef = useRef(null);
   const assistantRequestIdRef = useRef(0);
   const handledAssistantCommandRef = useRef("");
   const assistantQuickActions = [
@@ -326,12 +327,34 @@ function InspectorPanel({
       instruction: `Refine line ${item.lineNumber} wording.`,
       helperText: item.description
     }));
+  const assistantPromptExamples = [
+    {
+      id: "premium-centered",
+      label: "Premium layout",
+      instruction: "Make this invoice feel premium with a centered header, airy spacing, and a navy accent."
+    },
+    {
+      id: "clearer-wording",
+      label: "Clearer wording",
+      instruction: "Make the descriptions simpler, clearer, and easier for the client to skim."
+    },
+    {
+      id: "tighter-field-copy",
+      label: "Field-ready copy",
+      instruction: "Keep the invoice professional but tighten the wording so it feels faster to read on a phone."
+    },
+    {
+      id: "polish-notes",
+      label: "Polish notes",
+      instruction: "Make the notes more professional and easier for the client to understand."
+    }
+  ];
   const assistantChangeSummary = buildBillieChangeSummary(assistantChangePreview);
   const tabs = [
-    { id: "style", label: "Style", content: "Style controls coming soon" },
-    { id: "tone", label: "Tone", content: "Tone controls coming soon" },
-    { id: "assistant", label: "Edit with Billie", content: "Billie edits" },
-    { id: "export", label: "Export", content: "Export options coming soon" }
+    { id: "style", label: "Style" },
+    { id: "tone", label: "Tone" },
+    { id: "assistant", label: "Edit with Billie" },
+    { id: "export", label: "Export" }
   ];
   const styleOptions = STYLE_OPTIONS;
   const toneOptions = ["Formal", "Neutral", "Friendly"];
@@ -360,6 +383,13 @@ function InspectorPanel({
     backgroundColor: accent.soft,
     borderColor: accent.border,
     color: accent.text
+  };
+  const handleAssistantPromptPick = (instruction) => {
+    setAssistantInstruction(instruction);
+    setAssistantError("");
+    window.requestAnimationFrame(() => {
+      assistantComposerRef.current?.focus();
+    });
   };
   const invoiceStatus = savedInvoiceStatus || (savedInvoiceId ? "draft" : "");
   const documentTitle = documentType === "estimate" ? "ESTIMATE" : "INVOICE";
@@ -416,6 +446,24 @@ function InspectorPanel({
     draft: "nb-chip nb-chip--soft normal-case tracking-normal",
     sent: "nb-chip nb-chip--info normal-case tracking-normal",
     paid: "nb-chip nb-chip--success normal-case tracking-normal"
+  };
+  const inlineStatusClassName = (value) => {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    if (!normalized) {
+      return "nb-chip nb-chip--soft normal-case tracking-normal text-[11px]";
+    }
+    if (normalized.includes("saving") || normalized.includes("updating") || normalized.includes("copying")) {
+      return "nb-chip nb-chip--soft normal-case tracking-normal text-[11px]";
+    }
+    if (
+      normalized.includes("couldn't") ||
+      normalized.includes("unable") ||
+      normalized.includes("sign in required") ||
+      normalized.includes("unavailable")
+    ) {
+      return "nb-chip nb-chip--warning normal-case tracking-normal text-[11px]";
+    }
+    return "nb-chip nb-chip--success normal-case tracking-normal text-[11px]";
   };
   const canMarkSent = invoiceStatus === "draft" || invoiceStatus === "paid";
   const canMarkPaid = invoiceStatus === "sent";
@@ -706,7 +754,7 @@ function InspectorPanel({
     const startedAtMs = Date.now();
     setAssistantLoading(true);
     setAssistantError("");
-    setAssistantStatus(lineWordingCommand.loadingText || "Billie is refining line wording…");
+    setAssistantStatus(lineWordingCommand.loadingText || "Billie is refining line wording�");
     if (appendUserMessage) {
       setAssistantMessages((prev) => [...prev, { role: "user", text: instruction }]);
     }
@@ -1031,7 +1079,7 @@ function InspectorPanel({
     const beforeLines = Array.isArray(before.lineItems) ? before.lineItems : [];
     const afterLines = Array.isArray(after.lineItems) ? after.lineItems : [];
     if (beforeLines.length !== afterLines.length) {
-      summary.push(`Line items: ${beforeLines.length} → ${afterLines.length}`);
+      summary.push(`Line items: ${beforeLines.length} ? ${afterLines.length}`);
     }
     const changes = [];
     afterLines.forEach((line) => {
@@ -1075,7 +1123,7 @@ function InspectorPanel({
     if (!pendingAssistantEdit) {
       return;
     }
-    setAssistantMessages((prev) => [...prev, { role: "ai", text: "Okay — discarded that draft." }]);
+    setAssistantMessages((prev) => [...prev, { role: "ai", text: "Okay � discarded that draft." }]);
     setPendingAssistantEdit(null);
   };
   const handleUndoAssistantChange = () => {
@@ -1154,7 +1202,7 @@ function InspectorPanel({
           }
         ];
   const formatPreviewMoney = (value) =>
-    Number.isFinite(value) ? `$${value.toFixed(2)}` : "—";
+    Number.isFinite(value) ? `$${value.toFixed(2)}` : "�";
   const previewSubtotal = Number.isFinite(previewData?.subtotal)
     ? previewData.subtotal
     : parsedLineItems.reduce((sum, item) => sum + (item.amount ?? 0), 0);
@@ -1168,11 +1216,11 @@ function InspectorPanel({
     ? previewData.total
     : previewSubtotal + previewTaxAmount;
   const previewInvoiceNumber =
-    previewData?.invoiceNumber?.trim() || (previewItems[0]?.placeholder ? "Invoice" : "Invoice");
-  const previewIssueDate = previewData?.invoiceDate?.trim() || "—";
-  const previewFromDetails = previewData?.fromDetails?.trim() || "Add your business details";
-  const previewBillToDetails = previewData?.billToDetails?.trim() || "Add client details";
-  const previewNotes = previewData?.notes?.trim() || "Add payment terms or a note.";
+    previewData?.invoiceNumber?.trim() || (previewItems[0]?.placeholder ? "Number pending" : "Number pending");
+  const previewIssueDate = previewData?.invoiceDate?.trim() || "Date pending";
+  const previewFromDetails = previewData?.fromDetails?.trim() || "Add business name, phone, and email";
+  const previewBillToDetails = previewData?.billToDetails?.trim() || "Add client name and billing details";
+  const previewNotes = previewData?.notes?.trim() || "Add payment terms, scope notes, or next steps.";
   const previewPaymentLink = previewData?.paymentLinkUrl?.trim() || "";
   const previewPaymentMethods = Array.isArray(previewData?.paymentMethods) ? previewData.paymentMethods : [];
   const previewPaymentRecords = Array.isArray(previewData?.paymentRecords) ? previewData.paymentRecords : paymentRecords;
@@ -1807,6 +1855,44 @@ function InspectorPanel({
                 Ask for wording or design changes without retyping. Billie only adjusts the parts you request.
               </p>
             </div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="rounded-[18px] border border-slate-200 bg-slate-50/80 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Looks</p>
+                <p className="mt-1 text-xs leading-5 text-slate-600">
+                  Ask for cleaner spacing, a different header, or a stronger accent color.
+                </p>
+              </div>
+              <div className="rounded-[18px] border border-slate-200 bg-slate-50/80 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Wording</p>
+                <p className="mt-1 text-xs leading-5 text-slate-600">
+                  Rewrite line items or notes without re-entering the actual work.
+                </p>
+              </div>
+              <div className="rounded-[18px] border border-slate-200 bg-slate-50/80 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Guardrails</p>
+                <p className="mt-1 text-xs leading-5 text-slate-600">
+                  Nothing changes until you preview it here and choose to keep it.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Try asking Billie</p>
+              <div className="flex flex-wrap gap-2">
+                {assistantPromptExamples.map((example) => (
+                  <button
+                    key={example.id}
+                    type="button"
+                    className="rounded-full border px-3 py-1.5 text-xs font-semibold transition hover:bg-white"
+                    style={accentGhostButtonStyle}
+                    onClick={() => handleAssistantPromptPick(example.instruction)}
+                    disabled={assistantLoading || !!pendingAssistantEdit}
+                    title={example.instruction}
+                  >
+                    {example.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="space-y-2">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Quick actions</p>
               <div className="flex flex-wrap gap-2">
@@ -1868,8 +1954,8 @@ function InspectorPanel({
                   ))
                 ) : (
                   <p className="text-xs text-slate-500">
-                    Ask for changes like “Make descriptions more formal.” or “Set payment link to
-                    https://pay.example.com/invoice/123”. You can also say “Make this feel premium with a centered header and navy accent.”
+                    Ask for changes like �Make descriptions more formal.� or �Set payment link to
+                    https://pay.example.com/invoice/123�. You can also say �Make this feel premium with a centered header and navy accent.�
                   </p>
                 )}
               </div>
@@ -1914,6 +2000,7 @@ function InspectorPanel({
               </div>
             ) : null}
             <textarea
+              ref={assistantComposerRef}
               rows={4}
               className="w-full resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
               placeholder="Example: Use the bold template with a navy accent."
@@ -1921,6 +2008,9 @@ function InspectorPanel({
               onChange={(event) => setAssistantInstruction(event.target.value)}
               disabled={assistantLoading}
             />
+            <p className="text-[11px] leading-5 text-slate-500">
+              Best with short plain requests like "make this feel more premium" or "rewrite line 2 more simply."
+            </p>
             {pendingAssistantEdit ? (
               <div
                 className="space-y-3 rounded-lg border p-3"
@@ -2045,13 +2135,13 @@ function InspectorPanel({
               <div className="flex items-center justify-between">
                 <p className="text-sm font-semibold text-slate-900">Save to library</p>
                 {saveStatus ? (
-                  <span className="text-xs font-semibold" style={{ color: accent.text }}>
+                  <span className={inlineStatusClassName(saveStatus)}>
                     {saveStatus}
                   </span>
                 ) : null}
               </div>
               <p className="text-xs text-slate-500">
-                Save it once so you can reopen it, send it, export it, and manage the next steps from the library.
+                Save it once so you can reopen it later, send it, export it, and keep the follow-up steps in one place.
               </p>
               {planSummary ? (
                 <p className={`text-xs ${planLimitReached ? "font-semibold text-amber-700" : "text-slate-500"}`}>
@@ -2444,7 +2534,7 @@ function InspectorPanel({
                           </p>
                           <p className="text-xs text-slate-500">
                             {payment.paidAt?.trim() || "Recorded payment"}
-                            {payment.note?.trim() ? ` · ${payment.note.trim()}` : ""}
+                            {payment.note?.trim() ? ` � ${payment.note.trim()}` : ""}
                           </p>
                         </div>
                         <button
@@ -2517,7 +2607,15 @@ function InspectorPanel({
             ) : null}
             <div className="space-y-2">
               <p className="text-sm font-semibold text-slate-900">Download PDF</p>
-              <p className="text-xs text-slate-500">Save a PDF copy of the current invoice.</p>
+              <p className="text-xs text-slate-500">
+                Save the same client-facing layout shown in the editor, including visible notes, totals, and any payment path details you decided to show.
+              </p>
+              <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-3 text-xs leading-5 text-slate-600">
+                <p className="font-semibold text-slate-900">What exports</p>
+                <p className="mt-1">
+                  Logo, header, invoice dates, client details, line items, totals, visible notes, and payment links all carry into the PDF from the current draft state.
+                </p>
+              </div>
               <button
                 type="button"
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700"
@@ -2626,7 +2724,7 @@ function InspectorPanel({
                         className="mt-2 text-xs font-semibold uppercase tracking-[0.2em]"
                         style={{ color: previewAccent.text }}
                       >
-                        NoteBill draft
+                        Customer-facing preview
                       </p>
                     </div>
                     <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-xs">
@@ -2643,6 +2741,14 @@ function InspectorPanel({
                           Date
                         </span>
                         <span className="font-semibold text-slate-900">{previewIssueDate}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                          Due
+                        </span>
+                        <span className="font-semibold text-slate-900">
+                          {previewData?.dueDate?.trim() || "�"}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -2688,16 +2794,16 @@ function InspectorPanel({
                               ) : null}
                             </td>
                             <td className="py-3 pr-3 align-top text-sm text-slate-600">
-                              {Number.isFinite(item.qty) ? item.qty : "—"}
+                              {Number.isFinite(item.qty) ? item.qty : "�"}
                             </td>
                             <td className="py-3 pr-3 align-top text-sm text-slate-600">
-                              {Number.isFinite(item.rate) ? formatPreviewMoney(item.rate) : "—"}
+                              {Number.isFinite(item.rate) ? formatPreviewMoney(item.rate) : "�"}
                             </td>
                             <td className="py-3 text-right align-top text-sm text-slate-600">
                               {Number.isFinite(item.amount) ? (
                                 formatPreviewMoney(item.amount)
                               ) : item.placeholder ? (
-                                "—"
+                                "�"
                               ) : (
                                 <span className="text-xs font-semibold text-amber-600">
                                   Needs value

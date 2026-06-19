@@ -880,17 +880,17 @@
           tone: recurringSummary?.statusTone || (recurringEntry.autoSendEnabled ? "success" : "soft"),
           actionLabel: "Open recurring invoice",
           onAction: () => navigate(`/invoices?open=${encodeURIComponent(recurringInvoice.invoiceId)}`),
-          secondaryLabel: selectedMemoryEntry ? "Start from memory" : "",
+          secondaryLabel: selectedMemoryEntry ? "Start with saved details" : "",
           onSecondary: selectedMemoryEntry ? () => handleStartFromMemory(selectedMemoryEntry, leadService) : null
         });
       }
       if (selectedMemoryEntry) {
         entries.push({
           id: `timeline-memory-${selectedMemoryEntry.name}`,
-          label: "Client memory ready",
+          label: "Saved client details ready",
           detail: selectedMemoryEntry.defaultNotes || selectedMemoryEntry.details || selectedMemoryEntry.name,
           tone: "soft",
-          actionLabel: "Start from memory",
+          actionLabel: "Start with saved details",
           onAction: () => handleStartFromMemory(selectedMemoryEntry, leadService),
           secondaryLabel: clientServices.length > 0 ? "Review saved services" : "Open blank invoice",
           onSecondary:
@@ -1597,11 +1597,11 @@
             ? `Start from ${leadService.description}`
             : `Start the next invoice for ${selectedClientName}`,
           body:
-            "NoteBill already knows enough about this client to skip the blank page. Start from memory first, then only adjust what changed.",
-          primaryLabel: selectedMemoryEntry ? "Start from memory" : "Invoice again",
+            "NoteBill already knows enough about this client to skip the blank page. Start with the saved client details first, then only adjust what changed.",
+          primaryLabel: selectedMemoryEntry ? "Start with saved details" : "Invoice again",
           onPrimary: () =>
             selectedMemoryEntry ? handleStartFromMemory(selectedMemoryEntry, leadService) : handleInvoiceAgain(latestInvoice),
-          secondaryLabel: latestInvoice ? "Open latest with Billie" : "Review memory",
+          secondaryLabel: latestInvoice ? "Open latest with Billie" : "Review saved details",
           onSecondary: () => (latestInvoice ? handleOpenInvoiceWithBillie(latestInvoice) : navigate("/settings/memory"))
         };
       }
@@ -1612,7 +1612,7 @@
           "There is not much remembered setup yet, so the safest next move is to reuse the latest saved work and tune it from there.",
         primaryLabel: latestInvoice ? "Invoice again" : "Start invoice",
         onPrimary: () => (latestInvoice ? handleInvoiceAgain(latestInvoice) : navigate("/manual")),
-        secondaryLabel: "Review memory",
+        secondaryLabel: "Review saved details",
         onSecondary: () => navigate("/settings/memory")
       };
     }, [estimateActionId, latestInvoice, leadService, navigate, selectedClientName, selectedMemoryEntry]);
@@ -1642,7 +1642,7 @@
         detail:
           openBalance > 0
             ? `${sentCount} sent invoice${sentCount === 1 ? "" : "s"} still need payment follow-through.`
-            : "No open sent balance right now.",
+            : "No open balance is waiting right now.",
         toneClass: openBalance > 0 ? "text-amber-700" : "text-emerald-700",
         cardClass: openBalance > 0 ? "nb-stage-card--warning" : "nb-stage-card--success"
       },
@@ -1665,7 +1665,7 @@
               ? "This client is clear and ready for repeat work."
               : latestInvoice?.status === "sent"
                 ? "The next likely move is payment follow-through."
-                : "There is no sent invoice for this client yet.",
+                : "No sent invoice is waiting on payment yet.",
         toneClass:
           latestOpenedUnpaidInvoice || latestPartialInvoice
             ? "text-amber-700"
@@ -1705,7 +1705,7 @@
     const savedContextEssentials = [
       {
         label: "Send email",
-        value: selectedMemoryEntry?.recipientEmail || "No saved recipient yet",
+        value: selectedMemoryEntry?.recipientEmail || "Recipient not saved yet",
         detail: selectedMemoryEntry?.recipientEmail
           ? "Ready to reuse when you send."
           : "Save a recipient once and future sends get easier.",
@@ -1713,7 +1713,7 @@
       },
       {
         label: "Default notes",
-        value: selectedMemoryEntry?.defaultNotes || "No default notes yet",
+        value: selectedMemoryEntry?.defaultNotes || "Default notes not saved yet",
         detail: selectedMemoryEntry?.defaultNotes
           ? "These notes can prefill the next similar invoice."
           : "Helpful for repeat jobs that need the same explanation.",
@@ -1725,7 +1725,7 @@
           ? recurringSummary?.statusLabel || "Recurring schedule ready"
           : selectedMemoryEntry?.recurringIntervalDays
             ? `${formatRecurringCadence(selectedMemoryEntry.recurringIntervalDays)} cadence remembered`
-            : "No recurring setup yet",
+            : "Recurring cadence not saved yet",
         detail: recurringEntry
           ? recurringNextDueLabel
             ? `Next due ${recurringNextDueLabel}`
@@ -1739,6 +1739,33 @@
             : "text-slate-500"
       }
     ];
+    const repeatWorkSystemSummary = {
+      title: selectedClientName
+        ? `${selectedClientName} is building a reusable invoicing system`
+        : "Repeat-work system",
+      detail:
+        selectedMemoryEntry || clientServices.length > 0 || recurringEntry
+          ? "Client details, saved services, billing memory, and recurring cues are already stacking together so the next invoice should start faster."
+          : "Once you reuse work here, NoteBill will keep turning that activity into a faster repeat-work system.",
+      chips: [
+        selectedMemoryEntry?.recipientEmail ? "Saved recipient ready" : "",
+        clientServices.length > 0
+          ? `${clientServices.length} saved service${clientServices.length === 1 ? "" : "s"}`
+          : "",
+        recurringEntry
+          ? recurringSummary?.statusLabel || "Recurring schedule ready"
+          : selectedMemoryEntry?.recurringIntervalDays
+            ? `${formatRecurringCadence(selectedMemoryEntry.recurringIntervalDays)} cadence remembered`
+            : "",
+        latestInvoice?.status === "paid"
+          ? "Paid history ready"
+          : latestInvoice?.status === "sent"
+            ? "Sent history ready"
+            : latestInvoice
+              ? "Draft history ready"
+              : ""
+      ].filter(Boolean)
+    };
     const recurringClientButtons = recurringInvoice
       ? [
           {
@@ -1769,11 +1796,11 @@
       : selectedMemoryEntry
         ? [
             {
-              label: "Start from memory",
+              label: "Start with saved details",
               onClick: () => handleStartFromMemory(selectedMemoryEntry, leadService)
             },
             {
-              label: "Review memory",
+              label: "Review saved details",
               onClick: () => navigate("/settings/memory")
             }
           ]
@@ -1836,16 +1863,16 @@
                   })
                 ) : (
                   <div className="rounded-2xl border border-white/80 bg-white/75 px-4 py-4">
-                    <p className="text-sm font-semibold text-slate-900">No client workspace yet.</p>
+                    <p className="text-sm font-semibold text-slate-900">No saved client workspace yet.</p>
                     <p className="mt-1 text-xs leading-5 text-slate-500">
-                      Save the first invoice or reuse client details once, and NoteBill will start turning that activity into a reusable client workspace here.
+                      Save the first invoice or reuse one client once, and NoteBill will start turning that work into a reusable client home here.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <button type="button" className="nb-btn-primary" onClick={() => navigate("/ai-intake")}>
-                        Start first invoice
+                        Create first invoice
                       </button>
                       <button type="button" className="nb-btn-secondary" onClick={() => navigate("/settings/memory")}>
-                        Review memory
+                        Open saved details
                       </button>
                     </div>
                   </div>
@@ -1875,11 +1902,11 @@
                   {selectedClientName ? (
                     <div className="flex flex-wrap gap-2">
                       <button type="button" className="nb-btn-secondary" onClick={() => navigate(`/settings/memory`)}>
-                        Review memory
+                        Review saved details
                       </button>
                       {selectedMemoryEntry ? (
                         <button type="button" className="nb-btn-primary" onClick={handleStartFromMemory}>
-                          Start from memory
+                          Start with saved details
                         </button>
                       ) : (
                         <button type="button" className="nb-btn-primary" onClick={handleInvoiceAgain}>
@@ -1908,6 +1935,53 @@
                   <p className="mt-4 text-sm text-slate-500" role="status" aria-live="polite">
                     Loading client context…
                   </p>
+                ) : null}
+                {selectedClientName && bestNextMove ? (
+                  <div
+                    className="mt-5 rounded-[24px] border border-[#dbe9e2] bg-[linear-gradient(145deg,_#f7fbf8_0%,_#ffffff_55%,_#eef4f0_100%)] p-4 shadow-sm md:p-5"
+                    data-testid="client-workspace-quickstart"
+                  >
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="max-w-3xl">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
+                          {bestNextMove.eyebrow || "Best next move"}
+                        </p>
+                        <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                          {bestNextMove.title || "Start with the strongest saved context"}
+                        </h3>
+                        <p className="mt-2 text-sm leading-6 text-slate-600">
+                          {bestNextMove.body ||
+                            "Use the client context that is already saved so the next invoice starts with less typing and less guesswork."}
+                        </p>
+                        {repeatWorkSystemSummary.chips.length > 0 ? (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {repeatWorkSystemSummary.chips.map((chip) => (
+                              <span
+                                key={chip}
+                                className="rounded-full border border-[#d5e5de] bg-white/90 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3d6f61]"
+                              >
+                                {chip}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="flex w-full shrink-0 flex-col gap-2 lg:w-auto lg:min-w-[230px]">
+                        <button type="button" className="nb-btn-primary w-full justify-center" onClick={bestNextMove.onPrimary}>
+                          {bestNextMove.primaryLabel || "Start next action"}
+                        </button>
+                        {bestNextMove.secondaryLabel ? (
+                          <button
+                            type="button"
+                            className="nb-btn-secondary w-full justify-center"
+                            onClick={bestNextMove.onSecondary}
+                          >
+                            {bestNextMove.secondaryLabel}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
                 ) : null}
               </section>
 
@@ -2432,12 +2506,35 @@
 
                     <section className="order-1 nb-surface nb-surface--muted rounded-[26px] p-5 md:rounded-[30px] md:p-6 xl:order-2">
                       <p className="nb-kicker">
-                        {bestNextMove?.eyebrow || "Best next move"}
+                        Repeat-work system
                       </p>
                       <h3 className="mt-2 text-lg font-semibold text-slate-900">
-                        {bestNextMove?.title || "How we'd start the next job"}
+                        Why this client should get faster next time
                       </h3>
                       <div className="mt-4 space-y-3">
+                        <div
+                          className="rounded-[22px] border border-white/80 bg-white/85 p-4"
+                          data-testid="client-workspace-repeat-system"
+                        >
+                          <p className="text-sm font-semibold text-slate-900">
+                            {repeatWorkSystemSummary.title}
+                          </p>
+                          <p className="mt-2 text-xs leading-5 text-slate-600">
+                            {repeatWorkSystemSummary.detail}
+                          </p>
+                          {repeatWorkSystemSummary.chips.length > 0 ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {repeatWorkSystemSummary.chips.map((chip) => (
+                                <span
+                                  key={chip}
+                                  className="rounded-full border border-[#d5e5de] bg-[#f7faf7] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3d6f61]"
+                                >
+                                  {chip}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
                         <div className="rounded-[22px] border border-white/80 bg-white/85 p-4">
                           <p className="text-sm font-semibold text-slate-900">
                             {leadService

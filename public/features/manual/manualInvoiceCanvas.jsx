@@ -140,6 +140,24 @@
       // Best-effort only.
     }
   };
+  const getInlineNoticeClassName = (value) => {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    if (!normalized) {
+      return "nb-chip nb-chip--soft normal-case tracking-normal text-[11px]";
+    }
+    if (normalized.includes("saving") || normalized.includes("updating") || normalized.includes("copying")) {
+      return "nb-chip nb-chip--soft normal-case tracking-normal text-[11px]";
+    }
+    if (
+      normalized.includes("couldn't") ||
+      normalized.includes("unable") ||
+      normalized.includes("sign in required") ||
+      normalized.includes("unavailable")
+    ) {
+      return "nb-chip nb-chip--warning normal-case tracking-normal text-[11px]";
+    }
+    return "nb-chip nb-chip--success normal-case tracking-normal text-[11px]";
+  };
   const readFavoriteLayoutStudio = () => {
     try {
       const raw = window.localStorage.getItem(favoriteLayoutStudioStorageKey);
@@ -618,7 +636,7 @@ function ManualInvoiceCanvas() {
       ? {
           eyebrow: "Opened from library",
           title: "Your saved invoice is open in the editor.",
-          detail: "Next: add a payment link, create the client portal, or export/share the PDF.",
+          detail: "Next: add a payment link, create the client portal, or export the PDF.",
           actionLabel: "Jump to handoff",
           onAction: () => {
             document.getElementById("manual-send-payment-handoff")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1469,7 +1487,7 @@ function ManualInvoiceCanvas() {
     try {
       setSharePackPreview(sharePackText);
       void navigator.clipboard?.writeText?.(sharePackText).catch(() => {});
-      setSharePackNotice("Share pack copied. Next: paste it into email, text, or chat.");
+      setSharePackNotice("Share pack copied. Paste it into email, text, or chat now.");
       setTimedDraftStatus("Share pack copied");
     } catch (error) {
       setSharePackNotice(error?.message || "Could not copy the share pack.");
@@ -1582,7 +1600,7 @@ function ManualInvoiceCanvas() {
       }
     );
     setSavedLineItemLibrary(nextLineItemLibrary);
-    setTimedDraftStatus(`Saved service memory for ${normalizedDescription}`);
+    setTimedDraftStatus(`Saved service details for ${normalizedDescription}`);
     trackRevenueSignal("service_memory_saved", "manual_current_line_save");
   };
 
@@ -2102,7 +2120,7 @@ function ManualInvoiceCanvas() {
     }
     saveTimeoutRef.current = window.setTimeout(() => {
       persistDraft();
-      setDraftStatus("Draft saved");
+      setDraftStatus("Draft autosaved on this device");
       if (clearStatusTimeoutRef.current) {
         window.clearTimeout(clearStatusTimeoutRef.current);
       }
@@ -2184,7 +2202,7 @@ function ManualInvoiceCanvas() {
       document.body.removeChild(link);
       window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1000);
       completeOnboardingStep("export_pdf");
-      setDraftStatus("PDF is downloading");
+      setDraftStatus("PDF downloaded. Open it or send it next.");
       if (clearStatusTimeoutRef.current) {
         window.clearTimeout(clearStatusTimeoutRef.current);
       }
@@ -2299,7 +2317,11 @@ function ManualInvoiceCanvas() {
       completeOnboardingStep("save_invoice");
       markReviewMilestone("invoice_saved");
       setSaveNeedsAuth(false);
-      setSaveStatus(hasSavedDraft ? "Draft updates saved" : "Draft saved to library");
+      setSaveStatus(
+        hasSavedDraft
+          ? "Draft changes saved. Keep going or reopen it from the library later."
+          : "Draft saved to library. Open the library later or keep finishing the send path here."
+      );
       window.setTimeout(() => setSaveStatus(""), 2200);
       void refreshAccountPlan();
     } catch (error) {
@@ -2348,10 +2370,10 @@ function ManualInvoiceCanvas() {
       );
       setSaveStatus(
         appliedStatus === "paid"
-          ? "Invoice marked paid"
+          ? "Invoice marked paid. Client history and balance are now up to date."
           : appliedStatus === "sent"
-            ? "Invoice marked sent"
-            : "Invoice moved back to draft"
+            ? "Invoice marked sent. Follow-up and payment tracking stay attached."
+            : "Invoice moved back to draft."
       );
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {
@@ -2391,14 +2413,18 @@ function ManualInvoiceCanvas() {
         markReviewMilestone("payment_link_added");
         maybeRequestInAppReview("payment_link_added");
       }
-      setSaveStatus(nextPaymentLink ? "Payment link ready" : "Payment link already ready");
+      setSaveStatus(
+        nextPaymentLink
+          ? "Payment link ready. Add it to the share pack or send it now."
+          : "Payment link already ready."
+      );
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {
       const message = String(error?.message || "Couldn't create payment link.");
       const status = Number(error?.status ?? error?.statusCode ?? 0);
       setPaymentLinkError(
         status === 402
-          ? "Hosted payment links are a Pro workflow. Upgrade to unlock payment links, invoice sends, reminders, client portals, and repeat-work shortcuts."
+          ? "Hosted payment links are part of Pro. Upgrade to unlock payment links, sends, reminders, client portals, and repeat-work shortcuts."
           : message.includes("Invoice payments are not configured yet.")
           ? "Hosted payment links are not configured on this build yet. You can still share the client portal, copy the share pack, or send the invoice manually."
           : message
@@ -2455,8 +2481,8 @@ function ManualInvoiceCanvas() {
       );
       setSaveStatus(
         nextReviewState === "approved"
-          ? "Marked estimate approved"
-          : "Marked estimate needs review"
+          ? "Estimate marked approved. It is ready to convert or send."
+          : "Estimate marked for review."
       );
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {
@@ -2497,8 +2523,8 @@ function ManualInvoiceCanvas() {
       setSavedInvoiceStatus(payload?.invoice?.status ?? savedInvoiceStatus);
       setSaveStatus(
         payload?.invoice?.status === "paid"
-          ? "Payment recorded. Invoice is now paid."
-          : "Payment recorded"
+          ? "Payment recorded. Invoice is now fully paid."
+          : "Payment recorded. Remaining balance updated."
       );
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {
@@ -2533,7 +2559,7 @@ function ManualInvoiceCanvas() {
         normalizePaymentMethods(payload?.invoice?.invoiceData?.finishedInvoice?.paymentMethods ?? paymentMethods)
       );
       setSavedInvoiceStatus(payload?.invoice?.status ?? savedInvoiceStatus);
-      setSaveStatus("Payment record removed");
+      setSaveStatus("Payment record removed. Balance updated.");
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {
       setPaymentRecordError(error?.message || "Couldn't remove payment.");
@@ -2569,13 +2595,17 @@ function ManualInvoiceCanvas() {
       setPaymentMethods(
         normalizePaymentMethods(payload?.invoice?.invoiceData?.finishedInvoice?.paymentMethods ?? paymentMethods)
       );
-      setSaveStatus(nextToken ? "Client portal ready" : "Client portal unchanged");
+      setSaveStatus(
+        nextToken
+          ? "Client portal ready. Open it or include it in the share pack."
+          : "Client portal already ready."
+      );
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {
       const status = Number(error?.status ?? error?.statusCode ?? 0);
       setClientPortalError(
         status === 402
-          ? "Client portal links are a Pro workflow. Upgrade to unlock client portals, hosted payment links, sends, reminders, and repeat-work shortcuts."
+          ? "Client portals are part of Pro. Upgrade to unlock client portals, payment links, sends, reminders, and repeat-work shortcuts."
           : error?.message || "Couldn't create client portal link."
       );
     } finally {
@@ -2668,9 +2698,9 @@ function ManualInvoiceCanvas() {
     if (moves.length < 3 && primaryBillToName) {
       moves.push({
         id: "memory-review",
-        label: "Review repeat-client memory",
-        helper: "Check what Billie already remembers for this client so future invoices stay fast and accurate.",
-        actionLabel: "Open memory",
+        label: "Review saved client details",
+        helper: "Check the saved client and service details so future invoices stay fast and accurate.",
+        actionLabel: "Open saved details",
         busy: false,
         onClick: () => navigate("/settings/memory")
       });
@@ -2726,6 +2756,93 @@ function ManualInvoiceCanvas() {
             : "Save first"
     }
   ];
+  const handoffRecommendedAction = useMemo(() => {
+    if (!hasClientDetails) {
+      return {
+        id: "client-details",
+        eyebrow: "Recommended next step",
+        title: "Add the client details first.",
+        detail: "That gives the invoice a real recipient before you worry about links, portals, or sending.",
+        actionLabel: "Add client details",
+        busy: false,
+        onClick: () => {
+          document.querySelector('textarea[placeholder="Client Name"]')?.focus();
+        }
+      };
+    }
+    if (!hasBillableLineItem) {
+      return {
+        id: "priced-work",
+        eyebrow: "Recommended next step",
+        title: "Add one priced line item.",
+        detail: "A real line item makes the invoice worth saving, sharing, and sending.",
+        actionLabel: "Add priced work",
+        busy: false,
+        onClick: () => {
+          document.querySelector('input[placeholder="Description"]')?.focus();
+        }
+      };
+    }
+    if (!hasSavedDraft) {
+      return {
+        id: "save-draft",
+        eyebrow: "Recommended next step",
+        title: "Save the invoice before anything else.",
+        detail: "Saving unlocks the library, payment link, portal, and the cleaner follow-up path.",
+        actionLabel: isSavingDraft ? saveDraftActionLabel : "Save draft first",
+        busy: isSavingDraft,
+        onClick: () => {
+          void handleSaveInvoice();
+        }
+      };
+    }
+    if (!hasHostedPaymentLink && !hostedHandoffLocked) {
+      return {
+        id: "payment-link",
+        eyebrow: "Recommended next step",
+        title: "Add the payment link next.",
+        detail: "That makes the first send feel easier to pay from right away.",
+        actionLabel: paymentLinkBusy ? "Creating..." : "Add payment link next",
+        busy: paymentLinkBusy,
+        onClick: () => {
+          void handleGeneratePaymentLink();
+        }
+      };
+    }
+    if (!hasClientPortal && !hostedHandoffLocked) {
+      return {
+        id: "client-portal",
+        eyebrow: "Recommended next step",
+        title: "Add the client portal next.",
+        detail: "This gives the customer one clean place to review the invoice after they open it.",
+        actionLabel: clientPortalBusy ? "Creating..." : "Add client portal next",
+        busy: clientPortalBusy,
+        onClick: () => {
+          void handleGenerateClientPortalLink();
+        }
+      };
+    }
+    return {
+      id: "share-pack",
+      eyebrow: "Recommended next step",
+      title: "Copy the share pack or export the PDF.",
+      detail: "The saved draft, payment step, and portal are already in place, so you can finish the send path now.",
+      actionLabel: sharePackBusy ? "Copying..." : "Copy share pack to send",
+      busy: sharePackBusy,
+      onClick: handleCopySharePack
+    };
+  }, [
+    clientPortalBusy,
+    hasBillableLineItem,
+    hasClientDetails,
+    hasClientPortal,
+    hasHostedPaymentLink,
+    hostedHandoffLocked,
+    isSavingDraft,
+    paymentLinkBusy,
+    saveDraftActionLabel,
+    sharePackBusy
+  ]);
   const onboardingContextCue = useMemo(() => {
     if (onboardingStatus.completionVisible || !onboardingStatus.visible) {
       return null;
@@ -2943,128 +3060,363 @@ function ManualInvoiceCanvas() {
     });
   };
 
+  const openSendAndPayHandoff = () => {
+    setActiveInspectorTab("export");
+    setInspectorOpen(true);
+    window.requestAnimationFrame(() => {
+      document.getElementById("manual-send-payment-handoff")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
   const billieWorkspaceActions =
     billieWorkspaceSource === "intake"
       ? [
           {
             id: "intake-polish",
+            category: "wording",
             label: "Polish intake draft",
             instruction:
               "Refine the line item wording and notes so this invoice feels polished and client-ready. Keep numbers unchanged."
           },
           {
             id: "intake-simpler",
+            category: "wording",
             label: "Simpler wording",
             instruction: "Make the descriptions and notes simpler and clearer."
           },
           {
             id: "intake-client-ready",
+            category: "wording",
             label: "Client-ready tone",
             instruction: "Make the invoice read more clearly for the client while keeping the same meaning."
           },
           {
             id: "intake-refine-notes",
+            category: "wording",
             label: "Refine notes",
             instruction: "Make the notes more professional."
           },
           {
             id: "intake-premium-look",
+            category: "look",
             label: "Premium look",
             instruction: "Make this invoice feel premium with a centered header, airy spacing, and a navy accent."
+          },
+          {
+            id: "intake-send-ready",
+            category: "workflow",
+            label: "Make it send-ready",
+            instruction:
+              "Tighten the wording, notes, and payment-facing language so this invoice feels ready to send today. Keep numbers unchanged."
           }
         ]
       : billieWorkspaceSource === "import"
         ? [
             {
               id: "import-cleanup",
+              category: "wording",
               label: "Clean imported draft",
               instruction:
                 "Use the imported source text to clean up the invoice wording and notes while keeping numbers unchanged."
             },
             {
               id: "import-client-ready",
+              category: "wording",
               label: "Client-ready tone",
               instruction:
                 "Make this imported draft read clearly for the client while keeping the same meaning and numbers."
             },
             {
               id: "import-structure",
+              category: "wording",
               label: "Tighten structure",
               instruction:
                 "Tighten the wording and structure of this imported draft without changing quantities, rates, or totals."
             },
             {
               id: "import-refine-notes",
+              category: "wording",
               label: "Refine notes",
               instruction: "Make the imported notes more professional."
             },
             {
               id: "import-clean-minimal",
+              category: "look",
               label: "Clean minimal look",
               instruction: "Use a clean minimal layout with tighter spacing and a charcoal accent."
+            },
+            {
+              id: "import-send-ready",
+              category: "workflow",
+              label: "Make it send-ready",
+              instruction:
+                "Tighten the imported wording, notes, and payment-facing language so this invoice feels ready to send today. Keep numbers unchanged."
             }
           ]
       : billieWorkspaceSource === "library"
         ? [
             {
               id: "library-polish",
+              category: "wording",
               label: "Polish reopened draft",
               instruction:
                 "Refine the invoice wording and notes so this saved draft feels polished and client-ready. Keep numbers unchanged."
             },
             {
               id: "library-simpler",
+              category: "wording",
               label: "Simpler wording",
               instruction: "Make the wording simpler and clearer for the client."
             },
             {
               id: "library-follow-up",
+              category: "workflow",
               label: "Sharpen send tone",
               instruction: "Make the notes and invoice language feel clearer before I send or follow up."
             },
             {
               id: "library-refine-notes",
+              category: "wording",
               label: "Refine notes",
               instruction: "Make the notes more professional."
             },
             {
               id: "library-premium-look",
+              category: "look",
               label: "Premium look",
               instruction: "Make this invoice feel premium with a centered header, airy spacing, and a navy accent."
+            },
+            {
+              id: "library-send-ready",
+              category: "workflow",
+              label: "Prep follow-up wording",
+              instruction:
+                "Make the notes, delivery wording, and payment-facing language feel clearer before I send or follow up. Keep numbers unchanged."
             }
           ]
         : [
           {
             id: "formal-descriptions",
+            category: "wording",
             label: "Formal descriptions",
             instruction: "Make the descriptions more formal."
           },
           {
             id: "simpler-descriptions",
+            category: "wording",
             label: "Simpler wording",
             instruction: "Make the descriptions simpler and clearer."
           },
           {
             id: "stronger-descriptions",
+            category: "wording",
             label: "Stronger wording",
             instruction: "Make the descriptions stronger and more decisive."
           },
           {
             id: "refine-notes",
+            category: "wording",
             label: "Refine notes",
             instruction: "Make the notes more professional."
           },
           {
             id: "premium-look",
+            category: "look",
             label: "Premium look",
             instruction: "Make this invoice feel premium with a centered header, airy spacing, and a navy accent."
           },
           {
             id: "clean-minimal-look",
+            category: "look",
             label: "Clean minimal look",
             instruction: "Use a clean minimal layout with tighter spacing and a charcoal accent."
+          },
+          {
+            id: "send-ready-wording",
+            category: "workflow",
+            label: "Make it send-ready",
+            instruction:
+              "Tighten the wording, notes, and payment-facing language so this invoice feels ready to send today. Keep numbers unchanged."
           }
         ];
+  const billieWorkspaceActionGroups = [
+    {
+      id: "wording",
+      title: "Wording",
+      helper: "Use Billie to make the invoice clearer, more professional, and more client-safe.",
+      actions: billieWorkspaceActions.filter((action) => action.category === "wording")
+    },
+    {
+      id: "look",
+      title: "Look",
+      helper: "Let Billie change presentation safely while Layout Studio keeps the direct controls nearby.",
+      actions: billieWorkspaceActions.filter((action) => action.category === "look")
+    },
+    {
+      id: "workflow",
+      title: "Send-ready",
+      helper: "Tighten the customer-facing wording before you move into save, payment, portal, or follow-up handoff.",
+      actions: billieWorkspaceActions.filter((action) => action.category === "workflow")
+    }
+  ].filter((group) => group.actions.length > 0);
+  const billieWorkspaceOutcomePresets = useMemo(
+    () => [
+      {
+        id: "outcome-homeowner",
+        label: "Homeowner-friendly",
+        detail: "Clear, simple wording for a residential client.",
+        instruction:
+          "Rewrite this invoice so it feels simple, clear, and easy for a homeowner to understand. Keep numbers unchanged."
+      },
+      {
+        id: "outcome-contractor",
+        label: "Contractor-ready",
+        detail: "Sharper trade-professional wording and scope clarity.",
+        instruction:
+          "Make this invoice feel more contractor-ready with tighter professional wording and clearer scope language. Keep numbers unchanged."
+      },
+      {
+        id: "outcome-premium",
+        label: "Premium service",
+        detail: "Polished wording plus a higher-end presentation feel.",
+        instruction:
+          "Make this invoice feel premium and high-trust with polished wording, a confident tone, and a refined presentation. Keep numbers unchanged."
+      },
+      {
+        id: "outcome-followup",
+        label: "Follow-up ready",
+        detail: "Cleaner payment-facing wording before sending or reminding.",
+        instruction:
+          "Make the invoice feel follow-up ready with clearer payment-facing wording, delivery notes, and a client-safe tone. Keep numbers unchanged."
+      }
+    ],
+    []
+  );
+  const billieWorkspaceMemoryValue = useMemo(() => {
+    const hasClientMemory = Boolean(currentClientMemoryEntry);
+    const savedServiceCount = currentClientSavedBundle.length;
+    if (!hasClientMemory && savedServiceCount === 0) {
+      return null;
+    }
+    const clientName = primaryBillToName || currentClientMemoryEntry?.name || "this client";
+    const savedRecipient = String(currentClientMemoryEntry?.recipientEmail ?? "").trim();
+    const cadenceLabel = currentClientMemoryEntry?.recurringIntervalDays
+      ? formatRecurringCadence(currentClientMemoryEntry.recurringIntervalDays)
+      : "";
+    const serviceSummary =
+      savedServiceCount > 1
+        ? `${savedServiceCount} saved services`
+        : savedServiceCount === 1
+          ? currentClientSavedBundle[0]?.description || "1 saved service"
+          : "No saved services yet";
+    const detailParts = [
+      hasClientMemory ? "repeat client details are already remembered" : "",
+      savedRecipient ? `saved recipient ${savedRecipient} is ready` : "",
+      cadenceLabel ? `${cadenceLabel} cadence is remembered` : ""
+    ].filter(Boolean);
+    return {
+      clientName,
+      serviceSummary,
+      detail:
+        detailParts.length > 0
+          ? `${clientName}: ${detailParts.join(", ")}.`
+          : `${clientName} already has reusable context in NoteBill.`,
+      primaryLabel: savedServiceCount > 0 ? "Review saved setup" : "Open saved client details"
+    };
+  }, [currentClientMemoryEntry, currentClientSavedBundle, primaryBillToName]);
+  const billieWorkspacePrimaryGuide = useMemo(() => {
+    if (savedInvoiceStatus === "paid") {
+      return {
+        eyebrow: "Best next ask",
+        title: "Turn this paid invoice into a repeatable workflow.",
+        detail:
+          "The money side is done. Ask Billie to turn what worked here into cleaner repeat-ready wording and reusable service language for the next job.",
+        actionLabel: "Make this repeat-ready",
+        actionInstruction:
+          "Turn this invoice into a repeat-ready version with cleaner reusable wording, stronger service descriptions, and notes I can use again next time. Keep numbers unchanged."
+      };
+    }
+    if (savedInvoiceStatus === "sent") {
+      return {
+        eyebrow: "Best next ask",
+        title: "Sharpen the follow-up path while this invoice is out in the world.",
+        detail:
+          "Billie can tighten the payment-facing and reminder wording now so the next follow-up feels clearer and easier to trust.",
+        actionLabel: "Prep follow-up wording",
+        actionInstruction:
+          "Make the follow-up, payment-facing, and reminder wording for this invoice clearer and more client-safe. Keep numbers unchanged."
+      };
+    }
+    if (!hasSavedDraft) {
+      return {
+        eyebrow: "Best next ask",
+        title: "Finish the draft, then save it to unlock the full handoff.",
+        detail:
+          "Ask Billie to tighten the wording now so the invoice feels polished before you save, add payment, and send.",
+        actionLabel: "Polish and prep to save",
+        actionInstruction:
+          "Refine the wording, notes, and customer-facing language so this invoice feels polished and ready to save. Keep numbers unchanged."
+      };
+    }
+    if (!hasHostedPaymentLink && !hasClientPortal) {
+      return {
+        eyebrow: "Best next ask",
+        title: "Prep the customer-facing wording before you add payment and portal steps.",
+        detail:
+          "Let Billie make the invoice feel clearer and easier to trust, then move into the send and payment setup while the draft is fresh.",
+        actionLabel: "Prep send wording",
+        actionInstruction:
+          "Tighten the wording, notes, and payment-facing language so this invoice feels ready to send today. Keep numbers unchanged."
+      };
+    }
+    if (!hasHostedPaymentLink || !hasClientPortal) {
+      return {
+        eyebrow: "Best next ask",
+        title: "Use Billie to sharpen the handoff while you finish the last customer step.",
+        detail:
+          "The draft is already partly set up. Ask Billie to make the delivery and payment wording clearer, then finish the final send-and-pay step below.",
+        actionLabel: "Sharpen handoff wording",
+        actionInstruction:
+          "Make the delivery wording, payment-facing language, and notes feel clearer before I send this invoice. Keep numbers unchanged."
+      };
+    }
+    return {
+      eyebrow: "Best next ask",
+      title: "Everything is in place. Give the invoice one last polish before you send.",
+      detail:
+        "Billie can make the tone clearer and more client-ready now that the draft, payment link, and portal are already set up.",
+      actionLabel: "Final client-ready polish",
+      actionInstruction:
+        "Give this invoice a final client-ready polish so it feels clear, professional, and easy to pay from. Keep numbers unchanged."
+    };
+  }, [hasClientPortal, hasHostedPaymentLink, hasSavedDraft, savedInvoiceStatus]);
+  const billieWorkspaceLifecycleGuide = useMemo(() => {
+    if (savedInvoiceStatus === "paid") {
+      return {
+        eyebrow: "After payment",
+        title: "Capture what made this invoice work so the next one starts faster.",
+        detail:
+          "The highest-leverage move now is to reuse the winning service/client setup instead of rebuilding the next invoice from scratch.",
+        primaryLabel: "Open saved client details",
+        onPrimary: () => navigate("/settings/memory"),
+        secondaryLabel: "Open library",
+        onSecondary: () => navigate("/invoices")
+      };
+    }
+    if (savedInvoiceStatus === "sent") {
+      return {
+        eyebrow: "After send",
+        title: "Keep the payment path and follow-up path easy to act on.",
+        detail:
+          "Open the library to track status, reminders, and open balance, or jump back into the send-and-pay tools if the handoff still needs work.",
+        primaryLabel: "Open library",
+        onPrimary: () => navigate("/invoices"),
+        secondaryLabel: "Open Send & Pay",
+        onSecondary: openSendAndPayHandoff
+      };
+    }
+    return null;
+  }, [navigate, openSendAndPayHandoff, savedInvoiceStatus]);
 
   const isMobileInspectorOpen = inspectorOpen;
   const invoiceInteractionClass = isMobileInspectorOpen
@@ -3482,13 +3834,13 @@ function ManualInvoiceCanvas() {
                     </p>
                     <p className="mt-1 text-sm leading-6 text-slate-600">
                       {onboardingStatus.walkthroughActive
-                        ? "You made it to the editor. Save this draft first, then export the PDF so you finish the full first-invoice loop."
+                        ? "You made it to the editor. Save this draft first, then export the PDF so you finish the full first-invoice loop with confidence."
                         : onboardingStatus.nextStep?.helper ||
-                        "You are in the editor now. Save, add the handoff pieces, and export to finish the first complete loop."}
+                        "You are in the editor now. Save the draft, add the handoff pieces, and export it so the first complete loop feels finished."}
                     </p>
                     {!authSession?.userId ? (
                       <p className="mt-2 text-xs leading-5 text-slate-500">
-                        Optional: sign in if you want this draft, billing, and repeat-work setup to stay with your account.
+                        Optional: sign in if you want this draft, billing, and repeat-work setup to stay tied to your account.
                       </p>
                     ) : null}
                   </div>
@@ -3600,7 +3952,7 @@ function ManualInvoiceCanvas() {
             className="nb-shell-utility underline-offset-2 transition hover:underline"
             onClick={() => navigate("/")}
           >
-            {authSession?.email ? `Account: ${authSession.email}` : "Account: guest session"}
+            {authSession?.email ? `Account: ${authSession.email}` : "Account: guest mode"}
           </button>
         </div>
           <section
@@ -3616,14 +3968,14 @@ function ManualInvoiceCanvas() {
               </div>
               <div className="space-y-1">
                 <h2 className="text-xl font-semibold text-slate-900 md:text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>
-                  Refine the invoice wording or look here, then move straight into save or send.
+                  Refine rough field notes into something clean enough to save, send, and reuse.
                 </h2>
                 <p className="text-sm leading-6 text-slate-600">
                   {billieWorkspaceSource === "intake"
-                    ? "Polish the intake draft before you save, send, or share it."
+                    ? "Polish the intake draft before you save, send, or share it with the client."
                     : billieWorkspaceSource === "library"
-                      ? "Polish reopened work before you send, remind, or reuse it."
-                    : "Ask Billie to improve wording or change the invoice look while money changes stay guarded."}
+                      ? "Polish reopened work before you send, remind, or reuse it on the next similar job."
+                    : "Ask Billie to improve wording or change the invoice look while money changes stay guarded and visible."}
                 </p>
               </div>
             </div>
@@ -3679,6 +4031,141 @@ function ManualInvoiceCanvas() {
                   </p>
                 </div>
               ) : null}
+              <div
+                className="mt-4 rounded-2xl border border-[#dbe9e2] bg-[linear-gradient(145deg,_#f7fbf8_0%,_#ffffff_60%,_#eef4f0_100%)] px-4 py-4 text-sm text-slate-600"
+                data-testid="manual-billie-fit-guide"
+              >
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
+                  Best fit
+                </p>
+                <p className="mt-2 text-base font-semibold text-slate-900">
+                  Best when you invoice from your phone after real field work.
+                </p>
+                <p className="mt-1 leading-6">
+                  This path works best for contractors, solo operators, and repeat service jobs where the first draft starts from rough notes instead of a perfect office-ready form.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3d6f61]">
+                  {["Rough job notes", "Repeat service work", "Phone-first review"].map((pill) => (
+                    <span
+                      key={pill}
+                      className="rounded-full border border-[#d5e5de] bg-white/92 px-3 py-1"
+                    >
+                      {pill}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <div
+                className="mt-4 rounded-2xl border border-[#cfe1d8] bg-[#f7fbf9] px-4 py-4 text-sm text-slate-600"
+                data-testid="manual-billie-primary-guide"
+              >
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
+                  {billieWorkspacePrimaryGuide.eyebrow}
+                </p>
+                <p className="mt-2 text-base font-semibold text-slate-900">
+                  {billieWorkspacePrimaryGuide.title}
+                </p>
+                <p className="mt-1 leading-6">
+                  {billieWorkspacePrimaryGuide.detail}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="nb-btn-primary inline-flex rounded-full px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                    style={accentButtonStyle}
+                    onClick={() => submitBillieWorkspaceInstruction(billieWorkspacePrimaryGuide.actionInstruction)}
+                    disabled={assistantWorkspaceRuntime.loading || assistantWorkspaceRuntime.hasPendingEdit}
+                  >
+                    {billieWorkspacePrimaryGuide.actionLabel}
+                  </button>
+                  <button
+                    type="button"
+                    className="nb-btn-secondary rounded-full px-3 py-2 text-xs"
+                    style={accentGhostButtonStyle}
+                    onClick={openSendAndPayHandoff}
+                  >
+                    Open Send &amp; Pay
+                  </button>
+                </div>
+              </div>
+              {billieWorkspaceLifecycleGuide ? (
+                <div
+                  className="mt-4 rounded-2xl border border-[#d5e5de] bg-white/82 px-4 py-4 text-sm text-slate-600"
+                  data-testid="manual-billie-lifecycle-guide"
+                >
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
+                    {billieWorkspaceLifecycleGuide.eyebrow}
+                  </p>
+                  <p className="mt-2 text-base font-semibold text-slate-900">
+                    {billieWorkspaceLifecycleGuide.title}
+                  </p>
+                  <p className="mt-1 leading-6">
+                    {billieWorkspaceLifecycleGuide.detail}
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="nb-btn-secondary rounded-full px-3 py-2 text-xs"
+                      style={accentGhostButtonStyle}
+                      onClick={billieWorkspaceLifecycleGuide.onPrimary}
+                    >
+                      {billieWorkspaceLifecycleGuide.primaryLabel}
+                    </button>
+                    <button
+                      type="button"
+                      className="nb-btn-secondary rounded-full px-3 py-2 text-xs"
+                      style={accentGhostButtonStyle}
+                      onClick={billieWorkspaceLifecycleGuide.onSecondary}
+                    >
+                      {billieWorkspaceLifecycleGuide.secondaryLabel}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {billieWorkspaceMemoryValue ? (
+                <div
+                  className="mt-4 rounded-2xl border border-[#d7e4ef] bg-[#f8fbfe] px-4 py-4 text-sm text-slate-600"
+                  data-testid="manual-billie-memory-value"
+                >
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#315b7c]">
+                    Repeat-work value
+                  </p>
+                  <p className="mt-2 text-base font-semibold text-slate-900">
+                    Billie already has repeat-ready context for {billieWorkspaceMemoryValue.clientName}.
+                  </p>
+                  <p className="mt-1 leading-6">
+                    {billieWorkspaceMemoryValue.detail}
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                    <span className="rounded-full border border-[#c8dceb] bg-white px-3 py-1 font-semibold text-[#315b7c]">
+                      {billieWorkspaceMemoryValue.serviceSummary}
+                    </span>
+                    {currentClientMemoryEntry?.defaultNotes ? (
+                      <span className="rounded-full border border-[#c8dceb] bg-white px-3 py-1 font-semibold text-[#315b7c]">
+                        Saved client note ready
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="nb-btn-secondary rounded-full px-3 py-2 text-xs"
+                      style={accentGhostButtonStyle}
+                      onClick={() => navigate("/settings/memory")}
+                    >
+                      {billieWorkspaceMemoryValue.primaryLabel}
+                    </button>
+                    <button
+                      type="button"
+                      className="nb-btn-secondary rounded-full px-3 py-2 text-xs"
+                      style={accentGhostButtonStyle}
+                      onClick={() => navigate("/invoices")}
+                    >
+                      Open library
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="mt-4 rounded-2xl border border-[#d5e5de] bg-white/72 px-4 py-3 text-sm text-slate-600">
                 <p className="font-semibold text-slate-900">Billie can help with the look too</p>
                 <p className="mt-1">
@@ -3688,18 +4175,76 @@ function ManualInvoiceCanvas() {
                   <span className="font-semibold text-slate-800"> hide notes</span>. Layout Studio gives you the same controls directly.
                 </p>
               </div>
-              <div className="nb-mobile-actions mt-4">
-                {billieWorkspaceActions.map((action) => (
+              <section
+                className="mt-4 rounded-2xl border border-slate-200 bg-white/82 px-4 py-4"
+                data-testid="manual-billie-outcome-presets"
+              >
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">Outcome presets</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Ask for the finished result you want. Billie will keep the money intact while shifting the tone,
+                  clarity, and presentation toward that outcome.
+                </p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  {billieWorkspaceOutcomePresets.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-[#b7d2c5] hover:bg-[#f8fcfa] disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => submitBillieWorkspaceInstruction(preset.instruction)}
+                      disabled={assistantWorkspaceRuntime.loading || assistantWorkspaceRuntime.hasPendingEdit}
+                    >
+                      <p className="text-sm font-semibold text-slate-900">{preset.label}</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-600">{preset.detail}</p>
+                    </button>
+                  ))}
+                </div>
+              </section>
+              <div
+                className="mt-4 rounded-2xl border border-[#d5e5de] bg-white/72 px-4 py-3 text-sm text-slate-600"
+                data-testid="manual-billie-workflow-guide"
+              >
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <p className="font-semibold text-slate-900">Billie can prep the handoff too</p>
+                    <p className="mt-1">
+                      Ask Billie to tighten send-ready wording first, then jump into the payment link, client portal,
+                      and share steps when the draft feels right.
+                    </p>
+                  </div>
                   <button
-                    key={action.id}
                     type="button"
-                    className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                    className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs"
                     style={accentGhostButtonStyle}
-                    onClick={() => submitBillieWorkspaceInstruction(action.instruction)}
-                    disabled={assistantWorkspaceRuntime.loading || assistantWorkspaceRuntime.hasPendingEdit}
+                    onClick={openSendAndPayHandoff}
                   >
-                    {action.label}
+                    Jump to Send &amp; Pay
                   </button>
+                </div>
+              </div>
+              <div className="mt-4 space-y-3">
+                {billieWorkspaceActionGroups.map((group) => (
+                  <section
+                    key={group.id}
+                    className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3"
+                    data-testid={`manual-billie-group-${group.id}`}
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">{group.title}</p>
+                    <p className="mt-1 text-sm text-slate-600">{group.helper}</p>
+                    <div className="nb-mobile-actions mt-3">
+                      {group.actions.map((action) => (
+                        <button
+                          key={action.id}
+                          type="button"
+                          className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                          style={accentGhostButtonStyle}
+                          onClick={() => submitBillieWorkspaceInstruction(action.instruction)}
+                          disabled={assistantWorkspaceRuntime.loading || assistantWorkspaceRuntime.hasPendingEdit}
+                        >
+                          {action.label}
+                        </button>
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
               <div className="mt-4 flex flex-col gap-3 lg:flex-row lg:items-start">
@@ -3806,16 +4351,29 @@ function ManualInvoiceCanvas() {
               </p>
             </div>
             <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {billieNextMoves.map((move) => (
+              {billieNextMoves.map((move, index) => (
                 <div
                   key={move.id}
-                  className="rounded-2xl border border-white/80 bg-white px-4 py-3 shadow-sm"
+                  className={`rounded-2xl border px-4 py-3 shadow-sm ${
+                    index === 0
+                      ? "border-emerald-200 bg-[linear-gradient(145deg,_rgba(236,253,245,0.96)_0%,_rgba(255,255,255,0.98)_100%)]"
+                      : "border-white/80 bg-white"
+                  }`}
                 >
-                  <p className="text-sm font-semibold text-slate-900">{move.label}</p>
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-900">{move.label}</p>
+                    {index === 0 ? (
+                      <span className="nb-chip nb-chip--success normal-case tracking-normal text-[11px]">
+                        Recommended
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="mt-1 text-xs leading-5 text-slate-600">{move.helper}</p>
                   <button
                     type="button"
-                    className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                    className={`mt-3 rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60 ${
+                      index === 0 ? "nb-btn-primary" : "nb-btn-secondary"
+                    }`}
                     onClick={move.onClick}
                     disabled={move.busy}
                   >
@@ -3839,9 +4397,11 @@ function ManualInvoiceCanvas() {
             <div className={`flex items-center justify-between ${activePreset.metaClass}`}>
               <span>{documentType === "estimate" ? "Estimate document" : "Invoice document"}</span>
               <span className="flex items-center gap-2">
-                {draftStatus ? <span className="text-xs text-slate-400">{draftStatus}</span> : null}
+                {draftStatus ? (
+                  <span className={getInlineNoticeClassName(draftStatus)}>{draftStatus}</span>
+                ) : null}
                 <span className="rounded-full border px-2 py-0.5 text-[10px]" style={{ borderColor: accent.border, color: accent.primary }}>
-                  Draft
+                  Client-facing draft
                 </span>
               </span>
             </div>
@@ -3849,6 +4409,34 @@ function ManualInvoiceCanvas() {
               className="h-1 w-full rounded-full"
               style={{ backgroundColor: accent.soft, boxShadow: `inset 0 0 0 1px ${accent.border}` }}
             />
+            <div
+              className="mt-4 rounded-2xl border border-[#dbe9e2] bg-[linear-gradient(145deg,_#f7fbf8_0%,_#ffffff_58%,_#eef4f0_100%)] px-4 py-4 no-print"
+              data-testid="manual-client-facing-preview-guide"
+            >
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-3xl">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#3d6f61]">
+                    Client-facing preview
+                  </p>
+                  <p className="mt-2 text-base font-semibold text-slate-900">
+                    This is the live invoice your customer path is built around.
+                  </p>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">
+                    The layout below is the same draft you refine with Billie, export to PDF, and use for send, payment, and follow-up. Keep the money, wording, and visible details clean here before you hand it off.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#3d6f61]">
+                  {["PDF-ready", "Client details visible", "Totals stay in view"].map((pill) => (
+                    <span
+                      key={pill}
+                      className="rounded-full border border-[#d5e5de] bg-white/92 px-3 py-1"
+                    >
+                      {pill}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
             <div className="hidden justify-end gap-2 no-print md:flex">
               <button
                 type="button"
@@ -3918,7 +4506,7 @@ function ManualInvoiceCanvas() {
                     </div>
                   </div>
                   <p className="mt-2 text-xs font-semibold uppercase tracking-[0.2em]" style={{ color: accent.primary }}>
-                    NoteBill · prepared with Billie
+                    Prepared for client review
                   </p>
                 </div>
                 <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-3">
@@ -4978,7 +5566,7 @@ function ManualInvoiceCanvas() {
                   </p>
                 </div>
                 <p className="text-xs font-medium text-slate-500">
-                  Nothing sends automatically.
+                  Nothing sends until you choose.
                 </p>
               </div>
               {!hasSavedDraft ? (
@@ -5008,6 +5596,34 @@ function ManualInvoiceCanvas() {
                   </div>
                 ))}
               </div>
+              <div className="mt-3 rounded-[24px] border border-emerald-200 bg-[linear-gradient(145deg,_rgba(236,253,245,0.94)_0%,_rgba(255,255,255,0.98)_100%)] p-4 shadow-sm">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="max-w-2xl">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                      {handoffRecommendedAction.eyebrow}
+                    </p>
+                    <p className="mt-2 text-base font-semibold text-slate-900">
+                      {handoffRecommendedAction.title}
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {handoffRecommendedAction.detail}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="nb-chip nb-chip--success normal-case tracking-normal text-[11px]">
+                      Recommended
+                    </span>
+                    <button
+                      type="button"
+                      className="nb-btn-primary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={handoffRecommendedAction.onClick}
+                      disabled={handoffRecommendedAction.busy}
+                    >
+                      {handoffRecommendedAction.actionLabel}
+                    </button>
+                  </div>
+                </div>
+              </div>
               {hostedHandoffLocked ? (
                 <div className="mt-3 rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
                   <p className="font-semibold uppercase tracking-[0.18em] text-amber-700">Pro handoff</p>
@@ -5024,8 +5640,13 @@ function ManualInvoiceCanvas() {
                   </button>
                 </div>
               ) : null}
-              <div className="nb-mobile-actions mt-3">
-                {!hasClientDetails ? (
+              <div className="mt-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  Other actions
+                </p>
+              </div>
+              <div className="nb-mobile-actions mt-2">
+                {!hasClientDetails && handoffRecommendedAction.id !== "client-details" ? (
                   <button
                     type="button"
                     className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs"
@@ -5036,7 +5657,7 @@ function ManualInvoiceCanvas() {
                     Add client details
                   </button>
                 ) : null}
-                {!hasBillableLineItem ? (
+                {!hasBillableLineItem && handoffRecommendedAction.id !== "priced-work" ? (
                   <button
                     type="button"
                     className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs"
@@ -5047,7 +5668,7 @@ function ManualInvoiceCanvas() {
                     Add priced work
                   </button>
                 ) : null}
-                {!hasSavedDraft && hasClientDetails && hasBillableLineItem ? (
+                {!hasSavedDraft && hasClientDetails && hasBillableLineItem && handoffRecommendedAction.id !== "save-draft" ? (
                   <button
                     type="button"
                     className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
@@ -5059,7 +5680,7 @@ function ManualInvoiceCanvas() {
                     {isSavingDraft ? saveDraftActionLabel : "Save draft first"}
                   </button>
                 ) : null}
-                {hasSavedDraft && !hasHostedPaymentLink && !hostedHandoffLocked ? (
+                {hasSavedDraft && !hasHostedPaymentLink && !hostedHandoffLocked && handoffRecommendedAction.id !== "payment-link" ? (
                   <button
                     type="button"
                     className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
@@ -5071,7 +5692,7 @@ function ManualInvoiceCanvas() {
                     {paymentLinkBusy ? "Creating..." : "Add payment link next"}
                   </button>
                 ) : null}
-                {hasSavedDraft && !hasClientPortal && !hostedHandoffLocked ? (
+                {hasSavedDraft && !hasClientPortal && !hostedHandoffLocked && handoffRecommendedAction.id !== "client-portal" ? (
                   <button
                     type="button"
                     className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
@@ -5092,7 +5713,7 @@ function ManualInvoiceCanvas() {
                     Open saved invoice
                   </button>
                 ) : null}
-                {hasBillableLineItem ? (
+                {hasBillableLineItem && handoffRecommendedAction.id !== "share-pack" ? (
                   <button
                     type="button"
                     className="nb-btn-secondary rounded-full px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-60"
@@ -5271,7 +5892,7 @@ function ManualInvoiceCanvas() {
                   {sharePackBusy ? "Copying..." : "Copy share pack"}
                 </button>
                 {sharePackNotice ? (
-                  <span className="text-xs font-semibold text-slate-500">{sharePackNotice}</span>
+                  <span className={getInlineNoticeClassName(sharePackNotice)}>{sharePackNotice}</span>
                 ) : null}
               </div>
               {sharePackPreview ? (

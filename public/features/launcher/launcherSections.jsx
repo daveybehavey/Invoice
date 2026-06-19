@@ -60,10 +60,10 @@ function LauncherAccountStrip({
     : signedIn
       ? "border-slate-200 bg-white text-slate-700"
       : "border-slate-200 bg-[#f8f5ef] text-slate-700";
-  const planToggleLabel = showPlanActions ? "Hide plan & billing" : "Open plan & billing";
+  const planToggleLabel = showPlanActions ? "Hide plan & billing" : "View plan & billing";
   const planHelper = signedIn
-    ? "Saved work, billing, and repeat-client setup stay together on this account."
-    : "Keep moving as a guest, then sign in when you want your work and billing to stay together.";
+    ? "Saved drafts, billing, and repeat-client setup now stay tied to this account."
+    : "Guest mode is fine for trying the workflow. Sign in when you want saved work and billing to stay with you.";
   const planActionHint = showBillingPortalAction
     ? "Open billing to manage or cancel your current plan."
     : showUpgradeAction || showLifetimePurchaseAction
@@ -144,7 +144,12 @@ function LauncherAccountStrip({
           </span>
         </div>
         <p className="mt-3 text-base font-semibold text-slate-800">
-          {authSession?.email ? `Signed in as ${authSession.email}` : "Guest mode is on"}
+          {authSession?.email ? `Signed in as ${authSession.email}` : "Guest mode is active on this device"}
+        </p>
+        <p className="mt-1 text-xs leading-5 text-slate-500">
+          {authSession?.email
+            ? "This is the account NoteBill will use for saved invoices, upgrades, and repeat-work history."
+            : "Your draft can keep moving here. Sign in later when you want saved invoices, upgrades, and repeat work tied to an account."}
         </p>
         {planSummary ? (
           <p className={`mt-1 text-xs ${planAtLimit ? "text-amber-700" : "text-slate-500"}`}>{planSummary}</p>
@@ -310,7 +315,7 @@ function LauncherAccountStrip({
             onClick={onOpenSignIn}
             disabled={authBusy}
           >
-            Sign in to sync
+            Save & sync with email
           </button>
         )}
       </div>
@@ -1168,7 +1173,7 @@ function LauncherStartSection({
               className="nb-btn-secondary rounded-full px-3 py-1.5"
               onClick={onOpenScratchpad}
             >
-              Use real notes instead
+              Paste my real notes
             </button>
             <button
               type="button"
@@ -1191,7 +1196,7 @@ function LauncherStartSection({
                     Guided first invoice
                   </p>
                   <p className="mt-1 text-sm font-semibold leading-6 text-[#17493c]">
-                    New here? Start with Billie first. Use the scratchpad only when you already have real notes you want to turn into an invoice.
+                    New here? Start with Billie first. It is the clearest path for contractors and repeat service jobs when all you have is rough job notes.
                   </p>
                 </div>
                 <button
@@ -1219,7 +1224,7 @@ function LauncherStartSection({
           ) : null}
           <p className="mt-4 text-xs leading-5 text-slate-500">
             Start here unless you already have a file to import, need the library, or want a blank invoice. Once
-            the first draft feels useful, Pro keeps saved client and job details, reminders, payment links, memory,
+            the first draft feels useful, Pro keeps repeat-client details, reminders, payment links, saved job context,
             and sync ready for the next invoice.
           </p>
         </div>
@@ -1358,34 +1363,35 @@ function LauncherAuthModal({
   const canResendEmailLink = emailLinkReady && !authBusy && resendCooldownSeconds <= 0;
   const emailLinkButtonLabel =
     authBusy && authFlow === "email_link"
-      ? "Sending link..."
+      ? "Sending sign-in link..."
       : resendCooldownSeconds > 0
         ? `Resend in ${resendCooldownSeconds}s`
-        : "Email sign-in link";
+        : "Email me a sign-in link";
   return (
     <div className="nb-modal-backdrop fixed inset-0 z-40 flex items-center justify-center px-4">
       <div className="nb-surface nb-surface--elevated nb-hero-glow max-h-[min(90vh,44rem)] w-full max-w-md overflow-y-auto rounded-[30px] p-5 md:p-7">
         <div className="nb-section-chip">Account access</div>
         <h2 className="mt-4 text-2xl font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
-          Sign in
+          Save your work
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          Keep saved work tied to your email so invoices, progress, billing, and repeat setup stay attached to you.
+          Sign in when you want saved invoices, billing, repeat-client setup, and upgrades tied to your email.
+          Your current draft can stay in guest mode until you are ready.
         </p>
         <div className="mt-4 flex flex-wrap gap-2 text-[11px] font-semibold uppercase tracking-[0.16em]">
           <span className="rounded-full border border-[#3d6f61]/14 bg-[#eef4f0] px-2.5 py-1 text-[#17493c]">
-            Draft first, sign in later
+            No password to remember
           </span>
           <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-slate-600">
             Guest mode stays available
           </span>
         </div>
         <p className="mt-3 max-w-md text-xs leading-5 text-slate-500">
-          Keep moving in guest mode, or sign in later when you want saved invoices, upgrades, and sync tied to your email.
+          Keep moving in guest mode for now, or sign in once you want this workflow to follow you across devices.
         </p>
         {preferEmailFirstOnWeb ? (
           <p className="mt-2 text-xs font-semibold leading-5 text-[#17493c]">
-            Web and incognito are usually smoothest with email-link sign-in first.
+            On web, email-link sign-in is usually the smoothest path.
           </p>
         ) : null}
         {authReturnPathLabel ? (
@@ -1403,7 +1409,7 @@ function LauncherAuthModal({
               Email link sign-in
             </label>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              {emailLinkProvider?.warning || "We'll send a secure sign-in link to your inbox."}
+              {emailLinkProvider?.warning || "We'll email you a secure sign-in link. No password needed."}
             </p>
             {resendCooldownSeconds > 0 ? (
               <p className="mt-1 text-xs leading-5 text-slate-500">
@@ -1441,7 +1447,7 @@ function LauncherAuthModal({
               </a>
             ) : null}
             <p className="mt-3 text-xs leading-5 text-slate-500">
-              You can always close this and keep working in guest mode. Sign-in mainly matters when you want saved invoices, upgrades, and billing to follow you across devices.
+              You can close this and keep drafting. Sign-in mainly matters when you want saved invoices, upgrades, and billing to follow you across devices.
             </p>
           </>
         ) : null}
@@ -1452,7 +1458,7 @@ function LauncherAuthModal({
                 <p className="text-sm font-semibold text-slate-900">Google Sign-In</p>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
                   {googleProvider.warning ||
-                    "Use your Google account and come right back with the same NoteBill session model."}
+                    "Use your Google account and come right back into the same NoteBill workspace."}
                 </p>
               </div>
               <button
@@ -1469,7 +1475,7 @@ function LauncherAuthModal({
               </button>
             </div>
             <p className="mt-2 text-xs leading-5 text-slate-500">
-              Best when you want the fastest return to the same NoteBill workspace on Android.
+              Best when you already use Google on Android and want the quickest return to the same workspace.
             </p>
           </div>
         ) : null}
@@ -1479,7 +1485,7 @@ function LauncherAuthModal({
               Email link sign-in
             </label>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              {emailLinkProvider?.warning || "We'll send a secure sign-in link to your inbox."}
+              {emailLinkProvider?.warning || "We'll email you a secure sign-in link. No password needed."}
             </p>
             {resendCooldownSeconds > 0 ? (
               <p className="mt-1 text-xs leading-5 text-slate-500">
@@ -1517,7 +1523,7 @@ function LauncherAuthModal({
               </a>
             ) : null}
             <p className="mt-3 text-xs leading-5 text-slate-500">
-              You can always close this and keep working in guest mode. Sign-in mainly matters when you want saved invoices, upgrades, and billing to follow you across devices.
+              You can close this and keep drafting. Sign-in mainly matters when you want saved invoices, upgrades, and billing to follow you across devices.
             </p>
           </>
         ) : null}

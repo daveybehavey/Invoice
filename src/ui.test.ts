@@ -329,7 +329,8 @@ test("google analytics does not let browser unlock signals fabricate purchases",
   const page = await context.newPage();
 
   try {
-    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await openLauncher(page);
+    await page.getByRole("button", { name: "Explore in guest mode" }).click();
     await page.waitForFunction(
       () => Boolean((window as Window & { InvoiceAnalytics?: { trackRevenueSignal?: unknown } }).InvoiceAnalytics?.trackRevenueSignal)
     );
@@ -534,10 +535,14 @@ test("launcher sign-in modal keeps email-link flow active", async () => {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Continue with email" }).click();
 
+    await page.getByRole("heading", { name: "Save your work" }).waitFor({ state: "visible" });
+    await page.getByText("No password to remember", { exact: true }).waitFor({ state: "visible" });
+    await page.getByText("Guest mode stays available", { exact: true }).waitFor({ state: "visible" });
+    await page.getByText("Guest mode stays available", { exact: true }).waitFor({ state: "visible" });
     await page.getByText("Email link sign-in", { exact: true }).waitFor({ state: "visible" });
 
     await page.getByLabel("Email link sign-in").fill("owner@example.com");
-    await page.getByRole("button", { name: "Email sign-in link" }).click();
+    await page.getByRole("button", { name: "Email me a sign-in link" }).click();
     await page
       .getByText("Email delivery is not configured here, so a preview sign-in link is available below.")
       .nth(1)
@@ -829,8 +834,9 @@ test("launcher sample notes open intake with a realistic starter draft", async (
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
-    await page.getByText("Start with the guided sample.", { exact: true }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Start with Billie" }).click();
+    const firstInvoiceGuide = page.getByTestId("launcher-first-invoice-guide");
+    await firstInvoiceGuide.waitFor({ state: "visible" });
+    await firstInvoiceGuide.getByRole("button", { name: "Start with Billie" }).click();
 
     const notes = page.getByPlaceholder(/Example: Jan 10 fixed sink/i);
     await notes.waitFor({ state: "visible" });
@@ -843,10 +849,9 @@ test("launcher sample notes open intake with a realistic starter draft", async (
       state: "visible"
     });
     await page
-      .getByText("Sample notes loaded. Review them, then build the invoice.")
+      .getByTestId("intake-starter-walkthrough")
+      .getByText("The guided walkthrough above is tracking progress. This panel is just here to keep the next sample step obvious.")
       .waitFor({ state: "visible" });
-    await page.getByTestId("intake-starter-walkthrough").getByRole("button", { name: "Hide guide" }).click();
-    await page.getByTestId("intake-starter-walkthrough").waitFor({ state: "hidden" });
   } finally {
     await context.close();
   }
@@ -1188,7 +1193,7 @@ test("onboarding completion setup pages chain branding, memory, and services", a
     });
     await page.getByRole("button", { name: "Save defaults" }).click();
     await page.getByText("Business identity saved.").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Open memory" }).click();
+    await page.getByRole("button", { name: "Open saved details" }).click();
 
     await page.waitForURL(/\/settings\/memory\?from=onboarding-complete$/, { timeout: 10000 });
     await page.getByText("Nice work. Now make repeat clients feel easier.").waitFor({
@@ -1242,6 +1247,7 @@ test("launcher shows a V2 runway after onboarding and setup are complete", async
   const page = await context.newPage();
   try {
     await openLauncher(page);
+    await page.getByRole("button", { name: "Explore in guest mode" }).click();
     const readySection = page.getByTestId("launcher-v2-ready-section");
     await readySection.waitFor({ state: "visible" });
     await readySection.getByText("Launch runway").waitFor({ state: "visible" });
@@ -1279,9 +1285,11 @@ test("launcher sign-in setup step explains the post-sign-in return path", async 
   const page = await context.newPage();
   try {
     await openLauncher(page);
+    await page.getByRole("button", { name: "Explore in guest mode" }).click();
     const setupSection = page.getByTestId("launcher-setup-section");
     await setupSection.waitFor({ state: "visible" });
     await setupSection.getByRole("button", { name: "Open sign-in" }).first().click();
+    await page.getByRole("heading", { name: "Save your work" }).waitFor({ state: "visible" });
     await page.getByText("After sign-in, you'll go straight to branding setup.").waitFor({
       state: "visible"
     });
@@ -1295,8 +1303,10 @@ test("launcher opens the daily scratchpad quick capture flow", async () => {
   const page = await context.newPage();
   try {
     await openLauncher(page);
-    await page.getByRole("button", { name: "Use real notes instead" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Use real notes instead" }).click();
+    await page.getByRole("button", { name: "Explore in guest mode" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Explore in guest mode" }).click();
+    await page.getByRole("button", { name: "Paste my real notes" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Paste my real notes" }).click();
     await page.getByRole("heading", { name: "Capture work fast. Invoice later." }).waitFor({
       state: "visible"
     });
@@ -3411,6 +3421,33 @@ test("manual billie applies style commands locally without calling the AI edit r
   }
 });
 
+test("manual billie example prompts seed the composer with plain-language requests", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Edit with Billie" }).first().click();
+
+    const composer = page
+      .getByPlaceholder("Example: Use the bold template with a navy accent.")
+      .first();
+
+    await page.getByRole("button", { name: "Premium layout" }).click();
+    await expectValueEquals(
+      composer,
+      "Make this invoice feel premium with a centered header, airy spacing, and a navy accent."
+    );
+
+    await page.getByRole("button", { name: "Clearer wording" }).click();
+    await expectValueEquals(
+      composer,
+      "Make the descriptions simpler, clearer, and easier for the client to skim."
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual billie can translate premium design requests into safe local style changes", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -3961,9 +3998,10 @@ test("manual billie next moves guide the draft from save into payment setup", as
 
     const nextMoves = page.getByTestId("manual-billie-next-moves");
     await nextMoves.waitFor({ state: "visible" });
-    await nextMoves.getByText("Save this draft").waitFor({ state: "visible" });
+    await nextMoves.getByText("Save this first invoice").waitFor({ state: "visible" });
+    await nextMoves.getByText("Recommended").waitFor({ state: "visible" });
     await nextMoves.getByText("Save this service to memory").waitFor({ state: "visible" });
-    await nextMoves.getByRole("button", { name: "Save draft" }).click();
+    await nextMoves.getByRole("button", { name: "Save first invoice" }).click();
 
     await page.getByText("Saved").waitFor({ state: "visible" });
     await nextMoves.getByText("Add a payment link").waitFor({ state: "visible" });
@@ -4563,13 +4601,239 @@ test("manual billie workspace exposes layout-studio entry and safe look guidance
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
-    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.getByTestId("manual-billie-workspace").getByText("Billie can help with the look too").waitFor({
+    await page.goto(`${baseUrl}/manual?source=import`, { waitUntil: "networkidle" });
+    const workspace = page.getByTestId("manual-billie-workspace");
+    await workspace.waitFor({ state: "visible" });
+    await page
+      .getByTestId("manual-billie-fit-guide")
+      .getByText("Best when you invoice from your phone after real field work.")
+      .waitFor({ state: "visible" });
+    await workspace.getByText("Billie can help with the look too").waitFor({
       state: "visible"
     });
+    await page
+      .getByTestId("manual-billie-primary-guide")
+      .getByText("Finish the draft, then save it to unlock the full handoff.")
+      .waitFor({ state: "visible" });
+    await page.getByTestId("manual-billie-outcome-presets").getByText("Outcome presets", { exact: true }).waitFor({
+      state: "visible"
+    });
+    await page.getByTestId("manual-billie-outcome-presets").getByRole("button", { name: "Homeowner-friendly" }).waitFor({
+      state: "visible"
+    });
+    await page.getByTestId("manual-billie-outcome-presets").getByRole("button", { name: "Contractor-ready" }).waitFor({
+      state: "visible"
+    });
+    await page.getByTestId("manual-billie-outcome-presets").getByRole("button", { name: "Premium service" }).waitFor({
+      state: "visible"
+    });
+    await page.getByTestId("manual-billie-outcome-presets").getByRole("button", { name: "Follow-up ready" }).waitFor({
+      state: "visible"
+    });
+    await page.getByTestId("manual-billie-group-wording").getByText("Wording", { exact: true }).waitFor({ state: "visible" });
+    await page.getByTestId("manual-billie-group-look").getByText("Look", { exact: true }).waitFor({ state: "visible" });
+    await page.getByTestId("manual-billie-group-workflow").getByText("Send-ready", { exact: true }).waitFor({ state: "visible" });
+    await page
+      .getByTestId("manual-billie-primary-guide")
+      .getByRole("button", { name: "Open Send & Pay" })
+      .click();
+    await page.getByTestId("manual-send-payment-handoff").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Open Layout Studio" }).click();
     await page.getByRole("tabpanel").getByText("Layout Studio", { exact: true }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Save current look" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor explains the client-facing preview and export path clearly", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page
+      .getByTestId("manual-client-facing-preview-guide")
+      .getByText("This is the live invoice your customer path is built around.")
+      .waitFor({ state: "visible" });
+    await page
+      .getByTestId("manual-client-facing-preview-guide")
+      .getByText("PDF-ready")
+      .waitFor({ state: "visible" });
+    await page.getByText("Prepared for client review").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Customize / Export" }).click();
+    const exportPanel = page.getByRole("tabpanel");
+    await exportPanel.getByText("What exports").waitFor({ state: "visible" });
+    await exportPanel.getByText("Save the same client-facing layout shown in the editor").waitFor({
+      state: "visible"
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("layout preview uses professional fallback copy before business and client details are filled", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Open Layout Studio" }).click();
+    await page.getByRole("button", { name: "Preview current look" }).click();
+    const dialog = page.locator('[role="dialog"]').first();
+    await dialog.waitFor({ state: "visible" });
+    await dialog.getByText("Template preview").waitFor({ state: "visible" });
+    await dialog.getByText("Customer-facing preview").waitFor({ state: "visible" });
+    await dialog.getByText("Add business name, phone, and email").waitFor({ state: "visible" });
+    await dialog.getByText("Add client name and billing details").waitFor({ state: "visible" });
+    await dialog.getByText("Add payment terms, scope notes, or next steps.").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual billie workspace shifts guidance when a saved invoice is already sent", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const draft = {
+      invoiceNumber: "INV-SENT-1",
+      invoiceDate: "2026-03-10",
+      dueDate: "2026-03-20",
+      fromDetails: "Acme Plumbing",
+      billToDetails: "Mike Johnson",
+      notes: "Please pay within 10 days.",
+      taxRate: "0",
+      lineItems: [{ id: "line-1", description: "Faucet repair", qty: "1", rate: "90" }],
+      stylePreset: "default",
+      accentColor: "#093064",
+      savedInvoiceId: "sent-invoice-1",
+      savedInvoiceStatus: "sent",
+      paymentLinkUrl: "https://pay.example.com/inv-sent-1",
+      portalAccessToken: "portal-token-1"
+    };
+    window.localStorage.setItem("invoiceDraft", JSON.stringify(draft));
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page
+      .getByTestId("manual-billie-primary-guide")
+      .getByText("Sharpen the follow-up path while this invoice is out in the world.")
+      .waitFor({ state: "visible" });
+    await page
+      .getByTestId("manual-billie-lifecycle-guide")
+      .getByText("Keep the payment path and follow-up path easy to act on.")
+      .waitFor({ state: "visible" });
+    await page
+      .getByTestId("manual-billie-lifecycle-guide")
+      .getByRole("button", { name: "Open Send & Pay" })
+      .click();
+    await page.getByTestId("manual-send-payment-handoff").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual billie workspace shifts guidance when a saved invoice is already paid", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const draft = {
+      invoiceNumber: "INV-PAID-1",
+      invoiceDate: "2026-03-10",
+      dueDate: "2026-03-20",
+      fromDetails: "Acme Plumbing",
+      billToDetails: "Mike Johnson",
+      notes: "Paid in full. Thank you.",
+      taxRate: "0",
+      lineItems: [{ id: "line-1", description: "Faucet repair", qty: "1", rate: "90" }],
+      stylePreset: "default",
+      accentColor: "#093064",
+      savedInvoiceId: "paid-invoice-1",
+      savedInvoiceStatus: "paid",
+      paymentLinkUrl: "https://pay.example.com/inv-paid-1",
+      portalAccessToken: "portal-token-paid-1"
+    };
+    window.localStorage.setItem("invoiceDraft", JSON.stringify(draft));
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page
+      .getByTestId("manual-billie-primary-guide")
+      .getByText("Turn this paid invoice into a repeatable workflow.")
+      .waitFor({ state: "visible" });
+    await page
+      .getByTestId("manual-billie-lifecycle-guide")
+      .getByText("Capture what made this invoice work so the next one starts faster.")
+      .waitFor({ state: "visible" });
+    await page
+      .getByTestId("manual-billie-lifecycle-guide")
+      .getByRole("button", { name: "Open repeat-client memory" })
+      .waitFor({ state: "visible" });
+    await page
+      .getByTestId("manual-billie-lifecycle-guide")
+      .getByRole("button", { name: "Open library" })
+      .waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual billie workspace surfaces repeat-work value when client memory already exists", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const ownerId = "ui-billie-memory-value-owner";
+    window.localStorage.setItem("invoiceOwnerId", ownerId);
+    window.localStorage.setItem(
+      `invoiceClientMemory::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          name: "Casey Client",
+          details: "Casey Client\n123 Main St",
+          recipientEmail: "ap@casey.example",
+          defaultNotes: "Thanks for your repeat business.",
+          recurringIntervalDays: 30,
+          updatedAt: "2026-04-20T12:00:00.000Z"
+        }
+      ])
+    );
+    window.localStorage.setItem(
+      `invoiceLineItemLibrary::owner:${ownerId}`,
+      JSON.stringify([
+        {
+          description: "Quarterly drain maintenance",
+          qty: "2",
+          rate: "120",
+          clientName: "Casey Client",
+          usageCount: 4,
+          updatedAt: "2026-04-01T12:00:00.000Z"
+        },
+        {
+          description: "Water heater inspection",
+          qty: "1",
+          rate: "95",
+          clientName: "Casey Client",
+          usageCount: 2,
+          updatedAt: "2026-04-02T12:00:00.000Z"
+        }
+      ])
+    );
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByPlaceholder("Client Name").fill("Casey Client\n123 Main St");
+    await page
+      .getByTestId("manual-billie-memory-value")
+      .getByText("Billie already has repeat-ready context for Casey Client.")
+      .waitFor({ state: "visible" });
+    await page.getByTestId("manual-billie-memory-value").getByText("2 saved services").waitFor({ state: "visible" });
+    await page
+      .getByTestId("manual-billie-memory-value")
+      .getByText("Saved client note ready")
+      .waitFor({ state: "visible" });
+    await page
+      .getByTestId("manual-billie-memory-value")
+      .getByRole("button", { name: "Review saved setup" })
+      .waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -4998,7 +5262,9 @@ test("client memory settings lets users inspect and clear remembered clients", a
 
     await page.getByRole("button", { name: "Clear all remembered clients" }).click();
     await page.getByRole("button", { name: "Confirm clear all" }).click();
-    await page.getByText("Client memory will appear here as you reuse real work.").waitFor({ state: "visible" });
+    await page
+      .getByText("Client memory starts building after the first real invoice flow.")
+      .waitFor({ state: "visible" });
 
     const afterClear = await page.evaluate((storageOwnerId) => {
       const raw = window.localStorage.getItem(`invoiceClientMemory::owner:${storageOwnerId}`);
@@ -5138,10 +5404,11 @@ test("launcher shows free-plan usage when monthly save limit is reached", async 
 
   const page = await context.newPage();
   try {
-    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await openLauncher(page);
+    await page.getByRole("button", { name: "Explore in guest mode" }).click();
     await page.getByText("Free plan · 1/1 saved this month (limit reached)").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Open plan & billing" }).click();
-    const upgradeLink = page.getByRole("link", { name: "Upgrade" });
+    await page.getByRole("button", { name: "View plan & billing" }).click();
+    const upgradeLink = page.getByRole("link", { name: "Get monthly Pro" });
     await upgradeLink.waitFor({ state: "visible" });
     assert.equal(await upgradeLink.getAttribute("href"), "https://notebill.app/upgrade");
   } finally {
@@ -5219,10 +5486,11 @@ test("launcher shows upgrade button when stripe checkout is configured", async (
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
-    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
-    await page.getByRole("button", { name: "Open plan & billing" }).click();
-    await page.getByRole("button", { name: "Upgrade" }).waitFor({ state: "visible" });
-    assert.equal(await page.getByRole("link", { name: "Upgrade" }).count(), 0);
+    await openLauncher(page);
+    await page.getByRole("button", { name: "Explore in guest mode" }).click();
+    await page.getByRole("button", { name: "View plan & billing" }).click();
+    await page.getByRole("button", { name: "Get monthly Pro" }).waitFor({ state: "visible" });
+    assert.equal(await page.getByRole("link", { name: "Get monthly Pro" }).count(), 0);
   } finally {
     await context.close();
   }
@@ -5235,9 +5503,10 @@ test("launcher shows billing link for pro accounts when portal URL is configured
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
-    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
-    await page.getByRole("button", { name: "Open plan & billing" }).click();
-    const billingLink = page.getByRole("link", { name: "Billing" });
+    await openLauncher(page);
+    await page.getByRole("button", { name: "Explore in guest mode" }).click();
+    await page.getByRole("button", { name: "View plan & billing" }).click();
+    const billingLink = page.getByRole("link", { name: "Manage billing" });
     await billingLink.waitFor({ state: "visible" });
     assert.equal(await billingLink.getAttribute("href"), "https://notebill.app/billing");
   } finally {
@@ -5252,10 +5521,11 @@ test("launcher shows billing button when stripe portal is configured", async () 
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
-    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
-    await page.getByRole("button", { name: "Open plan & billing" }).click();
-    await page.getByRole("button", { name: "Billing" }).waitFor({ state: "visible" });
-    assert.equal(await page.getByRole("link", { name: "Billing" }).count(), 0);
+    await openLauncher(page);
+    await page.getByRole("button", { name: "Explore in guest mode" }).click();
+    await page.getByRole("button", { name: "View plan & billing" }).click();
+    await page.getByRole("button", { name: "Manage billing" }).waitFor({ state: "visible" });
+    assert.equal(await page.getByRole("link", { name: "Manage billing" }).count(), 0);
   } finally {
     await context.close();
   }
@@ -5311,7 +5581,8 @@ test("launcher shows resume draft shortcut when a scoped draft exists", async ()
   });
   const page = await context.newPage();
   try {
-    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await openLauncher(page);
+    await page.getByRole("button", { name: "Explore in guest mode" }).click();
     await page.getByRole("button", { name: "Resume last draft" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Resume last draft" }).click();
     await page.waitForURL(/\/manual$/, { timeout: 10000 });
@@ -6536,8 +6807,10 @@ test("invoice library empty state offers sample notes", async () => {
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    await page.getByText("No invoices saved yet").waitFor({ state: "visible" });
-    await page.getByText("Saved drafts, sent invoices, and paid work will show up here.").waitFor({
+    await page.getByText("Your invoice library is ready for the first saved invoice").waitFor({ state: "visible" });
+    await page
+      .getByText("Save a draft once and this becomes your home for reviews, follow-ups, sent invoices, and paid history.")
+      .waitFor({
       state: "visible"
     });
     await page.getByRole("button", { name: "Try sample job" }).click();
@@ -6563,8 +6836,9 @@ test("invoice library shows sign-in-required panel when auth policy requires it"
       .getByText("Open sign-in, send yourself a secure link, then come right back to your invoice library.")
       .waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Open sign-in" }).click();
+    await page.getByRole("heading", { name: "Save your work" }).waitFor({ state: "visible" });
     await page.getByText("After sign-in, you'll return to the invoice library.").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Email sign-in link" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Email me a sign-in link" }).waitFor({ state: "visible" });
   } finally {
     delete process.env.INVOICE_REQUIRE_AUTH;
     await context.close();
@@ -8699,7 +8973,7 @@ test("invoice library can start a fresh draft from saved client memory", async (
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     await page.getByText("Saved memory is ready for Memory Library Client.").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Start from saved memory for INV-LIB-MEMORY-1" }).click();
+    await page.getByRole("button", { name: /Start from saved memory|Start with saved details/i }).click();
 
     await page.waitForURL(/\/manual$/, { timeout: 10000 });
     await expectValueContains(page.getByPlaceholder("Client Name"), "Memory Library Client");
@@ -8869,6 +9143,21 @@ test("client workspace shows saved services and can start from memory", async ()
     });
     await page.getByTestId("client-workspace-page").waitFor({ state: "visible" });
     await page.getByRole("heading", { name: "Workspace Client" }).waitFor({ state: "visible" });
+    await page.getByTestId("client-workspace-quickstart").waitFor({ state: "visible" });
+    await page
+      .getByTestId("client-workspace-quickstart")
+      .getByRole("button", { name: /open latest with billie|start with saved details|invoice again/i })
+      .waitFor({ state: "visible" });
+    await page
+      .getByTestId("client-workspace-repeat-system")
+      .getByText("Workspace Client is building a reusable invoicing system")
+      .waitFor({ state: "visible" });
+    await page.getByTestId("client-workspace-repeat-system").getByText("Saved recipient ready").waitFor({
+      state: "visible"
+    });
+    await page.getByTestId("client-workspace-repeat-system").getByText("1 saved service").waitFor({
+      state: "visible"
+    });
     await page.getByTestId("client-workspace-services").getByText("Quarterly HVAC tune-up").waitFor({
       state: "visible"
     });
@@ -8940,6 +9229,27 @@ test("client workspace gives estimates a safer next action", async () => {
     }
   });
   assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const invoiceId = seedPayload?.invoice?.invoiceId as string;
+
+  const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      recipientEmail: "portal-gap@example.com"
+    }
+  });
+  assert.equal(sendResponse.status(), 200);
+  await mutateStoredInvoice(invoiceId, {
+    status: "sent",
+    updatedAt: "2026-05-03T09:00:00.000Z",
+    delivery: {
+      recipientEmail: "portal-gap@example.com",
+      status: "sent",
+      sentAt: "2026-05-03T09:00:00.000Z"
+    }
+  });
 
   const page = await context.newPage();
   try {
@@ -8956,6 +9266,22 @@ test("client workspace gives estimates a safer next action", async () => {
       .getByRole("button", { name: "Convert to invoice" })
       .waitFor({ state: "visible" });
     await page.getByTestId("client-workspace-timeline").getByText("Client timeline").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("client workspace empty state points new users toward the first useful setup moves", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/clients`, { waitUntil: "networkidle" });
+    await page.getByText("No saved client workspace yet.").waitFor({ state: "visible" });
+    await page
+      .getByText("Save the first invoice or reuse one client once, and NoteBill will start turning that work into a reusable client home here.")
+      .waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Create first invoice" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Open saved details" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -9341,6 +9667,27 @@ test("invoice library can convert a saved estimate into a draft invoice", async 
     }
   });
   assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const invoiceId = seedPayload?.invoice?.invoiceId as string;
+
+  const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      recipientEmail: "portal-gap@example.com"
+    }
+  });
+  assert.equal(sendResponse.status(), 200);
+  await mutateStoredInvoice(invoiceId, {
+    status: "sent",
+    updatedAt: "2026-05-03T09:00:00.000Z",
+    delivery: {
+      recipientEmail: "portal-gap@example.com",
+      status: "sent",
+      sentAt: "2026-05-03T09:00:00.000Z"
+    }
+  });
 
   const page = await context.newPage();
   try {
@@ -9512,15 +9859,15 @@ test("invoice library card surfaces a best next action for sent invoices", async
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    const card = page.locator("div").filter({ hasText: "INV-CARD-NEXT-1" }).first();
+    const card = page.locator(".nb-surface").filter({ hasText: "INV-CARD-NEXT-1" }).first();
     await card.getByText("Best next action").waitFor({ state: "visible" });
-    await card.getByText("Open and add payment link").waitFor({ state: "visible" });
+    await card.getByText("Open invoice and add payment link").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
 });
 
-test("invoice library card highlights a missing client portal after the payment link is ready", async () => {
+test("invoice library card shows hosted link readiness and portal gap on draft cards", async () => {
   const ownerId = "ui-library-card-portal-owner";
   const context = await browser.newContext();
   await context.addInitScript((initOwnerId) => {
@@ -9569,12 +9916,10 @@ test("invoice library card highlights a missing client portal after the payment 
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    const card = page.locator("div").filter({ hasText: "INV-CARD-PORTAL-1" }).first();
+    const card = page.locator(".nb-surface").filter({ hasText: "INV-CARD-PORTAL-1" }).first();
     await card.getByText("Best next action").waitFor({ state: "visible" });
-    await card.getByText("Create client portal").waitFor({ state: "visible" });
-    await card
-      .getByText("The payment link is ready. Add the portal so the customer also gets a clear review surface before paying.")
-      .waitFor({ state: "visible" });
+    await card.getByText("Hosted link ready").waitFor({ state: "visible" });
+    await card.getByText("Create after save").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -9857,7 +10202,9 @@ test("invoice library can create a client portal and copy a saved invoice share 
     assert.match(portalHref ?? "", /^https?:\/\/[^/]+\/portal\/[0-9a-f-]{36}\/.+$/);
 
     await page.getByRole("button", { name: "Copy share pack" }).click();
-    await page.getByText("Share pack copied. Paste it into email or chat.").waitFor({ state: "visible" });
+    await page.getByText("Share pack copied. Paste it into email, text, or chat now.").waitFor({
+      state: "visible"
+    });
 
     const copiedSharePack = await page.evaluate(
       () => (window as typeof window & { __copiedSharePack?: string }).__copiedSharePack
@@ -10010,7 +10357,7 @@ test("review details surfaces repeat-work memory without changing parsed draft a
     await repeatWorkCard.waitFor({ state: "visible" });
     await repeatWorkCard.getByText("Repeat work cues").waitFor({ state: "visible" });
     await repeatWorkCard.getByText("Matched draft lines").waitFor({ state: "visible" });
-    await repeatWorkCard.getByText("Saved services").waitFor({ state: "visible" });
+    await repeatWorkCard.getByText("Saved services", { exact: true }).waitFor({ state: "visible" });
     await repeatWorkCard.getByText("Current draft rate: $90.00/hr · Qty 1").waitFor({
       state: "visible"
     });
@@ -10639,13 +10986,13 @@ test("manual editor send and payment handoff updates after save", async () => {
 
     const handoff = page.getByTestId("manual-send-payment-handoff");
     await handoff.waitFor({ state: "visible" });
-    await handoff.getByText("Ready").waitFor({ state: "visible" });
-    await handoff.getByText("Save before links").waitFor({ state: "visible" });
+    await handoff.getByText("Ready", { exact: true }).waitFor({ state: "visible" });
+    await handoff.getByText("Save before links", { exact: true }).waitFor({ state: "visible" });
     await handoff.getByRole("button", { name: "Save draft" }).click();
 
-    await handoff.getByText("Saved to library").waitFor({ state: "visible" });
-    await handoff.getByText("Create link").waitFor({ state: "visible" });
-    await handoff.getByText("Create portal").waitFor({ state: "visible" });
+    await handoff.getByText("Saved to library", { exact: true }).waitFor({ state: "visible" });
+    await handoff.getByText("Payment link", { exact: true }).waitFor({ state: "visible" });
+    await handoff.getByText("Client portal", { exact: true }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Open library" }).first().waitFor({ state: "visible" });
   } finally {
     await context.close();
@@ -10670,8 +11017,9 @@ test("manual editor save shows sign-in guidance when auth is required", async ()
       .getByText("Open sign-in, send yourself a secure link, then come right back to save this draft.")
       .waitFor({ state: "visible" });
     await exportPanel.getByRole("button", { name: "Open sign-in" }).click();
+    await page.getByRole("heading", { name: "Save your work" }).waitFor({ state: "visible" });
     await page.getByText("After sign-in, you'll return to the invoice editor.").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Email sign-in link" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Email me a sign-in link" }).waitFor({ state: "visible" });
   } finally {
     delete process.env.INVOICE_REQUIRE_AUTH;
     await context.close();
@@ -10883,16 +11231,20 @@ test("manual export panel can create a hosted payment link for a saved invoice",
     await page.locator('input[placeholder="$0"]:visible').first().fill("260");
 
     await page.getByRole("button", { name: "Export" }).last().click();
-    await page.getByText("Save to library").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Save invoice" }).click();
-    await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
+    const exportPanel = page.getByRole("tabpanel");
+    await exportPanel.getByText("Save to library").waitFor({ state: "visible" });
+    await exportPanel.getByRole("button", { name: "Save invoice" }).click();
+    await exportPanel.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
 
-    await page.getByRole("button", { name: "Create hosted payment link" }).click();
+    await exportPanel.getByRole("button", { name: "Create hosted payment link" }).click();
+    await exportPanel.getByText("Payment link ready. Add it to the share pack or send it now.").waitFor({
+      state: "visible"
+    });
     await expectValueEquals(
       page.locator("#payment-link-url"),
       "https://pay.stripe.test/plink_manual_123"
     );
-    await page.getByRole("link", { name: "Open hosted payment link" }).first().waitFor({ state: "visible" });
+    await exportPanel.getByRole("link", { name: "Open hosted payment link" }).first().waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -10998,11 +11350,15 @@ test("manual export panel can create a client portal link for a saved invoice", 
     await page.locator('input[placeholder="$0"]:visible').first().fill("175");
 
     await page.getByRole("button", { name: "Export" }).last().click();
-    await page.getByText("Save to library").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Save invoice" }).click();
-    await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
+    const exportPanel = page.getByRole("tabpanel");
+    await exportPanel.getByText("Save to library").waitFor({ state: "visible" });
+    await exportPanel.getByRole("button", { name: "Save invoice" }).click();
+    await exportPanel.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
 
-    await page.getByRole("button", { name: "Create client portal" }).click();
+    await page.getByRole("button", { name: "Create client portal" }).last().click();
+    await exportPanel.getByText("Client portal ready. Open it or include it in the share pack.").waitFor({
+      state: "visible"
+    });
     await page.getByRole("link", { name: "Open client portal" }).first().waitFor({ state: "visible" });
     const portalHref = await page.getByRole("link", { name: "Open client portal" }).first().getAttribute("href");
     assert.match(
@@ -11421,7 +11777,7 @@ async function openDailyScratchpad(page: Page) {
 async function openLauncher(page: Page) {
   await page.goto(`${baseUrl}/`, { waitUntil: "domcontentloaded" });
   const walkthroughButton = page.getByRole("button", { name: "Start with Billie" });
-  const scratchpadButton = page.getByRole("button", { name: "Use real notes instead" });
+  const scratchpadButton = page.getByRole("button", { name: "Paste my real notes" });
   try {
     await Promise.race([
       walkthroughButton.waitFor({ state: "visible", timeout: 10000 }),
@@ -11433,13 +11789,6 @@ async function openLauncher(page: Page) {
       walkthroughButton.waitFor({ state: "visible", timeout: 10000 }),
       scratchpadButton.waitFor({ state: "visible", timeout: 10000 })
     ]);
-  }
-  if (await walkthroughButton.isVisible().catch(() => false)) {
-    const guestButton = page.getByRole("button", { name: "Explore in guest mode" });
-    if (await guestButton.isVisible().catch(() => false)) {
-      await guestButton.click();
-      await scratchpadButton.waitFor({ state: "visible", timeout: 10000 });
-    }
   }
 }
 
