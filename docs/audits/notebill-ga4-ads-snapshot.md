@@ -227,3 +227,125 @@ npm run report:google-conversion-readiness
 OAuth probe (token refresh + API status codes)
 GET /api/telemetry/revenue-signals (production fallback)
 ```
+
+---
+
+## 14. GA4 / Ads snapshot after OAuth repair (attempt 2)
+
+**Date:** 2026-07-04 (evening, UTC)  
+**Context:** User closed terminals / fresh session assumed after restart guidance.
+
+### 14.1 `npm ci`
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | **Succeeded** (exit 0, ~2m) |
+| `node_modules/dotenv` | **Present** |
+| `node_modules/@esbuild/win32-x64/esbuild.exe` | **Present** |
+| `package.json` / `package-lock.json` | **Unchanged** (still pre-modified `M`, hashes same as before) |
+| App/source files | **Not modified** by install |
+
+**Conclusion:** Local dependency blocker **cleared**. Reports can run once OAuth is fixed.
+
+### 14.2 Refresh token regeneration
+
+| Check | Result |
+| --- | --- |
+| `GOOGLE_ADS_REFRESH_TOKEN` in `.env.local` | Present |
+| Token refresh probe | **Still fails** — HTTP 400, `invalid_grant`, `Bad Request` |
+| Token updated this pass | **No** — requires manual Google OAuth consent |
+
+**Manual regeneration (ops — user must complete):**
+
+1. Confirm Google Cloud OAuth client redirect URI includes **`http://localhost:8080/`** (or set `GOOGLE_ADS_OAUTH_REDIRECT_URI` in `.env.local` to match your GCP console entry).
+2. Open the authorize URL (built from `GOOGLE_ADS_CLIENT_ID` in `.env.local`):
+
+   ```text
+   https://accounts.google.com/o/oauth2/v2/auth
+     ?response_type=code
+     &client_id=<GOOGLE_ADS_CLIENT_ID>
+     &redirect_uri=http://localhost:8080/
+     &scope=https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/adwords
+     &access_type=offline
+     &prompt=consent
+   ```
+
+3. Sign in with the Google account that owns GA4 + Ads access. Approve scopes.
+4. Copy the `code` query param from the redirect URL (browser may show “can’t connect” — the code is still in the address bar).
+5. Exchange code for tokens (run locally; reads secrets from `.env.local`, does not print them):
+
+   ```powershell
+   cd C:\Users\david\Desktop\Invoice
+   # Set $code to the value from step 4, then run a local exchange script or:
+   # POST https://oauth2.googleapis.com/token with grant_type=authorization_code,
+   # client_id, client_secret, redirect_uri, code
+   ```
+
+6. Paste the returned **`refresh_token`** into `.env.local` as `GOOGLE_ADS_REFRESH_TOKEN` (do not commit).
+
+7. Re-run:
+
+   ```powershell
+   npm run check:google-growth-stack
+   npm run report:google-growth-summary
+   npm run report:google-conversion-readiness
+   ```
+
+**Cursor pause point:** After step 6, re-run Part 3 of the unblock prompt to fill GA4/Ads numbers below.
+
+### 14.3 Report scripts (this pass)
+
+| Command | Result |
+| --- | --- |
+| `npm run check:google-growth-stack` | **Partial** — Google Play OK; GA4 + Ads failed (`Bad Request` / invalid_grant) |
+| `npm run report:google-growth-summary` | **Failed** — `{ "ok": false, "error": "Bad Request" }` |
+| `npm run report:google-conversion-readiness` | **Failed** — same |
+
+### 14.4 GA4 7d / 30d sessions and events
+
+**Not available** — OAuth still blocked.
+
+### 14.5 Google Ads 7d / 30d metrics
+
+**Not available** — OAuth still blocked.
+
+### 14.6 Web lane vs Android lane
+
+| Lane | This pass |
+| --- | --- |
+| Web revenue (GA4/Ads) | **Blocked** — invalid refresh token |
+| Android Play (service account) | **OK** — auth succeeded for `app.notebill.app` |
+
+### 14.7 Funnel table (production telemetry fallback — unchanged)
+
+| Stage | GA4 7d | GA4 30d | Telemetry (all-time) |
+| --- | ---: | ---: | ---: |
+| Sessions / landing | — | — | — |
+| `app_opened` | — | — | 3 |
+| `first_draft_started` | — | — | 25 |
+| `billing_plan_viewed` | — | — | 122 |
+| `billing_plan_selected` | — | — | 19 |
+| `checkout_started` | — | — | 13 |
+| `pro_unlock_verified` | — | — | 5 (+1 lifetime) |
+
+### 14.8 Biggest measured drop-off
+
+Still **billing_plan_viewed → billing_plan_selected → checkout_started → pro_unlock_verified** (122 → 19 → 13 → 5). GA4 cannot yet confirm ads → sessions → app entry.
+
+### 14.9 Decision-ready?
+
+**No.** Dependency install is fixed; **OAuth is the remaining blocker** before GA4/Ads numbers and a confident product ticket.
+
+### 14.10 Recommended next ticket
+
+1. **Complete OAuth refresh token regeneration** (manual steps above).
+2. Re-run report scripts and append GA4/Ads numbers to this section.
+3. **Then** choose product work:
+
+| If GA4 shows… | Ticket |
+| --- | --- |
+| Billing views OK, low selections | Upgrade clarity / trust |
+| Checkout starts OK, no unlocks | Billing / checkout proof |
+| Sessions OK, low `app_opened` | Landing / launcher |
+
+**Do not start pricing, deploy, ad scaling, or code changes until step 2 succeeds.**
