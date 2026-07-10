@@ -349,3 +349,103 @@ Still **billing_plan_viewed → billing_plan_selected → checkout_started → p
 | Sessions OK, low `app_opened` | Landing / launcher |
 
 **Do not start pricing, deploy, ad scaling, or code changes until step 2 succeeds.**
+
+---
+
+## 15. GA4 / Ads snapshot after OAuth repair (succeeded)
+
+**Date:** 2026-07-10 (UTC)  
+**Context:** Redirect URI fixed in GCP; localhost:8080 catcher exchanged code; `.env.local` refresh token updated (not committed).
+
+### 15.1 Unblock result
+
+| Check | Result |
+| --- | --- |
+| `npm ci` | Already healthy from prior pass |
+| OAuth refresh token | **Regenerated successfully** (scopes: `adwords` + `analytics.readonly`) |
+| `npm run check:google-growth-stack` | **All OK** — GA4, Google Ads, Google Play |
+| `npm run report:google-growth-summary` | **Succeeded** |
+| `npm run report:google-conversion-readiness` | **Succeeded** |
+
+### 15.2 GA4 (report window: last 30 days for summary)
+
+| Metric | Value |
+| --- | ---: |
+| Sessions | 7 |
+| Active users | 3 |
+| Page views | 8 |
+| Event count | 25 |
+
+**Top pages (30d):**
+
+| Path | Views |
+| --- | ---: |
+| `(not set)` | 5 |
+| `/` | 2 |
+| `/invoice-app-for-contractors` | 1 |
+
+### 15.3 Google Ads (last 30 days)
+
+| Metric | Value |
+| --- | ---: |
+| Account | NoteBill: AI Invoice App |
+| Impressions | 0 |
+| Clicks | 0 |
+| Spend | $0 |
+| Conversions | 0 |
+
+Top listed campaigns all show **0** impressions/clicks/spend/conversions in the last 30 days (campaigns appear present but not delivering).
+
+### 15.4 Conversion readiness (GA4, 7 days)
+
+All launch events **missing** in the last 7 days:
+
+- `pro_unlock_verified`, `checkout_started`, `billing_plan_selected`, `account_signed_in`, `billing_plan_viewed`
+- plus `begin_checkout`, `login`, `select_item`, `view_item_list`, `landing_invoice_sample_opened`
+
+### 15.5 Web lane vs Android lane
+
+| Lane | Status |
+| --- | --- |
+| Web revenue (GA4/Ads) | **Auth OK**; Ads currently **not delivering** (0 impressions) |
+| Android Play | **Auth OK** (service account) |
+
+### 15.6 Funnel table
+
+| Stage | GA4 7d | GA4 30d | Telemetry (all-time) |
+| --- | ---: | ---: | ---: |
+| Sessions / landing | — | 7 sessions | — |
+| `app_opened` | 0 (not in GA4 key-event list) | — | 3 |
+| `first_draft_started` | — | — | 25 |
+| `billing_plan_viewed` | 0 | — | 123 |
+| `billing_plan_selected` | 0 | — | 19 |
+| `checkout_started` | 0 | — | 13 |
+| `pro_unlock_verified` | 0 | — | 5 (+1 lifetime) |
+
+### 15.7 Biggest measured drop-off
+
+**Two different stories:**
+
+1. **Current acquisition (GA4/Ads):** Almost no traffic — **7 sessions / 30d**, **0 Ads impressions**. The “impressions but no paid users” problem is **not** active right now; Ads are idle.
+2. **Historical product funnel (production telemetry):** Still **billing_plan_viewed 123 → selected 19 → checkout 13 → unlock 5**. That remains the best product-side signal when traffic returns.
+
+### 15.8 Decision-ready?
+
+**Yes — for the next ops/product choice.**
+
+| Question | Answer |
+| --- | --- |
+| Are reports unblocked? | **Yes** |
+| Is paid search currently driving traffic? | **No** (0 impressions / 30d) |
+| Is the product paywall funnel weak historically? | **Yes** (billing view → selection drop) |
+| Should we scale ads now? | **No** |
+
+### 15.9 Recommended next ticket
+
+**Do not scale ads.** Pick one:
+
+1. **Ads delivery check (ops, no spend increase)** — Why are Search campaigns at 0 impressions? Paused? Budget? Keywords? Final URLs? (read-only Ads console / `report:google-ads-campaign-status`)
+2. **Upgrade clarity / trust (product, when traffic exists)** — Historical 123 → 19 billing drop still matters once traffic returns
+3. **Android Play billing proof** — Still required before hard paid acquisition on mobile
+
+**Best next active ticket:** **NoteBill Ads campaign status / delivery diagnosis** (why 0 impressions), then decide whether to resume a tiny search test or fix the upgrade path first.
