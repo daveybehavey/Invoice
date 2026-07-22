@@ -7,6 +7,8 @@ test("[rule:structure.line_items_present] blocks when no line items are captured
   const quality = evaluateInvoiceOutputQuality({
     structuredInvoice: { workSessions: [], materials: [] },
     invoice: {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-1001",
       issueDate: "2026-02-25",
       currency: "USD",
@@ -25,6 +27,8 @@ test("[rule:structure.totals_present] blocks when subtotal or total is missing",
   const quality = evaluateInvoiceOutputQuality({
     structuredInvoice: { workSessions: [], materials: [] },
     invoice: {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-1001",
       issueDate: "2026-02-25",
       currency: "USD",
@@ -52,6 +56,8 @@ test("[rule:structure.totals_consistent] blocks when subtotal conflicts with lin
   const quality = evaluateInvoiceOutputQuality({
     structuredInvoice: { workSessions: [], materials: [{ description: "Washer", amount: 5 }] },
     invoice: {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-1001",
       issueDate: "2026-02-25",
       currency: "USD",
@@ -79,6 +85,8 @@ test("[rule:structure.totals_consistent] blocks when total is below subtotal min
   const quality = evaluateInvoiceOutputQuality({
     structuredInvoice: { workSessions: [], materials: [{ description: "Washer", amount: 5 }] },
     invoice: {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-1001",
       issueDate: "2026-02-25",
       currency: "USD",
@@ -116,6 +124,8 @@ test("passes send-ready output for clean labor + material invoice", () => {
       materials: [{ description: "Cartridge", quantity: 1, unitCost: 18.75, amount: 18.75 }]
     },
     invoice: {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-1001",
       issueDate: "2026-02-25",
       customerName: "Mike Johnson",
@@ -161,6 +171,8 @@ test("[rule:tone.client_facing] warns on informal line-item wording without bloc
       materials: []
     },
     invoice: {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-1001",
       issueDate: "2026-02-25",
       currency: "USD",
@@ -198,6 +210,8 @@ test("[rule:structure.separate_labor_materials] warns when output loses labor/ma
       materials: [{ description: "Cartridge", quantity: 1, unitCost: 18.75, amount: 18.75 }]
     },
     invoice: {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-1001",
       issueDate: "2026-02-25",
       currency: "USD",
@@ -235,6 +249,8 @@ test("[rule:rewording.non_empty_description] blocks line items with blank descri
       materials: []
     },
     invoice: {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-1001",
       issueDate: "2026-02-25",
       currency: "USD",
@@ -270,6 +286,8 @@ test("[rule:structure.labor_pricing_format] blocks labor line missing explicit h
       materials: []
     },
     invoice: {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-1001",
       issueDate: "2026-02-25",
       currency: "USD",
@@ -310,6 +328,8 @@ test("[rule:multi_day.date_context] warns when multi-day work has weak date cont
       materials: []
     },
     invoice: {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-1001",
       issueDate: "2026-02-25",
       currency: "USD",

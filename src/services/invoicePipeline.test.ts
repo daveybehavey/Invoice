@@ -27,6 +27,8 @@ test("rewordFullInvoice uses the single-line wording path when only one line nee
   });
 
   const updated = await rewordFullInvoice({
+    documentType: "invoice",
+    paymentRecords: [],
     invoiceNumber: "INV-1",
     issueDate: "2026-03-07",
     customerName: "Mike Johnson",
@@ -66,6 +68,8 @@ test("rewordFullInvoice keeps the full rewrite path when notes are present", asy
   });
 
   const updated = await rewordFullInvoice({
+    documentType: "invoice",
+    paymentRecords: [],
     invoiceNumber: "INV-2",
     issueDate: "2026-03-07",
     customerName: "Mike Johnson",
@@ -102,6 +106,8 @@ test("rewordFullInvoice falls back to a polished original when the model returns
   });
 
   const updated = await rewordFullInvoice({
+    documentType: "invoice",
+    paymentRecords: [],
     invoiceNumber: "INV-2B",
     issueDate: "2026-03-07",
     customerName: "Mike Johnson",
@@ -135,6 +141,8 @@ test("rewordFullInvoice preserves an already-polished trade description when the
   });
 
   const updated = await rewordFullInvoice({
+    documentType: "invoice",
+    paymentRecords: [],
     invoiceNumber: "INV-2C",
     issueDate: "2026-03-07",
     customerName: "Mike Johnson",
@@ -168,6 +176,8 @@ test("rewordFullInvoice falls back when the model returns a repair-of phrasing t
   });
 
   const updated = await rewordFullInvoice({
+    documentType: "invoice",
+    paymentRecords: [],
     invoiceNumber: "INV-2D",
     issueDate: "2026-03-07",
     customerName: "Mike Johnson",
@@ -209,6 +219,8 @@ test("rewordFullInvoice raises wording token budget for larger multi-line drafts
   });
 
   await rewordFullInvoice({
+    documentType: "invoice",
+    paymentRecords: [],
     invoiceNumber: "INV-3",
     issueDate: "2026-03-07",
     customerName: "Mike Johnson",
@@ -244,6 +256,8 @@ test("changeNotesWording rewrites only notes and keeps line items untouched", as
 
   const updated = await changeNotesWording(
     {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-4",
       issueDate: "2026-03-07",
       customerName: "Mike Johnson",
@@ -279,6 +293,8 @@ test("changeLineWording uses a deterministic fast path for Formal tone", async (
 
   const updated = await changeLineWording(
     {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-5",
       issueDate: "2026-03-07",
       customerName: "Mike Johnson",
@@ -315,6 +331,8 @@ test("changeDescriptionsWording uses a deterministic fast path for Neutral tone"
 
   const updated = await changeDescriptionsWording(
     {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-6",
       issueDate: "2026-03-07",
       customerName: "Mike Johnson",
@@ -359,6 +377,8 @@ test("rewordFullInvoice uses deterministic description cleanup when notes are bl
 
   const updated = await rewordFullInvoice(
     {
+      documentType: "invoice",
+      paymentRecords: [],
       invoiceNumber: "INV-7",
       issueDate: "2026-03-07",
       customerName: "Mike Johnson",

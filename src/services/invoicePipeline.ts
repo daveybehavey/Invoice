@@ -1123,7 +1123,8 @@ async function generateFinishedInvoice(structuredInvoice: StructuredInvoice): Pr
     customerName: structuredInvoice.customerName,
     currency: "USD",
     lineItems: [...laborLineItems, ...materialLineItems],
-    notes: structuredInvoice.notes
+    notes: structuredInvoice.notes,
+    paymentRecords: []
   };
 
   return normalizeInvoice(FinishedInvoiceSchema.parse(invoice));

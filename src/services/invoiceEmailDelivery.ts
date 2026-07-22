@@ -246,7 +246,8 @@ export async function sendLaunchTestEmail(
         "This is a launch-readiness verification email. If you received it, NoteBill email delivery is configured.",
       subtotal: 0,
       total: 0,
-      balanceDue: 0
+      balanceDue: 0,
+      paymentRecords: []
     }
   });
   return {

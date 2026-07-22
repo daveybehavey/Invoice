@@ -5515,8 +5515,11 @@ test("launcher due-soon recurring work can start from saved memory", async () =>
       if (!raw) {
         return "";
       }
-      const parsed = JSON.parse(raw);
-      return parsed?.entries ? Object.values(parsed.entries)[0]?.nextDueAt ?? "" : "";
+      const parsed = JSON.parse(raw) as {
+        entries?: Record<string, { nextDueAt?: string }>;
+      };
+      const firstEntry = parsed?.entries ? Object.values(parsed.entries)[0] : undefined;
+      return firstEntry?.nextDueAt ?? "";
     }, ownerId);
     assert.notEqual(advancedSchedule, nextDueAt);
   } finally {
@@ -5824,15 +5827,18 @@ test("launcher follow-up card prefers focused reminder for overdue opened invoic
   assert.equal(sendResponse.status(), 200);
   await mutateStoredInvoice(savePayload?.invoice?.invoiceId, {
     status: "sent",
-    updatedAt: "2026-04-01T12:00:00.000Z",
-    delivery: {
-      recipientEmail: "overdue-opened-launcher@example.com",
-      sentAt: "2026-04-01T12:00:00.000Z",
-      openedAt: "2026-04-02T12:00:00.000Z",
-      status: "opened",
-      mode: "tracked"
-    }
+    updatedAt: "2026-04-01T12:00:00.000Z"
   });
+  const openedResponse = await context.request.post(
+    `${baseUrl}/api/invoices/${savePayload?.invoice?.invoiceId}/delivery/opened`,
+    {
+      headers: {
+        "x-invoice-user-id": ownerId
+      },
+      data: {}
+    }
+  );
+  assert.equal(openedResponse.status(), 200);
 
   const page = await context.newPage();
   try {
@@ -6017,7 +6023,7 @@ test("launcher shows a pro value pitch when one free save remains", async () => 
   assert.ok(seededInvoiceId);
   const sentResponse = await context.request.post(`${baseUrl}/api/invoices/${seededInvoiceId}/status`, {
     headers: {
-      "x-invoice-user-id": ownerId
+      "x-invoice-user-id": "ui-plan-pitch-owner"
     },
     data: {
       status: "sent"
@@ -6929,14 +6935,23 @@ test("invoice library can run recurring auto-send immediately", async () => {
     await page.getByRole("button", { name: "Run recurring auto-send for INV-RECUR-AUTO-RUN-1" }).click();
     await page.waitForFunction(
       () => {
+        type RecurringScheduleEntry = {
+          lastAutoSendAt?: string;
+          lastAutoSendRecipient?: string;
+          autoSendRunCount?: number;
+          lastAutoSendMode?: string;
+        };
         for (let index = 0; index < window.localStorage.length; index += 1) {
           const key = window.localStorage.key(index);
           if (!key || !key.includes("invoiceRecurringSchedules")) {
             continue;
           }
           try {
-            const parsed = JSON.parse(window.localStorage.getItem(key) || "{}");
-            const entries = parsed?.entries && typeof parsed.entries === "object" ? parsed.entries : {};
+            const parsed = JSON.parse(window.localStorage.getItem(key) || "{}") as {
+              entries?: Record<string, RecurringScheduleEntry>;
+            };
+            const entries =
+              parsed?.entries && typeof parsed.entries === "object" ? parsed.entries : {};
             for (const entry of Object.values(entries)) {
               if (
                 entry?.lastAutoSendAt &&
@@ -9292,12 +9307,12 @@ test("invoice library can create a client portal and copy a saved invoice share 
   const context = await browser.newContext();
   await context.addInitScript(() => {
     window.localStorage.setItem("invoiceOwnerId", "ui-library-handoff-owner");
-    window["__copiedSharePack"] = "";
+    (window as Window & { __copiedSharePack?: string }).__copiedSharePack = "";
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: {
         writeText: async (text: string) => {
-          window["__copiedSharePack"] = text;
+          (window as Window & { __copiedSharePack?: string }).__copiedSharePack = text;
         }
       }
     });
@@ -9361,7 +9376,9 @@ test("invoice library can create a client portal and copy a saved invoice share 
     await page.getByRole("button", { name: "Copy share pack" }).click();
     await page.getByText("Share pack copied. Paste it into email or chat.").waitFor({ state: "visible" });
 
-    const copiedSharePack = await page.evaluate(() => window["__copiedSharePack"]);
+    const copiedSharePack = await page.evaluate(
+      () => (window as Window & { __copiedSharePack?: string }).__copiedSharePack
+    );
     assert.match(String(copiedSharePack ?? ""), /INV-LIB-HANDOFF-1/);
     assert.match(String(copiedSharePack ?? ""), /Payment link: https:\/\/pay\.example\.com\/invoice\/INV-LIB-HANDOFF-1/);
     assert.match(String(copiedSharePack ?? ""), /Client portal: https?:\/\/[^/]+\/portal\/[0-9a-f-]{36}\/.+/);
