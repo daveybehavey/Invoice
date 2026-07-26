@@ -5,6 +5,7 @@ import {
   changeDescriptionsWording,
   changeLineWording,
   changeNotesWording,
+  rewriteFollowUpMessage,
   rewordFullInvoice
 } from "./invoicePipeline.js";
 
@@ -270,6 +271,29 @@ test("changeNotesWording rewrites only notes and keeps line items untouched", as
   assert.equal(updated.lineItems[0]?.description, "Faucet repair");
   assert.match(capturedPrompt, /Rewrite invoice notes only\./);
   assert.equal((capturedOptions as CapturedTaskOptions | null)?.taskType, "wording");
+});
+
+test("rewriteFollowUpMessage keeps reminder intent and uses wording task", async () => {
+  let capturedPrompt = "";
+  let capturedOptions: CapturedTaskOptions | null = null;
+  setJsonTaskRunnerForTests(async <T>(prompt: string, options?: CapturedTaskOptions): Promise<T> => {
+    capturedPrompt = prompt;
+    capturedOptions = options ?? null;
+    return {
+      message:
+        "Hi Mike,\n\nJust checking in on INV-22. It was due yesterday. If anything is holding payment up, please let me know and I can help.\n\nBillie from NoteBill"
+    } as T;
+  });
+
+  const rewritten = await rewriteFollowUpMessage(
+    "Hi Mike,\n\nA quick follow-up on INV-22.\nIt was due yesterday.\nIf possible, please take a look and let me know if anything is blocking payment.\n\nBillie from NoteBill",
+    "Friendlier"
+  );
+
+  assert.match(capturedPrompt, /Rewrite a payment follow-up message only\./);
+  assert.equal((capturedOptions as CapturedTaskOptions | null)?.taskType, "wording");
+  assert.match(rewritten, /INV-22/);
+  assert.match(rewritten, /Billie from NoteBill/);
 });
 
 test("changeLineWording uses a deterministic fast path for Formal tone", async () => {
