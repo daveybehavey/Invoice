@@ -6915,23 +6915,6 @@ test("invoice library can run recurring auto-send immediately", async () => {
     );
   }, ownerId);
 
-  // Served dist invoiceLibrary.js runRecurringAutoSend reads undeclared `clientMemoryEntries`
-  // (ReferenceError) while the same module's render path correctly uses getClientMemory().
-  // This test-only serve rewrite unblocks the real Run → /send → bookkeeping path without
-  // synthesizing lastAutoSend* fields. Product source on disk stays unchanged.
-  await context.route("**/dist/features/library/invoiceLibrary.js", async (route) => {
-    const response = await route.fetch();
-    const body = (await response.text()).replace(
-      "getRecurringAutoSendRecipient(invoice, clientMemoryEntries)",
-      "getRecurringAutoSendRecipient(invoice, getClientMemory())"
-    );
-    await route.fulfill({
-      status: response.status(),
-      headers: response.headers(),
-      body
-    });
-  });
-
   const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
     headers: {
       "x-invoice-user-id": ownerId
@@ -7007,7 +6990,11 @@ test("invoice library can run recurring auto-send immediately", async () => {
       },
       { timeout: 30000 }
     );
-    await page.getByText("Sent", { exact: true }).first().waitFor({ state: "visible" });
+    const invoiceCard = page.locator("div.nb-surface--elevated").filter({
+      has: page.getByText("INV-RECUR-AUTO-RUN-1", { exact: true })
+    });
+    await invoiceCard.getByText("Sent invoice", { exact: true }).waitFor({ state: "visible" });
+    await invoiceCard.locator("span.nb-chip--info", { hasText: "Sent" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
