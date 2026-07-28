@@ -718,6 +718,9 @@
     }
     setError("");
     const sendResult = await handleSendInvoice(invoice, { recipientEmail });
+    if (!sendResult) {
+      return;
+    }
     const nextDueAt = new Date(
       Date.now() + normalizeRecurringInterval(recurringEntry.intervalDays) * recurringDayMs
     ).toISOString();

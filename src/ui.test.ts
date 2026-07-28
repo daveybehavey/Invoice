@@ -6952,9 +6952,25 @@ test("invoice library can run recurring auto-send immediately", async () => {
     }
   });
   assert.equal(seedResponse.status(), 200);
+  const seedPayload = (await seedResponse.json()) as { invoice?: { invoiceId?: string } };
+  const invoiceId = String(seedPayload.invoice?.invoiceId ?? "");
+  assert.ok(invoiceId);
 
   const page = await context.newPage();
+  let sendAttempts = 0;
+  let sendStatus = 0;
   try {
+    await page.route("**/api/invoices/*/send", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      sendAttempts += 1;
+      const response = await route.fetch();
+      sendStatus = response.status();
+      await route.fulfill({ response });
+    });
+
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     await page.getByText("INV-RECUR-AUTO-RUN-1", { exact: true }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Set monthly recurring for INV-RECUR-AUTO-RUN-1" }).click();
@@ -6962,39 +6978,235 @@ test("invoice library can run recurring auto-send immediately", async () => {
     await page.getByRole("button", { name: "Run recurring auto-send for INV-RECUR-AUTO-RUN-1" }).waitFor({
       state: "visible"
     });
+
+    const beforeEntry = await page.evaluate(
+      ({ storageOwnerId, targetInvoiceId }) => {
+        const raw = window.localStorage.getItem(`invoiceRecurringSchedules::owner:${storageOwnerId}`);
+        if (!raw) {
+          return null;
+        }
+        const parsed: RecurringScheduleStore = JSON.parse(raw);
+        return parsed.entries?.[targetInvoiceId] ?? null;
+      },
+      { storageOwnerId: ownerId, targetInvoiceId: invoiceId }
+    );
+    assert.ok(beforeEntry);
+    assert.equal(beforeEntry.autoSendEnabled, true);
+    assert.equal(beforeEntry.intervalDays, 30);
+    assert.ok(beforeEntry.nextDueAt);
+
     await page.getByRole("button", { name: "Run recurring auto-send for INV-RECUR-AUTO-RUN-1" }).click();
     await page.waitForFunction(
-      () => {
-        for (let index = 0; index < window.localStorage.length; index += 1) {
-          const key = window.localStorage.key(index);
-          if (!key || !key.includes("invoiceRecurringSchedules")) {
-            continue;
-          }
-          try {
-            const parsed: RecurringScheduleStore = JSON.parse(window.localStorage.getItem(key) || "{}");
-            for (const entry of Object.values(parsed.entries ?? {})) {
-              if (
-                entry.lastAutoSendAt &&
-                entry.lastAutoSendRecipient === "run-auto@example.com" &&
-                Number(entry.autoSendRunCount ?? 0) >= 1 &&
-                String(entry.lastAutoSendMode ?? "")
-              ) {
-                return true;
-              }
-            }
-          } catch (_error) {
-            // ignore malformed storage while polling
-          }
+      ({ storageOwnerId, targetInvoiceId, previousNextDueAt }) => {
+        const raw = window.localStorage.getItem(`invoiceRecurringSchedules::owner:${storageOwnerId}`);
+        if (!raw) {
+          return false;
         }
-        return false;
+        try {
+          const parsed: RecurringScheduleStore = JSON.parse(raw);
+          const entry = parsed.entries?.[targetInvoiceId];
+          return Boolean(
+            entry &&
+              entry.nextDueAt &&
+              entry.nextDueAt !== previousNextDueAt &&
+              entry.lastAutoSendAt &&
+              entry.lastAutoSendRecipient === "run-auto@example.com" &&
+              Number(entry.autoSendRunCount ?? 0) === 1 &&
+              String(entry.lastAutoSendMode ?? "")
+          );
+        } catch (_error) {
+          return false;
+        }
+      },
+      {
+        storageOwnerId: ownerId,
+        targetInvoiceId: invoiceId,
+        previousNextDueAt: beforeEntry.nextDueAt
       },
       { timeout: 30000 }
     );
+
+    const afterEntry = await page.evaluate(
+      ({ storageOwnerId, targetInvoiceId }) => {
+        const raw = window.localStorage.getItem(`invoiceRecurringSchedules::owner:${storageOwnerId}`);
+        if (!raw) {
+          return null;
+        }
+        const parsed: RecurringScheduleStore = JSON.parse(raw);
+        return parsed.entries?.[targetInvoiceId] ?? null;
+      },
+      { storageOwnerId: ownerId, targetInvoiceId: invoiceId }
+    );
+    assert.ok(afterEntry);
+    assert.notEqual(afterEntry.nextDueAt, beforeEntry.nextDueAt);
+    assert.equal(afterEntry.autoSendRunCount, 1);
+    assert.ok(afterEntry.lastAutoSendAt);
+    assert.equal(afterEntry.lastAutoSendRecipient, "run-auto@example.com");
+    assert.ok(String(afterEntry.lastAutoSendMode ?? ""));
+    assert.equal(sendAttempts, 1);
+    assert.ok(sendStatus >= 200 && sendStatus < 300);
+
     const invoiceCard = page.locator("div.nb-surface--elevated").filter({
       has: page.getByText("INV-RECUR-AUTO-RUN-1", { exact: true })
     });
     await invoiceCard.getByText("Sent invoice", { exact: true }).waitFor({ state: "visible" });
     await invoiceCard.locator("span.nb-chip--info", { hasText: "Sent" }).waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library keeps recurring schedule unchanged when auto-send fails", async () => {
+  const ownerId = "ui-recurring-auto-send-fail-owner";
+  const invoiceNumber = "INV-RECUR-AUTO-FAIL-1";
+  const recipientEmail = "fail-auto@example.com";
+  const context = await browser.newContext();
+  await context.addInitScript(
+    ({ initOwnerId, rememberedEmail }) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+      window.localStorage.setItem(
+        `invoiceClientMemory::owner:${initOwnerId}`,
+        JSON.stringify([
+          {
+            name: "Recurring Fail Client",
+            details: "Recurring Fail Client\n99 Fail St",
+            recipientEmail: rememberedEmail,
+            updatedAt: "2026-05-09T18:00:00.000Z"
+          }
+        ])
+      );
+    },
+    { initOwnerId: ownerId, rememberedEmail: recipientEmail }
+  );
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Recurring Fail Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber,
+          issueDate: "2026-05-09",
+          dueDate: "2026-05-16",
+          customerName: "Recurring Fail Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "recur-auto-fail-line-1",
+              type: "labor",
+              description: "Monthly maintenance",
+              quantity: 1,
+              unitPrice: 95,
+              amount: 95
+            }
+          ],
+          subtotal: 95,
+          total: 95,
+          balanceDue: 95
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+  const seedPayload = (await seedResponse.json()) as { invoice?: { invoiceId?: string } };
+  const invoiceId = String(seedPayload.invoice?.invoiceId ?? "");
+  assert.ok(invoiceId);
+
+  const page = await context.newPage();
+  let sendAttempts = 0;
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText(invoiceNumber, { exact: true }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: `Set monthly recurring for ${invoiceNumber}` }).click();
+    await page.getByRole("button", { name: `Arm auto-send for ${invoiceNumber}` }).click();
+    await page.getByRole("button", { name: `Run recurring auto-send for ${invoiceNumber}` }).waitFor({
+      state: "visible"
+    });
+
+    const beforeSnapshot = await page.evaluate(
+      ({ storageOwnerId, targetInvoiceId }) => {
+        const key = `invoiceRecurringSchedules::owner:${storageOwnerId}`;
+        const raw = window.localStorage.getItem(key);
+        if (!raw) {
+          return null;
+        }
+        const parsed: RecurringScheduleStore = JSON.parse(raw);
+        return {
+          raw,
+          entry: parsed.entries?.[targetInvoiceId] ?? null
+        };
+      },
+      { storageOwnerId: ownerId, targetInvoiceId: invoiceId }
+    );
+    assert.ok(beforeSnapshot?.raw);
+    assert.ok(beforeSnapshot.entry);
+    assert.equal(beforeSnapshot.entry.autoSendEnabled, true);
+    assert.equal(beforeSnapshot.entry.intervalDays, 30);
+    assert.ok(beforeSnapshot.entry.nextDueAt);
+    assert.equal(beforeSnapshot.entry.autoSendRunCount ?? 0, 0);
+    assert.equal(beforeSnapshot.entry.lastAutoSendAt, undefined);
+    assert.equal(beforeSnapshot.entry.lastAutoSendRecipient, undefined);
+    assert.equal(beforeSnapshot.entry.lastAutoSendMode, undefined);
+
+    await page.route("**/api/invoices/*/send", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      sendAttempts += 1;
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Simulated recurring send failure." })
+      });
+    });
+
+    await page.getByRole("button", { name: `Run recurring auto-send for ${invoiceNumber}` }).click();
+    await page.getByText("Simulated recurring send failure.", { exact: true }).waitFor({ state: "visible" });
+    await page.getByText(`Recurring send run for ${recipientEmail}`, { exact: false }).waitFor({
+      state: "hidden"
+    });
+
+    const afterSnapshot = await page.evaluate(
+      ({ storageOwnerId, targetInvoiceId }) => {
+        const key = `invoiceRecurringSchedules::owner:${storageOwnerId}`;
+        const raw = window.localStorage.getItem(key);
+        if (!raw) {
+          return null;
+        }
+        const parsed: RecurringScheduleStore = JSON.parse(raw);
+        return {
+          raw,
+          entry: parsed.entries?.[targetInvoiceId] ?? null
+        };
+      },
+      { storageOwnerId: ownerId, targetInvoiceId: invoiceId }
+    );
+    assert.ok(afterSnapshot?.raw);
+    assert.ok(afterSnapshot.entry);
+    assert.equal(afterSnapshot.raw, beforeSnapshot.raw);
+    assert.deepEqual(afterSnapshot.entry, beforeSnapshot.entry);
+    assert.equal(afterSnapshot.entry.nextDueAt, beforeSnapshot.entry.nextDueAt);
+    assert.equal(afterSnapshot.entry.autoSendRunCount ?? 0, beforeSnapshot.entry.autoSendRunCount ?? 0);
+    assert.equal(afterSnapshot.entry.lastAutoSendAt, beforeSnapshot.entry.lastAutoSendAt);
+    assert.equal(afterSnapshot.entry.lastAutoSendRecipient, beforeSnapshot.entry.lastAutoSendRecipient);
+    assert.equal(afterSnapshot.entry.lastAutoSendMode, beforeSnapshot.entry.lastAutoSendMode);
+    assert.equal(sendAttempts, 1);
+
+    const invoiceCard = page.locator("div.nb-surface--elevated").filter({
+      has: page.getByText(invoiceNumber, { exact: true })
+    });
+    await invoiceCard.getByText("Draft invoice", { exact: true }).waitFor({ state: "visible" });
+    assert.equal(await invoiceCard.getByText("Sent invoice", { exact: true }).count(), 0);
+    assert.equal(await invoiceCard.locator("span.nb-chip--info", { hasText: "Sent" }).count(), 0);
   } finally {
     await context.close();
   }
