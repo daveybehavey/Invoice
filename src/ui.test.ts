@@ -479,17 +479,17 @@ test("decision CTA switches and undo restores unresolved decision state", async 
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr. Cabinet door adjustment maybe charge.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
-    await page.getByRole("button", { name: "Resolve decisions" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Resolve decisions").waitFor({ state: "visible" });
 
-    await page.getByRole("button", { name: "Add" }).first().click();
+    await page.locator("div.nb-sticky-panel").getByRole("button", { name: "Add" }).click();
 
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Undo" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Undo" }).click();
 
-    await page.getByRole("button", { name: "Resolve decisions" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Resolve decisions").waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -527,12 +527,14 @@ test("decision undo toast does not block billie chips on mobile", async () => {
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr. Cabinet door adjustment maybe charge.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
-    await page.getByRole("button", { name: "Skip" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Skip" }).click();
+    await page.locator("div.nb-sticky-panel").getByRole("button", { name: "Skip" }).waitFor({
+      state: "visible"
+    });
+    await page.locator("div.nb-sticky-panel").getByRole("button", { name: "Skip" }).click();
 
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Undo" }).waitFor({ state: "visible" });
 
     await page.getByRole("button", { name: "Refine wording" }).click();
@@ -564,20 +566,25 @@ test("mobile generate CTA stays clear of Billie composer footer", async () => {
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr. Cabinet door adjustment maybe charge.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
-    await page.getByRole("button", { name: "Skip" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Skip" }).click();
+    await page.locator("div.nb-sticky-panel").getByRole("button", { name: "Skip" }).waitFor({
+      state: "visible"
+    });
+    await page.locator("div.nb-sticky-panel").getByRole("button", { name: "Skip" }).click();
 
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.evaluate(() => {
       window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
     });
 
     const geometry = await page.evaluate(() => {
-      const generateButton = Array.from(document.querySelectorAll("button")).find(
-        (button) => button.textContent?.trim() === "Generate Invoice"
-      );
+      const stickyPanel = document.querySelector("div.nb-sticky-panel");
+      const generateButton = stickyPanel
+        ? Array.from(stickyPanel.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Generate Invoice"
+          )
+        : null;
       const composer = document.querySelector(".nb-billie-composer");
       if (!generateButton || !composer) {
         return null;
@@ -672,7 +679,7 @@ test("guided walkthrough stays active from launcher through manual editor", asyn
       state: "visible"
     });
 
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Generate Invoice" }).click();
     await page.waitForURL(/\/manual$/, { timeout: 10000 });
@@ -772,18 +779,25 @@ test("intake Billie next-up guide updates from notes to draft-ready state", asyn
 });
 
 test("intake can hand off directly into manual Billie workspace", async () => {
-  useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
+  useMockResponses([structuredInvoiceWithNotes(), emptyAudit()]);
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
     await openIntake(page);
-    await page.getByRole("button", { name: "Build invoice" }).click();
-    await page.getByRole("button", { name: "Open Billie workspace" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Open Billie workspace" }).click();
+    await page
+      .getByPlaceholder(/Example: Jan 10 fixed sink/i)
+      .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.\nNotes: pay in 7 days thanks.");
+    await getPrimaryIntakeBuildButton(page).click();
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
+    await getIntakeButtonOutsideNextUp(page, "Show review details").click();
+    await page.getByText(/Notes:\s*pay in 7 days thanks/i).waitFor({ state: "visible" });
+    const nextUp = page.getByTestId("intake-billie-next-up");
+    await nextUp.getByRole("button", { name: "Open Billie workspace" }).waitFor({ state: "visible" });
+    await nextUp.getByRole("button", { name: "Open Billie workspace" }).click();
 
     await page.waitForURL(/\/manual\?tab=assistant&source=intake$/, { timeout: 10000 });
     await page.getByText("Draft ready for Billie handoff from intake review.").waitFor({ state: "visible" });
-    await page.getByText("Continue from intake review").waitFor({ state: "visible" });
+    await page.getByText("Continue from intake review", { exact: true }).waitFor({ state: "visible" });
     await page
       .getByText(
         "Billie already helped structure the draft. Use these starter actions to tighten wording and notes before you move into save, payment, or portal handoff."
@@ -883,7 +897,7 @@ test("first invoice onboarding tracks progress across launcher, intake, and manu
     await intakeOnboarding.waitFor({ state: "visible" });
     await intakeOnboarding.getByText("1 of 5 core steps complete").waitFor({ state: "visible" });
 
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await intakeOnboarding.getByText("2 of 5 core steps complete").waitFor({ state: "visible" });
 
@@ -1324,7 +1338,7 @@ test("labor follow-up shows last used hourly rate quick reply", async () => {
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Did one labor visit this week.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
     await page.getByText("Pricing needed", { exact: true }).waitFor({ state: "visible" });
     await page
@@ -1338,7 +1352,7 @@ test("labor follow-up shows last used hourly rate quick reply", async () => {
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Did one labor visit this week.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
     await page.getByRole("button", { name: "Use last ($101/hr)" }).waitFor({ state: "visible" });
   } finally {
@@ -1371,7 +1385,7 @@ test("labor follow-up suggests a saved matched hourly rate by service wording", 
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Did one labor visit this week.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
     await page.getByText("Pricing needed", { exact: true }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Use saved match ($133/hr)" }).waitFor({ state: "visible" });
@@ -1425,7 +1439,7 @@ test("labor follow-up prioritizes client-matched rates over generic saved matche
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Did one labor visit this week.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
     await page.getByText("Pricing needed", { exact: true }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Use client match ($155/hr)" }).waitFor({ state: "visible" });
@@ -1481,7 +1495,7 @@ test("labor follow-up favors higher-usage client matches when overlap is tied", 
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Did one labor visit this week.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
     await page.getByText("Pricing needed", { exact: true }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Use client match ($142/hr)" }).waitFor({ state: "visible" });
@@ -1500,7 +1514,7 @@ test("review quick actions include merge duplicates when duplicate line items ar
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Fixed faucet and added two washers.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
     await page.getByText("Quick actions").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Merge duplicates" }).waitFor({ state: "visible" });
@@ -1537,14 +1551,14 @@ test("billie workspace shows action chips and allows safe wording undo", async (
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByText("Wording only. Numbers stay locked.").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Refine wording" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Ask Billie" }).waitFor({ state: "visible" });
+    await getIntakeButtonOutsideNextUp(page, "Ask Billie").waitFor({ state: "visible" });
 
-    await page.getByRole("button", { name: "Show review details" }).click();
+    await getIntakeButtonOutsideNextUp(page, "Show review details").click();
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll("p.text-sm.font-semibold.text-slate-800")).some(
         (node) => node.textContent?.trim() === "Faucet repair"
@@ -1559,7 +1573,7 @@ test("billie workspace shows action chips and allows safe wording undo", async (
       .waitFor({ state: "visible" });
     assert.equal(rewordRequestCount, 1);
     assert.equal(editRequestCount, 0);
-    await page.getByRole("button", { name: "Show review details" }).click();
+    await getIntakeButtonOutsideNextUp(page, "Show review details").click();
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll("p.text-sm.font-semibold.text-slate-800")).some(
         (node) => node.textContent?.trim() === "Kitchen faucet repair service"
@@ -1570,7 +1584,7 @@ test("billie workspace shows action chips and allows safe wording undo", async (
       .locator("form.fixed")
       .getByText("Undid last Billie change")
       .waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Show review details" }).click();
+    await getIntakeButtonOutsideNextUp(page, "Show review details").click();
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll("p.text-sm.font-semibold.text-slate-800")).some(
         (node) => node.textContent?.trim() === "Faucet repair"
@@ -1591,9 +1605,9 @@ test("review details shows before-and-after transparency preview", async () => {
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
-    await page.getByRole("button", { name: "Show review details" }).click();
+    await getIntakeButtonOutsideNextUp(page, "Show review details").click();
     const transparencyCard = page.locator("div.rounded-xl").filter({ hasText: /Before and after/i });
     await transparencyCard.getByText(/Before and after/i).waitFor({ state: "visible" });
     await transparencyCard.getByText(/Cleaned lines:/i).waitFor({ state: "visible" });
@@ -1616,9 +1630,9 @@ test("review details shows a service timeline for multi-day jobs", async () => {
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 28 inspected leak. Jan 30 repaired leak. Feb 2 tightened cabinet door.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
-    await page.getByRole("button", { name: "Show review details" }).click();
+    await getIntakeButtonOutsideNextUp(page, "Show review details").click();
     const timelineCard = page.locator("div.rounded-xl").filter({ hasText: /Service timeline/i });
     await timelineCard.getByText(/Service timeline/i).waitFor({ state: "visible" });
     await timelineCard.getByText("Jan 28").waitFor({ state: "visible" });
@@ -1645,9 +1659,9 @@ test("billie workspace keeps secondary chips behind a mobile more toggle", async
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Refine wording" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Make simpler" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "More formal" }).waitFor({ state: "visible" });
@@ -1678,7 +1692,7 @@ test("billie workspace blocks money-changing edits and keeps totals unchanged", 
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Show review details" }).click();
@@ -1756,7 +1770,7 @@ test("line-level billie refine rewrites only the selected line and keeps undo wo
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 10 faucet repair and washer replacement.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Show review details" }).click();
@@ -1846,7 +1860,7 @@ test("notes-only billie refine rewrites notes without changing line items", asyn
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 10 faucet repair.\nNotes: pay in 7 days thanks.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Show review details" }).click();
@@ -4539,7 +4553,7 @@ test("ai intake applies business identity defaults when generating draft", async
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Generate Invoice" }).click();
 
@@ -4670,7 +4684,7 @@ test("ai intake shows free-plan upgrade surface when monthly save limit is reach
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
 
     const resolveButton = page.getByRole("button", { name: "Resolve decisions" });
     await page.getByText("Free plan limit reached").waitFor({ state: "visible" });
@@ -9652,7 +9666,7 @@ test("saving a client remembers bill-to details and autofills later matching dra
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Generate Invoice" }).click();
 
@@ -9710,7 +9724,7 @@ test("intake review surfaces recent saved jobs for the matched client", async ()
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
@@ -9763,7 +9777,7 @@ test("review details surfaces repeat-work memory without changing parsed draft a
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
@@ -9854,7 +9868,7 @@ test("review details can apply a prior client note without changing numbers", { 
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 1h at $90/hr for Note Memory Client.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
@@ -9936,7 +9950,7 @@ test("review details labels client-memory and recent invoice notes separately", 
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 1h at $90/hr for Repeat Note Client.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
@@ -10003,7 +10017,7 @@ test("review details can append a saved note without changing numbers", async ()
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 1h at $90/hr for Append Note Client.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
@@ -10080,7 +10094,7 @@ test("review details append upgrades structured note wording instead of stacking
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 1h at $90/hr for Structured Append Client.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
@@ -10153,7 +10167,7 @@ test("review details shows saved wording actions for multiple matched lines", { 
     await page
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet and cleaned drain for Mike Johnson.");
-    await page.getByRole("button", { name: "Build invoice" }).click();
+    await getPrimaryIntakeBuildButton(page).click();
     await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
@@ -10893,6 +10907,32 @@ async function openIntake(page: Page): Promise<void> {
   await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
   // Ready when the primary job-notes textarea is available for user input.
   await page.getByPlaceholder(/Example: Jan 10 fixed sink/i).waitFor({ state: "visible" });
+}
+
+/** Primary paste-panel Build invoice control (excludes intake-billie-next-up chips). */
+function getPrimaryIntakeBuildButton(page: Page): Locator {
+  const intakeRegion = page.locator("div.nb-surface").filter({
+    has: page.getByPlaceholder(/Example: Jan 10 fixed sink/i)
+  });
+  return intakeRegion.getByRole("button", {
+    name: "Build invoice",
+    exact: true
+  });
+}
+
+/** Sticky review/decision column CTA (excludes intake-billie-next-up chips). */
+function getPrimaryIntakeStickyButton(page: Page, name: string): Locator {
+  return page.locator("div.nb-sticky-panel").getByRole("button", {
+    name,
+    exact: true
+  });
+}
+
+/** Intake action button outside the Billie next-up suggestion chrome. */
+function getIntakeButtonOutsideNextUp(page: Page, name: string): Locator {
+  return page.locator(
+    `xpath=//button[normalize-space()=${JSON.stringify(name)} and not(ancestor::*[@data-testid="intake-billie-next-up"])]`
+  );
 }
 
 async function waitForCondition(
