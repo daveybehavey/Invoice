@@ -711,13 +711,16 @@
       setError("Arm recurring auto-send before running it.");
       return;
     }
-    const recipientEmail = getRecurringAutoSendRecipient(invoice, clientMemoryEntries);
+    const recipientEmail = getRecurringAutoSendRecipient(invoice, getClientMemory());
     if (!recipientEmail) {
       setError("Recurring auto-send needs a remembered recipient email.");
       return;
     }
     setError("");
     const sendResult = await handleSendInvoice(invoice, { recipientEmail });
+    if (!sendResult) {
+      return;
+    }
     const nextDueAt = new Date(
       Date.now() + normalizeRecurringInterval(recurringEntry.intervalDays) * recurringDayMs
     ).toISOString();

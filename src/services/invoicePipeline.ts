@@ -113,6 +113,10 @@ type RewordFullInvoiceResponse = {
   notes?: string;
 };
 
+type RewriteFollowUpMessageResponse = {
+  message: string;
+};
+
 type WordingRewriteSource = {
   lineItems: Array<{
     id: string;
@@ -727,6 +731,32 @@ export async function rewordFullInvoice(invoice: FinishedInvoice, tone?: string)
   };
 
   return normalizeInvoice(FinishedInvoiceSchema.parse(updatedInvoice));
+}
+
+export async function rewriteFollowUpMessage(message: string, tone?: string): Promise<string> {
+  const currentMessage = String(message ?? "").trim();
+  if (!currentMessage) {
+    return "";
+  }
+
+  const taskPrompt = [
+    "Rewrite a payment follow-up message only.",
+    "Keep the same meaning, invoice/payment intent, and recipient context.",
+    "Do not invent or remove invoice numbers, due-date references, payment instructions, links, or promises.",
+    "Do not add threats, pressure, legal language, or emotional manipulation.",
+    "Keep it short, professional, and easy to send.",
+    `Tone preference: ${tone ?? "neutral professional"}.`,
+    'Return JSON with shape: {"message":"..."}.',
+    `Original follow-up message: ${JSON.stringify(currentMessage)}`
+  ].join("\n");
+
+  const modelResponse = await runJsonTask<RewriteFollowUpMessageResponse>(taskPrompt, {
+    taskType: "wording",
+    maxCompletionTokens: Math.min(700, Math.max(180, Math.ceil(currentMessage.length / 2)))
+  });
+
+  const rewritten = String(modelResponse.message ?? "").trim();
+  return rewritten || currentMessage;
 }
 
 export async function applyInvoiceEditInstruction(
