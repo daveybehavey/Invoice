@@ -10891,7 +10891,8 @@ test("diagnostics route shows launch, billing, delivery, and telemetry panels", 
 
 async function openIntake(page: Page): Promise<void> {
   await page.goto(`${baseUrl}/ai-intake`, { waitUntil: "networkidle" });
-  await page.getByText(/(AI Invoice Assistant|Billie at NoteBill)/).waitFor({ state: "visible" });
+  // Ready when the primary job-notes textarea is available for user input.
+  await page.getByPlaceholder(/Example: Jan 10 fixed sink/i).waitFor({ state: "visible" });
 }
 
 async function waitForCondition(
