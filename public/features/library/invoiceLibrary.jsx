@@ -711,7 +711,7 @@
       setError("Arm recurring auto-send before running it.");
       return;
     }
-    const recipientEmail = getRecurringAutoSendRecipient(invoice, clientMemoryEntries);
+    const recipientEmail = getRecurringAutoSendRecipient(invoice, getClientMemory());
     if (!recipientEmail) {
       setError("Recurring auto-send needs a remembered recipient email.");
       return;
