@@ -876,17 +876,31 @@ test("library can reopen a saved invoice directly in Billie workspace", async ()
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    await page.getByRole("button", { name: "Open with Billie" }).first().click();
+    const invoiceCard = page.locator("div.nb-surface.nb-surface--elevated").filter({
+      has: page.getByText("INV-LIB-BILLIE-1", { exact: true })
+    });
+    await invoiceCard.waitFor({ state: "visible" });
+    await invoiceCard.getByRole("button", { name: "Open with Billie" }).click();
 
     await page.waitForURL(/\/manual\?tab=assistant&source=library$/, { timeout: 10000 });
     await page.getByText("Saved invoice reopened in Billie workspace.").waitFor({ state: "visible" });
-    await page.getByText("Continue from saved work").waitFor({ state: "visible" });
-    await page
-      .locator('[data-testid="manual-billie-workspace"]')
-      .getByRole("button", { name: "Polish reopened draft" })
-      .waitFor({ state: "visible" });
+    await expectValueEquals(page.getByLabel("Invoice #"), "INV-LIB-BILLIE-1");
+    await expectValueContains(page.getByPlaceholder("Client Name"), "Library Billie Client");
+
+    const billieWorkspace = page.locator('[data-testid="manual-billie-workspace"]');
+    await billieWorkspace.waitFor({ state: "visible" });
+    // Production auto-expands library handoffs; do not click expand in the test.
+    await billieWorkspace.getByRole("button", { name: "Open full Billie tools" }).waitFor({
+      state: "visible"
+    });
+    await billieWorkspace.getByText("Continue from saved work", { exact: true }).waitFor({
+      state: "visible"
+    });
+    const polishAction = billieWorkspace.getByRole("button", { name: "Polish reopened draft" });
+    await polishAction.waitFor({ state: "visible" });
+    assert.equal(await polishAction.isEnabled(), true);
     await expectValueEquals(
-      page.locator('[data-testid="manual-billie-workspace"]').getByPlaceholder(/Ask Billie to refine wording/i),
+      billieWorkspace.getByPlaceholder(/Ask Billie to refine wording/i),
       "Refine the invoice wording and notes so this saved draft feels polished and client-ready. Keep numbers unchanged."
     );
   } finally {

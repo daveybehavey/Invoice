@@ -2474,7 +2474,9 @@ function ManualInvoiceCanvas() {
   const activeMobileTabLabel =
     mobileInspectorTabs.find((tab) => tab.id === activeInspectorTab)?.label ?? "Tools";
   const billieWorkspaceExpanded =
-    (billieWorkspaceSource === "intake" || billieWorkspaceSource === "import") ||
+    (billieWorkspaceSource === "intake" ||
+      billieWorkspaceSource === "import" ||
+      billieWorkspaceSource === "library") ||
     (activeInspectorTab !== "assistant" && !inspectorOpen);
 
   const refreshAuthSessionState = async (shouldApply = () => true) => {
