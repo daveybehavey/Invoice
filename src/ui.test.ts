@@ -7,7 +7,13 @@ import { after, afterEach, before, beforeEach, test } from "node:test";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
-import { chromium, type Browser, type Locator, type Page } from "playwright";
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Locator,
+  type Page
+} from "playwright";
 import request from "supertest";
 import type { SavedInvoice } from "./models/invoice.js";
 
@@ -208,6 +214,7 @@ test("launcher manage tools include a tester feedback shortcut", async () => {
   const page = await context.newPage();
 
   try {
+    await prepareReturningGuest(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Show manage tools" }).click();
     await page.locator("#launcher-manage-options").getByRole("button", { name: /Feedback/ }).click();
@@ -224,6 +231,7 @@ test("launcher manage tools include support access", async () => {
   const page = await context.newPage();
 
   try {
+    await prepareReturningGuest(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Show manage tools" }).click();
     await page.locator("#launcher-manage-options").getByRole("button", { name: /Help and support/ }).click();
@@ -264,6 +272,7 @@ test("launcher manage tools include a saved service catalog shortcut", async () 
   const page = await context.newPage();
 
   try {
+    await prepareReturningGuest(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Show manage tools" }).click();
     await page.locator("#launcher-manage-options").getByRole("button", { name: /Services/ }).click();
@@ -280,10 +289,14 @@ test("launcher footer exposes feedback and support", async () => {
   const page = await context.newPage();
 
   try {
+    await prepareReturningGuest(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Feedback" }).waitFor({ state: "visible" });
     assert.equal(
-      await page.getByRole("link", { name: "Support" }).getAttribute("href"),
+      await page
+        .getByRole("link", { name: "Support" })
+        .and(page.locator('a[href="mailto:support@notebill.app"]'))
+        .getAttribute("href"),
       "mailto:support@notebill.app"
     );
 
@@ -300,10 +313,7 @@ test("launcher welcome screen shows sign-in and guest entry", async () => {
   const page = await context.newPage();
 
   try {
-    await page.addInitScript(() => {
-      window.localStorage.removeItem("invoiceGuestEntryDismissed");
-      window.localStorage.removeItem("invoiceAuthPendingReturnPath");
-    });
+    await prepareFirstTimeVisitor(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
 
     await page.getByRole("heading", { name: "NoteBill" }).waitFor({ state: "visible" });
@@ -324,6 +334,7 @@ test("launcher sign-in modal shows provider readiness and keeps email-link flow 
   const page = await context.newPage();
 
   try {
+    await prepareReturningGuest(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
 
@@ -638,6 +649,7 @@ test("launcher sample notes open intake with a realistic starter draft", async (
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
+    await prepareReturningGuest(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByText("Start with Billie", { exact: true }).first().waitFor({ state: "visible" });
     await page.getByTestId("launcher-first-invoice-guide").getByText("Guided first invoice").waitFor({
@@ -672,7 +684,7 @@ test("guided walkthrough stays active from launcher through manual editor", asyn
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
-    await openLauncher(page);
+    await openLauncherAsReturningGuest(page);
     await page.getByRole("button", { name: "Start walkthrough" }).click();
 
     await page.getByTestId("intake-onboarding-section").getByText("Guided walkthrough").waitFor({
@@ -680,8 +692,8 @@ test("guided walkthrough stays active from launcher through manual editor", asyn
     });
 
     await getPrimaryIntakeBuildButton(page).click();
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Generate Invoice" }).click();
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").click();
     await page.waitForURL(/\/manual$/, { timeout: 10000 });
 
     const manualOnboarding = page.getByTestId("manual-onboarding-section");
@@ -887,7 +899,7 @@ test("first invoice onboarding tracks progress across launcher, intake, and manu
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
-    await openLauncher(page);
+    await openLauncherAsReturningGuest(page);
     const launcherOnboarding = page.getByTestId("launcher-onboarding-section");
     await launcherOnboarding.waitFor({ state: "visible" });
     await launcherOnboarding.getByText(/0 of 5 complete/i).waitFor({ state: "visible" });
@@ -898,10 +910,10 @@ test("first invoice onboarding tracks progress across launcher, intake, and manu
     await intakeOnboarding.getByText("1 of 5 core steps complete").waitFor({ state: "visible" });
 
     await getPrimaryIntakeBuildButton(page).click();
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await intakeOnboarding.getByText("2 of 5 core steps complete").waitFor({ state: "visible" });
 
-    await page.getByRole("button", { name: "Generate Invoice" }).click();
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").click();
     await page.waitForURL(/\/manual$/, { timeout: 10000 });
 
     const manualOnboarding = page.getByTestId("manual-onboarding-section");
@@ -922,7 +934,7 @@ test("first invoice onboarding tracks progress across launcher, intake, and manu
       state: "visible"
     });
 
-    await openLauncher(page);
+    await openLauncherAsReturningGuest(page);
     const completionCard = page.getByTestId("launcher-onboarding-complete");
     await completionCard.waitFor({ state: "visible" });
     await completionCard.getByText("You finished the full first-invoice loop.").waitFor({
@@ -966,6 +978,7 @@ test("onboarding completion setup pages chain branding, memory, and services", a
       })
     );
   });
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/settings/business?from=onboarding-complete`, {
@@ -1025,6 +1038,7 @@ test("launcher shows a V2 runway after onboarding and setup are complete", async
       })
     );
   });
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await openLauncher(page);
@@ -1062,6 +1076,7 @@ test("launcher sign-in setup step explains the post-sign-in return path", async 
       })
     );
   });
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await openLauncher(page);
@@ -1080,7 +1095,7 @@ test("launcher opens the daily scratchpad quick capture flow", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
-    await openLauncher(page);
+    await openLauncherAsReturningGuest(page);
     await page.getByRole("button", { name: "Open scratchpad" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Open scratchpad" }).click();
     await page.getByRole("heading", { name: "Capture work fast. Invoice later." }).waitFor({
@@ -11170,6 +11185,50 @@ async function openDailyScratchpad(page: Page) {
     await heading.waitFor({ state: "visible", timeout: 10000 });
   }
   await scratchpadNoteEditor(page).waitFor({ state: "visible" });
+}
+
+/**
+ * First-time visitor: clear guest-entry dismiss keys and pending auth return path
+ * so the launcher welcome gate is shown. Does not fabricate auth or invoices.
+ */
+async function prepareFirstTimeVisitor(page: Page) {
+  await page.addInitScript(() => {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (
+        key === "invoiceGuestEntryDismissed" ||
+        (key != null && key.startsWith("guestEntryDismissed::"))
+      ) {
+        keysToRemove.push(key);
+      }
+    }
+    for (const key of keysToRemove) {
+      window.localStorage.removeItem(key);
+    }
+    window.sessionStorage.removeItem("invoiceAuthPendingReturnPath");
+  });
+}
+
+/**
+ * Returning guest: set only the production scoped guest-entry key to "true"
+ * before navigation. Uses the existing invoiceOwnerId when present.
+ * Must be called explicitly per returning-guest journey — never from beforeEach.
+ */
+async function prepareReturningGuest(target: Page | BrowserContext) {
+  await target.addInitScript(() => {
+    let ownerId = window.localStorage.getItem("invoiceOwnerId");
+    if (!ownerId) {
+      ownerId = "ui-returning-guest";
+      window.localStorage.setItem("invoiceOwnerId", ownerId);
+    }
+    window.localStorage.setItem(`guestEntryDismissed::owner:${ownerId}`, "true");
+  });
+}
+
+async function openLauncherAsReturningGuest(page: Page) {
+  await prepareReturningGuest(page);
+  await openLauncher(page);
 }
 
 async function openLauncher(page: Page) {
