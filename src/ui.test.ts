@@ -1319,6 +1319,184 @@ test("core mobile app routes keep controls thumb friendly", async () => {
   }
 });
 
+test("mobile launcher Support control stays tappable across narrow widths", async () => {
+  const viewports = [
+    { width: 320, height: 640 },
+    { width: 360, height: 640 },
+    { width: 375, height: 667 },
+    { width: 390, height: 844 },
+    { width: 414, height: 896 }
+  ];
+
+  for (const viewport of viewports) {
+    const context = await browser.newContext({
+      viewport,
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 3
+    });
+    const page = await context.newPage();
+
+    try {
+      await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+      await page.locator("#root").waitFor({ state: "visible" });
+
+      const supportLink = page.getByRole("link", { name: "Support", exact: true });
+      await supportLink.waitFor({ state: "visible" });
+      assert.equal(await supportLink.getAttribute("href"), "/support");
+
+      const geometry = await page.evaluate(() => {
+        const support = Array.from(document.querySelectorAll("a")).find((el) => {
+          const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+          return text === "Support" && (el.getAttribute("href") || "") === "/support";
+        });
+        if (!support) {
+          throw new Error("expected /support Support link");
+        }
+        const rect = support.getBoundingClientRect();
+        const styles = window.getComputedStyle(support);
+        return {
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          top: rect.top,
+          left: rect.left,
+          bottom: rect.bottom,
+          right: rect.right,
+          minHeight: styles.minHeight,
+          paddingTop: styles.paddingTop,
+          paddingBottom: styles.paddingBottom,
+          overflowX:
+            document.documentElement.scrollWidth > window.innerWidth + 1 ||
+            document.body.scrollWidth > window.innerWidth + 1,
+          insideViewport:
+            rect.left >= -1 &&
+            rect.right <= window.innerWidth + 1 &&
+            rect.width > 0 &&
+            rect.height > 0
+        };
+      });
+
+      assert.ok(
+        geometry.height >= 34 || geometry.width >= 120,
+        `${viewport.width}px Support target too small: ${JSON.stringify(geometry)}`
+      );
+      assert.equal(geometry.overflowX, false, `${viewport.width}px Support causes horizontal overflow`);
+      assert.equal(geometry.insideViewport, true, `${viewport.width}px Support leaves viewport`);
+
+      await supportLink.focus();
+      assert.equal(
+        await page.evaluate(() => {
+          const active = document.activeElement as HTMLElement | null;
+          return Boolean(
+            active &&
+              active.tagName === "A" &&
+              (active.textContent || "").replace(/\s+/g, " ").trim() === "Support" &&
+              active.getAttribute("href") === "/support"
+          );
+        }),
+        true,
+        `${viewport.width}px Support is not keyboard-focusable`
+      );
+    } finally {
+      await context.close();
+    }
+  }
+
+  const returningContext = await browser.newContext({
+    viewport: { width: 360, height: 640 },
+    isMobile: true,
+    hasTouch: true,
+    deviceScaleFactor: 3
+  });
+  const returningPage = await returningContext.newPage();
+  try {
+    await prepareReturningGuest(returningPage);
+    await returningPage.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+
+    const mailtoSupport = returningPage
+      .getByRole("link", { name: "Support", exact: true })
+      .and(returningPage.locator('a[href="mailto:support@notebill.app"]'));
+    await mailtoSupport.waitFor({ state: "visible" });
+    assert.equal(await mailtoSupport.getAttribute("href"), "mailto:support@notebill.app");
+
+    const pathSupport = returningPage
+      .getByRole("link", { name: "Support", exact: true })
+      .and(returningPage.locator('a[href="/support"]'));
+    await pathSupport.waitFor({ state: "visible" });
+
+    const feedback = returningPage.getByRole("button", { name: "Feedback", exact: true });
+    await feedback.waitFor({ state: "visible" });
+
+    const layout = await returningPage.evaluate(() => {
+      const supports = Array.from(document.querySelectorAll("a")).filter((el) => {
+        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        return text === "Support";
+      });
+      const feedbackEl = Array.from(document.querySelectorAll("button, a")).find((el) => {
+        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        return text === "Feedback";
+      });
+      const boxes = supports.map((el) => {
+        const rect = el.getBoundingClientRect();
+        return {
+          href: el.getAttribute("href"),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          left: rect.left,
+          right: rect.right,
+          top: rect.top,
+          bottom: rect.bottom
+        };
+      });
+      const feedbackBox = feedbackEl
+        ? (() => {
+            const rect = feedbackEl.getBoundingClientRect();
+            return {
+              left: rect.left,
+              right: rect.right,
+              top: rect.top,
+              bottom: rect.bottom
+            };
+          })()
+        : null;
+      const overlapFeedback = boxes.some(
+        (box) =>
+          feedbackBox != null &&
+          Math.max(0, Math.min(box.right, feedbackBox.right) - Math.max(box.left, feedbackBox.left)) > 0 &&
+          Math.max(0, Math.min(box.bottom, feedbackBox.bottom) - Math.max(box.top, feedbackBox.top)) > 0
+      );
+      return {
+        boxes,
+        overlapFeedback,
+        overflowX:
+          document.documentElement.scrollWidth > window.innerWidth + 1 ||
+          document.body.scrollWidth > window.innerWidth + 1
+      };
+    });
+
+    for (const box of layout.boxes) {
+      assert.ok(
+        box.height >= 34 || box.width >= 120,
+        `returning-guest Support ${box.href} too small: ${JSON.stringify(box)}`
+      );
+    }
+    assert.equal(layout.overlapFeedback, false, "Support overlaps Feedback");
+    assert.equal(layout.overflowX, false, "returning-guest Support causes horizontal overflow");
+
+    await mailtoSupport.focus();
+    assert.equal(
+      await returningPage.evaluate(() => {
+        const active = document.activeElement as HTMLAnchorElement | null;
+        return active?.getAttribute("href") === "mailto:support@notebill.app";
+      }),
+      true,
+      "mailto Support is not keyboard-focusable"
+    );
+  } finally {
+    await returningContext.close();
+  }
+});
+
 test("voice-note upload appends transcript into intake notes before build", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
