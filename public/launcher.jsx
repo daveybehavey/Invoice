@@ -1827,10 +1827,16 @@ function Launcher() {
                   your account.
                 </p>
                 <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#d7f1dd]">
-                  <a href="/privacy" className="underline decoration-[#d7f1dd]/50 underline-offset-4 hover:text-white">
+                  <a
+                    href="/privacy"
+                    className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#d7f1dd]/50 underline-offset-4 hover:bg-white/10 hover:text-white"
+                  >
                     Privacy policy
                   </a>
-                  <a href="/support" className="underline decoration-[#d7f1dd]/50 underline-offset-4 hover:text-white">
+                  <a
+                    href="/support"
+                    className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#d7f1dd]/50 underline-offset-4 hover:bg-white/10 hover:text-white"
+                  >
                     Support
                   </a>
                 </div>
@@ -1972,10 +1978,16 @@ function Launcher() {
                 </p>
               </div>
               <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">
-                <a href="/privacy" className="underline decoration-[#4f8b5f]/50 underline-offset-4 hover:text-[#14532d]">
+                <a
+                  href="/privacy"
+                  className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d]"
+                >
                   Privacy policy
                 </a>
-                <a href="/support" className="underline decoration-[#4f8b5f]/50 underline-offset-4 hover:text-[#14532d]">
+                <a
+                  href="/support"
+                  className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d]"
+                >
                   Support
                 </a>
               </div>
