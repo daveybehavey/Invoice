@@ -1647,7 +1647,27 @@ test("mobile manual editor controls stay tappable across narrow widths", async (
       await invoiceType.waitFor({ state: "visible" });
       await estimateType.waitFor({ state: "visible" });
 
-      const geometry = await page.evaluate(`(() => {
+      type ManualControlBox = {
+        width: number;
+        height: number;
+        left: number;
+        right: number;
+        top: number;
+        bottom: number;
+        insideViewport: boolean;
+      } | null;
+      type ManualControlGeometry = {
+        onboardingAdd: ManualControlBox;
+        handoffAdd: ManualControlBox;
+        saveDraft: ManualControlBox;
+        invoice: ManualControlBox;
+        estimate: ManualControlBox;
+        anyOverlap: boolean;
+        overflowX: boolean;
+        allInside: boolean;
+      };
+
+      const geometry = await page.evaluate<ManualControlGeometry>(`(() => {
         const onboarding = document.querySelector('[data-testid="manual-onboarding-next-cue"]');
         const handoff = document.querySelector('[data-testid="manual-send-payment-handoff"]');
         const nextMoves = document.querySelector('[data-testid="manual-billie-next-moves"]');
