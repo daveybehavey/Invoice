@@ -2832,7 +2832,7 @@ function ManualInvoiceCanvas() {
                           <button
                             key={action.id}
                             type="button"
-                            className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
                             onClick={action.onClick}
                             disabled={action.disabled}
                           >
@@ -3083,7 +3083,7 @@ function ManualInvoiceCanvas() {
                   <p className="mt-1 text-xs leading-5 text-slate-600">{move.helper}</p>
                   <button
                     type="button"
-                    className="mt-3 rounded-full border border-[#6993d2]/22 bg-[#f6f9ff] px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="mt-3 inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/22 bg-[#f6f9ff] px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={move.onClick}
                     disabled={move.busy}
                   >
@@ -3167,7 +3167,8 @@ function ManualInvoiceCanvas() {
                           key={option.id}
                           type="button"
                           aria-label={`Set document type to ${option.label}`}
-                          className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                          aria-pressed={documentType === option.id}
+                          className={`inline-flex min-h-10 items-center rounded-full px-3 text-sm font-semibold transition ${
                             documentType === option.id ? "text-white shadow-sm" : "text-slate-500"
                           }`}
                           style={
@@ -4198,7 +4199,7 @@ function ManualInvoiceCanvas() {
                 {!hasClientDetails ? (
                   <button
                     type="button"
-                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35"
+                    className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35"
                     onClick={() => {
                       document.querySelector('textarea[placeholder="Client Name"]')?.focus();
                     }}
@@ -4209,7 +4210,7 @@ function ManualInvoiceCanvas() {
                 {!hasBillableLineItem ? (
                   <button
                     type="button"
-                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35"
+                    className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35"
                     onClick={() => {
                       document.querySelector('input[placeholder="Description"]')?.focus();
                     }}
@@ -4220,7 +4221,7 @@ function ManualInvoiceCanvas() {
                 {!hasSavedDraft && hasClientDetails && hasBillableLineItem ? (
                   <button
                     type="button"
-                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => {
                       void handleSaveInvoice();
                     }}
@@ -4232,7 +4233,7 @@ function ManualInvoiceCanvas() {
                 {hasSavedDraft && !hasHostedPaymentLink ? (
                   <button
                     type="button"
-                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => {
                       void handleGeneratePaymentLink();
                     }}
@@ -4244,7 +4245,7 @@ function ManualInvoiceCanvas() {
                 {hasSavedDraft && !hasClientPortal ? (
                   <button
                     type="button"
-                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={() => {
                       void handleGenerateClientPortalLink();
                     }}
@@ -4256,7 +4257,7 @@ function ManualInvoiceCanvas() {
                 {hasBillableLineItem ? (
                   <button
                     type="button"
-                    className="rounded-full border border-[#6993d2]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
                     onClick={handleCopySharePack}
                     disabled={sharePackBusy}
                   >

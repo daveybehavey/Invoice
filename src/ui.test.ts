@@ -1601,6 +1601,195 @@ test("mobile intake Paste notes control stays tappable across narrow widths", as
   }
 });
 
+test("mobile manual editor controls stay tappable across narrow widths", async () => {
+  const viewports = [
+    { width: 320, height: 640 },
+    { width: 360, height: 640 },
+    { width: 375, height: 667 },
+    { width: 390, height: 844 },
+    { width: 414, height: 896 }
+  ];
+
+  for (const viewport of viewports) {
+    const context = await browser.newContext({
+      viewport,
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 3
+    });
+    const page = await context.newPage();
+
+    try {
+      await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+      await page.getByPlaceholder("Client Name").waitFor({ state: "visible" });
+
+      const onboardingAdd = page
+        .getByTestId("manual-onboarding-next-cue")
+        .getByRole("button", { name: "Add priced work", exact: true });
+      const handoffAdd = page
+        .getByTestId("manual-send-payment-handoff")
+        .getByRole("button", { name: "Add priced work", exact: true });
+      const saveDraft = page
+        .getByTestId("manual-billie-next-moves")
+        .getByRole("button", { name: "Save draft", exact: true });
+      const invoiceType = page.getByRole("button", {
+        name: "Set document type to Invoice",
+        exact: true
+      });
+      const estimateType = page.getByRole("button", {
+        name: "Set document type to Estimate",
+        exact: true
+      });
+
+      await onboardingAdd.waitFor({ state: "visible" });
+      await handoffAdd.waitFor({ state: "visible" });
+      await saveDraft.waitFor({ state: "visible" });
+      await invoiceType.waitFor({ state: "visible" });
+      await estimateType.waitFor({ state: "visible" });
+
+      const geometry = await page.evaluate(`(() => {
+        const onboarding = document.querySelector('[data-testid="manual-onboarding-next-cue"]');
+        const handoff = document.querySelector('[data-testid="manual-send-payment-handoff"]');
+        const nextMoves = document.querySelector('[data-testid="manual-billie-next-moves"]');
+        const pick = (root, label) => Array.from((root && root.querySelectorAll("button")) || []).find((el) => (el.textContent || "").replace(/\\s+/g, " ").trim() === label);
+        const onboardingAddEl = pick(onboarding, "Add priced work");
+        const handoffAddEl = pick(handoff, "Add priced work");
+        const saveEl = pick(nextMoves, "Save draft");
+        const invoiceEl = Array.from(document.querySelectorAll("button")).find((el) => el.getAttribute("aria-label") === "Set document type to Invoice");
+        const estimateEl = Array.from(document.querySelectorAll("button")).find((el) => el.getAttribute("aria-label") === "Set document type to Estimate");
+        const boxFor = (el) => {
+          if (!el) return null;
+          const rect = el.getBoundingClientRect();
+          return {
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            bottom: rect.bottom,
+            insideViewport: rect.left >= -1 && rect.right <= window.innerWidth + 1 && rect.width > 0 && rect.height > 0
+          };
+        };
+        const overlaps = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) > 0 && Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)) > 0;
+        const targets = [onboardingAddEl, handoffAddEl, saveEl, invoiceEl, estimateEl].map(boxFor).filter(Boolean);
+        const anyOverlap =
+          Boolean(onboardingAddEl && handoffAddEl && overlaps(onboardingAddEl.getBoundingClientRect(), handoffAddEl.getBoundingClientRect())) ||
+          Boolean(invoiceEl && estimateEl && overlaps(invoiceEl.getBoundingClientRect(), estimateEl.getBoundingClientRect())) ||
+          Boolean(saveEl && invoiceEl && overlaps(saveEl.getBoundingClientRect(), invoiceEl.getBoundingClientRect()));
+        return {
+          onboardingAdd: boxFor(onboardingAddEl),
+          handoffAdd: boxFor(handoffAddEl),
+          saveDraft: boxFor(saveEl),
+          invoice: boxFor(invoiceEl),
+          estimate: boxFor(estimateEl),
+          anyOverlap,
+          overflowX: document.documentElement.scrollWidth > window.innerWidth + 1 || document.body.scrollWidth > window.innerWidth + 1,
+          allInside: targets.every((t) => t.insideViewport)
+        };
+      })()`);
+
+      for (const [name, box] of [
+        ["onboarding Add priced work", geometry.onboardingAdd],
+        ["handoff Add priced work", geometry.handoffAdd],
+        ["Save draft", geometry.saveDraft],
+        ["Invoice", geometry.invoice],
+        ["Estimate", geometry.estimate]
+      ] as const) {
+        assert.ok(box, `${viewport.width}px missing ${name}`);
+        assert.ok(
+          box!.height >= 34 || box!.width >= 120,
+          `${viewport.width}px ${name} too small: ${JSON.stringify(box)}`
+        );
+      }
+      assert.equal(geometry.overflowX, false, `${viewport.width}px manual controls cause horizontal overflow`);
+      assert.equal(geometry.anyOverlap, false, `${viewport.width}px manual controls overlap`);
+      assert.equal(geometry.allInside, true, `${viewport.width}px manual control left viewport`);
+
+      await onboardingAdd.focus();
+      assert.equal(
+        await page.evaluate(() => {
+          const active = document.activeElement as HTMLElement | null;
+          return Boolean(
+            active &&
+              active.tagName === "BUTTON" &&
+              (active.textContent || "").replace(/\s+/g, " ").trim() === "Add priced work" &&
+              active.closest('[data-testid="manual-onboarding-next-cue"]')
+          );
+        }),
+        true,
+        `${viewport.width}px onboarding Add priced work is not keyboard-focusable`
+      );
+
+      await onboardingAdd.click();
+      assert.equal(
+        await page.evaluate(() => {
+          const active = document.activeElement as HTMLInputElement | null;
+          return active?.tagName === "INPUT" && active.getAttribute("placeholder") === "Description";
+        }),
+        true,
+        `${viewport.width}px Add priced work did not focus Description`
+      );
+
+      await estimateType.focus();
+      assert.equal(
+        await page.evaluate(() => document.activeElement?.getAttribute("aria-label")),
+        "Set document type to Estimate",
+        `${viewport.width}px Estimate is not keyboard-focusable`
+      );
+      await estimateType.click();
+      assert.equal(await estimateType.getAttribute("aria-pressed"), "true");
+      assert.equal(await invoiceType.getAttribute("aria-pressed"), "false");
+      await page.getByRole("heading", { name: "ESTIMATE", exact: true }).waitFor({ state: "visible" });
+      await invoiceType.click();
+      assert.equal(await invoiceType.getAttribute("aria-pressed"), "true");
+      assert.equal(await estimateType.getAttribute("aria-pressed"), "false");
+      await page.getByRole("heading", { name: "INVOICE", exact: true }).waitFor({ state: "visible" });
+
+      await page.getByPlaceholder("Client Name").fill("Mobile Target Client");
+      const lineCard = page.locator('[data-testid^="manual-line-item-"]:visible');
+      await lineCard.waitFor({ state: "visible" });
+      await lineCard.getByPlaceholder("Description").fill("Mobile target repair");
+      await lineCard.getByPlaceholder("0", { exact: true }).fill("1");
+      await lineCard.getByPlaceholder("$0").fill("125");
+      const saveDraftReady = page
+        .getByTestId("manual-billie-next-moves")
+        .getByRole("button", { name: "Save draft", exact: true });
+      await saveDraftReady.waitFor({ state: "visible" });
+      await saveDraftReady.focus();
+      assert.equal(
+        await page.evaluate(() => {
+          const active = document.activeElement as HTMLElement | null;
+          return Boolean(
+            active &&
+              active.tagName === "BUTTON" &&
+              (active.textContent || "").replace(/\s+/g, " ").trim() === "Save draft" &&
+              active.closest('[data-testid="manual-billie-next-moves"]')
+          );
+        }),
+        true,
+        `${viewport.width}px Save draft is not keyboard-focusable`
+      );
+      await saveDraftReady.click();
+      const saveError = page.getByText(/Save failed|sign in required|Free plan save limit/i);
+      await Promise.race([
+        page
+          .getByTestId("manual-send-payment-handoff")
+          .getByText("Saved to library", { exact: true })
+          .waitFor({ state: "visible", timeout: 15000 }),
+        saveError.waitFor({ state: "visible", timeout: 15000 }).then(async () => {
+          throw new Error(`save failed: ${await saveError.textContent()}`);
+        })
+      ]);
+      await page
+        .getByTestId("manual-billie-next-moves")
+        .getByRole("button", { name: "Create payment link", exact: true })
+        .waitFor({ state: "visible" });
+    } finally {
+      await context.close();
+    }
+  }
+});
+
 test("voice-note upload appends transcript into intake notes before build", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -3988,7 +4177,10 @@ test("manual billie next moves guide the draft from save into payment setup", as
     await nextMoves.getByText("Save this service to memory").waitFor({ state: "visible" });
     await nextMoves.getByRole("button", { name: "Save draft" }).click();
 
-    await page.getByText("Saved").waitFor({ state: "visible" });
+    await page
+      .getByTestId("manual-send-payment-handoff")
+      .getByText("Saved to library", { exact: true })
+      .waitFor({ state: "visible" });
     await nextMoves.getByText("Add a payment link").waitFor({ state: "visible" });
     await nextMoves.getByText("Create the client portal").waitFor({ state: "visible" });
   } finally {
