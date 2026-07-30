@@ -1497,6 +1497,110 @@ test("mobile launcher Support control stays tappable across narrow widths", asyn
   }
 });
 
+test("mobile intake Paste notes control stays tappable across narrow widths", async () => {
+  const viewports = [
+    { width: 320, height: 640 },
+    { width: 360, height: 640 },
+    { width: 375, height: 667 },
+    { width: 390, height: 844 },
+    { width: 414, height: 896 }
+  ];
+
+  for (const viewport of viewports) {
+    const context = await browser.newContext({
+      viewport,
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 3
+    });
+    const page = await context.newPage();
+
+    try {
+      await openIntake(page);
+
+      const pasteNotes = page.getByRole("button", { name: "Paste notes", exact: true });
+      await pasteNotes.waitFor({ state: "visible" });
+
+      const geometry = await page.evaluate(() => {
+        const nextUp = document.querySelector('[data-testid="intake-billie-next-up"]');
+        const paste = Array.from(nextUp?.querySelectorAll("button") || []).find((el) => {
+          const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+          return text === "Paste notes";
+        });
+        if (!paste) {
+          throw new Error("expected Paste notes button inside intake-billie-next-up");
+        }
+        const sample = Array.from(nextUp?.querySelectorAll("button") || []).find((el) => {
+          const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+          return text === "Try sample notes";
+        });
+        const rect = paste.getBoundingClientRect();
+        const sampleRect = sample?.getBoundingClientRect() || null;
+        const styles = window.getComputedStyle(paste);
+        const overlapSample =
+          sampleRect != null &&
+          Math.max(0, Math.min(rect.right, sampleRect.right) - Math.max(rect.left, sampleRect.left)) > 0 &&
+          Math.max(0, Math.min(rect.bottom, sampleRect.bottom) - Math.max(rect.top, sampleRect.top)) > 0;
+        return {
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          top: rect.top,
+          left: rect.left,
+          bottom: rect.bottom,
+          right: rect.right,
+          minHeight: styles.minHeight,
+          paddingTop: styles.paddingTop,
+          paddingBottom: styles.paddingBottom,
+          overflowX:
+            document.documentElement.scrollWidth > window.innerWidth + 1 ||
+            document.body.scrollWidth > window.innerWidth + 1,
+          insideViewport:
+            rect.left >= -1 &&
+            rect.right <= window.innerWidth + 1 &&
+            rect.width > 0 &&
+            rect.height > 0,
+          overlapSample
+        };
+      });
+
+      assert.ok(
+        geometry.height >= 34 || geometry.width >= 120,
+        `${viewport.width}px Paste notes target too small: ${JSON.stringify(geometry)}`
+      );
+      assert.equal(geometry.overflowX, false, `${viewport.width}px Paste notes causes horizontal overflow`);
+      assert.equal(geometry.insideViewport, true, `${viewport.width}px Paste notes leaves viewport`);
+      assert.equal(geometry.overlapSample, false, `${viewport.width}px Paste notes overlaps Try sample notes`);
+
+      await pasteNotes.focus();
+      assert.equal(
+        await page.evaluate(() => {
+          const active = document.activeElement as HTMLElement | null;
+          return Boolean(
+            active &&
+              active.tagName === "BUTTON" &&
+              (active.textContent || "").replace(/\s+/g, " ").trim() === "Paste notes"
+          );
+        }),
+        true,
+        `${viewport.width}px Paste notes is not keyboard-focusable`
+      );
+
+      await pasteNotes.click();
+      const notes = page.getByPlaceholder(/Example: Jan 10 fixed sink/i);
+      await notes.waitFor({ state: "visible" });
+      assert.equal(
+        await page.evaluate(() => document.activeElement?.tagName === "TEXTAREA"),
+        true,
+        `${viewport.width}px Paste notes did not focus notes field`
+      );
+      await notes.fill("Mar 3 replaced faucet, 2 hours at $95/hr.");
+      await expectValueContains(notes, "Mar 3 replaced faucet");
+    } finally {
+      await context.close();
+    }
+  }
+});
+
 test("voice-note upload appends transcript into intake notes before build", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
