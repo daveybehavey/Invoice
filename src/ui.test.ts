@@ -5030,6 +5030,7 @@ test("business identity defaults prefill new manual drafts", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
+    await prepareReturningGuest(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Show manage tools" }).click();
     await page.getByRole("button", { name: "Branding" }).click();
@@ -5059,6 +5060,7 @@ test("ai intake applies business identity defaults when generating draft", async
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
+    await prepareReturningGuest(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Show manage tools" }).click();
     await page.getByRole("button", { name: "Branding" }).click();
@@ -5279,6 +5281,7 @@ test("launcher shows free-plan usage when monthly save limit is reached", async 
   });
   assert.equal(seedResponse.status(), 200);
 
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
@@ -5306,6 +5309,7 @@ test("launcher plan usage meter keeps remaining text inside on narrow phones", a
     window.localStorage.setItem("invoiceOwnerId", "ui-plan-visual-owner");
   });
 
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
@@ -5362,6 +5366,7 @@ test("launcher shows upgrade button when stripe checkout is configured", async (
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
+    await prepareReturningGuest(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Plan options" }).click();
     await page.getByRole("button", { name: "Upgrade" }).waitFor({ state: "visible" });
@@ -5378,6 +5383,7 @@ test("launcher shows billing link for pro accounts when portal URL is configured
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
+    await prepareReturningGuest(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByText("Pro plan · Unlimited saved invoices").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Plan options" }).click();
@@ -5396,6 +5402,7 @@ test("launcher shows billing button when stripe portal is configured", async () 
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
+    await prepareReturningGuest(page);
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Plan options" }).click();
     await page.getByRole("button", { name: "Billing" }).waitFor({ state: "visible" });
@@ -5409,6 +5416,7 @@ test("launcher shows billing completion notice and clears billing query param", 
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
+    await prepareReturningGuest(page);
     await page.goto(`${baseUrl}/?billing=success`, { waitUntil: "networkidle" });
     await page
       .getByText("Upgrade started. Billie will unlock Pro as soon as Stripe confirms your subscription.")
@@ -5453,6 +5461,7 @@ test("launcher shows resume draft shortcut when a scoped draft exists", async ()
       })
     );
   });
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
@@ -5551,6 +5560,7 @@ test("launcher shows draft recovery inbox for saved draft invoices", async () =>
     updatedAt: "2026-03-11T12:00:00.000Z"
   });
 
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
@@ -5636,6 +5646,7 @@ test("launcher shows invoice command center for drafts and follow-ups", async ()
     updatedAt: "2026-01-15T12:00:00.000Z"
   });
 
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
@@ -5715,6 +5726,7 @@ test("launcher starts a fresh repeat invoice from paid work", async () => {
     updatedAt: "2026-04-18T12:00:00.000Z"
   });
 
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
@@ -5831,6 +5843,7 @@ test("launcher command center surfaces due recurring invoices", async () => {
     }
   );
 
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
@@ -5926,6 +5939,7 @@ test("launcher command center distinguishes recurring work due soon", async () =
     }
   );
 
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
@@ -6131,6 +6145,7 @@ test("launcher draft recovery can reopen a saved draft in Billie workspace", asy
   });
   assert.equal(saveResponse.status(), 200);
 
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
@@ -6223,6 +6238,7 @@ test("launcher repeat command center can start from saved memory for paid client
     updatedAt: "2026-04-18T12:00:00.000Z"
   });
 
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
@@ -6311,6 +6327,7 @@ test("launcher follow-up card prefers delivery review for overdue unopened invoi
     updatedAt: "2026-04-01T12:00:00.000Z"
   });
 
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
@@ -6457,6 +6474,7 @@ test("launcher can start a fresh draft from repeat client memory", async () => {
       ])
     );
   });
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await openLauncher(page);
@@ -6527,6 +6545,7 @@ test("launcher shows pre-limit warning when one free save remains", async () => 
   });
   assert.equal(seedResponse.status(), 200);
 
+  await prepareReturningGuest(context);
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
