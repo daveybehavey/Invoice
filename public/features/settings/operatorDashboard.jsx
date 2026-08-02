@@ -258,6 +258,7 @@
             intervalDays: Number(entry.intervalDays ?? 30) || 30,
             nextDueMs,
             autoSendEnabled: Boolean(entry.autoSendEnabled),
+            autoSendRunCount: Math.max(0, Number(entry.autoSendRunCount ?? 0) || 0),
             lastAutoSendAt:
               typeof entry.lastAutoSendAt === "string" && entry.lastAutoSendAt.trim()
                 ? entry.lastAutoSendAt
@@ -266,6 +267,7 @@
               typeof entry.lastAutoSendRecipient === "string"
                 ? entry.lastAutoSendRecipient.trim().toLowerCase()
                 : "",
+            lastAutoSendMode: typeof entry.lastAutoSendMode === "string" ? entry.lastAutoSendMode.trim() : "",
             dueNow: Number.isFinite(nextDueMs) && nextDueMs <= nowMs,
             dueSoon:
               Number.isFinite(nextDueMs) &&

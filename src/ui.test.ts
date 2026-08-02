@@ -2214,7 +2214,7 @@ test("billie workspace blocks money-changing edits and keeps totals unchanged", 
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
     await getPrimaryIntakeBuildButton(page).click();
 
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Show review details" }).click();
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll("p.text-xs.text-slate-500")).some((node) =>
@@ -2225,7 +2225,7 @@ test("billie workspace blocks money-changing edits and keeps totals unchanged", 
     const billieComposer = page.locator("form.fixed textarea#ai-intake-input");
     await billieComposer.waitFor({ state: "visible" });
     await billieComposer.fill("Increase labor to 3 hours.");
-    await page.getByRole("button", { name: "Ask Billie" }).click();
+    await page.locator("form.fixed").getByRole("button", { name: "Ask Billie" }).click();
 
     await page
       .locator("form.fixed")
@@ -2292,7 +2292,7 @@ test("line-level billie refine rewrites only the selected line and keeps undo wo
       .fill("Jan 10 faucet repair and washer replacement.");
     await getPrimaryIntakeBuildButton(page).click();
 
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Show review details" }).click();
     await page.getByRole("button", { name: "Billie for Faucet repair" }).click();
     await page.getByRole("button", { name: "Refine Faucet repair" }).click();
@@ -2382,7 +2382,7 @@ test("notes-only billie refine rewrites notes without changing line items", asyn
       .fill("Jan 10 faucet repair.\nNotes: pay in 7 days thanks.");
     await getPrimaryIntakeBuildButton(page).click();
 
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Show review details" }).click();
     await page.getByRole("main").getByText("pay in 7 days thanks", { exact: true }).first().waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Billie for notes" }).click();
@@ -5079,8 +5079,8 @@ test("ai intake applies business identity defaults when generating draft", async
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
     await getPrimaryIntakeBuildButton(page).click();
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Generate Invoice" }).click();
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").click();
 
     await page.waitForURL(/\/manual$/, { timeout: 10000 });
     const fromInput = page.getByPlaceholder("Your Name / Company");
@@ -6833,7 +6833,7 @@ test("invoice library surfaces follow-up reminders for stale sent invoices", asy
     await page.getByText("Follow-up queue").waitFor({ state: "visible" });
     await page.getByText("1 sent invoice is waiting on follow-up.").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Open repeat invoice" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Show sent invoices" }).click();
+    await getLibraryButtonOutsideNextUp(page, "Show sent invoices").click();
     await page.getByText("INV-SENT-1", { exact: true }).waitFor({ state: "visible" });
     assert.equal(await page.getByText("INV-DRAFT-1").count(), 0);
   } finally {
@@ -7363,7 +7363,7 @@ test("invoice library supports recurring monthly reminders with pause", async ()
     await setRecurringButton.waitFor({ state: "visible" });
     await setRecurringButton.click();
 
-    await page.getByText("Repeat work").waitFor({ state: "visible" });
+    await page.getByText("Repeat work", { exact: true }).waitFor({ state: "visible" });
     await page.getByText(/Next recurring invoice is due/i).waitFor({ state: "visible" });
     await page.getByText("Recurring monthly").waitFor({ state: "visible" });
     await page
@@ -7375,7 +7375,7 @@ test("invoice library supports recurring monthly reminders with pause", async ()
       .waitFor({ state: "visible" });
 
     await page.getByRole("button", { name: "Pause recurring for INV-RECUR-1" }).click();
-    await page.getByText("Repeat work").waitFor({ state: "hidden" });
+    await page.getByText("Repeat work", { exact: true }).waitFor({ state: "hidden" });
     await page
       .getByRole("button", { name: "Set monthly recurring for INV-RECUR-1" })
       .waitFor({ state: "visible" });
@@ -7917,9 +7917,12 @@ test("invoice library recurring reminder opens invoice-again for the next due in
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    await page.getByText("Repeat work").waitFor({ state: "visible" });
-    await page.getByText("1 recurring invoice is ready.").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Open repeat invoice" }).click();
+    const repeatWorkBanner = page.locator("div.nb-banner").filter({
+      has: page.getByText("Repeat work", { exact: true })
+    });
+    await repeatWorkBanner.waitFor({ state: "visible" });
+    await repeatWorkBanner.getByText("1 recurring invoice is ready.").waitFor({ state: "visible" });
+    await repeatWorkBanner.getByRole("button", { name: "Open repeat invoice" }).click();
     await page.waitForURL(/\/manual$/, { timeout: 15000 });
     await expectValueContains(page.getByPlaceholder("Client Name"), "Recurring Open Client");
   } finally {
@@ -8611,9 +8614,9 @@ test("invoice library overdue unopened invoices prefer resend over reminder", as
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    const card = page.locator("div").filter({ hasText: "INV-OVERDUE-UNOPENED-1" }).first();
-    await card.getByText("Best next action").waitFor({ state: "visible" });
-    await card.getByText("Re-send or confirm delivery").waitFor({ state: "visible" });
+    const card = getLibraryInvoiceCard(page, "INV-OVERDUE-UNOPENED-1");
+    await card.getByText("Best next action", { exact: true }).waitFor({ state: "visible" });
+    await card.getByText("Re-send or confirm delivery", { exact: true }).waitFor({ state: "visible" });
     await card
       .getByText("This invoice is overdue, but it still has not been opened. Re-send it or confirm delivery before escalating into a payment reminder.")
       .waitFor({ state: "visible" });
@@ -9312,9 +9315,15 @@ test("client workspace gives estimates a safer next action", async () => {
       waitUntil: "networkidle"
     });
     await page.getByTestId("client-workspace-page").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Convert to invoice" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Convert to invoice" }).click();
-    await page.getByText("Converted EST-WORKSPACE-1 into a draft invoice.", { exact: false }).waitFor({
+    await page
+      .getByTestId("client-workspace-primary-action")
+      .and(page.getByRole("button", { name: "Convert to invoice" }))
+      .waitFor({ state: "visible" });
+    await page
+      .getByTestId("client-workspace-primary-action")
+      .and(page.getByRole("button", { name: "Convert to invoice" }))
+      .click();
+    await page.getByText(/Converted (?:EST-WORKSPACE-1|the estimate) into a draft invoice\./i).waitFor({
       state: "visible"
     });
   } finally {
@@ -9433,9 +9442,14 @@ test("operator dashboard surfaces open balance, recurring work, and repeat-ready
     await page.getByTestId("operator-dashboard-momentum").getByText("Momentum snapshot").waitFor({
       state: "visible"
     });
-    await page.getByTestId("operator-dashboard-momentum").getByText("last week").waitFor({
-      state: "visible"
-    });
+    await page
+      .getByTestId("operator-dashboard-momentum")
+      .locator("div.rounded-\\[22px\\]")
+      .filter({ has: page.getByText("Invoices touched", { exact: true }) })
+      .getByText(/vs last week/)
+      .waitFor({
+        state: "visible"
+      });
     await page.getByTestId("operator-dashboard-followups").getByText("INV-DASH-1").waitFor({
       state: "visible"
     });
@@ -9447,7 +9461,10 @@ test("operator dashboard surfaces open balance, recurring work, and repeat-ready
     await page.getByText("Recurring auto-send armed for billing@dashboard-client.example.", {
       exact: false
     }).waitFor({ state: "visible" });
-    await page.getByText("3 recurring runs recorded").waitFor({ state: "visible" });
+    await page
+      .getByTestId("operator-dashboard-recurring")
+      .getByText(/3 recurring runs recorded/)
+      .waitFor({ state: "visible" });
     await page.getByTestId("operator-dashboard-recurring-history").getByText("Dashboard Client").waitFor({
       state: "visible"
     });
@@ -9535,17 +9552,30 @@ test("operator dashboard surfaces estimate and action lanes", async () => {
     await page.getByTestId("operator-dashboard-momentum").getByText("Estimate conversions").waitFor({
       state: "visible"
     });
-    await page.getByTestId("operator-dashboard-recent-activity").getByText("Estimate Dashboard Client").waitFor({
-      state: "visible"
-    });
+    await page
+      .getByTestId("operator-dashboard-recent-activity")
+      .locator("div.rounded-\\[22px\\]")
+      .filter({ has: page.getByText("EST-DASH-1", { exact: true }) })
+      .getByText("Estimate Dashboard Client", { exact: true })
+      .waitFor({
+        state: "visible"
+      });
     await page.getByTestId("operator-dashboard-estimates").getByText("EST-DASH-1").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Convert to invoice" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Convert to invoice" }).click();
-    await page.getByText("Converted EST-DASH-1 into a draft invoice.", { exact: false }).waitFor({
+    await page
+      .getByTestId("operator-dashboard-estimates")
+      .getByRole("button", { name: "Convert to invoice" })
+      .waitFor({ state: "visible" });
+    await page
+      .getByTestId("operator-dashboard-estimates")
+      .getByRole("button", { name: "Convert to invoice" })
+      .click();
+    await page.getByText(/Converted (?:EST-DASH-1|the estimate) into a draft invoice\./i).waitFor({
       state: "visible"
     });
     await page.getByTestId("operator-dashboard-partials").waitFor({ state: "visible" });
-    await page.getByText("Partial payments", { exact: false }).waitFor({ state: "visible" });
+    await page.getByTestId("operator-dashboard-partials").getByText("Partial payments", { exact: true }).waitFor({
+      state: "visible"
+    });
   } finally {
     await context.close();
   }
@@ -9725,8 +9755,8 @@ test("invoice library supports sent and paid status actions", async () => {
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    await page.getByText("INV-STATUS-1").waitFor({ state: "visible" });
-    const card = page.locator("div").filter({ hasText: "INV-STATUS-1" }).first();
+    await page.getByText("INV-STATUS-1", { exact: true }).waitFor({ state: "visible" });
+    const card = getLibraryInvoiceCard(page, "INV-STATUS-1");
     await card.getByText("Draft invoice", { exact: true }).waitFor({ state: "visible" });
     await card.getByText("Draft total: $220.00", { exact: true }).waitFor({ state: "visible" });
     await card.getByText("Next: Open the draft, finish the details, then send or export.").waitFor({ state: "visible" });
@@ -9742,7 +9772,7 @@ test("invoice library supports sent and paid status actions", async () => {
     await card.getByRole("button", { name: "Mark paid" }).click();
     await card.locator("span.rounded-full", { hasText: "paid" }).waitFor({ state: "visible" });
     await card.getByText("Paid invoice", { exact: true }).waitFor({ state: "visible" });
-    await card.getByText("Paid and closed").waitFor({ state: "visible" });
+    await card.getByText("Paid and closed", { exact: true }).waitFor({ state: "visible" });
     await card.getByText("Next: Paid and closed. Reuse it for the next similar job or set a cadence.").waitFor({ state: "visible" });
 
     const listResponse = await context.request.get(`${baseUrl}/api/invoices`, {
@@ -10028,8 +10058,8 @@ test("invoice library filters cards by lifecycle status", async () => {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Sent (1)" }).click();
 
-    await page.getByText("INV-FILTER-SENT").waitFor({ state: "visible" });
-    await page.getByText("INV-FILTER-DRAFT").waitFor({ state: "hidden" });
+    await page.getByText("INV-FILTER-SENT", { exact: true }).waitFor({ state: "visible" });
+    await page.getByText("INV-FILTER-DRAFT", { exact: true }).waitFor({ state: "hidden" });
   } finally {
     await context.close();
   }
@@ -10086,10 +10116,11 @@ test("invoice library shows open pay link action when payment link exists", asyn
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    await page.getByText("INV-PAY-LINK-1").waitFor({ state: "visible" });
-    await page.getByText("Send/payment workflow").waitFor({ state: "visible" });
-    await page.getByText("Hosted link ready").waitFor({ state: "visible" });
-    await page.getByRole("link", { name: "Open hosted payment link" }).waitFor({ state: "visible" });
+    await page.getByText("INV-PAY-LINK-1", { exact: true }).waitFor({ state: "visible" });
+    const payLinkCard = getLibraryInvoiceCard(page, "INV-PAY-LINK-1");
+    await payLinkCard.getByText("Send/payment workflow").waitFor({ state: "visible" });
+    await payLinkCard.getByText("Hosted link ready").waitFor({ state: "visible" });
+    await payLinkCard.getByRole("link", { name: "Open hosted payment link" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -10209,8 +10240,8 @@ test("saving a client remembers bill-to details and autofills later matching dra
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
     await getPrimaryIntakeBuildButton(page).click();
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Generate Invoice" }).click();
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").click();
 
     await page.waitForURL(/\/manual$/, { timeout: 10000 });
     await expectValueContains(page.getByPlaceholder("Client Name"), "Mike Johnson\n1423 Pine St");
@@ -10267,7 +10298,7 @@ test("intake review surfaces recent saved jobs for the matched client", async ()
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
     await getPrimaryIntakeBuildButton(page).click();
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
     await page.getByText("Recent for Mike Johnson").waitFor({ state: "visible" });
@@ -10320,7 +10351,7 @@ test("review details surfaces repeat-work memory without changing parsed draft a
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 2h at $80/hr for Mike Johnson.");
     await getPrimaryIntakeBuildButton(page).click();
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
     const repeatWorkCard = page.getByTestId("review-repeat-work-card");
@@ -10411,7 +10442,7 @@ test("review details can apply a prior client note without changing numbers", { 
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 1h at $90/hr for Note Memory Client.");
     await getPrimaryIntakeBuildButton(page).click();
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
     await page.getByText("Saved in client memory").waitFor({ state: "visible" });
@@ -10493,7 +10524,7 @@ test("review details labels client-memory and recent invoice notes separately", 
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 1h at $90/hr for Repeat Note Client.");
     await getPrimaryIntakeBuildButton(page).click();
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
     await page.getByText("Saved in client memory").waitFor({ state: "visible" });
@@ -10560,7 +10591,7 @@ test("review details can append a saved note without changing numbers", async ()
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 1h at $90/hr for Append Note Client.");
     await getPrimaryIntakeBuildButton(page).click();
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
     await page
@@ -10572,7 +10603,7 @@ test("review details can append a saved note without changing numbers", async ()
       .getByTestId("review-append-saved-note-recent-note-prior-207")
       .click();
     await page.locator("form.fixed").getByText("Numbers unchanged").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Generate Invoice" }).click();
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").click();
     await expectValueEquals(
       page.getByPlaceholder("Thank you for your business"),
       "Customer prefers text updates.\nPayment due on receipt."
@@ -10637,7 +10668,7 @@ test("review details append upgrades structured note wording instead of stacking
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet 1h at $90/hr for Structured Append Client.");
     await getPrimaryIntakeBuildButton(page).click();
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
     await page
@@ -10649,7 +10680,7 @@ test("review details append upgrades structured note wording instead of stacking
       .getByTestId("review-append-saved-note-recent-note-prior-209")
       .click();
     await page.locator("form.fixed").getByText("Numbers unchanged").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Generate Invoice" }).click();
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").click();
     await expectValueEquals(
       page.getByPlaceholder("Thank you for your business"),
       "Customer prefers text updates.\nPayment due on receipt."
@@ -10710,7 +10741,7 @@ test("review details shows saved wording actions for multiple matched lines", { 
       .getByPlaceholder(/Example: Jan 10 fixed sink/i)
       .fill("Jan 30 fixed faucet and cleaned drain for Mike Johnson.");
     await getPrimaryIntakeBuildButton(page).click();
-    await page.getByRole("button", { name: "Generate Invoice" }).waitFor({ state: "visible" });
+    await getPrimaryIntakeStickyButton(page, "Generate Invoice").waitFor({ state: "visible" });
     await page.getByRole("button", { name: /show review details/i }).click();
 
     const repeatWorkCard = page.getByTestId("review-repeat-work-card");
@@ -10954,8 +10985,8 @@ test("manual editor send and payment handoff updates after save", async () => {
 
     const handoff = page.getByTestId("manual-send-payment-handoff");
     await handoff.waitFor({ state: "visible" });
-    await handoff.getByText("Ready").waitFor({ state: "visible" });
-    await handoff.getByText("Save before links").waitFor({ state: "visible" });
+    await handoff.getByText("Ready", { exact: true }).waitFor({ state: "visible" });
+    await handoff.getByText("Save before links", { exact: true }).waitFor({ state: "visible" });
     await handoff.getByRole("button", { name: "Save draft" }).click();
 
     await handoff.getByText("Saved to library").waitFor({ state: "visible" });
@@ -11240,6 +11271,8 @@ test("manual payment link fallback explains when hosted billing is not configure
 
     await page.getByRole("button", { name: "Create hosted payment link" }).click();
     await page
+      .locator("section")
+      .filter({ has: page.locator("#payment-link-url") })
       .getByText(
         "Hosted payment links are not configured on this build yet. You can still share the client portal, copy the share pack, or send the invoice manually."
       )
@@ -11283,9 +11316,17 @@ test("manual export panel can create a client portal link for a saved invoice", 
     await page.getByRole("button", { name: "Save invoice" }).click();
     await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
 
-    await page.getByRole("button", { name: "Create client portal" }).click();
-    await page.getByRole("link", { name: "Open client portal" }).first().waitFor({ state: "visible" });
-    const portalHref = await page.getByRole("link", { name: "Open client portal" }).first().getAttribute("href");
+    await getManualExportFormButton(page, "Create client portal").click();
+    await page
+      .locator("section")
+      .filter({ has: page.getByText("Client portal", { exact: true }) })
+      .getByRole("link", { name: "Open client portal" })
+      .waitFor({ state: "visible" });
+    const portalHref = await page
+      .locator("section")
+      .filter({ has: page.getByText("Client portal", { exact: true }) })
+      .getByRole("link", { name: "Open client portal" })
+      .getAttribute("href");
     assert.match(
       portalHref ?? "",
       /^https?:\/\/[^/]+\/portal\/[0-9a-f-]{36}\/token123$/
@@ -11474,6 +11515,27 @@ function getPrimaryIntakeStickyButton(page: Page, name: string): Locator {
 function getIntakeButtonOutsideNextUp(page: Page, name: string): Locator {
   return page.locator(
     `xpath=//button[normalize-space()=${JSON.stringify(name)} and not(ancestor::*[@data-testid="intake-billie-next-up"])]`
+  );
+}
+
+/** Library invoice card surface for a specific invoice number (excludes Billie next-up titles). */
+function getLibraryInvoiceCard(page: Page, invoiceNumber: string): Locator {
+  return page.locator("div.nb-surface.nb-surface--elevated").filter({
+    has: page.getByText(invoiceNumber, { exact: true })
+  });
+}
+
+/** Library action button outside library-billie-next-up chrome. */
+function getLibraryButtonOutsideNextUp(page: Page, name: string): Locator {
+  return page.locator(
+    `xpath=//button[normalize-space()=${JSON.stringify(name)} and not(ancestor::*[@data-testid="library-billie-next-up"])]`
+  );
+}
+
+/** Manual export/form control outside Billie next-moves and handoff chrome. */
+function getManualExportFormButton(page: Page, name: string): Locator {
+  return page.locator(
+    `xpath=//button[normalize-space()=${JSON.stringify(name)} and not(ancestor::*[@data-testid="manual-billie-next-moves"]) and not(ancestor::*[@data-testid="manual-send-payment-handoff"])]`
   );
 }
 
