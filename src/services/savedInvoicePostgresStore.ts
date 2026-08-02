@@ -159,7 +159,8 @@ export class PostgresSavedInvoiceRepository {
         total: row.invoice_data.finishedInvoice.total,
         balanceDue: row.invoice_data.finishedInvoice.balanceDue,
         dueDate: row.invoice_data.finishedInvoice.dueDate ?? row.invoice_data.structuredInvoice.dueDate,
-        paymentLinkUrl: row.invoice_data.finishedInvoice.paymentLinkUrl
+        paymentLinkUrl: row.invoice_data.finishedInvoice.paymentLinkUrl,
+        paymentRecords: row.invoice_data.finishedInvoice.paymentRecords ?? []
       })
     );
   }

@@ -324,7 +324,8 @@ export const InvoiceListItemSchema = z.object({
   total: OptionalNumber,
   balanceDue: OptionalNumber,
   dueDate: OptionalString,
-  paymentLinkUrl: OptionalUrl
+  paymentLinkUrl: OptionalUrl,
+  paymentRecords: z.array(PaymentRecordSchema).default([])
 });
 
 export const RecentClientContextItemSchema = z.object({
