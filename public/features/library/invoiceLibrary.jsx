@@ -1127,7 +1127,7 @@
         );
         if (status === "paid") {
           setDeliveryNotice(
-            `Marked ${updatedInvoice.invoiceNumber || "the invoice"} as paid. Next: use Invoice again when similar work comes back.`
+            `Marked ${mergedInvoice.invoiceNumber || "the invoice"} as paid. Next: use Invoice again when similar work comes back.`
           );
         } else if (status === "sent") {
           setDeliveryNotice(
@@ -3914,7 +3914,10 @@
                           <p className="mt-2 text-xs leading-5 text-slate-500">
                             <span className="font-semibold text-slate-600">Next:</span> {nextActionHint}
                           </p>
-                          <div className="mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3 py-3 shadow-sm">
+                          <div
+                            className="mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3 py-3 shadow-sm"
+                            data-testid="library-card-best-next-action"
+                          >
                             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                               Best next action
                             </p>

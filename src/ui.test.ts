@@ -5660,10 +5660,9 @@ test("launcher shows invoice command center for drafts and follow-ups", async ()
     await queue.getByText("Last sent to ops-reminder@example.com.").waitFor({ state: "visible" });
     await queue.getByRole("button", { name: "Mark INV-OPS-SENT paid" }).waitFor({ state: "visible" });
     await queue.getByRole("button", { name: "Send reminder for INV-OPS-SENT" }).click();
+    await page.getByText(/Reminder recorded for ops-reminder@example.com\./i).waitFor({ state: "visible" });
     await page
-      .getByText(
-        "Reminder recorded for ops-reminder@example.com. delivery is tracked without sending Next: add a hosted payment link so the follow-up points to an easier payment path."
-      )
+      .getByText(/Next: add a hosted payment link so the follow-up points to an easier payment path\./i)
       .waitFor({ state: "visible" });
     await queue.getByText("$210.00", { exact: true }).waitFor({ state: "visible" });
     await queue.getByRole("button", { name: "Open INV-OPS-DRAFT with Billie" }).waitFor({ state: "visible" });
@@ -5752,6 +5751,7 @@ test("launcher starts a fresh repeat invoice from paid work", async () => {
 
 test("launcher command center surfaces due recurring invoices", async () => {
   const ownerId = "ui-launcher-recurring-owner";
+  const nextDueAt = "2026-03-20T17:00:00.000Z";
   const context = await browser.newContext();
   await context.addInitScript(
     ({ initOwnerId, recurringNextDueAt, recurringInvoiceId }) => {
@@ -5773,7 +5773,7 @@ test("launcher command center surfaces due recurring invoices", async () => {
     },
     {
       initOwnerId: ownerId,
-      recurringNextDueAt: "2026-03-20T00:00:00.000Z",
+      recurringNextDueAt: nextDueAt,
       recurringInvoiceId: "placeholder"
     }
   );
@@ -5822,7 +5822,7 @@ test("launcher command center surfaces due recurring invoices", async () => {
   });
 
   await context.addInitScript(
-    ({ initOwnerId, nextDueAt, invoiceId }) => {
+    ({ initOwnerId, nextDueAt: dueAt, invoiceId }) => {
       window.localStorage.setItem("invoiceOwnerId", initOwnerId);
       window.localStorage.setItem(
         `invoiceRecurringSchedules::owner:${initOwnerId}`,
@@ -5830,7 +5830,7 @@ test("launcher command center surfaces due recurring invoices", async () => {
           entries: {
             [invoiceId]: {
               intervalDays: 30,
-              nextDueAt
+              nextDueAt: dueAt
             }
           }
         })
@@ -5838,7 +5838,7 @@ test("launcher command center surfaces due recurring invoices", async () => {
     },
     {
       initOwnerId: ownerId,
-      nextDueAt: "2026-03-20T00:00:00.000Z",
+      nextDueAt,
       invoiceId: recurringInvoiceId
     }
   );
@@ -5847,11 +5847,22 @@ test("launcher command center surfaces due recurring invoices", async () => {
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const dueLabel = await page.evaluate(
+      (iso) =>
+        new Date(iso).toLocaleDateString([], {
+          month: "short",
+          day: "numeric",
+          year: "numeric"
+        }),
+      nextDueAt
+    );
     const queue = page.locator("section").filter({ hasText: "Invoice command center" });
     await queue.getByText("1 recurring invoice is due now.").waitFor({ state: "visible" });
     await queue.getByText("Recurring invoice due now").waitFor({ state: "visible" });
     await queue
-      .getByText("INV-LAUNCHER-RECUR for Launcher Recurring Client is due Mar 20, 2026. Reopen it now so the repeat job keeps moving.")
+      .getByText(
+        `INV-LAUNCHER-RECUR for Launcher Recurring Client is due ${dueLabel}. Reopen it now so the repeat job keeps moving.`
+      )
       .waitFor({ state: "visible" });
     await queue.getByRole("button", { name: "Open repeat invoice from INV-LAUNCHER-RECUR" }).click();
 
@@ -6149,15 +6160,15 @@ test("launcher draft recovery can reopen a saved draft in Billie workspace", asy
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
-    await page.getByRole("button", { name: "Open with Billie" }).first().click();
+    const draftRecovery = page.locator("section").filter({ has: page.getByText("Draft recovery", { exact: true }) });
+    await draftRecovery.waitFor({ state: "visible" });
+    await draftRecovery.getByRole("button", { name: "Open INV-LAUNCHER-BILLIE-DRAFT with Billie" }).click();
 
     await page.waitForURL(/\/manual\?tab=assistant&source=library$/, { timeout: 10000 });
     await page.getByText("Saved invoice reopened in Billie workspace.").waitFor({ state: "visible" });
-    await page.getByText("Continue from saved work").waitFor({ state: "visible" });
-    await page
-      .locator('[data-testid="manual-billie-workspace"]')
-      .getByRole("button", { name: "Polish reopened draft" })
-      .waitFor({ state: "visible" });
+    const billieWorkspace = page.locator('[data-testid="manual-billie-workspace"]');
+    await billieWorkspace.getByText("Continue from saved work", { exact: true }).waitFor({ state: "visible" });
+    await billieWorkspace.getByRole("button", { name: "Polish reopened draft" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -6907,6 +6918,7 @@ test("invoice library follow-up reminder supports snooze and persists it", async
 
 test("invoice library follow-up reminder can copy a suggested reminder note", async () => {
   const context = await browser.newContext();
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await context.addInitScript(() => {
     window.localStorage.setItem("invoiceOwnerId", "ui-reminder-copy-owner");
   });
@@ -6966,11 +6978,11 @@ test("invoice library follow-up reminder can copy a suggested reminder note", as
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
     await page.getByText("Follow-up queue").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Copy reminder note" }).waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Copy reminder note" }).click();
+    const followUpQueue = page.locator("div.nb-accent-panel").filter({ hasText: "Follow-up queue" });
+    await followUpQueue.getByText("A quick follow-up on INV-COPY-1", { exact: false }).waitFor({ state: "visible" });
+    await followUpQueue.getByRole("button", { name: "Copy reminder note" }).click();
     await page
-      .locator("p.rounded-xl.border.border-blue-100")
-      .getByText("A quick follow-up on INV-COPY-1", { exact: false })
+      .getByText("Reminder note copied. Paste it into email or a message.")
       .waitFor({ state: "visible" });
   } finally {
     await context.close();
@@ -7038,13 +7050,13 @@ test("invoice library follow-up plan can mark the oldest reminder paid", async (
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    const plan = page.getByTestId("library-follow-up-plan");
-    await plan.waitFor({ state: "visible" });
-    await plan.getByText("Past due since").waitFor({ state: "visible" });
-    await plan.getByText("Sent to reminder.paid@example.com").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Mark paid" }).first().click();
+    const followUpQueue = page.locator("div.nb-accent-panel").filter({ hasText: "Follow-up queue" });
+    await followUpQueue.waitFor({ state: "visible" });
+    await followUpQueue.getByText("Past due since").waitFor({ state: "visible" });
+    await followUpQueue.getByText("Sent to reminder.paid@example.com").waitFor({ state: "visible" });
+    await followUpQueue.getByRole("button", { name: "Mark paid" }).click();
     await page
-      .getByText("Marked INV-REMINDER-PAID as paid. Next: use Invoice again when similar work comes back.")
+      .getByText("Marked INV-REM-PAID-1 as paid. Next: use Invoice again when similar work comes back.")
       .waitFor({ state: "visible" });
     await page.getByText("Follow-up queue").waitFor({ state: "hidden" });
   } finally {
@@ -8503,7 +8515,7 @@ test("invoice library card distinguishes tracked but unopened delivery", async (
         finishedInvoice: {
           invoiceNumber: "INV-UNOPENED-1",
           issueDate: "2026-05-01",
-          dueDate: "2026-05-20",
+          dueDate: futureDueDateIso(60),
           customerName: "Tracked Unopened Client",
           currency: "USD",
           paymentLinkUrl: "https://pay.example.com/invoice/INV-UNOPENED-1",
@@ -8541,9 +8553,9 @@ test("invoice library card distinguishes tracked but unopened delivery", async (
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    const card = page.locator("div").filter({ hasText: "INV-UNOPENED-1" }).first();
-    await card.getByText("Best next action").waitFor({ state: "visible" });
-    await card.getByText("Check delivery first").waitFor({ state: "visible" });
+    const card = getLibraryInvoiceCard(page, "INV-UNOPENED-1");
+    await card.getByText("Best next action", { exact: true }).waitFor({ state: "visible" });
+    await card.getByText("Check delivery first", { exact: true }).waitFor({ state: "visible" });
     await card
       .getByText("This invoice is tracked but still unopened. Confirm the client saw it before you escalate into a reminder.")
       .waitFor({ state: "visible" });
@@ -8692,9 +8704,9 @@ test("invoice library Billie next-up guide prioritizes follow-up work", async ()
     const nextUp = page.getByTestId("library-billie-next-up");
     await nextUp.waitFor({ state: "visible" });
     await nextUp.getByText("Billie next up").waitFor({ state: "visible" });
-    await nextUp.getByText("Follow up on INV-GUIDE-1").waitFor({ state: "visible" });
-    await nextUp.getByText("Open balance $190.00").waitFor({ state: "visible" });
-    await nextUp.getByRole("button", { name: "Send reminder" }).waitFor({ state: "visible" });
+    await nextUp.getByText("Check delivery for INV-GUIDE-1").waitFor({ state: "visible" });
+    await nextUp.getByText("Total $190.00").waitFor({ state: "visible" });
+    await nextUp.getByRole("button", { name: "Mark opened" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -9119,22 +9131,6 @@ test("client workspace shows saved services and can start from memory", async ()
         }
       ])
     );
-    window.localStorage.setItem(
-      `invoiceRecurringSchedules::owner:${initOwnerId}`,
-      JSON.stringify({
-        entries: {
-          "workspace-invoice-id": {
-            intervalDays: 90,
-            nextDueAt: "2026-05-15T00:00:00.000Z",
-            autoSendEnabled: true,
-            lastAutoSendAt: "2026-05-01T18:00:00.000Z",
-            lastAutoSendRecipient: "billing@workspace-client.example",
-            autoSendRunCount: 2,
-            lastAutoSendMode: "provider"
-          }
-        }
-      })
-    );
   }, ownerId);
   const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
     headers: {
@@ -9173,6 +9169,30 @@ test("client workspace shows saved services and can start from memory", async ()
     }
   });
   assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const workspaceInvoiceId = seedPayload?.invoice?.invoiceId as string;
+  assert.ok(workspaceInvoiceId);
+  await context.addInitScript(
+    ({ initOwnerId, invoiceId }) => {
+      window.localStorage.setItem(
+        `invoiceRecurringSchedules::owner:${initOwnerId}`,
+        JSON.stringify({
+          entries: {
+            [invoiceId]: {
+              intervalDays: 90,
+              nextDueAt: "2026-05-15T00:00:00.000Z",
+              autoSendEnabled: false,
+              lastAutoSendAt: "2026-05-01T18:00:00.000Z",
+              lastAutoSendRecipient: "billing@workspace-client.example",
+              autoSendRunCount: 2,
+              lastAutoSendMode: "provider"
+            }
+          }
+        })
+      );
+    },
+    { initOwnerId: ownerId, invoiceId: workspaceInvoiceId }
+  );
 
   const partialSeedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
     headers: {
@@ -9205,13 +9225,29 @@ test("client workspace shows saved services and can start from memory", async ()
           ],
           subtotal: 150,
           total: 150,
-          balanceDue: 75,
-          paymentRecords: [{ id: "payment-1", amount: 75, paidAt: "2026-05-07", note: "Deposit" }]
+          balanceDue: 150
         }
       }
     }
   });
   assert.equal(partialSeedResponse.status(), 200);
+  const partialSeedPayload = await partialSeedResponse.json();
+  const partialInvoiceId = partialSeedPayload?.invoice?.invoiceId as string;
+  assert.ok(partialInvoiceId);
+  const recordPaymentResponse = await context.request.post(
+    `${baseUrl}/api/invoices/${partialInvoiceId}/record-payment`,
+    {
+      headers: {
+        "x-invoice-user-id": ownerId
+      },
+      data: {
+        amount: 75,
+        paidAt: "2026-05-07",
+        note: "Deposit"
+      }
+    }
+  );
+  assert.equal(recordPaymentResponse.status(), 200);
 
   const page = await context.newPage();
   try {
@@ -9232,16 +9268,18 @@ test("client workspace shows saved services and can start from memory", async ()
       exact: false
     }).waitFor({ state: "visible" });
     await page.getByText("2 recurring runs recorded").waitFor({ state: "visible" });
-    await page.getByText("Payment progress").waitFor({ state: "visible" });
-    await page.getByText("50% complete").waitFor({ state: "visible" });
-    await page.getByText("Payment timeline").waitFor({ state: "visible" });
-    await page.getByText("Deposit").waitFor({ state: "visible" });
-    await page.getByRole("button", { name: "Open latest with Billie" }).waitFor({ state: "visible" });
+    const paymentProgress = page.getByTestId("client-workspace-payment-progress");
+    await paymentProgress.waitFor({ state: "visible" });
+    await paymentProgress.getByText("50% complete").waitFor({ state: "visible" });
+    const paymentTimeline = page.getByTestId("client-workspace-payment-timeline");
+    await paymentTimeline.waitFor({ state: "visible" });
+    await paymentTimeline.getByText("Deposit", { exact: true }).waitFor({ state: "visible" });
+    await paymentProgress.getByRole("button", { name: "Open latest with Billie" }).waitFor({ state: "visible" });
     await page.getByTestId("client-workspace-history").getByText("INV-WORKSPACE-1").waitFor({
       state: "visible"
     });
 
-    await page.getByTestId("client-workspace-primary-action").click();
+    await page.getByTestId("client-workspace-page").getByRole("button", { name: "Start from memory" }).click();
     await page.waitForURL(/\/manual$/, { timeout: 15000 });
     await expectValueContains(page.getByPlaceholder("Client Name"), "Workspace Client");
     await expectValueContains(
@@ -9847,13 +9885,19 @@ test("invoice library card surfaces a best next action for sent invoices", async
     }
   });
   assert.equal(sendResponse.status(), 200);
+  const openedResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/delivery/opened`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    }
+  });
+  assert.equal(openedResponse.status(), 200);
 
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    const card = page.locator("div").filter({ hasText: "INV-CARD-NEXT-1" }).first();
-    await card.getByText("Best next action").waitFor({ state: "visible" });
-    await card.getByText("Open and add payment link").waitFor({ state: "visible" });
+    const card = getLibraryInvoiceCard(page, "INV-CARD-NEXT-1");
+    await card.getByText("Best next action", { exact: true }).waitFor({ state: "visible" });
+    await card.getByText("Open and add payment link", { exact: true }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -9881,7 +9925,7 @@ test("invoice library card highlights a missing client portal after the payment 
         finishedInvoice: {
           invoiceNumber: "INV-CARD-PORTAL-1",
           issueDate: "2026-05-02",
-          dueDate: "2026-05-22",
+          dueDate: futureDueDateIso(60),
           customerName: "Portal Gap Client",
           currency: "USD",
           paymentLinkUrl: "https://pay.example.com/invoice/INV-CARD-PORTAL-1",
@@ -9904,14 +9948,22 @@ test("invoice library card highlights a missing client portal after the payment 
     }
   });
   assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const invoiceId = seedPayload?.invoice?.invoiceId as string;
+  assert.ok(invoiceId);
+  await mutateStoredInvoice(invoiceId, {
+    status: "sent",
+    updatedAt: "2026-05-02T12:00:00.000Z"
+  });
 
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
-    const card = page.locator("div").filter({ hasText: "INV-CARD-PORTAL-1" }).first();
-    await card.getByText("Best next action").waitFor({ state: "visible" });
-    await card.getByText("Create client portal").waitFor({ state: "visible" });
-    await card
+    const card = getLibraryInvoiceCard(page, "INV-CARD-PORTAL-1");
+    const bestNextAction = card.getByTestId("library-card-best-next-action");
+    await bestNextAction.waitFor({ state: "visible" });
+    await bestNextAction.getByText("Create client portal", { exact: true }).waitFor({ state: "visible" });
+    await bestNextAction
       .getByText("The payment link is ready. Add the portal so the customer also gets a clear review surface before paying.")
       .waitFor({ state: "visible" });
   } finally {
@@ -11523,6 +11575,14 @@ function getLibraryInvoiceCard(page: Page, invoiceNumber: string): Locator {
   return page.locator("div.nb-surface.nb-surface--elevated").filter({
     has: page.getByText(invoiceNumber, { exact: true })
   });
+}
+
+/** Stable YYYY-MM-DD due date far enough ahead to avoid overdue priority and timezone edges. */
+function futureDueDateIso(daysAhead: number): string {
+  const date = new Date();
+  date.setUTCHours(12, 0, 0, 0);
+  date.setUTCDate(date.getUTCDate() + daysAhead);
+  return date.toISOString().slice(0, 10);
 }
 
 /** Library action button outside library-billie-next-up chrome. */

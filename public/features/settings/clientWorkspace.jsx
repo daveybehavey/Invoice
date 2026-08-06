@@ -586,6 +586,9 @@
         onSecondary: () => navigate("/settings/memory")
       };
     }, [estimateActionId, latestInvoice, leadService, navigate, selectedClientName, selectedMemoryEntry]);
+    const recurringAutoSendRecipient = recurringInvoice
+      ? getRecurringAutoSendRecipient(recurringInvoice, clientMemory)
+      : "";
     const recurringClientButtons = recurringInvoice
       ? [
           {
@@ -693,7 +696,7 @@
                         Review memory
                       </button>
                       {selectedMemoryEntry ? (
-                        <button type="button" className="nb-btn-primary" onClick={handleStartFromMemory}>
+                        <button type="button" className="nb-btn-primary" onClick={() => handleStartFromMemory()}>
                           Start from memory
                         </button>
                       ) : (
@@ -813,7 +816,10 @@
                               </div>
                             ) : null}
                           </div>
-                          <div className="rounded-[22px] border border-slate-100 bg-white/85 p-4">
+                          <div
+                            className="rounded-[22px] border border-slate-100 bg-white/85 p-4"
+                            data-testid="client-workspace-payment-progress"
+                          >
                             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                               Payment progress
                             </p>
@@ -845,7 +851,10 @@
                                       : ""}
                                   </p>
                                 ) : null}
-                                <div className="rounded-[18px] border border-slate-100 bg-white/90 p-3">
+                                <div
+                                  className="rounded-[18px] border border-slate-100 bg-white/90 p-3"
+                                  data-testid="client-workspace-payment-timeline"
+                                >
                                   <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
                                     Payment timeline
                                   </p>

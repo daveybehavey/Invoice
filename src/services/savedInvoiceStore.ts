@@ -121,7 +121,8 @@ export async function listSavedInvoiceMetadata(
         total: invoice.invoiceData.finishedInvoice.total,
         balanceDue: invoice.invoiceData.finishedInvoice.balanceDue,
         dueDate: invoice.invoiceData.finishedInvoice.dueDate ?? invoice.invoiceData.structuredInvoice.dueDate,
-        paymentLinkUrl: invoice.invoiceData.finishedInvoice.paymentLinkUrl
+        paymentLinkUrl: invoice.invoiceData.finishedInvoice.paymentLinkUrl,
+        paymentRecords: invoice.invoiceData.finishedInvoice.paymentRecords ?? []
       })
     )
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
