@@ -2578,9 +2578,10 @@ test("daily scratchpad can convert a whole session directly into Billie intake",
     await page.getByRole("button", { name: "Open session with Billie" }).first().click();
     await page.waitForURL(/\/ai-intake$/, { timeout: 10000 });
     await page.getByTestId("scratchpad-seed-notice").waitFor({ state: "visible" });
-    await expectValueContains(
+    // Supported product assembly: day-labeled notes, newest-first within the session.
+    await expectValueEquals(
       page.locator("#ai-intake-input"),
-      "Installed replacement filter.\n\nChecked pressure and left the system running."
+      "Today\nChecked pressure and left the system running.\n\nToday\nInstalled replacement filter."
     );
   } finally {
     await context.close();
