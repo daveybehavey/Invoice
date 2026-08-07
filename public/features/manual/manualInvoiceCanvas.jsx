@@ -1182,9 +1182,12 @@ function ManualInvoiceCanvas() {
     if (clearStatusTimeoutRef.current) {
       window.clearTimeout(clearStatusTimeoutRef.current);
     }
+    // Keep action feedback visible long enough that autosave and note updates
+    // cannot race the toast away before the user (or UI tests) can read it.
     clearStatusTimeoutRef.current = window.setTimeout(() => {
       setDraftStatus("");
-    }, 1800);
+      clearStatusTimeoutRef.current = null;
+    }, 6000);
   };
 
   const handleInsertSavedLineItem = (entry) => {
@@ -1659,12 +1662,15 @@ function ManualInvoiceCanvas() {
     }
     saveTimeoutRef.current = window.setTimeout(() => {
       persistDraft();
-      setDraftStatus("Draft saved");
+      // Keep in-flight action feedback (templates, retainers, etc.) visible
+      // instead of replacing it with the generic autosave toast.
       if (clearStatusTimeoutRef.current) {
-        window.clearTimeout(clearStatusTimeoutRef.current);
+        return;
       }
+      setDraftStatus("Draft saved");
       clearStatusTimeoutRef.current = window.setTimeout(() => {
         setDraftStatus("");
+        clearStatusTimeoutRef.current = null;
       }, 1500);
     }, 500);
     return () => {
