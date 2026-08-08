@@ -532,7 +532,7 @@ function ManualInvoiceCanvas() {
     };
     writeFavoriteLayoutStudio(nextFavorite);
     setSavedFavoriteLayoutStudio(nextFavorite);
-    setDraftStatus("Saved this invoice look as your favorite layout.");
+    setTimedDraftStatus("Saved this invoice look as your favorite layout.");
   };
   const handleApplyFavoriteLayoutStudio = () => {
     if (!savedFavoriteLayoutStudio) {
@@ -544,12 +544,12 @@ function ManualInvoiceCanvas() {
     setAccentColor(savedFavoriteLayoutStudio.accentColor);
     setLogoVisible(savedFavoriteLayoutStudio.logoVisible !== false);
     setNotesVisible(savedFavoriteLayoutStudio.notesVisible !== false);
-    setDraftStatus("Applied your saved favorite invoice look.");
+    setTimedDraftStatus("Applied your saved favorite invoice look.");
   };
   const handleClearFavoriteLayoutStudio = () => {
     writeFavoriteLayoutStudio(null);
     setSavedFavoriteLayoutStudio(null);
-    setDraftStatus("Cleared your saved favorite invoice look.");
+    setTimedDraftStatus("Cleared your saved favorite invoice look.");
   };
   const emailLinkSaveProvider = Array.isArray(saveAuthProviders)
     ? saveAuthProviders.find((provider) => provider?.id === "email_link")
@@ -590,8 +590,42 @@ function ManualInvoiceCanvas() {
       : "";
   const saveTimeoutRef = useRef(null);
   const clearStatusTimeoutRef = useRef(null);
+  const timeCaptureStatusTimeoutRef = useRef(null);
+  const actionFeedbackActiveRef = useRef(false);
+  const actionFeedbackUntilRef = useRef(0);
   const billieChangeHighlightTimeoutRef = useRef(null);
   const draftStatusLabel = "Draft restored";
+
+  const clearDraftStatusTimer = () => {
+    if (!clearStatusTimeoutRef.current) {
+      return;
+    }
+    window.clearTimeout(clearStatusTimeoutRef.current);
+    clearStatusTimeoutRef.current = null;
+  };
+
+  const isActionFeedbackActive = () => {
+    if (actionFeedbackActiveRef.current) {
+      return true;
+    }
+    return Date.now() < actionFeedbackUntilRef.current;
+  };
+
+  const scheduleDraftStatusClear = (delayMs, { isActionFeedback = false } = {}) => {
+    clearDraftStatusTimer();
+    const until = isActionFeedback ? Date.now() + delayMs : 0;
+    actionFeedbackUntilRef.current = until;
+    actionFeedbackActiveRef.current = Boolean(isActionFeedback);
+    clearStatusTimeoutRef.current = window.setTimeout(() => {
+      setDraftStatus("");
+      clearStatusTimeoutRef.current = null;
+      // Only inactivate when this timer is still the owning action schedule.
+      if (actionFeedbackUntilRef.current === until) {
+        actionFeedbackActiveRef.current = false;
+        actionFeedbackUntilRef.current = 0;
+      }
+    }, delayMs);
+  };
   const rankedSavedLineItems = useMemo(
     () =>
       rankSavedLineItems({
@@ -977,11 +1011,14 @@ function ManualInvoiceCanvas() {
     }
     setTimeCaptureStartedAt(Date.now());
     setTimeCaptureStatus("Timer started");
-    if (clearStatusTimeoutRef.current) {
-      window.clearTimeout(clearStatusTimeoutRef.current);
+    // Keep time-capture status on its own timer so it cannot steal/cancel draft-status clears.
+    if (timeCaptureStatusTimeoutRef.current) {
+      window.clearTimeout(timeCaptureStatusTimeoutRef.current);
+      timeCaptureStatusTimeoutRef.current = null;
     }
-    clearStatusTimeoutRef.current = window.setTimeout(() => {
+    timeCaptureStatusTimeoutRef.current = window.setTimeout(() => {
       setTimeCaptureStatus("");
+      timeCaptureStatusTimeoutRef.current = null;
     }, 1800);
   };
 
@@ -1160,12 +1197,7 @@ function ManualInvoiceCanvas() {
     if (changedCount > 0) {
       setLineItems(nextLineItems);
       setDraftStatus(`Polished ${changedCount} line item${changedCount > 1 ? "s" : ""}`);
-      if (clearStatusTimeoutRef.current) {
-        window.clearTimeout(clearStatusTimeoutRef.current);
-      }
-      clearStatusTimeoutRef.current = window.setTimeout(() => {
-        setDraftStatus("");
-      }, 1800);
+      scheduleDraftStatusClear(1800);
     }
     return changedCount;
   };
@@ -1178,13 +1210,14 @@ function ManualInvoiceCanvas() {
   };
 
   const setTimedDraftStatus = (message) => {
+    // Arm action feedback before scheduling clear so a concurrent autosave tick
+    // cannot treat the status lane as idle between these updates.
+    actionFeedbackActiveRef.current = true;
+    actionFeedbackUntilRef.current = Date.now() + 1800;
     setDraftStatus(message);
-    if (clearStatusTimeoutRef.current) {
-      window.clearTimeout(clearStatusTimeoutRef.current);
-    }
-    clearStatusTimeoutRef.current = window.setTimeout(() => {
-      setDraftStatus("");
-    }, 1800);
+    // Action feedback must stay distinct from generic clear timers so autosave
+    // can suppress "Draft saved" only while this feedback is genuinely active.
+    scheduleDraftStatusClear(1800, { isActionFeedback: true });
   };
 
   const handleInsertSavedLineItem = (entry) => {
@@ -1417,12 +1450,7 @@ function ManualInvoiceCanvas() {
       setSaveError("");
       if (result.convertedFromSvg) {
         setDraftStatus("SVG logo converted to PNG for PDF compatibility");
-        if (clearStatusTimeoutRef.current) {
-          window.clearTimeout(clearStatusTimeoutRef.current);
-        }
-        clearStatusTimeoutRef.current = window.setTimeout(() => {
-          setDraftStatus("");
-        }, 1800);
+        scheduleDraftStatusClear(1800);
       }
     } catch (_error) {
       setSaveError("Couldn't read that logo file.");
@@ -1644,12 +1672,7 @@ function ManualInvoiceCanvas() {
   useEffect(() => {
     if (initialDraft) {
       setDraftStatus(draftStatusLabel);
-      if (clearStatusTimeoutRef.current) {
-        window.clearTimeout(clearStatusTimeoutRef.current);
-      }
-      clearStatusTimeoutRef.current = window.setTimeout(() => {
-        setDraftStatus("");
-      }, 2000);
+      scheduleDraftStatusClear(2000);
     }
   }, [initialDraft, draftStatusLabel]);
 
@@ -1659,13 +1682,13 @@ function ManualInvoiceCanvas() {
     }
     saveTimeoutRef.current = window.setTimeout(() => {
       persistDraft();
-      setDraftStatus("Draft saved");
-      if (clearStatusTimeoutRef.current) {
-        window.clearTimeout(clearStatusTimeoutRef.current);
+      // Suppress the generic autosave toast only while genuine action feedback
+      // is active — never because a generic timer handle remains truthy.
+      if (isActionFeedbackActive()) {
+        return;
       }
-      clearStatusTimeoutRef.current = window.setTimeout(() => {
-        setDraftStatus("");
-      }, 1500);
+      setDraftStatus("Draft saved");
+      scheduleDraftStatusClear(1500);
     }, 500);
     return () => {
       if (saveTimeoutRef.current) {
@@ -1742,12 +1765,7 @@ function ManualInvoiceCanvas() {
       window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1000);
       completeOnboardingStep("export_pdf");
       setDraftStatus("PDF download started");
-      if (clearStatusTimeoutRef.current) {
-        window.clearTimeout(clearStatusTimeoutRef.current);
-      }
-      clearStatusTimeoutRef.current = window.setTimeout(() => {
-        setDraftStatus("");
-      }, 2600);
+      scheduleDraftStatusClear(2600);
     } catch (error) {
       setSaveError(error?.message || "Couldn't export PDF.");
       setSaveStatus("");
@@ -3107,7 +3125,11 @@ function ManualInvoiceCanvas() {
             <div className={`flex items-center justify-between ${activePreset.metaClass}`}>
               <span>{documentType === "estimate" ? "Estimate document" : "Invoice document"}</span>
               <span className="flex items-center gap-2">
-                {draftStatus ? <span className="text-xs text-slate-400">{draftStatus}</span> : null}
+                {draftStatus ? (
+                  <span className="text-xs text-slate-400" data-testid="manual-draft-status">
+                    {draftStatus}
+                  </span>
+                ) : null}
                 <span className="rounded-full border px-2 py-0.5 text-[10px]" style={{ borderColor: accent.border, color: accent.primary }}>
                   Draft
                 </span>
