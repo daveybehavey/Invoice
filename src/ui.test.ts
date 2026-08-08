@@ -3514,6 +3514,71 @@ test("manual editor applies trade templates without duplicating old template tex
   }
 });
 
+test("manual editor keeps action feedback through autosave and restores Draft saved after timers expire", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const notesInput = page.getByPlaceholder("Thank you for your business");
+    const draftStatus = page.getByTestId("manual-draft-status");
+    const draftStorageKey = await page.evaluate(() => {
+      const ownerId = window.localStorage.getItem("invoiceOwnerId");
+      return ownerId ? `invoiceDraft::owner:${ownerId}` : "invoiceDraft";
+    });
+
+    await notesInput.fill("Baseline note before retainer.");
+    await page.getByRole("button", { name: "Monthly retainer" }).click();
+    await draftStatus.filter({ hasText: /^Monthly retainer applied$/ }).waitFor({ state: "visible" });
+
+    // Autsave must still persist while action feedback is active.
+    await page.waitForFunction(
+      (storageKey) => {
+        try {
+          const raw = window.localStorage.getItem(storageKey);
+          if (!raw) {
+            return false;
+          }
+          const parsed = JSON.parse(raw);
+          return String(parsed?.notes ?? "").includes("Retainer: Monthly service plan");
+        } catch (_error) {
+          return false;
+        }
+      },
+      draftStorageKey,
+      { timeout: 5000 }
+    );
+    await draftStatus.filter({ hasText: /^Monthly retainer applied$/ }).waitFor({ state: "visible" });
+
+    // After action feedback expires, later edits can show Draft saved.
+    await draftStatus.filter({ hasText: /^Monthly retainer applied$/ }).waitFor({ state: "detached", timeout: 5000 });
+    await notesInput.fill(
+      "Retainer: Monthly service plan billed on the first business day of each month.\nBaseline note before retainer.\nLater edit after retainer toast expired."
+    );
+    await draftStatus.filter({ hasText: /^Draft saved$/ }).waitFor({ state: "visible", timeout: 5000 });
+
+    // Unrelated timed status (polish) shares the generic clear timer, but must not leave a
+    // stale truthy handle that permanently suppresses Draft saved after timers settle.
+    await page.locator('input[placeholder="Description"]:visible').first().fill("fixed sink");
+    await page.getByRole("button", { name: "Tone" }).last().click();
+    await page.getByRole("button", { name: "Quick clean descriptions" }).click();
+    // Polish is not action feedback — autosave may replace the polish toast with Draft saved.
+    // Wait until the status lane is idle, then confirm a later edit can still toast Draft saved.
+    await page.waitForFunction(() => {
+      const el = document.querySelector('[data-testid="manual-draft-status"]');
+      return !el || !String(el.textContent || "").trim();
+    }, null, { timeout: 8000 });
+    // Touch an autosave dependency that is independent of notes to force a fresh draft write.
+    const invoiceNumberInput = page.locator("label").filter({ hasText: /^Invoice #$/ }).locator("input");
+    await invoiceNumberInput.fill(`INV-LIFE-${Date.now()}`);
+    await notesInput.fill(
+      "Retainer: Monthly service plan billed on the first business day of each month.\nBaseline note before retainer.\nLater edit after retainer toast expired.\nPost-polish autosave check."
+    );
+    await draftStatus.filter({ hasText: /^Draft saved$/ }).waitFor({ state: "visible", timeout: 8000 });
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor inserts saved client details from known-client memory", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {
