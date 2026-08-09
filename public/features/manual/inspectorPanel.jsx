@@ -366,7 +366,15 @@ function InspectorPanel({
         cancelPath: "/manual?billing=cancelled"
       });
     } catch (billingActionError) {
-      setBillingError(billingActionError?.message || "Unable to open upgrade.");
+      if (
+        billingActionError?.code === "AUTH_REQUIRED_FOR_UPGRADE" ||
+        /sign in to upgrade/i.test(String(billingActionError?.message || ""))
+      ) {
+        setBillingError("Sign in to upgrade to Pro. We'll resume checkout after you authenticate.");
+        window.location.assign("/?auth=sign-in&returnTo=/manual");
+      } else {
+        setBillingError(billingActionError?.message || "Unable to open upgrade.");
+      }
     } finally {
       setBillingBusy(false);
     }

@@ -67,6 +67,39 @@ export async function hasActiveStripeEntitlement(input: {
   return hasActiveEntitlementInSnapshot(snapshot, input);
 }
 
+/** Resolve Stripe customer id from entitlements by authenticated opaque identity. */
+export async function findBillingCustomerIdForOwner(input: {
+  userId?: string;
+  ownerId?: string;
+}): Promise<string | null> {
+  const snapshot = await readSnapshot();
+  const userId = normalizeValue(input.userId);
+  const ownerId = normalizeValue(input.ownerId);
+  if (!userId && !ownerId) {
+    return null;
+  }
+
+  for (const customer of Object.values(snapshot.customers)) {
+    if (userId && customer.userId === userId && customer.customerId) {
+      return customer.customerId;
+    }
+    if (ownerId && customer.ownerId === ownerId && customer.customerId) {
+      return customer.customerId;
+    }
+  }
+
+  for (const subscription of Object.values(snapshot.subscriptions)) {
+    if (userId && subscription.userId === userId && subscription.customerId) {
+      return subscription.customerId;
+    }
+    if (ownerId && subscription.ownerId === ownerId && subscription.customerId) {
+      return subscription.customerId;
+    }
+  }
+
+  return null;
+}
+
 export async function applyCheckoutSessionEntitlement(input: {
   customerId?: string;
   subscriptionId?: string;

@@ -37,7 +37,13 @@ process.env.REVENUE_SIGNALS_STORE_FILE = path.join(
 const [
   { app },
   { setAudioTranscriptionRunnerForTests, setImageOcrRunnerForTests, setJsonTaskRunnerForTests },
-  { setInvoicePaymentLinkCreatorForTests },
+  {
+    buildCheckoutResumeIdempotencyKey,
+    setInvoicePaymentLinkCreatorForTests,
+    setCheckoutSessionCreatorForTests,
+    setBillingPortalSessionCreatorForTests,
+    clearCheckoutIntentSessionsForTests
+  },
   { resetInvoiceEmailVerificationCacheForTests },
   { setGoogleAuthClientFactoryForTests }
 ] = await Promise.all([
@@ -148,6 +154,9 @@ afterEach(() => {
   setImageOcrRunnerForTests(null);
   setAudioTranscriptionRunnerForTests(null);
   setInvoicePaymentLinkCreatorForTests(null);
+  setCheckoutSessionCreatorForTests(null);
+  setBillingPortalSessionCreatorForTests(null);
+  clearCheckoutIntentSessionsForTests();
   setGoogleAuthClientFactoryForTests(null);
   (globalThis as { fetch?: typeof fetch }).fetch = nativeFetch;
 });
@@ -157,6 +166,9 @@ after(async () => {
   setImageOcrRunnerForTests(null);
   setAudioTranscriptionRunnerForTests(null);
   setInvoicePaymentLinkCreatorForTests(null);
+  setCheckoutSessionCreatorForTests(null);
+  setBillingPortalSessionCreatorForTests(null);
+  clearCheckoutIntentSessionsForTests();
   setGoogleAuthClientFactoryForTests(null);
   await fs.rm(storeFilePath, { force: true });
   await fs.rm(ocrMetricsStoreFilePath, { force: true });
@@ -3737,16 +3749,244 @@ test("delivery diagnostics endpoint scopes reminder preview by request owner", a
   assert.equal(diagnosticsResponse.body.reminders?.due?.[0]?.invoiceId, invoiceId);
 });
 
-test("checkout session endpoint returns a setup error when stripe is not configured", async () => {
-  const response = await request(app).post("/api/billing/checkout-session").send({});
-  assert.equal(response.status, 400);
-  assert.match(String(response.body.error || ""), /STRIPE_SECRET_KEY/i);
+test("checkout session endpoint requires authentication before Stripe setup checks", async () => {
+  let creatorCalls = 0;
+  setCheckoutSessionCreatorForTests(async () => {
+    creatorCalls += 1;
+    return { url: "https://checkout.test/unauth", sessionId: "cs_unauth" };
+  });
+  const response = await request(app)
+    .post("/api/billing/checkout-session")
+    .set("x-invoice-user-id", "spoofed-guest-owner")
+    .query({ userId: "spoofed-guest-owner" })
+    .send({ ownerId: "spoofed-guest-owner", userId: "spoofed-guest-owner" });
+  assert.equal(response.status, 401);
+  assert.match(String(response.body.error || ""), /sign in to upgrade/i);
+  assert.equal(creatorCalls, 0);
+});
+
+test("checkout session endpoint binds authenticated ownership and ignores spoofed identity", async () => {
+  const signInResponse = await signInForTests("checkout-owner@test.dev");
+  const token = signInResponse.body.token as string;
+  const session = signInResponse.body.session as { userId: string; email: string };
+  const creatorInputs: Array<Record<string, unknown>> = [];
+  setCheckoutSessionCreatorForTests(async (input) => {
+    creatorInputs.push({
+      ownerId: input.ownerId,
+      userId: input.userId,
+      email: input.email,
+      clientReferenceId: input.clientReferenceId,
+      resumeIntentId: input.resumeIntentId
+    });
+    return {
+      url: "https://checkout.test/session",
+      sessionId: `cs_${creatorInputs.length}`
+    };
+  });
+
+  const response = await request(app)
+    .post("/api/billing/checkout-session")
+    .set("authorization", `Bearer ${token}`)
+    .set("x-invoice-user-id", "attacker-guest-id")
+    .set("x-user-id", "attacker-x-user")
+    .query({ userId: "attacker-query-owner" })
+    .send({
+      successPath: "/?billing=success",
+      ownerId: "attacker-body-owner",
+      userId: "attacker-body-user",
+      email: "attacker@evil.test",
+      client_reference_id: "attacker-client-ref"
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.url, "https://checkout.test/session");
+  assert.equal(creatorInputs.length, 1);
+  assert.equal(creatorInputs[0]?.ownerId, session.userId);
+  assert.equal(creatorInputs[0]?.userId, session.userId);
+  assert.equal(creatorInputs[0]?.clientReferenceId, session.userId);
+  assert.equal(creatorInputs[0]?.email, session.email);
+});
+
+test("checkout resume intent is idempotent for the authenticated owner", async () => {
+  const signInResponse = await signInForTests("checkout-resume@test.dev");
+  const token = signInResponse.body.token as string;
+  const session = signInResponse.body.session as { userId: string; email: string };
+  let creatorCalls = 0;
+  const providerKeys: string[] = [];
+  const sessionsByKey = new Map<string, { url: string; sessionId: string }>();
+  setCheckoutSessionCreatorForTests(async (input, requestOptions) => {
+    creatorCalls += 1;
+    assert.equal(input.ownerId, session.userId);
+    assert.equal(input.resumeIntentId, "intent_resume_1");
+    const key = String(requestOptions?.idempotencyKey || "");
+    providerKeys.push(key);
+    const existing = sessionsByKey.get(key);
+    if (existing) {
+      return { url: existing.url, sessionId: existing.sessionId };
+    }
+    const created = {
+      url: "https://checkout.test/idempotent",
+      sessionId: "cs_idempotent_1"
+    };
+    sessionsByKey.set(key, created);
+    return created;
+  });
+
+  const first = await request(app)
+    .post("/api/billing/checkout-session")
+    .set("authorization", `Bearer ${token}`)
+    .send({ resumeIntentId: "intent_resume_1", successPath: "/?billing=success" });
+  const second = await request(app)
+    .post("/api/billing/checkout-session")
+    .set("authorization", `Bearer ${token}`)
+    .send({ resumeIntentId: "intent_resume_1", successPath: "/?billing=success" });
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(first.body.sessionId, "cs_idempotent_1");
+  assert.equal(second.body.sessionId, "cs_idempotent_1");
+  assert.equal(first.body.url, second.body.url);
+  assert.equal(creatorCalls, 2);
+  assert.equal(providerKeys.length, 2);
+  assert.equal(providerKeys[0], providerKeys[1]);
+  assert.equal(
+    providerKeys[0],
+    buildCheckoutResumeIdempotencyKey(session.userId, "intent_resume_1")
+  );
+});
+
+test("checkout endpoint concurrent resume intents coalesce within one isolate", async () => {
+  const signInResponse = await signInForTests("checkout-coalesce@test.dev");
+  const token = signInResponse.body.token as string;
+  const session = signInResponse.body.session as { userId: string; email: string };
+  let creatorCalls = 0;
+  const providerKeys: string[] = [];
+  setCheckoutSessionCreatorForTests(async (input, requestOptions) => {
+    creatorCalls += 1;
+    providerKeys.push(String(requestOptions?.idempotencyKey || ""));
+    assert.equal(input.ownerId, session.userId);
+    // Stay in-flight so the sibling HTTP handler can join the coalesce promise.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return {
+      url: "https://checkout.test/coalesce-api",
+      sessionId: "cs_coalesce_api"
+    };
+  });
+
+  const [first, second] = await Promise.all([
+    request(app)
+      .post("/api/billing/checkout-session")
+      .set("authorization", `Bearer ${token}`)
+      .send({ resumeIntentId: "intent_coalesce_api", successPath: "/?billing=success" }),
+    request(app)
+      .post("/api/billing/checkout-session")
+      .set("authorization", `Bearer ${token}`)
+      .send({ resumeIntentId: "intent_coalesce_api", successPath: "/?billing=success" })
+  ]);
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(first.body.sessionId, "cs_coalesce_api");
+  assert.equal(second.body.sessionId, "cs_coalesce_api");
+  assert.equal(creatorCalls, 1);
+  assert.equal(providerKeys.length, 1);
+  assert.equal(
+    providerKeys[0],
+    buildCheckoutResumeIdempotencyKey(session.userId, "intent_coalesce_api")
+  );
 });
 
 test("billing portal endpoint requires an authenticated session", async () => {
+  let portalCalls = 0;
+  setBillingPortalSessionCreatorForTests(async () => {
+    portalCalls += 1;
+    return { url: "https://billing.test/portal" };
+  });
   const response = await request(app).post("/api/billing/portal-session").send({});
   assert.equal(response.status, 401);
   assert.match(String(response.body.error || ""), /sign in/i);
+  assert.equal(portalCalls, 0);
+});
+
+test("billing portal selection is scoped to the authenticated owner customer", async () => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+
+  const ownerSignIn = await signInForTests("portal-owner@test.dev");
+  const otherSignIn = await signInForTests("portal-other@test.dev");
+  const ownerToken = ownerSignIn.body.token as string;
+  const otherToken = otherSignIn.body.token as string;
+  const ownerSession = ownerSignIn.body.session as { userId: string; email: string };
+  const otherSession = otherSignIn.body.session as { userId: string; email: string };
+
+  for (const [email, session, customerId, eventId] of [
+    [ownerSession.email, ownerSession, "cus_portal_owner", "evt_portal_owner"],
+    [otherSession.email, otherSession, "cus_portal_other", "evt_portal_other"]
+  ] as const) {
+    const webhookPayload = JSON.stringify({
+      id: eventId,
+      object: "event",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: `cs_${eventId}`,
+          object: "checkout.session",
+          customer: customerId,
+          subscription: `sub_${eventId}`,
+          customer_email: email,
+          metadata: {
+            ownerId: session.userId,
+            userId: session.userId,
+            email: session.email
+          }
+        }
+      }
+    });
+    const signature = Stripe.webhooks.generateTestHeaderString({
+      payload: webhookPayload,
+      secret: process.env.STRIPE_WEBHOOK_SECRET
+    });
+    assert.equal(
+      (
+        await request(app)
+          .post("/api/billing/stripe/webhook")
+          .set("Content-Type", "application/json")
+          .set("stripe-signature", signature)
+          .send(webhookPayload)
+      ).status,
+      200
+    );
+  }
+
+  const portalInputs: Array<{ resolvedCustomerId: string; userId?: string; ownerId?: string }> = [];
+  setBillingPortalSessionCreatorForTests(async (input) => {
+    portalInputs.push({
+      resolvedCustomerId: input.resolvedCustomerId,
+      userId: input.userId,
+      ownerId: input.ownerId
+    });
+    return { url: `https://billing.test/${input.resolvedCustomerId}` };
+  });
+
+  const ownerPortal = await request(app)
+    .post("/api/billing/portal-session")
+    .set("authorization", `Bearer ${ownerToken}`)
+    .set("x-invoice-user-id", otherSession.userId)
+    .send({ customerId: "cus_portal_other", ownerId: otherSession.userId });
+  assert.equal(ownerPortal.status, 200);
+  assert.equal(ownerPortal.body.url, "https://billing.test/cus_portal_owner");
+  assert.equal(portalInputs.length, 1);
+  assert.equal(portalInputs[0]?.resolvedCustomerId, "cus_portal_owner");
+  assert.equal(portalInputs[0]?.userId, ownerSession.userId);
+  assert.equal(portalInputs[0]?.ownerId, ownerSession.userId);
+
+  const otherPortal = await request(app)
+    .post("/api/billing/portal-session")
+    .set("authorization", `Bearer ${otherToken}`)
+    .send({});
+  assert.equal(otherPortal.status, 200);
+  assert.equal(otherPortal.body.url, "https://billing.test/cus_portal_other");
+  assert.equal(portalInputs[1]?.resolvedCustomerId, "cus_portal_other");
 });
 
 test("stripe webhook checkout event grants pro access for matching signed-in user", async () => {
@@ -3799,6 +4039,384 @@ test("stripe webhook checkout event grants pro access for matching signed-in use
   const planAfter = await request(app).get("/api/account/plan").set("authorization", `Bearer ${token}`);
   assert.equal(planAfter.status, 200);
   assert.equal(planAfter.body.plan, "pro");
+});
+
+test("duplicate checkout webhook is idempotent for the bound owner", async () => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+
+  const email = "stripe-idempotent@test.dev";
+  const signInResponse = await signInForTests(email);
+  const token = signInResponse.body.token as string;
+  const session = signInResponse.body.session as { userId: string; email: string };
+
+  const webhookPayload = JSON.stringify({
+    id: "evt_test_checkout_idempotent",
+    object: "event",
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_test_idempotent",
+        object: "checkout.session",
+        customer: "cus_test_idempotent",
+        subscription: "sub_test_idempotent",
+        customer_email: email,
+        metadata: {
+          ownerId: session.userId,
+          userId: session.userId,
+          email: session.email
+        }
+      }
+    }
+  });
+  const signature = Stripe.webhooks.generateTestHeaderString({
+    payload: webhookPayload,
+    secret: process.env.STRIPE_WEBHOOK_SECRET
+  });
+
+  for (let i = 0; i < 2; i += 1) {
+    const webhookResponse = await request(app)
+      .post("/api/billing/stripe/webhook")
+      .set("Content-Type", "application/json")
+      .set("stripe-signature", signature)
+      .send(webhookPayload);
+    assert.equal(webhookResponse.status, 200);
+    assert.equal(webhookResponse.body.handled, true);
+  }
+
+  const planAfter = await request(app).get("/api/account/plan").set("authorization", `Bearer ${token}`);
+  assert.equal(planAfter.status, 200);
+  assert.equal(planAfter.body.plan, "pro");
+});
+
+test("cancelled checkout does not grant Pro without a successful webhook", async () => {
+  const email = "stripe-cancelled@test.dev";
+  const signInResponse = await signInForTests(email);
+  const token = signInResponse.body.token as string;
+  const plan = await request(app).get("/api/account/plan").set("authorization", `Bearer ${token}`);
+  assert.equal(plan.status, 200);
+  assert.equal(plan.body.plan, "free");
+});
+
+test("subscription cancellation revokes Pro for the bound owner only", async () => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+
+  const ownerEmail = "stripe-cancel-owner@test.dev";
+  const otherEmail = "stripe-cancel-other@test.dev";
+  const ownerSignIn = await signInForTests(ownerEmail);
+  const otherSignIn = await signInForTests(otherEmail);
+  const ownerToken = ownerSignIn.body.token as string;
+  const otherToken = otherSignIn.body.token as string;
+  const ownerSession = ownerSignIn.body.session as { userId: string; email: string };
+  const otherSession = otherSignIn.body.session as { userId: string; email: string };
+
+  const grantPayload = JSON.stringify({
+    id: "evt_test_grant_then_cancel",
+    object: "event",
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_test_cancel",
+        object: "checkout.session",
+        customer: "cus_test_cancel",
+        subscription: "sub_test_cancel",
+        customer_email: ownerEmail,
+        metadata: {
+          ownerId: ownerSession.userId,
+          userId: ownerSession.userId,
+          email: ownerSession.email
+        }
+      }
+    }
+  });
+  const grantSignature = Stripe.webhooks.generateTestHeaderString({
+    payload: grantPayload,
+    secret: process.env.STRIPE_WEBHOOK_SECRET
+  });
+  const grantResponse = await request(app)
+    .post("/api/billing/stripe/webhook")
+    .set("Content-Type", "application/json")
+    .set("stripe-signature", grantSignature)
+    .send(grantPayload);
+  assert.equal(grantResponse.status, 200);
+
+  const ownerPlanGranted = await request(app)
+    .get("/api/account/plan")
+    .set("authorization", `Bearer ${ownerToken}`);
+  assert.equal(ownerPlanGranted.body.plan, "pro");
+
+  const otherPlanBefore = await request(app)
+    .get("/api/account/plan")
+    .set("authorization", `Bearer ${otherToken}`);
+  assert.equal(otherPlanBefore.body.plan, "free");
+
+  const cancelPayload = JSON.stringify({
+    id: "evt_test_subscription_deleted",
+    object: "event",
+    type: "customer.subscription.deleted",
+    data: {
+      object: {
+        id: "sub_test_cancel",
+        object: "subscription",
+        customer: "cus_test_cancel",
+        status: "canceled",
+        metadata: {
+          ownerId: ownerSession.userId,
+          userId: ownerSession.userId,
+          email: ownerSession.email
+        }
+      }
+    }
+  });
+  const cancelSignature = Stripe.webhooks.generateTestHeaderString({
+    payload: cancelPayload,
+    secret: process.env.STRIPE_WEBHOOK_SECRET
+  });
+  const cancelResponse = await request(app)
+    .post("/api/billing/stripe/webhook")
+    .set("Content-Type", "application/json")
+    .set("stripe-signature", cancelSignature)
+    .send(cancelPayload);
+  assert.equal(cancelResponse.status, 200);
+
+  const ownerPlanAfter = await request(app)
+    .get("/api/account/plan")
+    .set("authorization", `Bearer ${ownerToken}`);
+  assert.equal(ownerPlanAfter.body.plan, "free");
+
+  const otherPlanAfter = await request(app)
+    .get("/api/account/plan")
+    .set("authorization", `Bearer ${otherToken}`);
+  assert.equal(otherPlanAfter.body.plan, "free");
+  assert.ok(otherSession.userId);
+});
+
+test("signed-in entitlement recovers in a fresh session simulation", async () => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+
+  const email = "stripe-recover@test.dev";
+  const firstSignIn = await signInForTests(email);
+  const firstSession = firstSignIn.body.session as { userId: string; email: string };
+
+  const webhookPayload = JSON.stringify({
+    id: "evt_test_recover",
+    object: "event",
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_test_recover",
+        object: "checkout.session",
+        customer: "cus_test_recover",
+        subscription: "sub_test_recover",
+        customer_email: email,
+        metadata: {
+          ownerId: firstSession.userId,
+          userId: firstSession.userId,
+          email: firstSession.email
+        }
+      }
+    }
+  });
+  const signature = Stripe.webhooks.generateTestHeaderString({
+    payload: webhookPayload,
+    secret: process.env.STRIPE_WEBHOOK_SECRET
+  });
+  assert.equal(
+    (
+      await request(app)
+        .post("/api/billing/stripe/webhook")
+        .set("Content-Type", "application/json")
+        .set("stripe-signature", signature)
+        .send(webhookPayload)
+    ).status,
+    200
+  );
+
+  // Fresh session for the same email (new device/browser simulation).
+  const secondSignIn = await signInForTests(email);
+  const secondToken = secondSignIn.body.token as string;
+  const secondSession = secondSignIn.body.session as { userId: string };
+  assert.equal(secondSession.userId, firstSession.userId);
+
+  const recoveredPlan = await request(app)
+    .get("/api/account/plan")
+    .set("authorization", `Bearer ${secondToken}`);
+  assert.equal(recoveredPlan.status, 200);
+  assert.equal(recoveredPlan.body.plan, "pro");
+});
+
+test("one user cannot recover another user's entitlement", async () => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+
+  const ownerSignIn = await signInForTests("stripe-isolation-owner@test.dev");
+  const attackerSignIn = await signInForTests("stripe-isolation-attacker@test.dev");
+  const ownerSession = ownerSignIn.body.session as { userId: string; email: string };
+  const attackerToken = attackerSignIn.body.token as string;
+
+  const webhookPayload = JSON.stringify({
+    id: "evt_test_isolation",
+    object: "event",
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_test_isolation",
+        object: "checkout.session",
+        customer: "cus_test_isolation",
+        subscription: "sub_test_isolation",
+        customer_email: ownerSession.email,
+        metadata: {
+          ownerId: ownerSession.userId,
+          userId: ownerSession.userId,
+          email: ownerSession.email
+        }
+      }
+    }
+  });
+  const signature = Stripe.webhooks.generateTestHeaderString({
+    payload: webhookPayload,
+    secret: process.env.STRIPE_WEBHOOK_SECRET
+  });
+  assert.equal(
+    (
+      await request(app)
+        .post("/api/billing/stripe/webhook")
+        .set("Content-Type", "application/json")
+        .set("stripe-signature", signature)
+        .send(webhookPayload)
+    ).status,
+    200
+  );
+
+  const attackerPlan = await request(app)
+    .get("/api/account/plan")
+    .set("authorization", `Bearer ${attackerToken}`)
+    .set("x-invoice-user-id", ownerSession.userId);
+  assert.equal(attackerPlan.status, 200);
+  assert.equal(attackerPlan.body.plan, "free");
+});
+
+test("guest cannot impersonate a paid Stripe owner through header or query owner ids", async () => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
+
+  const ownerSignIn = await signInForTests("stripe-guest-impersonation-owner@test.dev");
+  const ownerToken = ownerSignIn.body.token as string;
+  const ownerSession = ownerSignIn.body.session as { userId: string; email: string };
+
+  const webhookPayload = JSON.stringify({
+    id: "evt_test_guest_impersonation",
+    object: "event",
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        id: "cs_test_guest_impersonation",
+        object: "checkout.session",
+        customer: "cus_test_guest_impersonation",
+        subscription: "sub_test_guest_impersonation",
+        customer_email: ownerSession.email,
+        metadata: {
+          ownerId: ownerSession.userId,
+          userId: ownerSession.userId,
+          email: ownerSession.email
+        }
+      }
+    }
+  });
+  const signature = Stripe.webhooks.generateTestHeaderString({
+    payload: webhookPayload,
+    secret: process.env.STRIPE_WEBHOOK_SECRET
+  });
+  assert.equal(
+    (
+      await request(app)
+        .post("/api/billing/stripe/webhook")
+        .set("Content-Type", "application/json")
+        .set("stripe-signature", signature)
+        .send(webhookPayload)
+    ).status,
+    200
+  );
+
+  const authenticatedOwnerPlan = await request(app)
+    .get("/api/account/plan")
+    .set("authorization", `Bearer ${ownerToken}`);
+  assert.equal(authenticatedOwnerPlan.status, 200);
+  assert.equal(authenticatedOwnerPlan.body.plan, "pro");
+
+  const guestViaXInvoiceUserId = await request(app)
+    .get("/api/account/plan")
+    .set("x-invoice-user-id", ownerSession.userId);
+  assert.equal(guestViaXInvoiceUserId.status, 200);
+  assert.equal(guestViaXInvoiceUserId.body.plan, "free");
+
+  const guestViaXUserId = await request(app)
+    .get("/api/account/plan")
+    .set("x-user-id", ownerSession.userId);
+  assert.equal(guestViaXUserId.status, 200);
+  assert.equal(guestViaXUserId.body.plan, "free");
+
+  const guestViaQuery = await request(app)
+    .get("/api/account/plan")
+    .query({ userId: ownerSession.userId });
+  assert.equal(guestViaQuery.status, 200);
+  assert.equal(guestViaQuery.body.plan, "free");
+
+  const guestViaAllPaths = await request(app)
+    .get("/api/account/plan")
+    .set("x-invoice-user-id", ownerSession.userId)
+    .set("x-user-id", ownerSession.userId)
+    .query({ userId: ownerSession.userId });
+  assert.equal(guestViaAllPaths.status, 200);
+  assert.equal(guestViaAllPaths.body.plan, "free");
+});
+
+test("guest free invoice workflow remains available without auth", async () => {
+  process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "25";
+  const ownerId = "guest-free-workflow-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Guest Free Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "GUEST-FREE-1",
+          invoiceDate: "2026-08-09",
+          customerName: "Guest Free Client",
+          billToDetails: "Guest Free Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-guest-1",
+              type: "labor",
+              description: "Guest free path labor",
+              quantity: 1,
+              unitPrice: 50,
+              amount: 50
+            }
+          ],
+          subtotal: 50,
+          total: 50,
+          balanceDue: 50
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  assert.ok(saveResponse.body.invoice?.invoiceId);
+
+  const plan = await request(app).get("/api/account/plan").set("x-invoice-user-id", ownerId);
+  assert.equal(plan.status, 200);
+  assert.equal(plan.body.plan, "free");
+  assert.equal(plan.body.canCreateInvoice, true);
 });
 
 test("stripe payment-intent webhook marks a saved invoice paid and clears balance due", async () => {

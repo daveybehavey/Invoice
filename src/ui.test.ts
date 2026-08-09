@@ -35,6 +35,28 @@ type RecurringScheduleStore = {
 declare global {
   interface Window {
     __copiedSharePack?: string;
+    InvoiceRequestIdentity?: {
+      getAuthSession?: () => { userId?: string; email?: string } | null;
+    };
+    InvoiceBillingActions?: {
+      clearPendingUpgradeCheckout: () => void;
+      rememberPendingUpgradeCheckout: (options?: Record<string, unknown>) => {
+        intentId: string;
+        successPath: string;
+        cancelPath: string;
+        createdAt: number;
+        expiresAt: number;
+      };
+      peekPendingUpgradeCheckout: () => {
+        intentId: string;
+        successPath: string;
+        cancelPath: string;
+        createdAt: number;
+        expiresAt: number;
+      } | null;
+      restorePendingUpgradeCheckout: (intent: Record<string, unknown>) => void;
+      resumePendingUpgradeCheckout?: (options?: Record<string, unknown>) => Promise<unknown>;
+    };
   }
 }
 
@@ -53,9 +75,17 @@ process.env.FLOW_FRICTION_HISTORY_FILE = path.join(
   `invoice-ui-friction-history-${randomUUID()}.json`
 );
 
-const [{ app }, { setImageOcrRunnerForTests, setJsonTaskRunnerForTests }] = await Promise.all([
+const [
+  { app },
+  { setImageOcrRunnerForTests, setJsonTaskRunnerForTests },
+  {
+    setCheckoutSessionCreatorForTests,
+    clearCheckoutIntentSessionsForTests
+  }
+] = await Promise.all([
   import("./server.js"),
-  import("./ai/openaiClient.js")
+  import("./ai/openaiClient.js"),
+  import("./services/stripeBilling.js")
 ]);
 
 let server: Server;
@@ -108,11 +138,15 @@ beforeEach(async () => {
 afterEach(() => {
   setJsonTaskRunnerForTests(null);
   setImageOcrRunnerForTests(null);
+  setCheckoutSessionCreatorForTests(null);
+  clearCheckoutIntentSessionsForTests();
 });
 
 after(async () => {
   setJsonTaskRunnerForTests(null);
   setImageOcrRunnerForTests(null);
+  setCheckoutSessionCreatorForTests(null);
+  clearCheckoutIntentSessionsForTests();
   await browser.close();
   await new Promise<void>((resolve, reject) => {
     server.close((error) => {
@@ -11279,6 +11313,221 @@ test("manual editor shows billing completion notice and clears billing query par
       timeoutMs: 2000,
       message: "Billing query param should be removed after manual notice renders."
     });
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher upgrade resumes checkout after email sign-in", async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_PRICE_ID = "price_test_placeholder";
+
+  const creatorInputs: Array<Record<string, unknown>> = [];
+  setCheckoutSessionCreatorForTests(async (input) => {
+    creatorInputs.push({
+      ownerId: input.ownerId,
+      userId: input.userId,
+      email: input.email,
+      clientReferenceId: input.clientReferenceId,
+      resumeIntentId: input.resumeIntentId,
+      successPath: input.successPath,
+      cancelPath: input.cancelPath
+    });
+    return {
+      url: `${baseUrl}/__fake-stripe-checkout?from=launcher`,
+      sessionId: `cs_ui_launcher_${creatorInputs.length}`
+    };
+  });
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await prepareReturningGuest(page);
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Plan options" }).click();
+    await page.getByRole("button", { name: "Upgrade" }).click();
+    await page.getByTestId("launcher-auth-provider-list").waitFor({ state: "visible" });
+    await page.waitForFunction(
+      () => Boolean(window.InvoiceBillingActions?.peekPendingUpgradeCheckout?.()?.intentId),
+      undefined,
+      { timeout: 5000 }
+    );
+
+    await page.getByLabel("Email link sign-in").fill("launcher-resume@test.dev");
+    await page.getByRole("button", { name: "Email sign-in link" }).click();
+    const previewLink = page.getByRole("link", { name: "Open preview sign-in link" });
+    await previewLink.waitFor({ state: "visible" });
+
+    await Promise.all([
+      page.waitForURL(/__fake-stripe-checkout\?from=launcher/, { timeout: 45000, waitUntil: "commit" }),
+      previewLink.click()
+    ]);
+
+    assert.ok(creatorInputs.length >= 1, `expected checkout creator call, got ${JSON.stringify(creatorInputs)}`);
+    assert.equal(typeof creatorInputs[0]?.resumeIntentId, "string");
+    assert.ok(String(creatorInputs[0]?.resumeIntentId || "").length > 0);
+    assert.match(String(creatorInputs[0]?.email || ""), /launcher-resume@test\.dev/i);
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor upgrade resumes checkout after email sign-in", async () => {
+  process.env.INVOICE_DEFAULT_PLAN = "free";
+  process.env.INVOICE_FREE_SAVE_LIMIT_PER_MONTH = "1";
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  process.env.STRIPE_PRICE_ID = "price_test_placeholder";
+
+  const creatorInputs: Array<Record<string, unknown>> = [];
+  setCheckoutSessionCreatorForTests(async (input) => {
+    creatorInputs.push({
+      ownerId: input.ownerId,
+      userId: input.userId,
+      email: input.email,
+      clientReferenceId: input.clientReferenceId,
+      resumeIntentId: input.resumeIntentId,
+      successPath: input.successPath,
+      cancelPath: input.cancelPath
+    });
+    return {
+      url: `${baseUrl}/__fake-stripe-checkout?from=manual`,
+      sessionId: `cs_ui_manual_${creatorInputs.length}`
+    };
+  });
+
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-manual-resume-owner");
+    window.localStorage.setItem("guestEntryDismissed::owner:ui-manual-resume-owner", "true");
+  });
+
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-manual-resume-owner"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Manual Resume Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-MANUAL-RESUME-1",
+          issueDate: "2026-03-10",
+          customerName: "Manual Resume Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-1",
+              type: "labor",
+              description: "Manual resume baseline",
+              quantity: 1,
+              unitPrice: 100,
+              amount: 100
+            }
+          ],
+          subtotal: 100,
+          total: 100,
+          balanceDue: 100
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Export" }).last().click();
+    await page.getByText("Save limit reached. Update existing invoices or upgrade to save more.").waitFor({
+      state: "visible"
+    });
+    await page.getByRole("button", { name: "Upgrade plan" }).click();
+    await page.getByTestId("launcher-auth-provider-list").waitFor({ state: "visible" });
+    const pendingPaths = await page.evaluate(() => {
+      const pending = window.InvoiceBillingActions?.peekPendingUpgradeCheckout?.();
+      return {
+        successPath: pending?.successPath || null,
+        cancelPath: pending?.cancelPath || null,
+        intentId: pending?.intentId || null
+      };
+    });
+    assert.equal(pendingPaths.successPath, "/manual?billing=success");
+    assert.equal(pendingPaths.cancelPath, "/manual?billing=cancelled");
+    assert.ok(pendingPaths.intentId);
+
+    await page.getByLabel("Email link sign-in").fill("manual-resume@test.dev");
+    await page.getByRole("button", { name: "Email sign-in link" }).click();
+    const previewLink = page.getByRole("link", { name: "Open preview sign-in link" });
+    await previewLink.waitFor({ state: "visible" });
+
+    await Promise.all([
+      page.waitForURL(/__fake-stripe-checkout\?from=manual/, { timeout: 45000, waitUntil: "commit" }),
+      previewLink.click()
+    ]);
+
+    assert.ok(creatorInputs.length >= 1, `expected checkout creator call, got ${JSON.stringify(creatorInputs)}`);
+    assert.equal(creatorInputs[0]?.successPath, "/manual?billing=success");
+    assert.equal(creatorInputs[0]?.cancelPath, "/manual?billing=cancelled");
+    assert.equal(typeof creatorInputs[0]?.resumeIntentId, "string");
+    assert.match(String(creatorInputs[0]?.email || ""), /manual-resume@test\.dev/i);
+  } finally {
+    await context.close();
+  }
+});
+
+test("pending upgrade intent helpers expire and restore without starting checkout", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const result = await page.evaluate(() => {
+      const actions = window.InvoiceBillingActions;
+      if (!actions) {
+        throw new Error("InvoiceBillingActions missing");
+      }
+      actions.clearPendingUpgradeCheckout();
+      const live = actions.rememberPendingUpgradeCheckout({
+        successPath: "/manual?billing=success",
+        cancelPath: "/manual?billing=cancelled"
+      });
+      const peeked = actions.peekPendingUpgradeCheckout();
+      actions.clearPendingUpgradeCheckout();
+      window.localStorage.setItem(
+        "invoicePendingUpgradeCheckout",
+        JSON.stringify({
+          intentId: "expired_intent",
+          successPath: "/manual?billing=success",
+          cancelPath: "/manual?billing=cancelled",
+          createdAt: Date.now() - 60 * 60 * 1000,
+          expiresAt: Date.now() - 1000
+        })
+      );
+      const expired = actions.peekPendingUpgradeCheckout();
+      window.localStorage.setItem("invoicePendingUpgradeCheckout", "{not-json");
+      const malformed = actions.peekPendingUpgradeCheckout();
+      const restored = actions.restorePendingUpgradeCheckout(live);
+      const afterRestore = actions.peekPendingUpgradeCheckout();
+      actions.clearPendingUpgradeCheckout();
+      return {
+        liveIntentId: live.intentId,
+        peekedIntentId: peeked?.intentId || null,
+        expired,
+        malformed,
+        restored: restored ?? null,
+        afterRestoreIntentId: afterRestore?.intentId || null
+      };
+    });
+
+    assert.ok(result.liveIntentId);
+    assert.equal(result.peekedIntentId, result.liveIntentId);
+    assert.equal(result.expired, null);
+    assert.equal(result.malformed, null);
+    assert.equal(result.afterRestoreIntentId, result.liveIntentId);
   } finally {
     await context.close();
   }

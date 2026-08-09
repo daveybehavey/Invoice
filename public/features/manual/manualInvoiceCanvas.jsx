@@ -104,7 +104,7 @@
       "Missing /utils/billingActions.js load. Ensure it is loaded before /features/manual/manualInvoiceCanvas.jsx."
     );
   }
-  const { readBillingNoticeFromUrl } = billingActions;
+  const { readBillingNoticeFromUrl, resumePendingUpgradeCheckout, peekPendingUpgradeCheckout } = billingActions;
   const billieWorkspaceStorageKey = requestIdentity.getScopedStorageKey?.("billieWorkspaceInstruction") ?? "billieWorkspaceInstruction";
   const favoriteLayoutStudioStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceFavoriteLayoutStudio") ?? "invoiceFavoriteLayoutStudio";
@@ -2587,6 +2587,35 @@ function ManualInvoiceCanvas() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!authSession?.userId || !authSession?.email) {
+      return undefined;
+    }
+    if (!peekPendingUpgradeCheckout?.()) {
+      return undefined;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const plan = await refreshAccountPlan(() => true);
+        await resumePendingUpgradeCheckout({
+          plan: plan || accountPlan,
+          session: authSession
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setBillingNotice({
+            tone: "amber",
+            message: error?.message || "Unable to resume upgrade after sign-in."
+          });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authSession?.userId, authSession?.email]);
 
   useEffect(() => {
     completeOnboardingStep("open_editor");

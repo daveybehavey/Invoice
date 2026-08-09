@@ -120,10 +120,15 @@ async function resolveAccountPlanTier(
   if (ownerId && proOwnerIds.has(ownerId.trim())) {
     return "pro";
   }
+  // Stripe Pro unlocks require a server-verified authenticated identity.
+  // Guest/header owner IDs must never match Stripe entitlements (OR-match spoofing).
+  if (!authSession?.userId) {
+    return "free";
+  }
   const hasBillingEntitlement = await hasActiveStripeEntitlement({
-    ownerId,
-    userId: authSession?.userId,
-    email: authSession?.email
+    ownerId: authSession.userId,
+    userId: authSession.userId,
+    email: authSession.email
   });
   if (hasBillingEntitlement) {
     return "pro";

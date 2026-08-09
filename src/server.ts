@@ -42,7 +42,8 @@ import {
   createStripeCheckoutSession,
   createStripeInvoicePaymentLink,
   getStripeBillingCapabilities,
-  processStripeWebhookEvent
+  processStripeWebhookEvent,
+  resolveAuthenticatedCheckoutOwnership
 } from "./services/stripeBilling.js";
 import { getBillingEntitlementsSummary } from "./services/billingEntitlementsStore.js";
 import {
@@ -217,23 +218,31 @@ app.post("/api/billing/checkout-session", async (req: Request, res: Response, ne
     const parsedRequest = z
       .object({
         successPath: z.string().trim().optional(),
-        cancelPath: z.string().trim().optional()
+        cancelPath: z.string().trim().optional(),
+        resumeIntentId: z.string().trim().min(1).max(128).optional()
       })
       .default({})
       .parse(req.body ?? {});
-    const ownerId = getRequestOwnerId(req);
     const authSession = getAuthSessionFromRequest(req);
+    let ownership: { ownerId: string; userId: string; email: string };
+    try {
+      ownership = resolveAuthenticatedCheckoutOwnership(authSession);
+    } catch (_error) {
+      throw new HttpStatusError(401, "Sign in to upgrade to Pro.");
+    }
+    // Ownership is always session-derived; guest headers / body cannot choose entitlement owner.
     const checkoutSession = await createStripeCheckoutSession({
-      ownerId,
-      userId: authSession?.userId,
-      email: authSession?.email,
+      ownerId: ownership.ownerId,
+      userId: ownership.userId,
+      email: ownership.email,
       baseUrl: resolvePublicBaseUrl(req),
       successPath: parsedRequest.successPath,
-      cancelPath: parsedRequest.cancelPath
+      cancelPath: parsedRequest.cancelPath,
+      resumeIntentId: parsedRequest.resumeIntentId
     });
     await trackRevenueSignalSafely({
       event: "checkout_started",
-      ownerId,
+      ownerId: ownership.ownerId,
       source: "billing_checkout"
     });
     res.json(checkoutSession);
@@ -251,11 +260,13 @@ app.post("/api/billing/portal-session", async (req: Request, res: Response, next
       .default({})
       .parse(req.body ?? {});
     const authSession = getAuthSessionFromRequest(req);
-    if (!authSession?.email) {
+    if (!authSession?.userId || !authSession.email) {
       throw new HttpStatusError(401, "Sign in to open billing settings.");
     }
     const portalSession = await createStripeBillingPortalSession({
       email: authSession.email,
+      userId: authSession.userId,
+      ownerId: authSession.userId,
       baseUrl: resolvePublicBaseUrl(req),
       returnPath: parsedRequest.returnPath
     });
