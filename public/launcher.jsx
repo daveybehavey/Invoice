@@ -104,7 +104,14 @@ if (!billingActions) {
   throw new Error("Missing /utils/billingActions.js load. Ensure it is loaded before /launcher.jsx.");
 }
 
-const { hasStripeCheckout, hasStripePortal, startUpgradeCheckout, openBillingPortal } = billingActions;
+const {
+  hasStripeCheckout,
+  hasStripePortal,
+  startUpgradeCheckout,
+  openBillingPortal,
+  resumePendingUpgradeCheckout,
+  peekPendingUpgradeCheckout
+} = billingActions;
 
 const requestIdentity = window.InvoiceRequestIdentity;
 if (!requestIdentity) {
@@ -879,7 +886,7 @@ function Launcher() {
   useEffect(() => {
     let active = true;
     refreshSession()
-      .then((session) => {
+      .then(async (session) => {
         if (!active) {
           return;
         }
@@ -911,6 +918,41 @@ function Launcher() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!authSession?.userId || !authSession?.email) {
+      return undefined;
+    }
+    if (!peekPendingUpgradeCheckout?.()) {
+      return undefined;
+    }
+    let cancelled = false;
+    setBillingBusy(true);
+    setBillingError("");
+    (async () => {
+      try {
+        const planResponse = await apiFetch("/api/account/plan");
+        const planPayload = planResponse.ok ? await planResponse.json().catch(() => null) : null;
+        // Always attempt resume once pending is observed. Cleanup may flip `cancelled`
+        // during plan fetch; that must not silently drop the Checkout intent.
+        await resumePendingUpgradeCheckout({
+          plan: planPayload || accountPlan,
+          session: authSession
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setBillingError(error?.message || "Unable to resume upgrade after sign-in.");
+        }
+      } finally {
+        if (!cancelled) {
+          setBillingBusy(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authSession?.userId, authSession?.email]);
 
   useEffect(() => {
     setOnboardingStatus(buildOnboardingStatus({ authSession }));
@@ -1414,7 +1456,12 @@ function Launcher() {
     try {
       await startUpgradeCheckout(accountPlan, { successPath: "/?billing=success" });
     } catch (error) {
-      setBillingError(error?.message || "Unable to open upgrade.");
+      if (error?.code === "AUTH_REQUIRED_FOR_UPGRADE" || /sign in to upgrade/i.test(String(error?.message || ""))) {
+        setBillingError("Sign in to upgrade to Pro. We'll resume checkout after you authenticate.");
+        openSignInModal({ returnTo: "/" });
+      } else {
+        setBillingError(error?.message || "Unable to open upgrade.");
+      }
     } finally {
       setBillingBusy(false);
     }

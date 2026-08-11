@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import Stripe from "stripe";
 import {
   applyCheckoutSessionEntitlement,
-  applySubscriptionEntitlement
+  applySubscriptionEntitlement,
+  findBillingCustomerIdForOwner
 } from "./billingEntitlementsStore.js";
 
 export type StripeBillingCapabilities = {
@@ -21,18 +23,66 @@ export type StripeBillingCapabilities = {
 
 type CheckoutSessionInput = {
   ownerId: string;
-  userId?: string;
-  email?: string;
+  userId: string;
+  email: string;
   baseUrl: string;
   successPath?: string;
   cancelPath?: string;
+  resumeIntentId?: string;
 };
 
 type BillingPortalSessionInput = {
   email: string;
+  userId?: string;
+  ownerId?: string;
+  customerId?: string;
   baseUrl: string;
   returnPath?: string;
 };
+
+type CheckoutSessionResult = {
+  url: string;
+  sessionId: string;
+};
+
+type CheckoutSessionCreatorInput = CheckoutSessionInput & {
+  ownerId: string;
+  userId: string;
+  email: string;
+  clientReferenceId: string;
+  resumeIntentId?: string;
+};
+
+/** Options forwarded to Stripe (or the test creator seam) for Checkout session create. */
+export type CheckoutSessionCreatorRequestOptions = {
+  idempotencyKey?: string;
+};
+
+type CheckoutSessionCreator = (
+  input: CheckoutSessionCreatorInput,
+  requestOptions?: CheckoutSessionCreatorRequestOptions
+) => Promise<CheckoutSessionResult>;
+
+type BillingPortalCreatorInput = BillingPortalSessionInput & {
+  resolvedCustomerId: string;
+};
+
+/** Authenticated Checkout ownership must come from the server session only. */
+export function resolveAuthenticatedCheckoutOwnership(authSession: {
+  userId?: string | null;
+  email?: string | null;
+} | null | undefined): { ownerId: string; userId: string; email: string } {
+  const userId = typeof authSession?.userId === "string" ? authSession.userId.trim() : "";
+  const email = typeof authSession?.email === "string" ? authSession.email.trim().toLowerCase() : "";
+  if (!userId || !email) {
+    throw new Error("Sign in to upgrade to Pro.");
+  }
+  return {
+    ownerId: userId,
+    userId,
+    email
+  };
+}
 
 type InvoicePaymentLinkInput = {
   invoiceId: string;
@@ -67,6 +117,37 @@ let cachedStripeClient:
 let invoicePaymentLinkCreatorForTests:
   | ((input: InvoicePaymentLinkInput) => Promise<InvoicePaymentLinkResult>)
   | null = null;
+let checkoutSessionCreatorForTests: CheckoutSessionCreator | null = null;
+let billingPortalSessionCreatorForTests:
+  | ((input: BillingPortalCreatorInput) => Promise<{ url: string }>)
+  | null = null;
+
+/**
+ * In-flight coalescing within one process/isolate for the same owner+resume intent.
+ * Sequential / cross-isolate correctness comes from Stripe idempotency keys only —
+ * there is intentionally no completed-session process cache (avoids unbounded Memory).
+ */
+const checkoutIntentInFlight = new Map<string, Promise<CheckoutSessionResult>>();
+
+function checkoutIntentInFlightKey(ownerId: string, resumeIntentId: string): string {
+  return `${ownerId}::${resumeIntentId}`;
+}
+
+/**
+ * Deterministic Stripe Checkout idempotency key for an authenticated owner + resume intent.
+ * Hashed so keys stay within Stripe limits and do not expose raw identity.
+ */
+export function buildCheckoutResumeIdempotencyKey(ownerId: string, resumeIntentId: string): string {
+  const owner = normalizeText(ownerId);
+  const intent = normalizeText(resumeIntentId);
+  if (!owner || !intent) {
+    throw new Error("Checkout idempotency key requires an authenticated owner and resume intent.");
+  }
+  const digest = createHash("sha256")
+    .update(`notebill.checkout.v1\0${owner}\0${intent}`, "utf8")
+    .digest("hex");
+  return `nb_co_${digest}`;
+}
 
 export function getStripeBillingCapabilities(): StripeBillingCapabilities {
   const secretKey = getOptionalEnv(process.env.STRIPE_SECRET_KEY);
@@ -163,74 +244,162 @@ export async function createStripeInvoicePaymentLink(
 
 export async function createStripeCheckoutSession(
   input: CheckoutSessionInput
-): Promise<{ url: string; sessionId: string }> {
+): Promise<CheckoutSessionResult> {
+  const ownership = resolveAuthenticatedCheckoutOwnership({
+    userId: input.userId,
+    email: input.email
+  });
+  if (input.ownerId.trim() !== ownership.ownerId) {
+    throw new Error("Checkout ownership must match the authenticated user.");
+  }
+
+  const resumeIntentId = normalizeText(input.resumeIntentId);
+  const intentKey = resumeIntentId
+    ? checkoutIntentInFlightKey(ownership.ownerId, resumeIntentId)
+    : "";
+
+  if (intentKey) {
+    const inFlight = checkoutIntentInFlight.get(intentKey);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const pending = createCheckoutSessionOnce(input, ownership, resumeIntentId);
+    checkoutIntentInFlight.set(intentKey, pending);
+    try {
+      return await pending;
+    } finally {
+      // Clear in-flight on settle (success or failure) so retries are not poisoned.
+      checkoutIntentInFlight.delete(intentKey);
+    }
+  }
+
+  return createCheckoutSessionOnce(input, ownership, resumeIntentId);
+}
+
+async function createCheckoutSessionOnce(
+  input: CheckoutSessionInput,
+  ownership: { ownerId: string; userId: string; email: string },
+  resumeIntentId: string
+): Promise<CheckoutSessionResult> {
   const capabilities = getStripeBillingCapabilities();
-  if (!capabilities.hasSecretKey) {
+  if (!capabilities.hasSecretKey && !checkoutSessionCreatorForTests) {
     throw new Error("Stripe billing is not configured (missing STRIPE_SECRET_KEY).");
   }
   const priceId = getOptionalEnv(process.env.STRIPE_PRICE_ID);
-  if (!priceId) {
+  if (!priceId && !checkoutSessionCreatorForTests) {
     throw new Error("Stripe checkout is not configured (missing STRIPE_PRICE_ID).");
-  }
-  const stripe = getStripeClient();
-  if (!stripe) {
-    throw new Error("Stripe billing is not configured.");
   }
 
   const successPath = normalizePathWithFallback(input.successPath, "/?billing=success");
   const cancelPath = normalizePathWithFallback(input.cancelPath, "/?billing=cancelled");
-
-  const session = await stripe.checkout.sessions.create({
-    mode: "subscription",
-    line_items: [{ price: priceId, quantity: 1 }],
-    allow_promotion_codes: true,
-    customer_email: input.email,
-    subscription_data: {
-      metadata: {
-        ownerId: input.ownerId,
-        userId: input.userId ?? "",
-        email: input.email ?? ""
-      }
-    },
-    client_reference_id: input.ownerId,
-    success_url: `${input.baseUrl}${successPath}`,
-    cancel_url: `${input.baseUrl}${cancelPath}`,
-    metadata: {
-      ownerId: input.ownerId,
-      userId: input.userId ?? "",
-      email: input.email ?? ""
-    }
-  });
-
-  if (!session.url) {
-    throw new Error("Stripe checkout session did not return a redirect URL.");
-  }
-  return {
-    url: session.url,
-    sessionId: session.id
+  const creatorInput: CheckoutSessionCreatorInput = {
+    ...input,
+    ownerId: ownership.ownerId,
+    userId: ownership.userId,
+    email: ownership.email,
+    clientReferenceId: ownership.ownerId,
+    successPath,
+    cancelPath,
+    resumeIntentId: resumeIntentId || undefined
   };
+  const requestOptions: CheckoutSessionCreatorRequestOptions | undefined = resumeIntentId
+    ? {
+        idempotencyKey: buildCheckoutResumeIdempotencyKey(ownership.ownerId, resumeIntentId)
+      }
+    : undefined;
+
+  let result: CheckoutSessionResult;
+  if (checkoutSessionCreatorForTests) {
+    result = await checkoutSessionCreatorForTests(creatorInput, requestOptions);
+  } else {
+    const stripe = getStripeClient();
+    if (!stripe) {
+      throw new Error("Stripe billing is not configured.");
+    }
+    if (!priceId) {
+      throw new Error("Stripe checkout is not configured (missing STRIPE_PRICE_ID).");
+    }
+    const session = await stripe.checkout.sessions.create(
+      {
+        mode: "subscription",
+        line_items: [{ price: priceId, quantity: 1 }],
+        allow_promotion_codes: true,
+        customer_email: ownership.email,
+        subscription_data: {
+          metadata: {
+            ownerId: ownership.ownerId,
+            userId: ownership.userId,
+            email: ownership.email,
+            ...(resumeIntentId ? { resumeIntentId } : {})
+          }
+        },
+        client_reference_id: ownership.ownerId,
+        success_url: `${input.baseUrl}${successPath}`,
+        cancel_url: `${input.baseUrl}${cancelPath}`,
+        metadata: {
+          ownerId: ownership.ownerId,
+          userId: ownership.userId,
+          email: ownership.email,
+          ...(resumeIntentId ? { resumeIntentId } : {})
+        }
+      },
+      requestOptions
+    );
+    if (!session.url) {
+      throw new Error("Stripe checkout session did not return a redirect URL.");
+    }
+    result = {
+      url: session.url,
+      sessionId: session.id
+    };
+  }
+
+  return result;
 }
 
 export async function createStripeBillingPortalSession(
   input: BillingPortalSessionInput
 ): Promise<{ url: string }> {
   const capabilities = getStripeBillingCapabilities();
-  if (!capabilities.hasSecretKey) {
+  if (!capabilities.hasSecretKey && !billingPortalSessionCreatorForTests) {
     throw new Error("Stripe billing is not configured (missing STRIPE_SECRET_KEY).");
   }
+
+  let customerId = typeof input.customerId === "string" ? input.customerId.trim() : "";
+  if (!customerId) {
+    customerId =
+      (await findBillingCustomerIdForOwner({
+        userId: input.userId,
+        ownerId: input.ownerId
+      })) ?? "";
+  }
+
+  if (billingPortalSessionCreatorForTests) {
+    if (!customerId) {
+      throw new Error("No Stripe customer found for this account yet.");
+    }
+    return billingPortalSessionCreatorForTests({
+      ...input,
+      resolvedCustomerId: customerId
+    });
+  }
+
   const stripe = getStripeClient();
   if (!stripe) {
     throw new Error("Stripe billing is not configured.");
   }
-
-  const customer = await findStripeCustomerByEmail(stripe, input.email);
-  if (!customer?.id) {
+  if (!customerId) {
+    const customer = await findStripeCustomerByEmail(stripe, input.email);
+    customerId = customer?.id ?? "";
+  }
+  if (!customerId) {
     throw new Error("No Stripe customer found for this account yet.");
   }
 
   const returnPath = normalizePathWithFallback(input.returnPath, "/");
   const session = await stripe.billingPortal.sessions.create({
-    customer: customer.id,
+    customer: customerId,
     return_url: `${input.baseUrl}${returnPath}`
   });
 
@@ -417,4 +586,19 @@ export function setInvoicePaymentLinkCreatorForTests(
   creator: ((input: InvoicePaymentLinkInput) => Promise<InvoicePaymentLinkResult>) | null
 ): void {
   invoicePaymentLinkCreatorForTests = creator;
+}
+
+export function setCheckoutSessionCreatorForTests(creator: CheckoutSessionCreator | null): void {
+  checkoutSessionCreatorForTests = creator;
+}
+
+export function setBillingPortalSessionCreatorForTests(
+  creator: ((input: BillingPortalCreatorInput) => Promise<{ url: string }>) | null
+): void {
+  billingPortalSessionCreatorForTests = creator;
+}
+
+/** Clears process-local in-flight Checkout coalescing (test isolate reset). */
+export function clearCheckoutIntentSessionsForTests(): void {
+  checkoutIntentInFlight.clear();
 }
