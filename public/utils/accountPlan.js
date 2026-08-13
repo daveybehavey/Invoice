@@ -61,7 +61,7 @@
     if (remaining === null || remaining > 1) {
       return "";
     }
-    return "Pro keeps sends, reminders, hosted payment links, and saved client memory in one place.";
+    return "Pro unlocks unlimited saved invoices for the paid period. Sends, reminders, and payment links stay available when configured.";
   };
 
   const getPlanUsageModel = (plan) => {

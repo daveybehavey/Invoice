@@ -5,6 +5,54 @@ import {
   applySubscriptionEntitlement,
   findBillingCustomerIdForOwner
 } from "./billingEntitlementsStore.js";
+import {
+  TERMS_ACCEPTANCE_METHOD,
+  assertValidTermsAcknowledgement,
+  listRegisteredTermsVersions
+} from "./legalFoundation.js";
+
+const CHECKOUT_SESSION_ID_PLACEHOLDER = "{CHECKOUT_SESSION_ID}";
+
+/**
+ * Append or replace `acceptedTermsVersion` on a Checkout success path.
+ * Preserves an existing `session_id={CHECKOUT_SESSION_ID}` placeholder when present.
+ * Stable: same inputs always produce the same string.
+ */
+export function appendAcceptedTermsVersionToSuccessPath(
+  successPath: string,
+  termsVersion: string
+): string {
+  const version = typeof termsVersion === "string" ? termsVersion.trim() : "";
+  if (!version) {
+    throw new Error("acceptedTermsVersion requires a Terms version.");
+  }
+  const registered = listRegisteredTermsVersions();
+  if (!registered.includes(version)) {
+    throw new Error(
+      `Unknown Terms version "${version}". Registered versions: ${registered.join(", ")}.`
+    );
+  }
+  const raw = typeof successPath === "string" ? successPath.trim() : "";
+  if (!raw.startsWith("/") || raw.startsWith("//")) {
+    throw new Error("successPath must be an absolute app path.");
+  }
+  const hashIndex = raw.indexOf("#");
+  const withoutHash = hashIndex === -1 ? raw : raw.slice(0, hashIndex);
+  const hash = hashIndex === -1 ? "" : raw.slice(hashIndex);
+  const qIndex = withoutHash.indexOf("?");
+  const pathname = qIndex === -1 ? withoutHash : withoutHash.slice(0, qIndex);
+  const search = qIndex === -1 ? "" : withoutHash.slice(qIndex + 1);
+  const params = new URLSearchParams(search);
+  params.set("acceptedTermsVersion", version);
+  let query = params.toString();
+  // Keep Stripe's unencoded placeholder form if it was present (or reintroduced by encoding).
+  if (query.includes(encodeURIComponent(CHECKOUT_SESSION_ID_PLACEHOLDER))) {
+    query = query.split(encodeURIComponent(CHECKOUT_SESSION_ID_PLACEHOLDER)).join(
+      CHECKOUT_SESSION_ID_PLACEHOLDER
+    );
+  }
+  return `${pathname}${query ? `?${query}` : ""}${hash}`;
+}
 
 export type StripeBillingCapabilities = {
   provider: "stripe" | "none";
@@ -29,6 +77,14 @@ type CheckoutSessionInput = {
   successPath?: string;
   cancelPath?: string;
   resumeIntentId?: string;
+  termsVersion?: string;
+  termsAccepted?: boolean | string;
+  /**
+   * Optional client-reported click time for diagnostics only.
+   * Never sent to Stripe metadata or included in provider create params —
+   * Stripe Checkout Session `created` is the authoritative durable provider time.
+   */
+  clientReportedAcknowledgedAt?: string;
 };
 
 type BillingPortalSessionInput = {
@@ -43,14 +99,23 @@ type BillingPortalSessionInput = {
 type CheckoutSessionResult = {
   url: string;
   sessionId: string;
+  /** ISO timestamp from Stripe Checkout Session `created` when available. */
+  providerCreatedAt?: string;
 };
 
-type CheckoutSessionCreatorInput = CheckoutSessionInput & {
+/** Stable creator input for Stripe (or test seam). No client timestamps. */
+type CheckoutSessionCreatorInput = {
   ownerId: string;
   userId: string;
   email: string;
+  baseUrl: string;
+  successPath: string;
+  cancelPath: string;
   clientReferenceId: string;
   resumeIntentId?: string;
+  termsVersion: string;
+  termsAccepted: true;
+  termsAcceptanceMethod: typeof TERMS_ACCEPTANCE_METHOD;
 };
 
 /** Options forwarded to Stripe (or the test creator seam) for Checkout session create. */
@@ -147,6 +212,88 @@ export function buildCheckoutResumeIdempotencyKey(ownerId: string, resumeIntentI
     .update(`notebill.checkout.v1\0${owner}\0${intent}`, "utf8")
     .digest("hex");
   return `nb_co_${digest}`;
+}
+
+export type StripeCheckoutSessionCreateParams = {
+  mode: "subscription";
+  line_items: Array<{ price: string; quantity: number }>;
+  allow_promotion_codes: true;
+  customer_email: string;
+  subscription_data: {
+    metadata: Record<string, string>;
+  };
+  client_reference_id: string;
+  success_url: string;
+  cancel_url: string;
+  metadata: Record<string, string>;
+};
+
+/**
+ * Byte-stable Stripe Checkout Session create params for the same owner + resume
+ * intent + termsVersion + termsAccepted. Client click timestamps are excluded.
+ * Authoritative durable provider time is Stripe Checkout Session `created`.
+ */
+export function buildStripeCheckoutSessionCreateParams(input: {
+  ownerId: string;
+  userId: string;
+  email: string;
+  baseUrl: string;
+  successPath: string;
+  cancelPath: string;
+  priceId: string;
+  resumeIntentId?: string;
+  termsVersion: string;
+  termsAccepted: true;
+  termsAcceptanceMethod?: typeof TERMS_ACCEPTANCE_METHOD;
+}): StripeCheckoutSessionCreateParams {
+  const resumeIntentId = normalizeText(input.resumeIntentId);
+  const termsMetadata = {
+    termsVersion: input.termsVersion,
+    termsAccepted: "true",
+    termsAcceptanceMethod: input.termsAcceptanceMethod ?? TERMS_ACCEPTANCE_METHOD
+  };
+  const ownershipMetadata = {
+    ownerId: input.ownerId,
+    userId: input.userId,
+    email: input.email,
+    ...(resumeIntentId ? { resumeIntentId } : {}),
+    ...termsMetadata
+  };
+  return {
+    mode: "subscription",
+    line_items: [{ price: input.priceId, quantity: 1 }],
+    allow_promotion_codes: true,
+    customer_email: input.email,
+    subscription_data: {
+      metadata: ownershipMetadata
+    },
+    client_reference_id: input.ownerId,
+    success_url: `${input.baseUrl}${input.successPath}`,
+    cancel_url: `${input.baseUrl}${input.cancelPath}`,
+    metadata: ownershipMetadata
+  };
+}
+
+/** Stripe-relevant fields from creator input (for idempotency param parity tests). */
+export function serializeStripeRelevantCheckoutParams(
+  creatorInput: CheckoutSessionCreatorInput,
+  priceId = "price_test_stable"
+): string {
+  return JSON.stringify(
+    buildStripeCheckoutSessionCreateParams({
+      ownerId: creatorInput.ownerId,
+      userId: creatorInput.userId,
+      email: creatorInput.email,
+      baseUrl: creatorInput.baseUrl,
+      successPath: creatorInput.successPath,
+      cancelPath: creatorInput.cancelPath,
+      priceId,
+      resumeIntentId: creatorInput.resumeIntentId,
+      termsVersion: creatorInput.termsVersion,
+      termsAccepted: creatorInput.termsAccepted,
+      termsAcceptanceMethod: creatorInput.termsAcceptanceMethod
+    })
+  );
 }
 
 export function getStripeBillingCapabilities(): StripeBillingCapabilities {
@@ -291,17 +438,32 @@ async function createCheckoutSessionOnce(
     throw new Error("Stripe checkout is not configured (missing STRIPE_PRICE_ID).");
   }
 
-  const successPath = normalizePathWithFallback(input.successPath, "/?billing=success");
+  const normalizedSuccessPath = normalizePathWithFallback(
+    input.successPath,
+    "/?billing=success"
+  );
   const cancelPath = normalizePathWithFallback(input.cancelPath, "/?billing=cancelled");
+  const termsAck = assertValidTermsAcknowledgement({
+    termsVersion: input.termsVersion,
+    termsAccepted: input.termsAccepted
+  });
+  const successPath = appendAcceptedTermsVersionToSuccessPath(
+    normalizedSuccessPath,
+    termsAck.termsVersion
+  );
+  // clientReportedAcknowledgedAt is intentionally omitted from creatorInput and Stripe params.
   const creatorInput: CheckoutSessionCreatorInput = {
-    ...input,
     ownerId: ownership.ownerId,
     userId: ownership.userId,
     email: ownership.email,
+    baseUrl: input.baseUrl,
     clientReferenceId: ownership.ownerId,
     successPath,
     cancelPath,
-    resumeIntentId: resumeIntentId || undefined
+    resumeIntentId: resumeIntentId || undefined,
+    termsVersion: termsAck.termsVersion,
+    termsAccepted: termsAck.termsAccepted,
+    termsAcceptanceMethod: termsAck.termsAcceptanceMethod
   };
   const requestOptions: CheckoutSessionCreatorRequestOptions | undefined = resumeIntentId
     ? {
@@ -320,38 +482,30 @@ async function createCheckoutSessionOnce(
     if (!priceId) {
       throw new Error("Stripe checkout is not configured (missing STRIPE_PRICE_ID).");
     }
-    const session = await stripe.checkout.sessions.create(
-      {
-        mode: "subscription",
-        line_items: [{ price: priceId, quantity: 1 }],
-        allow_promotion_codes: true,
-        customer_email: ownership.email,
-        subscription_data: {
-          metadata: {
-            ownerId: ownership.ownerId,
-            userId: ownership.userId,
-            email: ownership.email,
-            ...(resumeIntentId ? { resumeIntentId } : {})
-          }
-        },
-        client_reference_id: ownership.ownerId,
-        success_url: `${input.baseUrl}${successPath}`,
-        cancel_url: `${input.baseUrl}${cancelPath}`,
-        metadata: {
-          ownerId: ownership.ownerId,
-          userId: ownership.userId,
-          email: ownership.email,
-          ...(resumeIntentId ? { resumeIntentId } : {})
-        }
-      },
-      requestOptions
-    );
+    const createParams = buildStripeCheckoutSessionCreateParams({
+      ownerId: ownership.ownerId,
+      userId: ownership.userId,
+      email: ownership.email,
+      baseUrl: input.baseUrl,
+      successPath,
+      cancelPath,
+      priceId,
+      resumeIntentId: resumeIntentId || undefined,
+      termsVersion: termsAck.termsVersion,
+      termsAccepted: termsAck.termsAccepted,
+      termsAcceptanceMethod: termsAck.termsAcceptanceMethod
+    });
+    const session = await stripe.checkout.sessions.create(createParams, requestOptions);
     if (!session.url) {
       throw new Error("Stripe checkout session did not return a redirect URL.");
     }
     result = {
       url: session.url,
-      sessionId: session.id
+      sessionId: session.id,
+      providerCreatedAt:
+        typeof session.created === "number"
+          ? new Date(session.created * 1000).toISOString()
+          : undefined
     };
   }
 

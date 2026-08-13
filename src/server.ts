@@ -45,6 +45,17 @@ import {
   processStripeWebhookEvent,
   resolveAuthenticatedCheckoutOwnership
 } from "./services/stripeBilling.js";
+import {
+  LEGAL_PRIVACY_VERSION,
+  LEGAL_TERMS_VERSION,
+  buildPrivacySections,
+  buildTermsDownloadFilename,
+  buildTermsDownloadPath,
+  buildTermsPlainText,
+  getLegalFoundationSnapshot,
+  resolveTermsDocument
+} from "./services/legalFoundation.js";
+import { deliverContractCopy } from "./services/contractCopyDelivery.js";
 import { getBillingEntitlementsSummary } from "./services/billingEntitlementsStore.js";
 import {
   assertSavedInvoicePersistencePolicy,
@@ -173,6 +184,7 @@ const spaRoutes = [
   "/dashboard",
   "/portal",
   "/privacy",
+  "/terms",
   "/help",
   "/support",
   "/feedback",
@@ -213,13 +225,75 @@ app.get("/api/account/plan", async (req: Request, res: Response, next: NextFunct
   }
 });
 
+app.get("/api/legal/foundation", (_req: Request, res: Response) => {
+  res.json(getLegalFoundationSnapshot());
+});
+
+app.get("/api/legal/documents/:kind", (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const kind = z.enum(["terms", "privacy"]).parse(req.params.kind);
+    const versionQuery =
+      typeof req.query.version === "string" ? req.query.version.trim() : undefined;
+    const formatQuery =
+      typeof req.query.format === "string" ? req.query.format.trim().toLowerCase() : undefined;
+
+    if (kind === "terms") {
+      let termsDoc;
+      try {
+        termsDoc = resolveTermsDocument(versionQuery || null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown Terms version.";
+        throw new HttpStatusError(/Unknown Terms version/i.test(message) ? 404 : 400, message);
+      }
+
+      if (formatQuery === "txt") {
+        const filename = buildTermsDownloadFilename(termsDoc.version);
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.send(buildTermsPlainText(termsDoc.version));
+        return;
+      }
+
+      res.json({
+        kind,
+        version: termsDoc.version,
+        effectiveDate: termsDoc.effectiveDate,
+        isCurrent: termsDoc.isCurrent,
+        sections: termsDoc.sections,
+        termsUrlPath: termsDoc.termsUrlPath,
+        downloadPath: buildTermsDownloadPath(termsDoc.version)
+      });
+      return;
+    }
+
+    if (versionQuery && versionQuery !== LEGAL_PRIVACY_VERSION) {
+      throw new HttpStatusError(
+        404,
+        `Unknown Privacy version "${versionQuery}". Current version: ${LEGAL_PRIVACY_VERSION}.`
+      );
+    }
+    res.json({
+      kind,
+      version: LEGAL_PRIVACY_VERSION,
+      effectiveDate: getLegalFoundationSnapshot().effectiveDate,
+      isCurrent: true,
+      sections: buildPrivacySections(),
+      privacyUrlPath: "/privacy"
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/billing/checkout-session", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = z
       .object({
         successPath: z.string().trim().optional(),
         cancelPath: z.string().trim().optional(),
-        resumeIntentId: z.string().trim().min(1).max(128).optional()
+        resumeIntentId: z.string().trim().min(1).max(128).optional(),
+        termsVersion: z.string().trim().min(1).max(64).optional(),
+        termsAccepted: z.union([z.boolean(), z.string()]).optional()
       })
       .default({})
       .parse(req.body ?? {});
@@ -238,7 +312,9 @@ app.post("/api/billing/checkout-session", async (req: Request, res: Response, ne
       baseUrl: resolvePublicBaseUrl(req),
       successPath: parsedRequest.successPath,
       cancelPath: parsedRequest.cancelPath,
-      resumeIntentId: parsedRequest.resumeIntentId
+      resumeIntentId: parsedRequest.resumeIntentId,
+      termsVersion: parsedRequest.termsVersion,
+      termsAccepted: parsedRequest.termsAccepted
     });
     await trackRevenueSignalSafely({
       event: "checkout_started",
@@ -246,6 +322,30 @@ app.post("/api/billing/checkout-session", async (req: Request, res: Response, ne
       source: "billing_checkout"
     });
     res.json(checkoutSession);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/billing/contract-copy", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsedRequest = z
+      .object({
+        termsVersion: z.string().trim().min(1).max(64).optional()
+      })
+      .default({})
+      .parse(req.body ?? {});
+    const authSession = getAuthSessionFromRequest(req);
+    if (!authSession?.userId || !authSession.email) {
+      throw new HttpStatusError(401, "Sign in to request a contract copy.");
+    }
+    const result = await deliverContractCopy({
+      email: authSession.email,
+      userId: authSession.userId,
+      termsVersion: parsedRequest.termsVersion || LEGAL_TERMS_VERSION,
+      baseUrl: resolvePublicBaseUrl(req)
+    });
+    res.json(result);
   } catch (error) {
     next(error);
   }

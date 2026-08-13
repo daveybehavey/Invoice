@@ -110,8 +110,13 @@ const {
   startUpgradeCheckout,
   openBillingPortal,
   resumePendingUpgradeCheckout,
-  peekPendingUpgradeCheckout
+  peekPendingUpgradeCheckout,
 } = billingActions;
+const contractCopyControls = window.InvoiceContractCopyControls;
+if (!contractCopyControls) {
+  throw new Error("Missing /ui/contractCopyControls.jsx load. Ensure it is loaded before /launcher.jsx.");
+}
+const { ContractCopyControls, BillingNoticeActions } = contractCopyControls;
 
 const requestIdentity = window.InvoiceRequestIdentity;
 if (!requestIdentity) {
@@ -1456,7 +1461,9 @@ function Launcher() {
     try {
       await startUpgradeCheckout(accountPlan, { successPath: "/?billing=success" });
     } catch (error) {
-      if (error?.code === "AUTH_REQUIRED_FOR_UPGRADE" || /sign in to upgrade/i.test(String(error?.message || ""))) {
+      if (error?.code === "CHECKOUT_DISCLOSURE_CANCELLED") {
+        setBillingError("");
+      } else if (error?.code === "AUTH_REQUIRED_FOR_UPGRADE" || /sign in to upgrade/i.test(String(error?.message || ""))) {
         setBillingError("Sign in to upgrade to Pro. We'll resume checkout after you authenticate.");
         openSignInModal({ returnTo: "/" });
       } else {
@@ -1875,10 +1882,16 @@ function Launcher() {
                 </p>
                 <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#d7f1dd]">
                   <a
+                    href="/terms"
+                    className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#d7f1dd]/50 underline-offset-4 hover:bg-white/10 hover:text-white"
+                  >
+                    Terms
+                  </a>
+                  <a
                     href="/privacy"
                     className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#d7f1dd]/50 underline-offset-4 hover:bg-white/10 hover:text-white"
                   >
-                    Privacy policy
+                    Privacy
                   </a>
                   <a
                     href="/support"
@@ -1991,15 +2004,17 @@ function Launcher() {
                 onSignOut={handleSignOut}
               />
               {billingNotice ? (
-                <p
+                <div
                   className={`nb-banner mt-3 ${
                     billingNotice.tone === "green"
                       ? "nb-banner--success"
                       : "nb-banner--warning"
                   }`}
+                  data-testid="billing-success-notice"
                 >
-                  {billingNotice.message}
-                </p>
+                  <p>{billingNotice.message}</p>
+                  <BillingNoticeActions notice={billingNotice} compact />
+                </div>
               ) : null}
               {authError ? <p className="mt-3 text-sm text-rose-600">{authError}</p> : null}
               {authSuccessNotice ? (
@@ -2026,10 +2041,22 @@ function Launcher() {
               </div>
               <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">
                 <a
+                  href="/terms"
+                  className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d]"
+                >
+                  Terms
+                </a>
+                <a
                   href="/privacy"
                   className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d]"
                 >
-                  Privacy policy
+                  Privacy
+                </a>
+                <a
+                  href="/terms#cancellation"
+                  className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d]"
+                >
+                  Cancellation
                 </a>
                 <a
                   href="/support"
@@ -2569,9 +2596,13 @@ function PublicInfoPage({ kicker, title, intro, sections, footerNote, actions, c
 
           <div className="mt-6 space-y-4">
             {sections.map((section) => (
-              <section key={section.title} className="nb-subcard">
+              <section
+                key={section.title}
+                id={section.id || undefined}
+                className="nb-subcard"
+              >
                 <h2 className="text-lg font-semibold text-slate-900">{section.title}</h2>
-                {section.paragraphs.map((paragraph) => (
+                {(section.paragraphs || []).map((paragraph) => (
                   <p key={paragraph} className="mt-3 text-sm leading-7 text-slate-700 md:text-[15px]">
                     {paragraph}
                   </p>
@@ -2597,86 +2628,180 @@ function PublicInfoPage({ kicker, title, intro, sections, footerNote, actions, c
   );
 }
 
+function TermsPage() {
+  const [searchParams] = useSearchParams();
+  const requestedVersion = (searchParams.get("version") || "").trim();
+  const [loadToken, setLoadToken] = useState(0);
+  const [documentState, setDocumentState] = useState({ loading: true, error: "", payload: null });
+
+  useEffect(() => {
+    let active = true;
+    const query = requestedVersion
+      ? `?version=${encodeURIComponent(requestedVersion)}`
+      : "";
+    setDocumentState({ loading: true, error: "", payload: null });
+    fetch(`/api/legal/documents/terms${query}`)
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error || "Unable to load Terms.");
+        }
+        if (active) {
+          setDocumentState({ loading: false, error: "", payload });
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setDocumentState({
+            loading: false,
+            error: error?.message || "Unable to load Terms.",
+            payload: null
+          });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [requestedVersion, loadToken]);
+
+  const failed = Boolean(documentState.error) && !documentState.payload;
+  const version = documentState.payload?.version || "";
+  const effectiveDate = documentState.payload?.effectiveDate || "";
+  const sections = documentState.payload?.sections || [];
+  const downloadPath =
+    documentState.payload?.downloadPath ||
+    (version
+      ? `/api/legal/documents/terms?version=${encodeURIComponent(version)}&format=txt`
+      : "");
+  const versionedPath =
+    documentState.payload?.termsUrlPath ||
+    (version ? `/terms?version=${encodeURIComponent(version)}` : "/terms");
+
+  return (
+    <PublicInfoPage
+      kicker="Terms"
+      title="NoteBill Terms of Service"
+      intro="These Terms govern use of NoteBill, a product of EuroDigital. Review price, renewal, cancellation, refunds, and supplier identity before upgrading to Pro."
+      footerNote={
+        documentState.loading
+          ? "Loading Terms…"
+          : failed
+            ? "Terms could not be loaded. Use Retry — this page is not a retainable legal copy until the document loads."
+            : `Version ${version}. Effective ${effectiveDate}. Contact ${SUPPORT_EMAIL} for help.`
+      }
+      actions={[
+        { href: "/", label: "Open NoteBill", tone: "primary" },
+        { href: "/privacy", label: "Privacy", tone: "ghost" },
+        { href: "/support", label: "Support", tone: "ghost" },
+        { href: `${versionedPath}#cancellation`, label: "Cancellation", tone: "ghost" }
+      ]}
+      sections={failed || documentState.loading ? [] : sections}
+    >
+      {failed ? (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4" role="alert" data-testid="legal-doc-error">
+          <p className="text-sm text-rose-800">{documentState.error}</p>
+          <button
+            type="button"
+            className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-sm"
+            onClick={() => setLoadToken((value) => value + 1)}
+            data-testid="legal-doc-retry"
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
+      {!failed && !documentState.loading && version ? (
+        <ContractCopyControls
+          termsVersion={version}
+          termsHref={versionedPath}
+          downloadHref={downloadPath}
+        />
+      ) : null}
+    </PublicInfoPage>
+  );
+}
+
 function PrivacyPage() {
+  const [loadToken, setLoadToken] = useState(0);
+  const [documentState, setDocumentState] = useState({ loading: true, error: "", payload: null });
+
+  useEffect(() => {
+    let active = true;
+    setDocumentState({ loading: true, error: "", payload: null });
+    fetch("/api/legal/documents/privacy")
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error || "Unable to load Privacy Policy.");
+        }
+        if (active) {
+          setDocumentState({ loading: false, error: "", payload });
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setDocumentState({
+            loading: false,
+            error: error?.message || "Unable to load Privacy Policy.",
+            payload: null
+          });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [loadToken]);
+
+  const failed = Boolean(documentState.error) && !documentState.payload;
+  const version = documentState.payload?.version || "";
+  const effectiveDate = documentState.payload?.effectiveDate || "";
+  const sections = documentState.payload?.sections || [];
+
   return (
     <PublicInfoPage
       kicker="Privacy"
       title="NoteBill Privacy Policy"
-      intro="NoteBill helps you turn rough notes, imports, and draft invoice details into professional invoices. This policy explains what information we may collect, how it may be used, and what choices you have when using the product."
-      footerNote={`Last updated: ${PUBLIC_INFO_LAST_UPDATED}. For privacy or deletion requests, email ${SUPPORT_EMAIL} or use the public data deletion page.`}
+      intro="This policy explains what information NoteBill may collect, how it may be used, which processors may help operate the service, and how to contact us about privacy or deletion."
+      footerNote={
+        documentState.loading
+          ? "Loading Privacy Policy…"
+          : failed
+            ? "Privacy Policy could not be loaded. Use Retry — this page is not a retainable legal copy until the document loads."
+            : `Version ${version}. Effective ${effectiveDate}. For privacy or deletion requests, email ${SUPPORT_EMAIL} or use the public data deletion page.`
+      }
       actions={[
         { href: "/", label: "Open NoteBill", tone: "primary" },
+        { href: "/terms", label: "Terms", tone: "ghost" },
         { href: "/support", label: "Support", tone: "ghost" },
         { href: "/data-deletion", label: "Data deletion", tone: "ghost" }
       ]}
-      sections={[
-        {
-          title: "Information we may collect",
-          items: [
-            "Email address and session-related identifiers when you sign in or keep invoices tied to your account.",
-            "Content you provide, including notes, invoice details, uploaded invoice files, images, and saved drafts.",
-            "Audio notes and transcripts if audio transcription is enabled.",
-            "Billing and subscription metadata if paid plans, payment links, or Stripe checkout are enabled.",
-            "Limited diagnostic or quality information used to run, secure, and improve the product."
-          ],
-          paragraphs: []
-        },
-        {
-          title: "How we use information",
-          items: [
-            "To generate, edit, save, export, send, and reopen invoices.",
-            "To authenticate users and scope invoice data to the correct account.",
-            "To process imports, transcription, OCR, and invoice-generation workflows.",
-            "To support subscription billing, payment-link creation, and invoice email delivery when those features are enabled.",
-            "To troubleshoot issues, prevent abuse, and improve reliability."
-          ],
-          paragraphs: []
-        },
-        {
-          title: "Service providers",
-          paragraphs: [
-            "Depending on which features are enabled in production, NoteBill may use service providers such as OpenAI for AI-assisted processing, Stripe for billing and payment features, and SMTP2GO, Resend, or another email delivery provider for sending invoices or reminders.",
-            "These providers are used to operate the service, not to sell your information."
-          ]
-        },
-        {
-          title: "Sharing and disclosure",
-          items: [
-            "We do not sell your personal information.",
-            "We may share information with service providers that help us operate NoteBill.",
-            "We may disclose information when required to comply with law, protect the service, investigate abuse, or support a business transfer."
-          ],
-          paragraphs: []
-        },
-        {
-          title: "Your choices",
-          items: [
-            "You can delete saved invoices from the app.",
-            "You can avoid optional features like uploads, transcription, billing, or email sending if you do not want to use them.",
-            "You can request account-related privacy help through the support channel listed on the support page.",
-            "You can request account and associated data deletion through the public data deletion page or by emailing support@notebill.app."
-          ],
-          paragraphs: []
-        },
-        {
-          title: "Security and retention",
-          paragraphs: [
-            "NoteBill uses reasonable safeguards designed to protect information in transit and at rest, but no system can guarantee absolute security.",
-            "Information is kept only as long as needed to provide the service, comply with legal obligations, resolve disputes, and maintain backups or security records where necessary."
-          ]
-        },
-        {
-          title: "Children's privacy",
-          paragraphs: [
-            "NoteBill is not directed to children under 13, and we do not knowingly collect personal information from children under 13."
-          ]
-        }
-      ]}
-    />
+      sections={failed || documentState.loading ? [] : sections}
+    >
+      {failed ? (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4" role="alert" data-testid="legal-doc-error">
+          <p className="text-sm text-rose-800">{documentState.error}</p>
+          <button
+            type="button"
+            className="nb-btn-secondary mt-3 rounded-full px-3 py-1.5 text-sm"
+            onClick={() => setLoadToken((value) => value + 1)}
+            data-testid="legal-doc-retry"
+          >
+            Retry
+          </button>
+        </div>
+      ) : null}
+    </PublicInfoPage>
   );
 }
 
 function SupportPage() {
+  const legal = window.InvoiceLegalFoundation;
+  const termsVersion = legal?.LEGAL_TERMS_VERSION || "2026-08-12.1";
+  const versionedTerms =
+    typeof legal?.buildVersionedTermsPath === "function"
+      ? legal.buildVersionedTermsPath(termsVersion)
+      : `/terms?version=${encodeURIComponent(termsVersion)}`;
+
   return (
     <PublicInfoPage
       kicker="Support"
@@ -2685,6 +2810,7 @@ function SupportPage() {
       footerNote={`Last updated: ${PUBLIC_INFO_LAST_UPDATED}.`}
       actions={[
         { href: "/", label: "Open NoteBill", tone: "primary" },
+        { href: versionedTerms, label: "Terms", tone: "ghost" },
         { href: "/privacy", label: "Privacy", tone: "ghost" },
         { href: "/data-deletion", label: "Data deletion", tone: "ghost" }
       ]}
@@ -2697,9 +2823,26 @@ function SupportPage() {
             `Info email: ${INFO_EMAIL}`,
             `Direct contact: ${DIRECT_CONTACT_EMAIL}`,
             `Website: ${NOTE_BILL_SITE_URL}`,
+            `Terms (current version): ${versionedTerms}`,
+            "Privacy: /privacy",
+            `Cancellation: ${versionedTerms}#cancellation`,
             "Service name: NoteBill"
           ],
           paragraphs: []
+        },
+        {
+          title: "Billing, cancellation, and refunds",
+          paragraphs: [
+            "NoteBill Pro is $19 USD per month and renews automatically until you cancel.",
+            "Cancel anytime without a fee through Manage billing (Stripe customer portal). Cancellation takes effect at the end of the current paid period; Pro access continues until then.",
+            "Initial-payment goodwill refunds may be requested within 7 days via support@notebill.app. Duplicate or erroneous charges can be corrected. Otherwise renewals are non-refundable, subject to non-waivable statutory rights."
+          ]
+        },
+        {
+          title: "Contract copy",
+          paragraphs: [
+            "You can open, download/print, or email the exact registered Terms version for your records. Email delivery uses your signed-in account address when transactional email is configured; download/print is always available."
+          ]
         },
         {
           title: "What to include when you contact support",
@@ -2731,7 +2874,9 @@ function SupportPage() {
           paragraphs: []
         }
       ]}
-    />
+    >
+      <ContractCopyControls termsVersion={termsVersion} termsHref={versionedTerms} />
+    </PublicInfoPage>
   );
 }
 
@@ -3069,6 +3214,7 @@ function App() {
           <Route path="/clients" element={<ClientWorkspacePage />} />
           <Route path="/dashboard" element={<OperatorDashboardPage />} />
           <Route path="/privacy" element={<PrivacyPage />} />
+          <Route path="/terms" element={<TermsPage />} />
           <Route path="/help" element={<HelpCenterPage />} />
           <Route path="/support" element={<SupportPage />} />
           <Route path="/feedback" element={<FeedbackPage />} />

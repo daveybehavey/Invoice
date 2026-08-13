@@ -366,7 +366,9 @@ function InspectorPanel({
         cancelPath: "/manual?billing=cancelled"
       });
     } catch (billingActionError) {
-      if (
+      if (billingActionError?.code === "CHECKOUT_DISCLOSURE_CANCELLED") {
+        setBillingError("");
+      } else if (
         billingActionError?.code === "AUTH_REQUIRED_FOR_UPGRADE" ||
         /sign in to upgrade/i.test(String(billingActionError?.message || ""))
       ) {

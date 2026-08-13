@@ -35,6 +35,9 @@ type RecurringScheduleStore = {
 declare global {
   interface Window {
     __copiedSharePack?: string;
+    __nbDisclosureResult?: string;
+    __nbDisclosureDual?: { a: string; b: string };
+    __nbDisclosureSamePromise?: boolean;
     InvoiceRequestIdentity?: {
       getAuthSession?: () => { userId?: string; email?: string } | null;
     };
@@ -56,6 +59,7 @@ declare global {
       } | null;
       restorePendingUpgradeCheckout: (intent: Record<string, unknown>) => void;
       resumePendingUpgradeCheckout?: (options?: Record<string, unknown>) => Promise<unknown>;
+      confirmCheckoutDisclosure?: (options?: { invoker?: Element | null }) => Promise<unknown>;
     };
   }
 }
@@ -176,15 +180,26 @@ test("public policy pages render from their routes", async () => {
   const page = await context.newPage();
 
   try {
+    await page.goto(`${baseUrl}/terms`);
+    await page.waitForSelector("h1");
+    assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Terms of Service");
+    await page.getByText("Cancel at any time without a cancellation fee", { exact: false }).waitFor({
+      state: "visible"
+    });
+    assert.equal(await page.getByRole("link", { name: "Cancellation" }).first().isVisible(), true);
+    assert.equal(await page.locator("#cancellation").count(), 1);
+
     await page.goto(`${baseUrl}/privacy`);
     await page.waitForSelector("h1");
     assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Privacy Policy");
     assert.equal(await page.getByRole("link", { name: "Data deletion" }).isVisible(), true);
+    await page.getByText("model training", { exact: false }).waitFor({ state: "visible" });
 
     await page.goto(`${baseUrl}/support`);
     await page.waitForSelector("h1");
     assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Support");
     assert.equal(await page.getByText("Support email: support@notebill.app", { exact: true }).isVisible(), true);
+    await page.getByText("$19 USD per month", { exact: false }).waitFor({ state: "visible" });
 
     await page.goto(`${baseUrl}/help`);
     await page.waitForSelector("h1");
@@ -1276,7 +1291,7 @@ test("core mobile routes do not create horizontal page overflow", async () => {
     deviceScaleFactor: 3
   });
   const page = await context.newPage();
-  const routes = ["/", "/ai-intake", "/manual", "/scratchpad", "/import", "/invoices", "/privacy", "/help", "/support", "/feedback"];
+  const routes = ["/", "/ai-intake", "/manual", "/scratchpad", "/import", "/invoices", "/terms", "/privacy", "/help", "/support", "/feedback"];
 
   try {
     for (const route of routes) {
@@ -5517,18 +5532,173 @@ test("launcher shows billing completion notice and clears billing query param", 
   const page = await context.newPage();
   try {
     await prepareReturningGuest(page);
-    await page.goto(`${baseUrl}/?billing=success`, { waitUntil: "networkidle" });
+    await page.goto(`${baseUrl}/?billing=success&acceptedTermsVersion=2026-08-12.1`, {
+      waitUntil: "networkidle"
+    });
     await page
       .getByText("Upgrade started. Billie will unlock Pro as soon as Stripe confirms your subscription.")
       .waitFor({ state: "visible" });
+    assert.equal(await page.getByRole("link", { name: "Open versioned Terms" }).isVisible(), true);
+    assert.equal(await page.getByRole("link", { name: "Download/print Terms" }).isVisible(), true);
+    assert.equal(await page.getByRole("button", { name: "Email me a copy" }).isVisible(), true);
+    await waitForCondition(
+      () => {
+        const url = new URL(page.url());
+        return !url.searchParams.has("billing") && !url.searchParams.has("acceptedTermsVersion");
+      },
+      {
+        timeoutMs: 2000,
+        message: "Billing and acceptedTermsVersion query params should be removed after launcher notice renders."
+      }
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("launcher billing success without acceptedTermsVersion shows fallback Terms link", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await prepareReturningGuest(page);
+    await page.goto(`${baseUrl}/?billing=success`, { waitUntil: "networkidle" });
+    await page
+      .getByText("exact Terms version you accepted could not be confirmed", { exact: false })
+      .waitFor({ state: "visible" });
+    assert.equal(await page.getByRole("link", { name: "Open current Terms" }).isVisible(), true);
+    assert.equal(await page.getByRole("button", { name: "Email me a copy" }).count(), 0);
+    assert.equal(await page.getByTestId("contract-copy-controls").count(), 0);
     await waitForCondition(() => !new URL(page.url()).searchParams.has("billing"), {
       timeoutMs: 2000,
-      message: "Billing query param should be removed after launcher notice renders."
+      message: "Billing query param should be removed after launcher fallback notice renders."
     });
   } finally {
     await context.close();
   }
 });
+
+const NON_LAUNCHER_BILLING_RETURN_SURFACES = [
+  { name: "library", path: "/invoices" },
+  { name: "intake", path: "/ai-intake" },
+  { name: "import", path: "/import" },
+  { name: "manual", path: "/manual" }
+] as const;
+
+async function assertBillingReturnQueryCleaned(page: Page): Promise<void> {
+  await waitForCondition(
+    () => {
+      const url = new URL(page.url());
+      return (
+        !url.searchParams.has("billing") &&
+        !url.searchParams.has("acceptedTermsVersion") &&
+        !url.searchParams.has("session_id")
+      );
+    },
+    {
+      timeoutMs: 2000,
+      message: "Billing, acceptedTermsVersion, and session_id should be removed after the notice renders."
+    }
+  );
+}
+
+async function openBillingReturnSurface(
+  page: Page,
+  path: string,
+  search: string
+): Promise<Locator> {
+  await prepareReturningGuest(page);
+  await page.goto(`${baseUrl}${path}${search}`, { waitUntil: "networkidle" });
+  const notice = page.getByTestId("billing-success-notice");
+  await notice.waitFor({ state: "visible" });
+  return notice;
+}
+
+async function assertRegisteredAcceptedTermsReturn(page: Page, path: string): Promise<void> {
+  const notice = await openBillingReturnSurface(
+    page,
+    path,
+    "?billing=success&acceptedTermsVersion=2026-08-12.1"
+  );
+  await notice
+    .getByText("Upgrade started. Billie will unlock Pro as soon as Stripe confirms your subscription.", {
+      exact: true
+    })
+    .waitFor({ state: "visible" });
+  const versionedTerms = notice.getByRole("link", { name: "Open versioned Terms" });
+  await versionedTerms.waitFor({ state: "visible" });
+  assert.match((await versionedTerms.getAttribute("href")) || "", /version=2026-08-12\.1/);
+  const download = notice.getByTestId("contract-copy-download");
+  await download.waitFor({ state: "visible" });
+  const downloadHref = (await download.getAttribute("href")) || "";
+  assert.match(downloadHref, /\/api\/legal\/documents\/terms\?/);
+  assert.match(downloadHref, /version=2026-08-12\.1/);
+  assert.match(downloadHref, /format=txt/);
+  assert.equal(await notice.getByRole("button", { name: "Email me a copy" }).isVisible(), true);
+  assert.equal(await notice.getByRole("link", { name: "Open current Terms" }).count(), 0);
+  assert.doesNotMatch((await notice.innerText()) || "", /Open current Terms/);
+  await assertBillingReturnQueryCleaned(page);
+  assert.equal(await notice.getByTestId("contract-copy-download").isVisible(), true);
+  assert.match((await notice.getByTestId("contract-copy-download").getAttribute("href")) || "", /version=2026-08-12\.1/);
+  assert.equal(await notice.getByRole("button", { name: "Email me a copy" }).isVisible(), true);
+}
+
+async function assertFallbackBillingReturn(page: Page, path: string, search: string, banned: RegExp): Promise<void> {
+  const notice = await openBillingReturnSurface(page, path, search);
+  await notice
+    .getByText("The exact Terms version you accepted could not be confirmed from this return URL.", {
+      exact: false
+    })
+    .waitFor({ state: "visible" });
+  const currentTerms = notice.getByRole("link", { name: "Open current Terms" });
+  await currentTerms.waitFor({ state: "visible" });
+  const currentHref = (await currentTerms.getAttribute("href")) || "";
+  assert.equal(currentHref, "/terms");
+  assert.equal(await notice.getByRole("button", { name: "Email me a copy" }).count(), 0);
+  assert.equal(await notice.getByTestId("contract-copy-controls").count(), 0);
+  assert.equal(await notice.getByTestId("contract-copy-download").count(), 0);
+  assert.doesNotMatch((await notice.innerText()) || "", /accepted Terms/i);
+  assert.doesNotMatch((await notice.innerHTML()) || "", banned);
+  await assertBillingReturnQueryCleaned(page);
+  assert.equal(await notice.getByRole("link", { name: "Open current Terms" }).isVisible(), true);
+  assert.equal(await notice.getByRole("button", { name: "Email me a copy" }).count(), 0);
+}
+
+for (const surface of NON_LAUNCHER_BILLING_RETURN_SURFACES) {
+  test(`non-launcher billing return ${surface.name} registered accepted Terms`, async () => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    try {
+      await assertRegisteredAcceptedTermsReturn(page, surface.path);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test(`non-launcher billing return ${surface.name} missing accepted Terms version`, async () => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    try {
+      await assertFallbackBillingReturn(page, surface.path, "?billing=success", /acceptedTermsVersion/i);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test(`non-launcher billing return ${surface.name} unknown accepted Terms version`, async () => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    try {
+      await assertFallbackBillingReturn(
+        page,
+        surface.path,
+        "?billing=success&acceptedTermsVersion=1999-01-01.0",
+        /1999-01-01\.0/
+      );
+    } finally {
+      await context.close();
+    }
+  });
+}
 
 test("ai intake shows billing completion notice and clears billing query param", async () => {
   const context = await browser.newContext();
@@ -6732,7 +6902,7 @@ test("launcher shows a pro value pitch when one free save remains", async () => 
   try {
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
     await page
-      .getByText("Pro keeps sends, reminders, hosted payment links, and saved client memory in one place.")
+      .getByText("Pro unlocks unlimited saved invoices for the paid period.")
       .waitFor({ state: "visible" });
   } finally {
     await context.close();
@@ -11318,6 +11488,317 @@ test("manual editor shows billing completion notice and clears billing query par
   }
 });
 
+async function acknowledgeCheckoutDisclosure(page: Page): Promise<void> {
+  const dialog = page.locator("#nb-checkout-disclosure-modal");
+  await dialog.waitFor({ state: "visible", timeout: 15000 });
+  assert.equal(await dialog.getAttribute("aria-describedby"), "nb-checkout-disclosure-summary");
+  assert.equal(await dialog.getByRole("link", { name: "Open Terms of Service" }).isVisible(), true);
+  assert.equal(await dialog.getByRole("link", { name: "Open Privacy Policy" }).isVisible(), true);
+  await dialog.getByText("$19 USD", { exact: false }).waitFor({ state: "visible" });
+  await dialog.getByText("United States dollars", { exact: false }).waitFor({ state: "visible" });
+  await dialog.getByText("end of the current paid period", { exact: false }).waitFor({ state: "visible" });
+  const continueButton = dialog.getByRole("button", { name: "Continue to Checkout" });
+  assert.equal(await continueButton.isDisabled(), true);
+  await dialog.locator("#nb-checkout-terms-ack").check();
+  assert.equal(await continueButton.isDisabled(), false);
+  await continueButton.click();
+}
+
+async function openCheckoutDisclosureFromTestInvoker(page: Page): Promise<{ dialog: Locator; invoker: Locator }> {
+  await page.evaluate(() => {
+    document.getElementById("nb-disclosure-test-invoker")?.remove();
+    const btn = document.createElement("button");
+    btn.id = "nb-disclosure-test-invoker";
+    btn.type = "button";
+    btn.textContent = "Open disclosure test";
+    document.body.appendChild(btn);
+  });
+  const invoker = page.locator("#nb-disclosure-test-invoker");
+  await invoker.waitFor({ state: "visible" });
+  await invoker.focus();
+  await page.evaluate(() => {
+    const legalActions = window.InvoiceBillingActions;
+    const invokerEl = document.getElementById("nb-disclosure-test-invoker");
+    window.__nbDisclosureResult = "pending";
+    legalActions
+      ?.confirmCheckoutDisclosure?.({ invoker: invokerEl })
+      ?.then(() => {
+        window.__nbDisclosureResult = "accepted";
+      })
+      .catch((error) => {
+        window.__nbDisclosureResult = error?.code || "rejected";
+      });
+  });
+  const dialog = page.locator("#nb-checkout-disclosure-modal");
+  await dialog.waitFor({ state: "visible" });
+  return { dialog, invoker };
+}
+
+async function startConcurrentCheckoutDisclosure(
+  page: Page
+): Promise<{ dialog: Locator; invoker: Locator }> {
+  await page.evaluate(() => {
+    document.getElementById("nb-disclosure-test-invoker")?.remove();
+    const btn = document.createElement("button");
+    btn.id = "nb-disclosure-test-invoker";
+    btn.type = "button";
+    btn.textContent = "Open disclosure test";
+    document.body.appendChild(btn);
+  });
+  const invoker = page.locator("#nb-disclosure-test-invoker");
+  await invoker.waitFor({ state: "visible" });
+  await invoker.focus();
+  await page.evaluate(() => {
+    const legalActions = window.InvoiceBillingActions;
+    const invokerEl = document.getElementById("nb-disclosure-test-invoker");
+    const dual = { a: "pending", b: "pending" };
+    window.__nbDisclosureDual = dual;
+    const first = legalActions?.confirmCheckoutDisclosure?.({ invoker: invokerEl });
+    const second = legalActions?.confirmCheckoutDisclosure?.({ invoker: invokerEl });
+    window.__nbDisclosureSamePromise = first === second;
+    first
+      ?.then(() => {
+        dual.a = "accepted";
+        window.__nbDisclosureDual = { a: dual.a, b: dual.b };
+      })
+      .catch((error) => {
+        dual.a = error?.code || "rejected";
+        window.__nbDisclosureDual = { a: dual.a, b: dual.b };
+      });
+    second
+      ?.then(() => {
+        dual.b = "accepted";
+        window.__nbDisclosureDual = { a: dual.a, b: dual.b };
+      })
+      .catch((error) => {
+        dual.b = error?.code || "rejected";
+        window.__nbDisclosureDual = { a: dual.a, b: dual.b };
+      });
+  });
+  const dialog = page.locator("#nb-checkout-disclosure-modal");
+  await dialog.waitFor({ state: "visible" });
+  return { dialog, invoker };
+}
+
+test("checkout disclosure modal traps focus and restores on Escape", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const { dialog, invoker } = await openCheckoutDisclosureFromTestInvoker(page);
+
+    assert.equal(await dialog.getAttribute("aria-modal"), "true");
+    assert.equal(await dialog.getAttribute("aria-describedby"), "nb-checkout-disclosure-summary");
+    assert.equal(await page.locator("#root").getAttribute("aria-hidden"), "true");
+    assert.equal(await dialog.getByRole("link", { name: "Open Privacy Policy" }).isVisible(), true);
+
+    const checkbox = dialog.locator("#nb-checkout-terms-ack");
+    await checkbox.waitFor({ state: "visible" });
+    assert.equal(await checkbox.evaluate((el) => el === document.activeElement), true);
+
+    await page.keyboard.press("Tab");
+    assert.equal(
+      await dialog.getByRole("button", { name: "Not now" }).evaluate((el) => el === document.activeElement),
+      true
+    );
+    await page.keyboard.press("Tab");
+    assert.equal(
+      await dialog.getByRole("link", { name: "Open Terms of Service" }).evaluate((el) => el === document.activeElement),
+      true
+    );
+    await page.keyboard.press("Shift+Tab");
+    assert.equal(
+      await dialog.getByRole("button", { name: "Not now" }).evaluate((el) => el === document.activeElement),
+      true
+    );
+
+    assert.equal(await dialog.getByRole("button", { name: "Continue to Checkout" }).isDisabled(), true);
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    assert.equal(await page.evaluate(() => window.__nbDisclosureResult), "CHECKOUT_DISCLOSURE_CANCELLED");
+    assert.equal(await invoker.evaluate((el) => el === document.activeElement), true);
+    assert.notEqual(await page.locator("#root").getAttribute("aria-hidden"), "true");
+  } finally {
+    await context.close();
+  }
+});
+
+test("checkout disclosure modal cancels via Not now and accepts only after acknowledgement", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    let opened = await openCheckoutDisclosureFromTestInvoker(page);
+    await opened.dialog.getByRole("button", { name: "Not now" }).click();
+    await opened.dialog.waitFor({ state: "detached" });
+    assert.equal(await page.evaluate(() => window.__nbDisclosureResult), "CHECKOUT_DISCLOSURE_CANCELLED");
+    assert.equal(await opened.invoker.evaluate((el) => el === document.activeElement), true);
+
+    opened = await openCheckoutDisclosureFromTestInvoker(page);
+    const continueButton = opened.dialog.getByRole("button", { name: "Continue to Checkout" });
+    assert.equal(await continueButton.isDisabled(), true);
+    await opened.dialog.locator("#nb-checkout-terms-ack").check();
+    assert.equal(await continueButton.isDisabled(), false);
+    assert.equal(await opened.dialog.getByRole("link", { name: "Open Terms of Service" }).isVisible(), true);
+    assert.equal(await opened.dialog.getByRole("link", { name: "Open Privacy Policy" }).isVisible(), true);
+    await continueButton.click();
+    await opened.dialog.waitFor({ state: "detached" });
+    assert.equal(await page.evaluate(() => window.__nbDisclosureResult), "accepted");
+  } finally {
+    await context.close();
+  }
+});
+
+test("checkout disclosure concurrent callers share one dialog and settlement", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.evaluate(() => {
+      const root = document.getElementById("root");
+      if (root) {
+        root.inert = false;
+        root.setAttribute("aria-hidden", "false");
+      }
+    });
+    const { dialog, invoker } = await startConcurrentCheckoutDisclosure(page);
+    assert.equal(await page.locator("#nb-checkout-disclosure-modal").count(), 1);
+    assert.equal(await page.evaluate(() => window.__nbDisclosureSamePromise), true);
+    assert.equal(await page.locator("#root").getAttribute("aria-hidden"), "true");
+    await dialog.locator("#nb-checkout-terms-ack").check();
+    await dialog.getByRole("button", { name: "Continue to Checkout" }).click();
+    await dialog.waitFor({ state: "detached" });
+    await page.waitForFunction(
+      () => {
+        const dual = window.__nbDisclosureDual;
+        return dual?.a === "accepted" && dual?.b === "accepted";
+      },
+      undefined,
+      { timeout: 3000 }
+    );
+    assert.equal(await page.locator("#nb-checkout-disclosure-modal").count(), 0);
+    assert.notEqual(await page.locator("#root").getAttribute("aria-hidden"), "true");
+    assert.equal(await page.locator("#root").evaluate((el) => (el as HTMLElement).inert), false);
+    assert.equal(await page.locator("#root").getAttribute("aria-hidden"), "false");
+  } finally {
+    await context.close();
+  }
+});
+
+test("checkout disclosure concurrent callers restore focus and accessibility on cancel", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.evaluate(() => {
+      const root = document.getElementById("root");
+      if (root) {
+        root.inert = false;
+        root.setAttribute("aria-hidden", "false");
+      }
+    });
+    const { dialog, invoker } = await startConcurrentCheckoutDisclosure(page);
+    assert.equal(await page.locator("#nb-checkout-disclosure-modal").count(), 1);
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    await page.waitForFunction(
+      () => {
+        const dual = window.__nbDisclosureDual;
+        return dual?.a === "CHECKOUT_DISCLOSURE_CANCELLED" && dual?.b === "CHECKOUT_DISCLOSURE_CANCELLED";
+      },
+      undefined,
+      { timeout: 3000 }
+    );
+    assert.equal(await page.locator("#nb-checkout-disclosure-modal").count(), 0);
+    assert.equal(await invoker.evaluate((el) => el === document.activeElement), true);
+    assert.equal(await page.locator("#root").getAttribute("aria-hidden"), "false");
+    assert.equal(await page.locator("#root").evaluate((el) => (el as HTMLElement).inert), false);
+  } finally {
+    await context.close();
+  }
+});
+
+test("checkout disclosure Escape restores prior root accessibility and invoker focus", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    await page.evaluate(() => {
+      const root = document.getElementById("root");
+      if (root) {
+        root.inert = false;
+        root.setAttribute("aria-hidden", "false");
+      }
+    });
+    const { dialog, invoker } = await openCheckoutDisclosureFromTestInvoker(page);
+    assert.equal(await page.locator("#root").getAttribute("aria-hidden"), "true");
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached" });
+    assert.equal(await page.evaluate(() => window.__nbDisclosureResult), "CHECKOUT_DISCLOSURE_CANCELLED");
+    assert.equal(await invoker.evaluate((el) => el === document.activeElement), true);
+    assert.equal(await page.locator("#root").getAttribute("aria-hidden"), "false");
+    assert.equal(await page.locator("#root").evaluate((el) => (el as HTMLElement).inert), false);
+  } finally {
+    await context.close();
+  }
+});
+
+test("checkout disclosure accept restores root accessibility with skipFocusRestore", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const { dialog } = await openCheckoutDisclosureFromTestInvoker(page);
+    assert.equal(await page.locator("#root").getAttribute("aria-hidden"), "true");
+    await dialog.locator("#nb-checkout-terms-ack").check();
+    await dialog.getByRole("button", { name: "Continue to Checkout" }).click();
+    await dialog.waitFor({ state: "detached" });
+    assert.equal(await page.evaluate(() => window.__nbDisclosureResult), "accepted");
+    assert.notEqual(await page.locator("#root").getAttribute("aria-hidden"), "true");
+    assert.equal(await page.locator("#root").evaluate((el) => (el as HTMLElement).inert), false);
+  } finally {
+    await context.close();
+  }
+});
+
+test("terms page exposes versioned download and contract-copy controls", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/terms?version=2026-08-12.1`, { waitUntil: "networkidle" });
+    await page.getByRole("heading", { name: "NoteBill Terms of Service" }).waitFor({ state: "visible" });
+    await page
+      .locator("main p")
+      .filter({ hasText: "Version 2026-08-12.1. Effective 2026-08-12." })
+      .waitFor({ state: "visible" });
+    const download = page.getByTestId("contract-copy-download");
+    await download.waitFor({ state: "visible" });
+    assert.match((await download.getAttribute("href")) || "", /format=txt/);
+    assert.match((await download.getAttribute("href")) || "", /version=2026-08-12\.1/);
+    assert.equal(await page.getByTestId("contract-copy-email").isVisible(), true);
+
+    await page.route("**/api/legal/documents/terms**", async (route) => {
+      const url = route.request().url();
+      if (route.request().method() === "GET" && !url.includes("format=txt")) {
+        await route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Simulated Terms fetch failure." })
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.goto(`${baseUrl}/terms`, { waitUntil: "networkidle" });
+    await page.getByTestId("legal-doc-error").waitFor({ state: "visible" });
+    assert.equal(await page.getByTestId("legal-doc-retry").isVisible(), true);
+    assert.match((await page.locator("main").innerText()) || "", /not a retainable legal copy/i);
+    assert.equal(await page.getByTestId("contract-copy-controls").count(), 0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher upgrade resumes checkout after email sign-in", async () => {
   process.env.INVOICE_DEFAULT_PLAN = "free";
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
@@ -11332,7 +11813,10 @@ test("launcher upgrade resumes checkout after email sign-in", async () => {
       clientReferenceId: input.clientReferenceId,
       resumeIntentId: input.resumeIntentId,
       successPath: input.successPath,
-      cancelPath: input.cancelPath
+      cancelPath: input.cancelPath,
+      termsVersion: input.termsVersion,
+      termsAccepted: input.termsAccepted,
+      termsAcceptanceMethod: input.termsAcceptanceMethod
     });
     return {
       url: `${baseUrl}/__fake-stripe-checkout?from=launcher`,
@@ -11358,16 +11842,17 @@ test("launcher upgrade resumes checkout after email sign-in", async () => {
     await page.getByRole("button", { name: "Email sign-in link" }).click();
     const previewLink = page.getByRole("link", { name: "Open preview sign-in link" });
     await previewLink.waitFor({ state: "visible" });
-
-    await Promise.all([
-      page.waitForURL(/__fake-stripe-checkout\?from=launcher/, { timeout: 45000, waitUntil: "commit" }),
-      previewLink.click()
-    ]);
+    await previewLink.click();
+    await acknowledgeCheckoutDisclosure(page);
+    await page.waitForURL(/__fake-stripe-checkout\?from=launcher/, { timeout: 45000, waitUntil: "commit" });
 
     assert.ok(creatorInputs.length >= 1, `expected checkout creator call, got ${JSON.stringify(creatorInputs)}`);
     assert.equal(typeof creatorInputs[0]?.resumeIntentId, "string");
     assert.ok(String(creatorInputs[0]?.resumeIntentId || "").length > 0);
     assert.match(String(creatorInputs[0]?.email || ""), /launcher-resume@test\.dev/i);
+    assert.equal(typeof creatorInputs[0]?.termsVersion, "string");
+    assert.equal(creatorInputs[0]?.termsAccepted, true);
+    assert.equal(creatorInputs[0]?.termsAcceptanceMethod, "pre_checkout_disclosure");
   } finally {
     await context.close();
   }
@@ -11388,7 +11873,10 @@ test("manual editor upgrade resumes checkout after email sign-in", async () => {
       clientReferenceId: input.clientReferenceId,
       resumeIntentId: input.resumeIntentId,
       successPath: input.successPath,
-      cancelPath: input.cancelPath
+      cancelPath: input.cancelPath,
+      termsVersion: input.termsVersion,
+      termsAccepted: input.termsAccepted,
+      termsAcceptanceMethod: input.termsAcceptanceMethod
     });
     return {
       url: `${baseUrl}/__fake-stripe-checkout?from=manual`,
@@ -11464,17 +11952,21 @@ test("manual editor upgrade resumes checkout after email sign-in", async () => {
     await page.getByRole("button", { name: "Email sign-in link" }).click();
     const previewLink = page.getByRole("link", { name: "Open preview sign-in link" });
     await previewLink.waitFor({ state: "visible" });
-
-    await Promise.all([
-      page.waitForURL(/__fake-stripe-checkout\?from=manual/, { timeout: 45000, waitUntil: "commit" }),
-      previewLink.click()
-    ]);
+    await previewLink.click();
+    await acknowledgeCheckoutDisclosure(page);
+    await page.waitForURL(/__fake-stripe-checkout\?from=manual/, { timeout: 45000, waitUntil: "commit" });
 
     assert.ok(creatorInputs.length >= 1, `expected checkout creator call, got ${JSON.stringify(creatorInputs)}`);
-    assert.equal(creatorInputs[0]?.successPath, "/manual?billing=success");
+    assert.match(
+      String(creatorInputs[0]?.successPath || ""),
+      /\/manual\?billing=success&acceptedTermsVersion=2026-08-12\.1/
+    );
     assert.equal(creatorInputs[0]?.cancelPath, "/manual?billing=cancelled");
     assert.equal(typeof creatorInputs[0]?.resumeIntentId, "string");
     assert.match(String(creatorInputs[0]?.email || ""), /manual-resume@test\.dev/i);
+    assert.equal(typeof creatorInputs[0]?.termsVersion, "string");
+    assert.equal(creatorInputs[0]?.termsAccepted, true);
+    assert.equal(creatorInputs[0]?.termsAcceptanceMethod, "pre_checkout_disclosure");
   } finally {
     await context.close();
   }
