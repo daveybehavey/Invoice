@@ -51,7 +51,7 @@ type SendAuthSignInEmailInput = {
   expiresAt: string;
 };
 
-type TransactionalEmailInput = {
+export type TransactionalEmailInput = {
   recipientEmail: string;
   subject: string;
   textBody: string;
@@ -131,6 +131,12 @@ export async function sendInvoiceEmail(input: SendInvoiceEmailInput): Promise<In
     textBody: buildInvoiceEmailText(input),
     htmlBody: buildInvoiceEmailHtml(input)
   });
+}
+
+export async function sendPlainTransactionalEmail(
+  input: TransactionalEmailInput
+): Promise<InvoiceEmailSendResult> {
+  return sendTransactionalEmail(input);
 }
 
 export async function sendAuthSignInEmail(

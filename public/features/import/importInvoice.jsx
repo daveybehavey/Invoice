@@ -44,6 +44,13 @@
     );
   }
   const { hasStripeCheckout, startUpgradeCheckout, readBillingNoticeFromUrl } = billingActions;
+  const contractCopyControls = window.InvoiceContractCopyControls;
+  if (!contractCopyControls?.BillingNoticeActions) {
+    throw new Error(
+      "Missing /ui/contractCopyControls.jsx load. Ensure it is loaded before /features/import/importInvoice.jsx."
+    );
+  }
+  const { BillingNoticeActions } = contractCopyControls;
 
 function ImportInvoice() {
   const navigate = useNavigate();
@@ -367,7 +374,11 @@ function ImportInvoice() {
       }
       throw new Error("Upgrade is not configured yet.");
     } catch (upgradeError) {
-      setError(upgradeError?.message || "Unable to open upgrade.");
+      if (upgradeError?.code === "CHECKOUT_DISCLOSURE_CANCELLED") {
+        setError("");
+      } else {
+        setError(upgradeError?.message || "Unable to open upgrade.");
+      }
     } finally {
       setBillingBusy(false);
     }
@@ -815,8 +826,10 @@ function ImportInvoice() {
                 ? "nb-banner--success"
                 : "nb-banner--warning"
             }`}
+            data-testid="billing-success-notice"
           >
-            {billingNotice.message}
+            <p>{billingNotice.message}</p>
+            <BillingNoticeActions notice={billingNotice} compact />
           </div>
         ) : null}
 

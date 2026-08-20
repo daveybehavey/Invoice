@@ -45,14 +45,25 @@ const [
     clearCheckoutIntentSessionsForTests
   },
   { resetInvoiceEmailVerificationCacheForTests },
-  { setGoogleAuthClientFactoryForTests }
+  { setGoogleAuthClientFactoryForTests },
+  { LEGAL_TERMS_VERSION },
+  { setContractCopyEmailSenderForTests, clearContractCopyRateLimitForTests }
 ] = await Promise.all([
   import("./server.js"),
   import("./ai/openaiClient.js"),
   import("./services/stripeBilling.js"),
   import("./services/invoiceEmailDelivery.js"),
-  import("./services/googleAuth.js")
+  import("./services/googleAuth.js"),
+  import("./services/legalFoundation.js"),
+  import("./services/contractCopyDelivery.js")
 ]);
+
+function validTermsAckFields() {
+  return {
+    termsVersion: LEGAL_TERMS_VERSION,
+    termsAccepted: true
+  };
+}
 
 const storeFilePath = process.env.INVOICE_STORE_FILE;
 if (!storeFilePath) {
@@ -157,6 +168,8 @@ afterEach(() => {
   setCheckoutSessionCreatorForTests(null);
   setBillingPortalSessionCreatorForTests(null);
   clearCheckoutIntentSessionsForTests();
+  setContractCopyEmailSenderForTests(null);
+  clearContractCopyRateLimitForTests();
   setGoogleAuthClientFactoryForTests(null);
   (globalThis as { fetch?: typeof fetch }).fetch = nativeFetch;
 });
@@ -169,6 +182,8 @@ after(async () => {
   setCheckoutSessionCreatorForTests(null);
   setBillingPortalSessionCreatorForTests(null);
   clearCheckoutIntentSessionsForTests();
+  setContractCopyEmailSenderForTests(null);
+  clearContractCopyRateLimitForTests();
   setGoogleAuthClientFactoryForTests(null);
   await fs.rm(storeFilePath, { force: true });
   await fs.rm(ocrMetricsStoreFilePath, { force: true });
@@ -3776,11 +3791,16 @@ test("checkout session endpoint binds authenticated ownership and ignores spoofe
       userId: input.userId,
       email: input.email,
       clientReferenceId: input.clientReferenceId,
-      resumeIntentId: input.resumeIntentId
+      resumeIntentId: input.resumeIntentId,
+      successPath: input.successPath,
+      termsVersion: input.termsVersion,
+      termsAccepted: input.termsAccepted,
+      termsAcceptanceMethod: input.termsAcceptanceMethod
     });
     return {
       url: "https://checkout.test/session",
-      sessionId: `cs_${creatorInputs.length}`
+      sessionId: `cs_${creatorInputs.length}`,
+      providerCreatedAt: "2026-08-12T18:00:00.000Z"
     };
   });
 
@@ -3795,7 +3815,8 @@ test("checkout session endpoint binds authenticated ownership and ignores spoofe
       ownerId: "attacker-body-owner",
       userId: "attacker-body-user",
       email: "attacker@evil.test",
-      client_reference_id: "attacker-client-ref"
+      client_reference_id: "attacker-client-ref",
+      ...validTermsAckFields()
     });
 
   assert.equal(response.status, 200);
@@ -3805,6 +3826,13 @@ test("checkout session endpoint binds authenticated ownership and ignores spoofe
   assert.equal(creatorInputs[0]?.userId, session.userId);
   assert.equal(creatorInputs[0]?.clientReferenceId, session.userId);
   assert.equal(creatorInputs[0]?.email, session.email);
+  assert.equal(creatorInputs[0]?.termsVersion, LEGAL_TERMS_VERSION);
+  assert.equal(creatorInputs[0]?.termsAccepted, true);
+  assert.equal(creatorInputs[0]?.termsAcceptanceMethod, "pre_checkout_disclosure");
+  assert.match(
+    String(creatorInputs[0]?.successPath || ""),
+    new RegExp(`acceptedTermsVersion=${encodeURIComponent(LEGAL_TERMS_VERSION)}`)
+  );
 });
 
 test("checkout resume intent is idempotent for the authenticated owner", async () => {
@@ -3835,11 +3863,11 @@ test("checkout resume intent is idempotent for the authenticated owner", async (
   const first = await request(app)
     .post("/api/billing/checkout-session")
     .set("authorization", `Bearer ${token}`)
-    .send({ resumeIntentId: "intent_resume_1", successPath: "/?billing=success" });
+    .send({ resumeIntentId: "intent_resume_1", successPath: "/?billing=success", ...validTermsAckFields() });
   const second = await request(app)
     .post("/api/billing/checkout-session")
     .set("authorization", `Bearer ${token}`)
-    .send({ resumeIntentId: "intent_resume_1", successPath: "/?billing=success" });
+    .send({ resumeIntentId: "intent_resume_1", successPath: "/?billing=success", ...validTermsAckFields() });
 
   assert.equal(first.status, 200);
   assert.equal(second.status, 200);
@@ -3877,11 +3905,19 @@ test("checkout endpoint concurrent resume intents coalesce within one isolate", 
     request(app)
       .post("/api/billing/checkout-session")
       .set("authorization", `Bearer ${token}`)
-      .send({ resumeIntentId: "intent_coalesce_api", successPath: "/?billing=success" }),
+      .send({
+        resumeIntentId: "intent_coalesce_api",
+        successPath: "/?billing=success",
+        ...validTermsAckFields()
+      }),
     request(app)
       .post("/api/billing/checkout-session")
       .set("authorization", `Bearer ${token}`)
-      .send({ resumeIntentId: "intent_coalesce_api", successPath: "/?billing=success" })
+      .send({
+        resumeIntentId: "intent_coalesce_api",
+        successPath: "/?billing=success",
+        ...validTermsAckFields()
+      })
   ]);
 
   assert.equal(first.status, 200);
@@ -3894,6 +3930,146 @@ test("checkout endpoint concurrent resume intents coalesce within one isolate", 
     providerKeys[0],
     buildCheckoutResumeIdempotencyKey(session.userId, "intent_coalesce_api")
   );
+});
+
+test("legal foundation and documents endpoints expose versioned Terms and Privacy", async () => {
+  const foundation = await request(app).get("/api/legal/foundation");
+  assert.equal(foundation.status, 200);
+  assert.equal(foundation.body.termsVersion, LEGAL_TERMS_VERSION);
+  assert.match(String(foundation.body.supplier?.legalName || ""), /EuroDigital/i);
+  assert.match(String(foundation.body.offer?.priceDisplay || ""), /\$19 USD/);
+  assert.ok(Array.isArray(foundation.body.processors));
+  assert.ok(foundation.body.processors.some((item: { name: string }) => item.name === "Stripe"));
+
+  const terms = await request(app).get("/api/legal/documents/terms");
+  assert.equal(terms.status, 200);
+  assert.equal(terms.body.version, LEGAL_TERMS_VERSION);
+  assert.equal(terms.body.isCurrent, true);
+  assert.equal(terms.body.termsUrlPath, `/terms?version=${encodeURIComponent(LEGAL_TERMS_VERSION)}`);
+  assert.match(String(terms.body.downloadPath || ""), /format=txt/);
+  assert.ok(terms.body.sections.some((section: { id?: string }) => section.id === "cancellation"));
+  assert.ok(
+    terms.body.sections.some((section: { paragraphs?: string[] }) =>
+      (section.paragraphs || []).some((paragraph) => /end of the current paid billing period/i.test(paragraph))
+    )
+  );
+
+  const versioned = await request(app).get(
+    `/api/legal/documents/terms?version=${encodeURIComponent(LEGAL_TERMS_VERSION)}`
+  );
+  assert.equal(versioned.status, 200);
+  assert.equal(versioned.body.version, LEGAL_TERMS_VERSION);
+
+  const unknown = await request(app).get("/api/legal/documents/terms?version=1999-01-01.0");
+  assert.equal(unknown.status, 404);
+  assert.match(String(unknown.body.error || ""), /Unknown Terms version/i);
+
+  const txt = await request(app).get(
+    `/api/legal/documents/terms?version=${encodeURIComponent(LEGAL_TERMS_VERSION)}&format=txt`
+  );
+  assert.equal(txt.status, 200);
+  assert.match(String(txt.headers["content-type"] || ""), /text\/plain/i);
+  assert.match(String(txt.headers["content-disposition"] || ""), /notebill-terms-2026-08-12\.1\.txt/);
+  assert.match(String(txt.text || ""), new RegExp(`Version: ${LEGAL_TERMS_VERSION}`));
+
+  const privacy = await request(app).get("/api/legal/documents/privacy");
+  assert.equal(privacy.status, 200);
+  assert.match(String(privacy.body.version || ""), /2026-08-12/);
+  assert.ok(
+    privacy.body.sections.some((section: { paragraphs?: string[] }) =>
+      (section.paragraphs || []).some((paragraph) => /do not currently know|AI training|model training/i.test(paragraph))
+    )
+  );
+});
+
+test("SPA serves /terms and /privacy", async () => {
+  const terms = await request(app).get("/terms");
+  const privacy = await request(app).get("/privacy");
+  assert.equal(terms.status, 200);
+  assert.equal(privacy.status, 200);
+  assert.match(String(terms.headers["content-type"] || ""), /text\/html/i);
+  assert.match(String(privacy.headers["content-type"] || ""), /text\/html/i);
+});
+
+test("checkout requires current Terms acknowledgement before creating a session", async () => {
+  const signInResponse = await signInForTests("checkout-terms@test.dev");
+  const token = signInResponse.body.token as string;
+  let creatorCalls = 0;
+  setCheckoutSessionCreatorForTests(async () => {
+    creatorCalls += 1;
+    return { url: "https://checkout.test/terms", sessionId: "cs_terms" };
+  });
+
+  const missing = await request(app)
+    .post("/api/billing/checkout-session")
+    .set("authorization", `Bearer ${token}`)
+    .send({ successPath: "/?billing=success" });
+  assert.equal(missing.status, 400);
+  assert.match(String(missing.body.error || ""), /terms of service/i);
+  assert.equal(creatorCalls, 0);
+
+  const stale = await request(app)
+    .post("/api/billing/checkout-session")
+    .set("authorization", `Bearer ${token}`)
+    .send({
+      successPath: "/?billing=success",
+      termsVersion: "stale-version",
+      termsAccepted: true
+    });
+  assert.equal(stale.status, 400);
+  assert.equal(creatorCalls, 0);
+
+  const notAccepted = await request(app)
+    .post("/api/billing/checkout-session")
+    .set("authorization", `Bearer ${token}`)
+    .send({
+      successPath: "/?billing=success",
+      termsVersion: LEGAL_TERMS_VERSION,
+      termsAccepted: false
+    });
+  assert.equal(notAccepted.status, 400);
+  assert.equal(creatorCalls, 0);
+});
+
+test("contract-copy endpoint delivers through the test email seam", async () => {
+  const signInResponse = await signInForTests("contract-copy@test.dev");
+  const token = signInResponse.body.token as string;
+  const session = signInResponse.body.session as { email: string };
+  const sent: Array<Record<string, unknown>> = [];
+  setContractCopyEmailSenderForTests(async (input) => {
+    sent.push(input as unknown as Record<string, unknown>);
+    return { messageId: "msg_contract_copy_test" };
+  });
+
+  const unauthorized = await request(app).post("/api/billing/contract-copy").send({});
+  assert.equal(unauthorized.status, 401);
+
+  const response = await request(app)
+    .post("/api/billing/contract-copy")
+    .set("authorization", `Bearer ${token}`)
+    .send({ termsVersion: LEGAL_TERMS_VERSION });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.delivered, true);
+  assert.equal(response.body.channel, "email");
+  assert.equal(response.body.termsVersion, LEGAL_TERMS_VERSION);
+  assert.equal(response.body.emailConfigured, true);
+  assert.match(String(response.body.termsUrl || ""), /\/terms\?version=/);
+  assert.match(String(response.body.downloadUrl || ""), /\/api\/legal\/documents\/terms\?version=/);
+  assert.match(String(response.body.downloadUrl || ""), /format=txt/);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0]?.to, session.email);
+  assert.match(String(sent[0]?.subject || ""), /contract copy/i);
+  assert.match(String(sent[0]?.text || ""), /EuroDigital/);
+  assert.match(String(sent[0]?.text || ""), new RegExp(`Version: ${LEGAL_TERMS_VERSION}`));
+  assert.match(String(sent[0]?.text || ""), /Download plain-text Terms/i);
+
+  const coalesced = await request(app)
+    .post("/api/billing/contract-copy")
+    .set("authorization", `Bearer ${token}`)
+    .send({ termsVersion: LEGAL_TERMS_VERSION });
+  assert.equal(coalesced.status, 200);
+  assert.equal(coalesced.body.coalesced, true);
+  assert.equal(sent.length, 1);
 });
 
 test("billing portal endpoint requires an authenticated session", async () => {

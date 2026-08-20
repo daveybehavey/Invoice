@@ -105,6 +105,13 @@
     );
   }
   const { readBillingNoticeFromUrl, resumePendingUpgradeCheckout, peekPendingUpgradeCheckout } = billingActions;
+  const contractCopyControls = window.InvoiceContractCopyControls;
+  if (!contractCopyControls?.BillingNoticeActions) {
+    throw new Error(
+      "Missing /ui/contractCopyControls.jsx load. Ensure it is loaded before /features/manual/manualInvoiceCanvas.jsx."
+    );
+  }
+  const { BillingNoticeActions } = contractCopyControls;
   const billieWorkspaceStorageKey = requestIdentity.getScopedStorageKey?.("billieWorkspaceInstruction") ?? "billieWorkspaceInstruction";
   const favoriteLayoutStudioStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceFavoriteLayoutStudio") ?? "invoiceFavoriteLayoutStudio";
@@ -2683,8 +2690,10 @@ function ManualInvoiceCanvas() {
                 ? "nb-banner--success"
                 : "nb-banner--warning"
             }`}
+            data-testid="billing-success-notice"
           >
-            {billingNotice.message}
+            <p>{billingNotice.message}</p>
+            <BillingNoticeActions notice={billingNotice} compact />
           </div>
         ) : null}
         {importedDraftNotice ? (

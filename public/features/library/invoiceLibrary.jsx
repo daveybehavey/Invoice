@@ -48,6 +48,13 @@
     openBillingPortal,
     readBillingNoticeFromUrl
   } = billingActions;
+  const contractCopyControls = window.InvoiceContractCopyControls;
+  if (!contractCopyControls?.BillingNoticeActions) {
+    throw new Error(
+      "Missing /ui/contractCopyControls.jsx load. Ensure it is loaded before /features/library/invoiceLibrary.jsx."
+    );
+  }
+  const { BillingNoticeActions } = contractCopyControls;
   const clientMemoryUtils = window.InvoiceClientMemory;
   if (!clientMemoryUtils) {
     throw new Error(
@@ -2514,7 +2521,11 @@
         cancelPath: "/invoices?billing=cancelled"
       });
     } catch (billingActionError) {
-      setBillingError(billingActionError?.message || "Unable to open upgrade.");
+      if (billingActionError?.code === "CHECKOUT_DISCLOSURE_CANCELLED") {
+        setBillingError("");
+      } else {
+        setBillingError(billingActionError?.message || "Unable to open upgrade.");
+      }
     } finally {
       setBillingBusy(false);
     }
@@ -2840,8 +2851,10 @@
                 ? "nb-banner--success"
                 : "nb-banner--warning"
             }`}
+            data-testid="billing-success-notice"
           >
-            {billingNotice.message}
+            <p>{billingNotice.message}</p>
+            <BillingNoticeActions notice={billingNotice} compact />
           </div>
         ) : null}
         {deliveryNotice ? (
