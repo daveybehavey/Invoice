@@ -67,9 +67,11 @@ test("detectStripeKeyMode rejects mixed-case prefixes", () => {
 
 test("detectStripeKeyMode rejects truncated prefixes", () => {
   assert.equal(detectStripeKeyMode("rkcs_test", "secret"), "unknown");
+  assert.equal(detectStripeKeyMode("rk_test", "secret"), "unknown");
   assert.equal(detectStripeKeyMode("rkcs_", "secret"), "unknown");
   assert.equal(detectStripeKeyMode("rk_", "secret"), "unknown");
   assert.equal(detectStripeKeyMode("sk_test", "secret"), "unknown");
   assert.equal(detectStripeKeyMode("pk_test", "publishable"), "unknown");
   assert.notEqual(detectStripeKeyMode("rkcs_test", "secret"), "test");
+  assert.notEqual(detectStripeKeyMode("rk_test", "secret"), "test");
 });
