@@ -1,67 +1,85 @@
+<div align="center">
+
 # NoteBill
 
 **AI-assisted invoicing software that turns rough notes or uploaded invoice text into structured, editable invoices.**
 
-NoteBill is a full-stack TypeScript application focused on making invoice creation faster without turning into a full accounting suite. It accepts messy input, extracts structured invoice data, handles missing pricing through targeted follow-up questions, supports wording/tone changes, and produces a clean invoice preview that can be printed or saved as PDF.
+Full-stack TypeScript · React · Express · PostgreSQL · OpenAI · Automated QA
+
+</div>
+
+---
+
+## Overview
+
+NoteBill is a full-stack application focused on one practical workflow: turning incomplete, messy invoice notes into a professional invoice without hiding important assumptions from the user.
+
+The application structures free-form input, asks focused follow-up questions when pricing is missing, supports wording/tone changes, persists saved invoice documents, and produces a clean print/PDF-ready result.
 
 ## Highlights
 
-- AI-assisted parsing of free-form notes and uploaded invoice text
-- Structured invoice generation with explicit labor-pricing safeguards
-- Line-level and full-invoice wording/tone controls
-- Saved invoice documents with reopen, duplicate, status, and edit flows
-- Verified email-link and Google OAuth sign-in paths
+- AI-assisted parsing of rough notes and uploaded invoice text
+- Structured invoice generation with explicit pricing safeguards
+- Focused follow-up questions instead of silent labor/price assumptions
+- Line-level and full-invoice wording controls
+- Saved invoice documents with reopen, edit, duplicate, and status flows
+- Verified email-link and Google OAuth authentication paths
 - PostgreSQL-backed persistence
-- Responsive React interface and mobile-wrapper tooling with Capacitor
+- Responsive React interface
 - Automated regression, API, and browser-testing tooling
-- Cloudflare deployment/readiness tooling
+- Capacitor mobile-wrapper readiness and Cloudflare deployment tooling
 
 ## Tech Stack
 
-- **Frontend:** React 18, React Router, Tailwind CSS
-- **Backend:** Node.js, Express, TypeScript
-- **Data:** PostgreSQL
-- **AI:** OpenAI API
-- **Testing:** Node test runner, Supertest, Playwright
-- **Mobile:** Capacitor for Android/iOS wrappers
-- **Infrastructure:** Cloudflare Wrangler
-- **Other:** PDF parsing/generation, Google OAuth, Stripe launch tooling
+| Area | Technology |
+| --- | --- |
+| Frontend | React 18, React Router, Tailwind CSS |
+| Backend | Node.js, Express, TypeScript |
+| Data | PostgreSQL |
+| AI | OpenAI API |
+| Auth | Email-link sessions, Google OAuth |
+| QA | Node test runner, Supertest, Playwright |
+| Mobile | Capacitor |
+| Infrastructure | Cloudflare / Wrangler |
 
 ## Engineering & QA
 
-The project includes automated regression coverage for business-critical invoice behavior, including:
+Automated regression coverage protects invoice behavior that is easy to get subtly wrong:
 
-- preventing silent $0 labor finalization
-- requiring explicit labor pricing when needed
-- preserving numeric values during wording changes
-- automatic invoice-number generation
-- discount handling
-- explicit-only save behavior
+- no silent `$0` labor finalization
+- no hidden labor-hour assumptions
+- explicit pricing produces expected line amounts
+- invoice numbers are generated when missing
+- discount handling follows explicit user intent
+- numeric values are preserved during wording changes
+- saved documents are created only through explicit user action
 
-Related testing documentation is maintained in `docs/`, including exploratory-testing and user-testing plans.
+Related exploratory and user-testing documentation is maintained under `docs/`.
 
 ## Core Flow
 
-1. User enters rough invoice notes or uploads invoice text.
+1. Enter rough invoice notes or upload invoice text.
 2. NoteBill converts the input into a structured invoice model.
-3. Missing information is handled through focused follow-up questions rather than hidden assumptions.
-4. The user reviews, edits, rewords, and finalizes the invoice.
-5. The invoice can be saved, reopened, duplicated, assigned a manual status, printed, or exported through the browser PDF flow.
+3. Missing information is resolved through targeted follow-up questions.
+4. Review, edit, and reword the invoice.
+5. Save, reopen, duplicate, update status, print, or export through the browser PDF flow.
 
 ## API Surface
 
-Key endpoints include:
+Key endpoints include invoice creation, labor-pricing follow-up, discounts, line/full rewording, persistence, duplication, reopening, and manual status changes.
 
-- `POST /api/invoices/from-input`
-- `POST /api/invoices/from-input/labor-pricing`
-- `POST /api/invoices/from-input/discount`
-- `POST /api/invoices/reword-line`
-- `POST /api/invoices/reword-full`
-- `POST /api/invoices/save`
-- `GET /api/invoices`
-- `GET /api/invoices/:id`
-- `POST /api/invoices/:id/duplicate`
-- `POST /api/invoices/:id/status`
+```text
+POST /api/invoices/from-input
+POST /api/invoices/from-input/labor-pricing
+POST /api/invoices/from-input/discount
+POST /api/invoices/reword-line
+POST /api/invoices/reword-full
+POST /api/invoices/save
+GET  /api/invoices
+GET  /api/invoices/:id
+POST /api/invoices/:id/duplicate
+POST /api/invoices/:id/status
+```
 
 ## Local Development
 
@@ -71,8 +89,6 @@ cp .env.example .env
 npm run dev
 ```
 
-Set the required environment variables described in `.env.example`, including `OPENAI_API_KEY` for AI-assisted invoice processing.
-
 ### Validation
 
 ```bash
@@ -80,8 +96,12 @@ npm run build
 npm test
 ```
 
-Additional launch, persistence, Cloudflare, and mobile-wrapper checks are available through the scripts in `package.json`.
+Additional launch, persistence, Cloudflare, browser, and mobile-readiness checks are available through `package.json`.
 
-## Project Status
+---
 
-Active development. This repository demonstrates full-stack application development, API design, AI integration, persistence, authentication, automated testing, and deployment-readiness work.
+<div align="center">
+
+**Active development** · Full-stack application engineering, AI integration, data persistence, authentication, and automated QA.
+
+</div>
