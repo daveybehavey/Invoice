@@ -1,127 +1,107 @@
-# Invoice API
+<div align="center">
 
-Backend flow for:
+# NoteBill
 
-- messy input or uploaded invoice text
-- structured invoice model
-- finished invoice output
-- sendable invoice document preview
-- browser print and PDF (via print dialog)
+**AI-assisted invoicing software that turns rough notes or uploaded invoice text into structured, editable invoices.**
 
-## Setup
+Full-stack TypeScript · React · Express · PostgreSQL · OpenAI · Automated QA
+
+</div>
+
+---
+
+## Overview
+
+NoteBill is a full-stack application focused on one practical workflow: turning incomplete, messy invoice notes into a professional invoice without hiding important assumptions from the user.
+
+The application structures free-form input, asks focused follow-up questions when pricing is missing, supports wording/tone changes, persists saved invoice documents, and produces a clean print/PDF-ready result.
+
+## Highlights
+
+- AI-assisted parsing of rough notes and uploaded invoice text
+- Structured invoice generation with explicit pricing safeguards
+- Focused follow-up questions instead of silent labor/price assumptions
+- Line-level and full-invoice wording controls
+- Saved invoice documents with reopen, edit, duplicate, and status flows
+- Verified email-link and Google OAuth authentication paths
+- PostgreSQL-backed persistence
+- Responsive React interface
+- Automated regression, API, and browser-testing tooling
+- Capacitor mobile-wrapper readiness and Cloudflare deployment tooling
+
+## Tech Stack
+
+| Area | Technology |
+| --- | --- |
+| Frontend | React 18, React Router, Tailwind CSS |
+| Backend | Node.js, Express, TypeScript |
+| Data | PostgreSQL |
+| AI | OpenAI API |
+| Auth | Email-link sessions, Google OAuth |
+| QA | Node test runner, Supertest, Playwright |
+| Mobile | Capacitor |
+| Infrastructure | Cloudflare / Wrangler |
+
+## Engineering & QA
+
+Automated regression coverage protects invoice behavior that is easy to get subtly wrong:
+
+- no silent `$0` labor finalization
+- no hidden labor-hour assumptions
+- explicit pricing produces expected line amounts
+- invoice numbers are generated when missing
+- discount handling follows explicit user intent
+- numeric values are preserved during wording changes
+- saved documents are created only through explicit user action
+
+Related exploratory and user-testing documentation is maintained under `docs/`.
+
+## Core Flow
+
+1. Enter rough invoice notes or upload invoice text.
+2. NoteBill converts the input into a structured invoice model.
+3. Missing information is resolved through targeted follow-up questions.
+4. Review, edit, and reword the invoice.
+5. Save, reopen, duplicate, update status, print, or export through the browser PDF flow.
+
+## API Surface
+
+Key endpoints include invoice creation, labor-pricing follow-up, discounts, line/full rewording, persistence, duplication, reopening, and manual status changes.
+
+```text
+POST /api/invoices/from-input
+POST /api/invoices/from-input/labor-pricing
+POST /api/invoices/from-input/discount
+POST /api/invoices/reword-line
+POST /api/invoices/reword-full
+POST /api/invoices/save
+GET  /api/invoices
+GET  /api/invoices/:id
+POST /api/invoices/:id/duplicate
+POST /api/invoices/:id/status
+```
+
+## Local Development
 
 ```bash
 npm install
 cp .env.example .env
-```
-
-Set `OPENAI_API_KEY` in `.env`.
-
-## Auth
-
-- Optional account sign-in currently uses verified email links.
-- Launcher sign-in surfaces provider readiness from `GET /api/auth/providers`.
-- Google Sign-In now uses a backend OAuth callback that converts verified Google identity into the same NoteBill session model used by email-link sign-in.
-- To enable Google Sign-In, set:
-  - `GOOGLE_CLIENT_ID`
-  - `GOOGLE_CLIENT_SECRET`
-
-## Run
-
-```bash
 npm run dev
 ```
 
-Open `http://localhost:3000` for the minimal UI skeleton.
-
-## Tests
+### Validation
 
 ```bash
+npm run build
 npm test
 ```
 
-Current regression tests cover:
-- labor-pricing follow-up instead of $0 labor finalization
-- no silent labor-hour assumptions
-- explicit labor pricing produces expected line amounts
-- auto-generated invoice numbers when missing
-- discount detection (explicit amount + follow-up path)
-- line rewording preserves numeric values
-- explicit-only save behavior (no auto-save)
+Additional launch, persistence, Cloudflare, browser, and mobile-readiness checks are available through `package.json`.
 
-Related planning/testing docs:
-- `docs/user-testing-plan.md`
-- `docs/local-exploratory-testing-report.md`
-- `docs/discount-v1-spec.md`
+---
 
-## Prompt Source of Truth
+<div align="center">
 
-`system.md` is loaded at runtime as the system prompt for:
+**Active development** · Full-stack application engineering, AI integration, data persistence, authentication, and automated QA.
 
-- parsing messy input
-- invoice generation
-- per-line wording changes
-- full-invoice rewording
-
-No duplicated system prompt text exists in code.
-
-## API Endpoints
-
-- `POST /api/invoices/from-input`
-  - JSON body: `{ "messyInput": "...", "uploadedInvoiceText": "..." }`
-  - or multipart form-data with `invoiceFile` and optional `messyInput`
-  - Can return `needsFollowUp: true` with one follow-up at a time:
-    - `followUp.type = "labor_pricing"` when labor pricing is missing
-  - Discount behavior: explicit discount amounts in notes are auto-applied; if no amount is provided, no discount question is asked.
-  - UI behavior: if no tone guidance is detected in notes, UI asks one tone question before final wording is finalized.
-- `POST /api/invoices/from-input/labor-pricing`
-  - JSON body:
-    - Hourly: `{ "structuredInvoice": { ... }, "laborPricing": { "billingType": "hourly", "rate": 95, "lineHours": [2.5, 2.5] }, "sourceText": "original notes (optional)" }`
-    - Flat: `{ "structuredInvoice": { ... }, "laborPricing": { "billingType": "flat", "flatAmount": 285 }, "sourceText": "original notes (optional)" }`
-  - Returns invoice-ready output.
-- `POST /api/invoices/from-input/discount`
-  - JSON body: `{ "invoice": { ... }, "discountAmount": 20, "discountReason": "optional" }`
-- `POST /api/invoices/reword-line`
-  - JSON body: `{ "invoice": { ... }, "lineItemId": "line_1", "tone": "more concise" }`
-- `POST /api/invoices/reword-full`
-  - JSON body: `{ "invoice": { ... }, "tone": "friendly" }`
-
-## Persistence (Intentional Narrow Scope)
-
-- No auto-save exists.
-- Saving only happens through explicit user action: `POST /api/invoices/save`.
-- Saved invoices are editable documents, not accounting records.
-
-### Persistence Endpoints
-
-- `POST /api/invoices/save`
-  - Create body:
-    ```json
-    {
-      "confirmSave": true,
-      "sourceType": "text_input",
-      "invoiceData": {
-        "structuredInvoice": { "...": "..." },
-        "finishedInvoice": { "...": "..." }
-      }
-    }
-    ```
-  - Update existing invoice by including `invoiceId` in the same body.
-- `GET /api/invoices`
-  - Returns minimal metadata only: `invoiceId`, `createdAt`, `updatedAt`, `status`, `sourceType`
-- `GET /api/invoices/:id`
-  - Returns the full saved invoice document for reopening/editing
-- `POST /api/invoices/:id/duplicate`
-  - Duplicates a saved invoice into a new `draft`
--- `POST /api/invoices/:id/status`
-  - Body: `{ "status": "draft" | "sent" | "paid" }`
-  - Manual-only status change; no automatic transitions
-
-## Layer 2 surfaces
-
-- **Launcher hub**  
-  The landing area offers “Create new invoice” and, only when saved documents exist, “Open saved invoices.” A single supporting line of copy keeps the promise: no client setup, no accounting—just invoices you can generate and reopen.
-- **Document history**  
-  `/invoices` stays minimal: invoice #, date, total, status (draft | sent | paid) and the allowed actions (open in the workspace, duplicate, change status, or print/PDF). No client names, searches, filters, dashboards, or bulk operations.
-- **Tone follow-up presets**  
-  When the messy notes lack tone guidance, the follow-up shows three preset buttons (Neutral professional, Friendly professional, Firm / straightforward) plus the custom tone field. Clicking a preset injects a concise instruction while rewrite tools can still override the wording.
+</div>
