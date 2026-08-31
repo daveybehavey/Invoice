@@ -301,8 +301,8 @@ export function getStripeBillingCapabilities(): StripeBillingCapabilities {
   const publishableKey = getOptionalEnv(process.env.STRIPE_PUBLISHABLE_KEY);
   const checkoutPriceId = getOptionalEnv(process.env.STRIPE_PRICE_ID);
   const webhookSecret = getOptionalEnv(process.env.STRIPE_WEBHOOK_SECRET);
-  const secretKeyMode = detectStripeKeyMode(secretKey, "sk_");
-  const publishableKeyMode = detectStripeKeyMode(publishableKey, "pk_");
+  const secretKeyMode = detectStripeKeyMode(secretKey, "secret");
+  const publishableKeyMode = detectStripeKeyMode(publishableKey, "publishable");
   return {
     provider: secretKey ? "stripe" : "none",
     checkoutAvailable: Boolean(secretKey && checkoutPriceId),
@@ -560,6 +560,19 @@ export async function createStripeBillingPortalSession(
   return { url: session.url };
 }
 
+type StripeWebhookConstructEvent = (input: {
+  rawPayload: string;
+  signature: string;
+  webhookSecret: string;
+}) => Promise<Stripe.Event>;
+
+let stripeWebhookConstructEventForTests: StripeWebhookConstructEvent | null = null;
+
+/**
+ * Verify Stripe webhook signatures against the raw request body.
+ * Uses constructEventAsync so Cloudflare Workers (SubtleCrypto) can verify
+ * asynchronously; sync constructEvent fails closed there with a provider error.
+ */
 export async function processStripeWebhookEvent(input: {
   rawBody: Buffer | string;
   signature: string;
@@ -578,7 +591,14 @@ export async function processStripeWebhookEvent(input: {
     throw new Error("Stripe webhooks are not configured (missing STRIPE_WEBHOOK_SECRET).");
   }
   const rawPayload = typeof input.rawBody === "string" ? input.rawBody : input.rawBody.toString("utf8");
-  const event = stripe.webhooks.constructEvent(rawPayload, input.signature, webhookSecret);
+  // Fail closed: await verification so async crypto rejections propagate as errors.
+  const event = stripeWebhookConstructEventForTests
+    ? await stripeWebhookConstructEventForTests({
+        rawPayload,
+        signature: input.signature,
+        webhookSecret
+      })
+    : await stripe.webhooks.constructEventAsync(rawPayload, input.signature, webhookSecret);
 
   if (event.type === "checkout.session.completed") {
     await handleCheckoutSessionCompletedEvent(event.data.object as Stripe.Checkout.Session);
@@ -707,19 +727,49 @@ function getOptionalEnv(value: string | undefined): string | null {
   return trimmed.length ? trimmed : null;
 }
 
-function detectStripeKeyMode(
+export type StripeKeyMode = "live" | "test" | "unknown" | "none";
+
+/**
+ * Classify Stripe API key mode for launch/capability reporting.
+ * Recognizes standard secret/publishable prefixes plus official restricted
+ * sandbox/test formats issued by Stripe CLI anonymous sandboxes (`rkcs_test_`)
+ * and restricted keys (`rk_test_` / `rk_live_`). Unknown formats fail closed.
+ */
+export function detectStripeKeyMode(
   value: string | null,
-  expectedPrefix: "sk_" | "pk_"
-): "live" | "test" | "unknown" | "none" {
+  kind: "secret" | "publishable" = "secret"
+): StripeKeyMode {
   if (!value) {
     return "none";
   }
-  if (value.startsWith(`${expectedPrefix}live_`)) {
+
+  if (kind === "publishable") {
+    if (value.startsWith("pk_live_")) {
+      return "live";
+    }
+    if (value.startsWith("pk_test_")) {
+      return "test";
+    }
+    return "unknown";
+  }
+
+  // Standard secret keys
+  if (value.startsWith("sk_live_")) {
     return "live";
   }
-  if (value.startsWith(`${expectedPrefix}test_`)) {
+  if (value.startsWith("sk_test_")) {
     return "test";
   }
+
+  // Restricted keys and Stripe CLI sandbox restricted keys.
+  // Only explicit live/test suffixes map; never treat unknown restricted forms as test.
+  if (value.startsWith("rk_live_") || value.startsWith("rkcs_live_")) {
+    return "live";
+  }
+  if (value.startsWith("rk_test_") || value.startsWith("rkcs_test_")) {
+    return "test";
+  }
+
   return "unknown";
 }
 
@@ -750,6 +800,13 @@ export function setBillingPortalSessionCreatorForTests(
   creator: ((input: BillingPortalCreatorInput) => Promise<{ url: string }>) | null
 ): void {
   billingPortalSessionCreatorForTests = creator;
+}
+
+/** Test-only override for Stripe webhook signature verification. */
+export function setStripeWebhookConstructEventForTests(
+  constructor: StripeWebhookConstructEvent | null
+): void {
+  stripeWebhookConstructEventForTests = constructor;
 }
 
 /** Clears process-local in-flight Checkout coalescing (test isolate reset). */
