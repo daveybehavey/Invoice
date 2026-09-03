@@ -186,15 +186,16 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   const namedInvoice = applyCustomerNameFallback(structuredInvoice, sourceText);
   const optionalLaborTasks = identifyOptionalLaborTasks(structuredInvoice, sourceText);
   const sanitizedNotes = sanitizeStructuredNotes(namedInvoice.notes);
-  const pricingSafeInvoice = applyMissingPriceSafety(
+  const pricingSafe = applyUnresolvedBillingSafety(
     {
       ...namedInvoice,
       notes: sanitizedNotes.cleanedNotes
     },
     sourceText
   );
-  const sanitizedInvoice: StructuredInvoice = pricingSafeInvoice;
-  const unpricedLaborTasks = extractUnpricedLaborTasks(pricingSafeInvoice).filter(
+  const sanitizedInvoice: StructuredInvoice = pricingSafe.structuredInvoice;
+  const unresolvedBillingFacts = pricingSafe.unresolvedFacts;
+  const unpricedLaborTasks = extractUnpricedLaborTasks(sanitizedInvoice).filter(
     (taskRef) => !optionalLaborTasks.has(normalizeDecisionText(taskRef.task.description))
   );
 
@@ -208,7 +209,7 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     return {
       kind: "labor_pricing_follow_up",
       structuredInvoice: sanitizedInvoice,
-      openDecisions: extractMissingPriceDecisions(sourceText),
+      openDecisions: extractUnresolvedBillingDecisions(sourceText),
       assumptions: normalizeAssumptions(
         sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [],
         taxDirective
@@ -231,7 +232,7 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     };
   }
 
-  const invoice = await generateFinishedInvoice(sanitizedInvoice);
+  const invoice = await generateFinishedInvoice(sanitizedInvoice, unresolvedBillingFacts);
   const customerFallback = extractCustomerNameFromSource(sourceText);
   const invoiceWithCustomer =
     invoice.customerName && invoice.customerName.trim()
@@ -251,7 +252,7 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   const audit = auditOutcome.audit;
   const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
   const heuristicDecisions = audit ? extractAmbiguousBillingDecisions(sourceText) : [];
-  const missingPriceDecisions = extractMissingPriceDecisions(sourceText);
+  const missingPriceDecisions = extractUnresolvedBillingDecisions(sourceText);
   const baseOpenDecisions = audit
     ? filterResolvedDecisions(
         mergeDecisions(auditDecisions, heuristicDecisions),
@@ -342,14 +343,16 @@ export async function continueInvoiceAfterLaborPricing(
   const taxDirective = detectExplicitTaxDirective(source);
   const taxAmbiguity = detectTaxAmbiguity(source);
   const sanitizedNotes = sanitizeStructuredNotes(withFreeMinutes.notes);
-  const sanitizedInvoice: StructuredInvoice = applyMissingPriceSafety(
+  const pricingSafe = applyUnresolvedBillingSafety(
     {
       ...withFreeMinutes,
       notes: sanitizedNotes.cleanedNotes
     },
     source
   );
-  const invoice = await generateFinishedInvoice(sanitizedInvoice);
+  const sanitizedInvoice: StructuredInvoice = pricingSafe.structuredInvoice;
+  const unresolvedBillingFacts = pricingSafe.unresolvedFacts;
+  const invoice = await generateFinishedInvoice(sanitizedInvoice, unresolvedBillingFacts);
   const customerFallback = extractCustomerNameFromSource(source);
   const invoiceWithCustomer =
     invoice.customerName && invoice.customerName.trim()
@@ -370,7 +373,7 @@ export async function continueInvoiceAfterLaborPricing(
   const audit = auditOutcome.audit;
   const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
   const heuristicDecisions = audit ? extractAmbiguousBillingDecisions(source) : [];
-  const missingPriceDecisions = extractMissingPriceDecisions(source);
+  const missingPriceDecisions = extractUnresolvedBillingDecisions(source);
   const baseOpenDecisions = audit
     ? filterResolvedDecisions(mergeDecisions(auditDecisions, heuristicDecisions), source, lastUserMessage)
     : detectOpenDecisionsFromText(source, lastUserMessage);
@@ -944,7 +947,7 @@ export async function runInvoiceAuditOverlay(input: {
   const audit = await auditInvoiceInterpretation(sourceText, parsedInvoice);
   if (!audit) {
     return {
-      openDecisions: extractMissingPriceDecisions(sourceText),
+      openDecisions: extractUnresolvedBillingDecisions(sourceText),
       assumptions: normalizeAssumptions(
         sanitizedNotes.taxAmbiguityFound || (taxAmbiguity && taxDirective === "none")
           ? ["Tax assumed 0%."]
@@ -957,7 +960,7 @@ export async function runInvoiceAuditOverlay(input: {
 
   const auditDecisions = decisionsFromAudit(audit.decisions);
   const heuristicDecisions = extractAmbiguousBillingDecisions(sourceText);
-  const missingPriceDecisions = extractMissingPriceDecisions(sourceText);
+  const missingPriceDecisions = extractUnresolvedBillingDecisions(sourceText);
   const openDecisions = filterResolvedDecisions(
     mergeDecisions(mergeDecisions(auditDecisions, heuristicDecisions), missingPriceDecisions),
     sourceText,
@@ -1160,7 +1163,10 @@ function applyFreeLaborMinutesFromText(
   return nextStructuredInvoice;
 }
 
-async function generateFinishedInvoice(structuredInvoice: StructuredInvoice): Promise<FinishedInvoice> {
+async function generateFinishedInvoice(
+  structuredInvoice: StructuredInvoice,
+  unresolvedFacts: UnresolvedBillingFact[] = []
+): Promise<FinishedInvoice> {
   const laborLineItems = structuredInvoice.workSessions.flatMap((session) =>
     session.tasks
       .filter((task) => shouldEmitLaborLineItem(task))
@@ -1168,7 +1174,7 @@ async function generateFinishedInvoice(structuredInvoice: StructuredInvoice): Pr
   );
   const materialLineItems = structuredInvoice.materials
     .filter((material) => shouldEmitMaterialLineItem(material))
-    .map((material) => buildMaterialLineItem(material));
+    .map((material) => buildMaterialLineItem(material, unresolvedFacts));
 
   const invoice: FinishedInvoice = {
     documentType: "invoice",
@@ -1777,9 +1783,13 @@ function filterResolvedDecisions(
   }
 
   return decisions.filter((decision) => {
-    const resolved = candidateTexts.some((candidate) =>
-      evaluateDecisionResolution(decision, candidate).resolved
-    );
+    const resolved = candidateTexts.some((candidate) => {
+      // A fact cannot be resolved by the same originating source statement that created it.
+      if (isSameOriginatingStatement(decision.sourceSnippet, candidate)) {
+        return false;
+      }
+      return evaluateDecisionResolution(decision, candidate).resolved;
+    });
     if (resolved) {
       return false;
     }
@@ -2176,98 +2186,257 @@ function extractAmbiguousBillingDecisions(sourceText: string): OpenDecision[] {
 const MISSING_PRICE_MARKERS =
   /\b(?:(?:supplier\s+)?(?:price|cost|rate)\s+not\s+(?:written(?:\s+down)?|recorded|noted|available|known)|(?:price|cost|rate)\s+(?:unknown|missing|tbd|tba)|(?:don't|do\s+not|didn'?t|did\s+not)\s+know\s+(?:the\s+)?(?:price|cost|rate)|forgot\s+(?:the\s+)?(?:price|cost|rate)|(?:no|missing)\s+(?:unit\s+)?(?:price|cost))\b/i;
 
+const MISSING_QUANTITY_MARKERS =
+  /\b(?:(?:quantity|qty|count)\s+not\s+(?:written(?:\s+down)?|recorded|noted|available|known)|(?:quantity|qty|count)\s+(?:unknown|missing|tbd|tba)|(?:don't|do\s+not|didn'?t|did\s+not)\s+know\s+(?:the\s+)?(?:quantity|qty|count)|(?:no|missing)\s+(?:quantity|qty|count))\b/i;
+
 const EXPLICIT_FREE_CHARGE_MARKERS =
   /\b(?:no charge|no-charge|didn't charge|did not charge|didnt charge|not charged|no cost|complimentary|\bfree\b)\b/i;
 
-type MissingPriceMention = {
-  snippet: string;
-  description: string;
-  quantity?: number;
+const GENERIC_FREE_MATCH_TERMS = new Set([
+  "pump",
+  "pumps",
+  "basket",
+  "baskets",
+  "part",
+  "parts",
+  "item",
+  "items",
+  "system",
+  "work",
+  "labor",
+  "labour",
+  "service",
+  "visit",
+  "job",
+  "unit",
+  "material",
+  "materials",
+  "charge",
+  "free",
+  "cost",
+  "price",
+  "rate",
+  "amount",
+  "quantity"
+]);
+
+type UnresolvedBillingField = "price" | "cost" | "rate" | "quantity";
+
+type UnresolvedBillingFact = {
+  field: UnresolvedBillingField;
+  itemDescription: string;
+  itemIdentity: string;
+  sourceSnippet: string;
+  sourceFingerprint: string;
+  knownQuantity?: number;
 };
 
-function extractMissingPriceMentions(sourceText: string): MissingPriceMention[] {
-  const sentences = splitIntoSentences(sourceText);
-  if (!sentences.length) {
-    return [];
+function fingerprintSourceSnippet(value?: string): string {
+  const normalized = normalizeDecisionText(value ?? "");
+  if (!normalized) {
+    return "";
   }
-
-  const mentions: MissingPriceMention[] = [];
-  sentences.forEach((sentence) => {
-    if (!MISSING_PRICE_MARKERS.test(sentence)) {
-      return;
-    }
-    if (EXPLICIT_FREE_CHARGE_MARKERS.test(sentence)) {
-      return;
-    }
-
-    const snippet = sentence.length > 140 ? `${sentence.slice(0, 137)}...` : sentence;
-    const addedMatch = sentence.match(
-      /\b(?:added|used|installed|replaced|purchased|bought|included)\s+(\d+(?:\.\d+)?)\s+(.+?)(?:\s+but\b|\s+and\b|,|;|\.|$)/i
-    );
-    if (addedMatch) {
-      const quantity = Number(addedMatch[1]);
-      const description = cleanMissingPriceItemDescription(addedMatch[2]);
-      if (description) {
-        mentions.push({
-          snippet,
-          description,
-          quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : undefined
-        });
-        return;
-      }
-    }
-
-    const bareItemMatch = sentence.match(
-      /\b(\d+(?:\.\d+)?)?\s*([a-z][a-z0-9\s-]{1,40}?(?:jug|jugs|pump|pumps|filter|filters|fitting|fittings|part|parts|kit|kits|chemical|chemicals|acid|chlorine))\b/i
-    );
-    if (bareItemMatch) {
-      const quantity = bareItemMatch[1] ? Number(bareItemMatch[1]) : undefined;
-      const description = cleanMissingPriceItemDescription(bareItemMatch[2]);
-      if (description) {
-        mentions.push({
-          snippet,
-          description,
-          quantity: Number.isFinite(quantity) && quantity && quantity > 0 ? quantity : undefined
-        });
-        return;
-      }
-    }
-
-    const fallbackDescription = cleanMissingPriceItemDescription(
-      sentence
-        .replace(MISSING_PRICE_MARKERS, " ")
-        .replace(/\b(?:added|used|installed|replaced|purchased|bought|included|but|supplier)\b/gi, " ")
-    );
-    if (fallbackDescription) {
-      mentions.push({
-        snippet,
-        description: fallbackDescription
-      });
-    }
-  });
-
-  return mentions;
+  return hashString(normalized);
 }
 
-function cleanMissingPriceItemDescription(value: string): string {
+function isSameOriginatingStatement(sourceSnippet: string | undefined, candidate: string): boolean {
+  const origin = normalizeDecisionText(sourceSnippet ?? "");
+  const other = normalizeDecisionText(candidate);
+  if (!origin || !other) {
+    return false;
+  }
+  if (origin === other) {
+    return true;
+  }
+  // Treat near-identical containing statements as the same origin (avoid self-resolution).
+  if (origin.includes(other) || other.includes(origin)) {
+    const shorter = origin.length <= other.length ? origin : other;
+    return shorter.split(/\s+/).filter(Boolean).length >= 4;
+  }
+  return fingerprintSourceSnippet(origin) === fingerprintSourceSnippet(other);
+}
+
+function extractItemDescriptionFromUnresolvedSentence(sentence: string): {
+  description: string;
+  quantity?: number;
+} | null {
+  const addedWithQty = sentence.match(
+    /\b(?:added|used|installed|replaced|purchased|bought|included|add)\s+(\d+(?:\.\d+)?)\s+(.+?)(?:\s+but\b|\s+and\b|,|;|\.|$)/i
+  );
+  if (addedWithQty) {
+    const quantity = Number(addedWithQty[1]);
+    const description = cleanUnresolvedItemDescription(addedWithQty[2]);
+    if (description) {
+      return {
+        description,
+        quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : undefined
+      };
+    }
+  }
+
+  const addedWithoutQty = sentence.match(
+    /\b(?:added|used|installed|replaced|purchased|bought|included|add)\s+(.+?)(?:\s+at\b|\s+but\b|\s+and\b|,|;|\.|$)/i
+  );
+  if (addedWithoutQty) {
+    const description = cleanUnresolvedItemDescription(addedWithoutQty[1]);
+    if (description) {
+      return { description };
+    }
+  }
+
+  const bareItemMatch = sentence.match(
+    /\b(\d+(?:\.\d+)?)?\s*([a-z][a-z0-9\s-]{1,40}?(?:jug|jugs|pump|pumps|filter|filters|fitting|fittings|part|parts|kit|kits|chemical|chemicals|acid|chlorine))\b/i
+  );
+  if (bareItemMatch) {
+    const quantity = bareItemMatch[1] ? Number(bareItemMatch[1]) : undefined;
+    const description = cleanUnresolvedItemDescription(bareItemMatch[2]);
+    if (description) {
+      return {
+        description,
+        quantity: Number.isFinite(quantity) && quantity && quantity > 0 ? quantity : undefined
+      };
+    }
+  }
+
+  const fallbackDescription = cleanUnresolvedItemDescription(
+    sentence
+      .replace(MISSING_PRICE_MARKERS, " ")
+      .replace(MISSING_QUANTITY_MARKERS, " ")
+      .replace(/\b(?:added|used|installed|replaced|purchased|bought|included|add|but|supplier)\b/gi, " ")
+  );
+  if (fallbackDescription) {
+    return { description: fallbackDescription };
+  }
+  return null;
+}
+
+function cleanUnresolvedItemDescription(value: string): string {
   return value
-    .replace(/\b(?:supplier\s+)?(?:price|cost|rate)\b.*$/i, " ")
-    .replace(/\b(?:but|and|with|for|the|a|an)\b/gi, " ")
+    .replace(/\b(?:supplier\s+)?(?:price|cost|rate|quantity|qty|count)\b.*$/i, " ")
+    .replace(/\b(?:but|and|with|for|the|a|an|each)\b/gi, " ")
+    .replace(/\$?\d+(?:\.\d+)?/g, " ")
     .replace(/[^a-z0-9\s-]/gi, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 80);
 }
 
-function extractMissingPriceDecisions(sourceText: string): OpenDecision[] {
-  return extractMissingPriceMentions(sourceText).map((mention) => {
-    const prompt = `Confirm unit price for "${mention.description}"?`;
+function extractUnresolvedBillingFacts(sourceText: string): UnresolvedBillingFact[] {
+  const sentences = splitIntoSentences(sourceText);
+  if (!sentences.length) {
+    return [];
+  }
+
+  const facts: UnresolvedBillingFact[] = [];
+  const seen = new Set<string>();
+
+  const pushFact = (
+    field: UnresolvedBillingField,
+    sentence: string,
+    item: { description: string; quantity?: number }
+  ) => {
+    const itemIdentity = normalizeDecisionText(item.description);
+    if (!itemIdentity) {
+      return;
+    }
+    const sourceSnippet = sentence.length > 140 ? `${sentence.slice(0, 137)}...` : sentence;
+    const sourceFingerprint = fingerprintSourceSnippet(sourceSnippet);
+    const key = `${field}:${itemIdentity}:${sourceFingerprint}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    facts.push({
+      field,
+      itemDescription: item.description,
+      itemIdentity,
+      sourceSnippet,
+      sourceFingerprint,
+      knownQuantity: item.quantity
+    });
+  };
+
+  sentences.forEach((sentence) => {
+    if (EXPLICIT_FREE_CHARGE_MARKERS.test(sentence)) {
+      return;
+    }
+    const hasMissingPrice = MISSING_PRICE_MARKERS.test(sentence);
+    const hasMissingQuantity = MISSING_QUANTITY_MARKERS.test(sentence);
+    if (!hasMissingPrice && !hasMissingQuantity) {
+      return;
+    }
+    const item = extractItemDescriptionFromUnresolvedSentence(sentence);
+    if (!item) {
+      return;
+    }
+    if (hasMissingPrice) {
+      // Prefer price field; cost/rate markers still map to unresolved monetary value.
+      const field: UnresolvedBillingField = /\brate\b/i.test(sentence)
+        ? "rate"
+        : /\bcost\b/i.test(sentence)
+          ? "cost"
+          : "price";
+      pushFact(field, sentence, item);
+    }
+    if (hasMissingQuantity) {
+      pushFact("quantity", sentence, item);
+    }
+  });
+
+  return facts;
+}
+
+function unresolvedFactMatchesDescription(fact: UnresolvedBillingFact, description: string): boolean {
+  const identity = normalizeDecisionText(description);
+  if (!identity) {
+    return false;
+  }
+  if (identity === fact.itemIdentity || identity.includes(fact.itemIdentity) || fact.itemIdentity.includes(identity)) {
+    return true;
+  }
+  return countDescriptionKeywordOverlap(description, fact.itemDescription) >= 1;
+}
+
+function isUnresolvedNumericDecision(decision: OpenDecision): boolean {
+  const prompt = decision.prompt ?? "";
+  if (/confirm\s+(?:unit\s+)?(?:price|cost|rate|quantity)\s+for/i.test(prompt)) {
+    return true;
+  }
+  // Audit-authored or heuristic prompts that still represent a missing required numeric field.
+  if (
+    /(?:unit\s+)?(?:price|cost|rate|quantity).*(?:missing|unknown|not\s+written|not\s+recorded|tbd|confirm|what\s+should)/i.test(
+      prompt
+    )
+  ) {
+    return true;
+  }
+  if (/missing.+(?:price|cost|rate|quantity)/i.test(prompt)) {
+    return true;
+  }
+  return false;
+}
+
+export function hasUnresolvedNumericBillingFollowUp(input: {
+  openDecisions?: OpenDecision[];
+  qualityGate?: { blockers?: Array<{ code?: string }> };
+}): boolean {
+  void input.qualityGate;
+  // Source-proven missing price/cost/rate/quantity facts own needsFollowUp.
+  // Ambiguous bill/skip holds still block generate via openDecisions + qualityGate.
+  return (input.openDecisions ?? []).some((decision) => isUnresolvedNumericDecision(decision));
+}
+
+function extractUnresolvedBillingDecisions(sourceText: string): OpenDecision[] {
+  return extractUnresolvedBillingFacts(sourceText).map((fact) => {
+    const fieldLabel =
+      fact.field === "quantity" ? "quantity" : fact.field === "rate" ? "rate" : fact.field === "cost" ? "cost" : "unit price";
+    const prompt = `Confirm ${fieldLabel} for "${fact.itemDescription}"?`;
     return {
-      id: `decision-${hashString(prompt)}`,
+      id: `decision-${hashString(`${fact.field}:${fact.itemIdentity}:${fact.sourceFingerprint}`)}`,
       kind: "billing" as const,
       prompt,
-      sourceSnippet: mention.snippet,
-      keywords: extractKeywords([mention.description, mention.snippet].join(" "))
+      sourceSnippet: fact.sourceSnippet,
+      keywords: extractKeywords([fact.itemDescription, fact.sourceSnippet].join(" "))
     };
   });
 }
@@ -2296,12 +2465,72 @@ function countDescriptionKeywordOverlap(left: string, right: string): number {
 }
 
 function descriptionMatchesFreeCharge(description: string, sourceText: string): boolean {
-  const sentences = splitIntoSentences(sourceText);
-  return sentences.some((sentence) => {
+  const descriptionNorm = normalizeDecisionText(description);
+  if (!descriptionNorm) {
+    return false;
+  }
+
+  return splitIntoSentences(sourceText).some((sentence) => {
     if (!EXPLICIT_FREE_CHARGE_MARKERS.test(sentence)) {
       return false;
     }
-    return countDescriptionKeywordOverlap(description, sentence) >= 1;
+    const sentenceNorm = normalizeDecisionText(sentence);
+    // Strong phrase/description match against the same free/no-charge statement.
+    if (descriptionNorm.length >= 4 && sentenceNorm.includes(descriptionNorm)) {
+      return true;
+    }
+
+    // Prefer matching against the free-charge object ("no charge for X" / "didn't charge for X").
+    const objectMatch = sentence.match(
+      /(?:no(?:\s+|-)?charge|did(?:\s+not|n't|nt)\s+charge|not\s+charged|no\s+cost|complimentary|\bfree\b)(?:\s+for)\s+(.+)$/i
+    );
+    if (objectMatch?.[1]) {
+      const objectNorm = normalizeDecisionText(objectMatch[1]);
+      if (objectNorm.length >= 4 && (descriptionNorm.includes(objectNorm) || objectNorm.includes(descriptionNorm))) {
+        return true;
+      }
+      const objectKeywords = extractKeywords(objectMatch[1]).filter(
+        (keyword) => !["charge", "free", "cost", "that", "this", "them", "those"].includes(keyword)
+      );
+      const descriptionKeywords = extractKeywords(description);
+      let objectOverlap = 0;
+      objectKeywords.forEach((keyword) => {
+        if (descriptionKeywords.includes(keyword)) {
+          objectOverlap += 1;
+        }
+      });
+      if (objectKeywords.length <= 1) {
+        return objectOverlap >= 1;
+      }
+      return objectOverlap >= 2;
+    }
+
+    // Same-sentence free/no-charge (e.g. "inspected leak 30 minutes no charge") is item-local.
+    const workPortion = sentence.replace(EXPLICIT_FREE_CHARGE_MARKERS, " ");
+    const workKeywords = new Set(expandKeywordVariants(extractKeywords(workPortion)));
+    const descriptionKeywords = expandKeywordVariants(
+      extractKeywords(description).filter((keyword) => !GENERIC_FREE_MATCH_TERMS.has(keyword))
+    );
+    let sameSentenceOverlap = 0;
+    descriptionKeywords.forEach((keyword) => {
+      if (workKeywords.has(keyword)) {
+        sameSentenceOverlap += 1;
+      }
+    });
+    if (sameSentenceOverlap >= 1) {
+      return true;
+    }
+
+    const sentenceKeywords = new Set(
+      extractKeywords(sentence).filter((keyword) => !GENERIC_FREE_MATCH_TERMS.has(keyword))
+    );
+    let overlap = 0;
+    descriptionKeywords.forEach((keyword) => {
+      if (sentenceKeywords.has(keyword)) {
+        overlap += 1;
+      }
+    });
+    return overlap >= 2;
   });
 }
 
@@ -2321,39 +2550,51 @@ function clearInventedZeroPricing<T extends { amount?: number; unitCost?: number
   return next;
 }
 
-function applyMissingPriceSafety(
+type UnresolvedBillingSafetyResult = {
+  structuredInvoice: StructuredInvoice;
+  unresolvedFacts: UnresolvedBillingFact[];
+};
+
+function applyUnresolvedBillingSafety(
   structuredInvoice: StructuredInvoice,
   sourceText: string
-): StructuredInvoice {
-  const missingMentions = extractMissingPriceMentions(sourceText);
+): UnresolvedBillingSafetyResult {
+  const unresolvedFacts = extractUnresolvedBillingFacts(sourceText);
   let materials = structuredInvoice.materials.map((material) => ({ ...material }));
 
-  missingMentions.forEach((mention) => {
-    const matchIndex = materials.findIndex(
-      (material) => countDescriptionKeywordOverlap(material.description, mention.description) >= 1
+  unresolvedFacts.forEach((fact) => {
+    const matchIndex = materials.findIndex((material) =>
+      unresolvedFactMatchesDescription(fact, material.description)
     );
     if (matchIndex >= 0) {
-      const matched = clearInventedZeroPricing(materials[matchIndex]);
-      if (typeof matched.quantity !== "number" && typeof mention.quantity === "number") {
-        matched.quantity = mention.quantity;
+      let matched = { ...materials[matchIndex] };
+      if (fact.field === "quantity") {
+        matched.quantity = undefined;
+        matched.amount = undefined;
+      } else {
+        matched = clearInventedZeroPricing(matched);
+        if (typeof matched.quantity !== "number" && typeof fact.knownQuantity === "number") {
+          matched.quantity = fact.knownQuantity;
+        }
       }
       materials[matchIndex] = matched;
       return;
     }
+
     materials.push({
-      description: mention.description,
-      quantity: mention.quantity
+      description: fact.itemDescription,
+      quantity: fact.field === "quantity" ? undefined : fact.knownQuantity
     });
   });
 
   materials = materials.filter((material) => {
-    const isMissingPriceItem = missingMentions.some(
-      (mention) => countDescriptionKeywordOverlap(material.description, mention.description) >= 1
+    const matchedFacts = unresolvedFacts.filter((fact) =>
+      unresolvedFactMatchesDescription(fact, material.description)
     );
     const hasPricedAmount =
       (typeof material.amount === "number" && material.amount > 0) ||
       (typeof material.unitCost === "number" && material.unitCost > 0);
-    if (hasPricedAmount) {
+    if (hasPricedAmount || matchedFacts.length > 0) {
       return true;
     }
     const isZeroOnly =
@@ -2361,9 +2602,6 @@ function applyMissingPriceSafety(
       (typeof material.unitCost === "number" && material.unitCost === 0);
     const hasNoPricing =
       typeof material.amount !== "number" && typeof material.unitCost !== "number";
-    if (isMissingPriceItem) {
-      return true;
-    }
     if (isZeroOnly) {
       return descriptionMatchesFreeCharge(material.description, sourceText);
     }
@@ -2374,13 +2612,21 @@ function applyMissingPriceSafety(
   });
 
   materials = materials.map((material) => {
-    const isMissingPriceItem = missingMentions.some(
-      (mention) => countDescriptionKeywordOverlap(material.description, mention.description) >= 1
+    const matchedFacts = unresolvedFacts.filter((fact) =>
+      unresolvedFactMatchesDescription(fact, material.description)
     );
-    if (!isMissingPriceItem) {
+    if (!matchedFacts.length) {
       return material;
     }
-    return clearInventedZeroPricing(material);
+    let next = { ...material };
+    if (matchedFacts.some((fact) => fact.field === "quantity")) {
+      next.quantity = undefined;
+      next.amount = undefined;
+    }
+    if (matchedFacts.some((fact) => fact.field === "price" || fact.field === "cost" || fact.field === "rate")) {
+      next = clearInventedZeroPricing(next);
+    }
+    return next;
   });
 
   const workSessions = structuredInvoice.workSessions.map((session) => ({
@@ -2396,7 +2642,7 @@ function applyMissingPriceSafety(
         }
         const isExplicitZero = typeof task.amount === "number" && task.amount === 0;
         if (isExplicitZero) {
-          // Invented $0 labor is dropped unless source text marks it free/no-charge.
+          // Invented $0 labor is dropped unless the same free statement is item-specific.
           return descriptionMatchesFreeCharge(task.description, sourceText);
         }
         // Keep unpriced labor (hours-only or description-only) for follow-up handling.
@@ -2405,9 +2651,12 @@ function applyMissingPriceSafety(
   }));
 
   return {
-    ...structuredInvoice,
-    workSessions,
-    materials
+    structuredInvoice: {
+      ...structuredInvoice,
+      workSessions,
+      materials
+    },
+    unresolvedFacts
   };
 }
 
@@ -2428,7 +2677,7 @@ function shouldEmitMaterialLineItem(material: Material): boolean {
   if (typeof material.amount === "number" || typeof material.unitCost === "number") {
     return true;
   }
-  // Keep explicitly unresolved materials (missing price placeholders).
+  // Keep explicitly unresolved materials (missing price/quantity placeholders).
   return Boolean(material.description?.trim());
 }
 
@@ -3358,6 +3607,54 @@ function evaluateDecisionResolution(decision: OpenDecision, resolutionText: stri
     return { resolved: false, reason: "discount_intent_missing" };
   }
 
+  const keywords = decision.keywords ?? [];
+  const promptKeywords = extractKeywords(decision.prompt ?? "");
+  const contextKeywords = expandKeywordVariants(Array.from(new Set([...keywords, ...promptKeywords])));
+  const hasContextOverlap =
+    contextKeywords.length > 0 &&
+    contextKeywords.some((keyword) => resolutionKeywords.has(keyword) || normalized.includes(keyword));
+
+  // Unresolved numeric facts require later explicit numeric evidence (or an explicit skip),
+  // bound to the same item — not generic verbs like "added" paired with unrelated amounts.
+  if (isUnresolvedNumericDecision(decision)) {
+    const billingNo =
+      /\bno\s+charge\b/i.test(normalized) ||
+      /\bdon(?:'|)t\s+bill\b/i.test(normalized) ||
+      /\bdo\s+not\s+bill\b/i.test(normalized) ||
+      /\bnot\s+billed\b/i.test(normalized) ||
+      /\bwaive\b/i.test(normalized) ||
+      /\bfree\b/i.test(normalized) ||
+      /\bskip\b/i.test(normalized) ||
+      /\bno\s+bill\b/i.test(normalized);
+    const hasNumericEvidence = /\b\d+(?:\.\d+)?\b/.test(normalized);
+    const itemContextKeywords = expandKeywordVariants(
+      Array.from(
+        new Set([
+          ...extractKeywords(decision.sourceSnippet ?? ""),
+          ...extractKeywords(decision.prompt ?? "")
+        ])
+      )
+    ).filter(
+      (keyword) =>
+        !GENERIC_FREE_MATCH_TERMS.has(keyword) &&
+        !["added", "confirm", "supplier", "written", "recorded", "noted", "unknown", "missing", "down"].includes(
+          keyword
+        )
+    );
+    const hasItemOverlap =
+      itemContextKeywords.length > 0 &&
+      itemContextKeywords.some(
+        (keyword) => resolutionKeywords.has(keyword) || normalized.includes(keyword)
+      );
+    if (billingNo && hasItemOverlap) {
+      return { resolved: true };
+    }
+    if (hasNumericEvidence && hasItemOverlap) {
+      return { resolved: true };
+    }
+    return { resolved: false, reason: "numeric_evidence_missing" };
+  }
+
   const billingNo =
     /\bno\s+charge\b/i.test(normalized) ||
     /\bdon(?:'|)t\s+bill\b/i.test(normalized) ||
@@ -3376,10 +3673,6 @@ function evaluateDecisionResolution(decision: OpenDecision, resolutionText: stri
     return { resolved: false, reason: "billing_intent_missing" };
   }
 
-  const keywords = decision.keywords ?? [];
-  const promptKeywords = extractKeywords(decision.prompt ?? "");
-  const contextKeywords = expandKeywordVariants(Array.from(new Set([...keywords, ...promptKeywords])));
-
   const isBillToDirective = /\bbill\s+to\b/i.test(normalized);
   if (isBillToDirective) {
     const nonBillContext = contextKeywords.filter((keyword) => keyword !== "bill");
@@ -3390,10 +3683,6 @@ function evaluateDecisionResolution(decision: OpenDecision, resolutionText: stri
       return { resolved: false, reason: "bill_to_directive" };
     }
   }
-
-  const hasContextOverlap =
-    contextKeywords.length > 0 &&
-    contextKeywords.some((keyword) => resolutionKeywords.has(keyword) || normalized.includes(keyword));
 
   if (hasContextOverlap) {
     return { resolved: true };
@@ -3690,29 +3979,50 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
   };
 }
 
-function buildMaterialLineItem(material: Material) {
-  const quantity = typeof material.quantity === "number" ? material.quantity : 1;
-  const safeQuantity = quantity > 0 ? quantity : 1;
+function buildMaterialLineItem(
+  material: Material,
+  unresolvedFacts: UnresolvedBillingFact[] = []
+) {
   const description = polishLineItemDescription(material.description);
+  const quantityUnresolved = unresolvedFacts.some(
+    (fact) => fact.field === "quantity" && unresolvedFactMatchesDescription(fact, material.description)
+  );
+  const priceUnresolved = unresolvedFacts.some(
+    (fact) =>
+      (fact.field === "price" || fact.field === "cost" || fact.field === "rate") &&
+      unresolvedFactMatchesDescription(fact, material.description)
+  );
+
+  const hasExplicitQuantity = typeof material.quantity === "number" && material.quantity > 0;
+  // Safe default quantity=1 only when quantity is not an explicit unresolved fact.
+  const quantity = hasExplicitQuantity ? material.quantity : quantityUnresolved ? undefined : 1;
+  const safeQuantity =
+    typeof quantity === "number" && quantity > 0 ? quantity : undefined;
 
   let unitPrice: number | undefined;
-  if (typeof material.unitCost === "number") {
+  if (!priceUnresolved && typeof material.unitCost === "number") {
     unitPrice = material.unitCost;
-  } else if (typeof material.amount === "number") {
+  } else if (
+    !priceUnresolved &&
+    typeof material.amount === "number" &&
+    typeof safeQuantity === "number"
+  ) {
     unitPrice = material.amount / safeQuantity;
+  } else if (!priceUnresolved && typeof material.amount === "number" && !quantityUnresolved) {
+    unitPrice = material.amount;
   }
 
   const amount =
-    typeof material.amount === "number"
+    typeof material.amount === "number" && !priceUnresolved && !quantityUnresolved
       ? material.amount
-      : typeof unitPrice === "number"
+      : typeof unitPrice === "number" && typeof safeQuantity === "number"
         ? safeQuantity * unitPrice
         : undefined;
 
   return {
     type: "material" as const,
     description,
-    quantity: roundToCents(safeQuantity),
+    quantity: typeof safeQuantity === "number" ? roundToCents(safeQuantity) : undefined,
     unitPrice: typeof unitPrice === "number" ? roundToCents(unitPrice) : undefined,
     amount: typeof amount === "number" ? roundToCents(amount) : undefined
   };
