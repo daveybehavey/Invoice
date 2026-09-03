@@ -292,6 +292,49 @@ test("[rule:structure.labor_pricing_format] blocks labor line missing explicit h
 
   assert.equal(quality.status, "needs_review");
   assert.ok(quality.blockers.some((item) => item.code === "labor_pricing_format"));
+  assert.ok(quality.blockers.some((item) => item.code === "missing_price"));
+});
+
+test("[rule:money.missing_price] blocks unresolved priced line items", () => {
+  const quality = evaluateInvoiceOutputQuality({
+    structuredInvoice: {
+      workSessions: [
+        {
+          tasks: [{ description: "Opened pool", hours: 3, rate: 125, amount: 375 }]
+        }
+      ],
+      materials: [{ description: "Acid jug", quantity: 1 }]
+    },
+    invoice: {
+      invoiceNumber: "INV-1001",
+      issueDate: "2026-02-25",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line_1",
+          type: "labor",
+          description: "Opened pool",
+          quantity: 3,
+          unitPrice: 125,
+          amount: 375
+        },
+        {
+          id: "line_2",
+          type: "material",
+          description: "Acid jug",
+          quantity: 1,
+          unitPrice: undefined,
+          amount: undefined
+        }
+      ],
+      subtotal: 375,
+      total: 375,
+      balanceDue: 375
+    }
+  });
+
+  assert.equal(quality.status, "needs_review");
+  assert.ok(quality.blockers.some((item) => item.code === "missing_price"));
 });
 
 test("[rule:multi_day.date_context] warns when multi-day work has weak date context", () => {

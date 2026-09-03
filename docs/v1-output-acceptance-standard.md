@@ -72,6 +72,7 @@ Blockers (stop generate):
 - `totals_missing`
 - `totals_conflict`
 - `labor_pricing_format`
+- `missing_price`
 - blank/missing client-facing line descriptions
 
 Warnings (do not stop generate):
