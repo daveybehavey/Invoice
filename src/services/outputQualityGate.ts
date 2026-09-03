@@ -130,12 +130,13 @@ export function evaluateInvoiceOutputQuality({
 
     const hasAmount = isFiniteNumber(lineItem.amount);
     const hasUnitPrice = isFiniteNumber(lineItem.unitPrice);
+    const hasQuantity = isFiniteNumber(lineItem.quantity) && (lineItem.quantity as number) > 0;
     const isExplicitZeroCharge = hasAmount && lineItem.amount === 0 && hasUnitPrice && lineItem.unitPrice === 0;
-    if (!isExplicitZeroCharge && (!hasAmount || !hasUnitPrice)) {
+    if (!isExplicitZeroCharge && (!hasAmount || !hasUnitPrice || !hasQuantity)) {
       blockers.push({
         code: "missing_price",
         lineItemId: lineItem.id,
-        message: `Line item "${description}" is missing a required price or amount.`
+        message: `Line item "${description}" is missing a required price, quantity, or amount.`
       });
     }
 

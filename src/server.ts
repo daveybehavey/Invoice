@@ -33,6 +33,7 @@ import {
   changeLineWording,
   continueInvoiceAfterLaborPricing,
   createInvoiceFromInput,
+  hasUnresolvedNumericBillingFollowUp,
   rewordFullInvoice,
   runInvoiceAuditOverlay
 } from "./services/invoicePipeline.js";
@@ -995,7 +996,10 @@ app.post(
       }
 
       res.json({
-        needsFollowUp: false,
+        needsFollowUp: hasUnresolvedNumericBillingFollowUp({
+          openDecisions: result.openDecisions,
+          qualityGate: result.qualityGate
+        }),
         structuredInvoice: result.structuredInvoice,
         invoice: result.invoice,
         openDecisions: result.openDecisions,
@@ -1088,7 +1092,10 @@ app.post("/api/invoices/from-input/labor-pricing", async (req: Request, res: Res
     );
 
     res.json({
-      needsFollowUp: false,
+      needsFollowUp: hasUnresolvedNumericBillingFollowUp({
+        openDecisions: result.openDecisions,
+        qualityGate: result.qualityGate
+      }),
       structuredInvoice: result.structuredInvoice,
       invoice: result.invoice,
       openDecisions: result.openDecisions,
