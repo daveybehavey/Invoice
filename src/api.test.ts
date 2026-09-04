@@ -5818,6 +5818,190 @@ test("AG-088/P2: missing-price decision cannot self-resolve from its originating
   assert.notEqual(acid.amount, 0);
 });
 
+test("AG-094: later quantity evidence resolves before invoice application", async () => {
+  useMockResponses([
+    {
+      workSessions: [],
+      materials: [{ description: "Acid jugs", unitCost: 74 }]
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Added acid jugs but quantity unknown. Acid jugs quantity is 2.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const acid = (response.body.invoice.lineItems as Array<Record<string, unknown>>).find((item) =>
+    /acid/i.test(String(item.description ?? ""))
+  );
+  assert.ok(acid);
+  assert.equal(acid.quantity, 2);
+  assert.equal(acid.unitPrice, 74);
+  assert.equal(acid.amount, 148);
+  assert.equal(
+    (response.body.openDecisions ?? []).some((decision: { evidenceField?: string }) =>
+      decision.evidenceField === "quantity"
+    ),
+    false
+  );
+});
+
+test("AG-094: acid unknown price does not suppress separately priced acid wash", async () => {
+  useMockResponses([
+    {
+      workSessions: [],
+      materials: [
+        { description: "Acid", quantity: 1, unitCost: 0, amount: 0 },
+        { description: "Acid wash", quantity: 1, unitCost: 200, amount: 200 }
+      ]
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Added 1 acid but price unknown. Acid wash for $200.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const items = response.body.invoice.lineItems as Array<Record<string, unknown>>;
+  const acid = items.find((item) => /^acid$/i.test(String(item.description ?? "").trim()));
+  const wash = items.find((item) => /wash/i.test(String(item.description ?? "")));
+  assert.ok(acid);
+  assert.ok(wash);
+  assert.equal(acid.amount, undefined);
+  assert.equal(acid.unitPrice, undefined);
+  assert.equal(wash.unitPrice, 200);
+  assert.equal(wash.amount, 200);
+  assert.equal(response.body.needsFollowUp, true);
+});
+
+test("AG-094: missing rate binds labor task and does not invent material", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          tasks: [{ description: "Repaired pump", hours: 2, rate: 90, amount: 180 }]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Repaired pump for 2 hours, but rate unknown",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const items = response.body.invoice.lineItems as Array<Record<string, unknown>>;
+  assert.equal(
+    items.some((item) => item.type === "material"),
+    false,
+    "unmatched/bound rate facts must not materialize as materials"
+  );
+  const labor = items.find((item) => item.type === "labor");
+  assert.ok(labor);
+  assert.equal(labor.unitPrice, undefined);
+  assert.equal(labor.amount, undefined);
+  assert.equal(response.body.needsFollowUp, true);
+  assert.ok(
+    (response.body.openDecisions ?? []).some(
+      (decision: { evidenceField?: string; prompt: string }) =>
+        decision.evidenceField === "rate" || /rate/i.test(decision.prompt)
+    )
+  );
+});
+
+test("AG-094: no-charge pump cannot authorize cleaned pump baskets as $0", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          tasks: [
+            { description: "Pump", amount: 0 },
+            { description: "Cleaned pump baskets", amount: 0 }
+          ]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "No charge for pump. Cleaned pump baskets.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const items = response.body.invoice.lineItems as Array<{
+    description: string;
+    amount?: number;
+    unitPrice?: number;
+  }>;
+  assert.ok(items.some((item) => /^pump$/i.test(item.description) && item.amount === 0));
+  assert.equal(
+    items.some(
+      (item) => /basket/i.test(item.description) && (item.amount === 0 || item.unitPrice === 0)
+    ),
+    false
+  );
+});
+
+test("AG-094: later cost cannot resolve missing quantity decision", async () => {
+  useMockResponses([
+    {
+      workSessions: [],
+      materials: [{ description: "Acid jugs" }]
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Added acid jugs but quantity unknown. Acid jugs cost $74 each.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, true);
+  const acid = (response.body.invoice.lineItems as Array<Record<string, unknown>>).find((item) =>
+    /acid/i.test(String(item.description ?? ""))
+  );
+  assert.ok(acid);
+  assert.equal(acid.quantity, undefined);
+  assert.equal(acid.unitPrice, 74);
+  assert.equal(acid.amount, undefined);
+  assert.ok(
+    (response.body.openDecisions ?? []).some(
+      (decision: { evidenceField?: string }) => decision.evidenceField === "quantity"
+    )
+  );
+});
+
+test("AG-094: ambiguous subject identity fails closed without sibling mutation", async () => {
+  useMockResponses([
+    {
+      workSessions: [],
+      materials: [
+        { description: "Filter", quantity: 1, unitCost: 40, amount: 40 },
+        { description: "Filter", quantity: 2, unitCost: 40, amount: 80 }
+      ]
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Added filter but price unknown",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const filters = (response.body.invoice.lineItems as Array<Record<string, unknown>>).filter((item) =>
+    /filter/i.test(String(item.description ?? ""))
+  );
+  assert.equal(filters.length, 2);
+  assert.ok(filters.every((item) => item.unitPrice === 40));
+  assert.equal(response.body.needsFollowUp, true);
+});
+
 function useMockResponses(responses: unknown[]): void {
   const queue = [...responses];
   setJsonTaskRunnerForTests(async <T>(): Promise<T> => {

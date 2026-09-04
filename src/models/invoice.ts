@@ -115,7 +115,10 @@ export const OpenDecisionSchema = z.object({
   kind: z.enum(["tax", "billing"]),
   prompt: z.string().min(1),
   sourceSnippet: OptionalString,
-  keywords: z.array(z.string().min(1)).optional()
+  keywords: z.array(z.string().min(1)).optional(),
+  // Projections of authoritative billing-evidence ledger facts (AG-093/AG-094).
+  subjectId: OptionalString,
+  evidenceField: z.enum(["quantity", "price", "cost", "rate"]).optional()
 });
 
 export const InvoiceAuditSchema = z.object({
