@@ -6,6 +6,7 @@ export type OutputQualityIssueCode =
   | "totals_conflict"
   | "labor_material_separation"
   | "labor_pricing_format"
+  | "missing_price"
   | "description_clarity"
   | "multi_day_structure";
 
@@ -125,6 +126,18 @@ export function evaluateInvoiceOutputQuality({
         message: "A line item is missing a client-facing description."
       });
       return;
+    }
+
+    const hasAmount = isFiniteNumber(lineItem.amount);
+    const hasUnitPrice = isFiniteNumber(lineItem.unitPrice);
+    const hasQuantity = isFiniteNumber(lineItem.quantity) && (lineItem.quantity as number) > 0;
+    const isExplicitZeroCharge = hasAmount && lineItem.amount === 0 && hasUnitPrice && lineItem.unitPrice === 0;
+    if (!isExplicitZeroCharge && (!hasAmount || !hasUnitPrice || !hasQuantity)) {
+      blockers.push({
+        code: "missing_price",
+        lineItemId: lineItem.id,
+        message: `Line item "${description}" is missing a required price, quantity, or amount.`
+      });
     }
 
     if (INFORMAL_DESCRIPTION_PATTERN.test(description) || FIRST_PERSON_PATTERN.test(description)) {

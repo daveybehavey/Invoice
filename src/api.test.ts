@@ -5467,6 +5467,541 @@ test("apply-decision includes timing payload only when debugTiming is enabled", 
   assert.ok(withDebug.body._timing.serverTotalMs >= withDebug.body._timing.serverApplyMs);
 });
 
+const AG082_MISSING_PRICE_INPUT =
+  "Opened pool. 3.0 hr labour at $125/hr. Added 2 chlorine jugs at $74 each. Added 1 acid jug but supplier price not written down. Cleaned baskets and confirmed circulation.";
+
+test("AG-082 missing-price: acid at invented $0 stays unresolved and blocks qualityGate pass", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          tasks: [{ description: "Opened pool", hours: 3, rate: 125, amount: 375 }]
+        },
+        {
+          tasks: [{ description: "Cleaned baskets and confirmed circulation", amount: 0 }]
+        }
+      ],
+      materials: [
+        { description: "Chlorine jugs", quantity: 2, unitCost: 74, amount: 148 },
+        { description: "Acid jug", quantity: 1, unitCost: 0, amount: 0 }
+      ]
+    },
+    {
+      assumptions: [],
+      decisions: [
+        {
+          kind: "billing",
+          prompt: "Acid jug unit price is missing. What should we charge?",
+          sourceSnippet: "Added 1 acid jug but supplier price not written down."
+        }
+      ],
+      unparsedLines: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: AG082_MISSING_PRICE_INPUT
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, true);
+
+  const lineItems = response.body.invoice.lineItems as Array<{
+    type: string;
+    description: string;
+    quantity?: number;
+    unitPrice?: number;
+    amount?: number;
+  }>;
+
+  const labor = lineItems.find((item) => item.type === "labor" && /pool/i.test(item.description));
+  assert.ok(labor);
+  assert.equal(labor.quantity, 3);
+  assert.equal(labor.unitPrice, 125);
+  assert.equal(labor.amount, 375);
+
+  const chlorine = lineItems.find((item) => /chlorine/i.test(item.description));
+  assert.ok(chlorine);
+  assert.equal(chlorine.quantity, 2);
+  assert.equal(chlorine.unitPrice, 74);
+  assert.equal(chlorine.amount, 148);
+
+  const acid = lineItems.find((item) => /acid/i.test(item.description));
+  assert.ok(acid, "acid must remain represented, not disappear");
+  assert.notEqual(acid.amount, 0);
+  assert.equal(acid.amount, undefined);
+  assert.equal(acid.unitPrice, undefined);
+
+  assert.equal(
+    lineItems.some(
+      (item) => /basket|circulation/i.test(item.description) && (item.amount === 0 || item.unitPrice === 0)
+    ),
+    false,
+    "descriptive baskets/circulation work must not become an invented $0 charge"
+  );
+
+  const openDecisions = response.body.openDecisions ?? [];
+  assert.ok(
+    openDecisions.some((decision: { prompt: string }) => /acid/i.test(decision.prompt)),
+    "acid price must remain an unresolved decision"
+  );
+  assert.equal(response.body.qualityGate.status, "needs_review");
+  assert.ok(
+    (response.body.qualityGate.blockers ?? []).some(
+      (blocker: { code?: string }) => blocker.code === "missing_price"
+    )
+  );
+});
+
+test("AG-082 missing-price: omitted acid is restored as unresolved and blocks complete/pass", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          tasks: [{ description: "Opened pool", hours: 3, rate: 125, amount: 375 }]
+        }
+      ],
+      materials: [{ description: "Chlorine jugs", quantity: 2, unitCost: 74, amount: 148 }]
+    },
+    { assumptions: [], decisions: [], unparsedLines: [] }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: AG082_MISSING_PRICE_INPUT
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, true);
+
+  const lineItems = response.body.invoice.lineItems as Array<{
+    type: string;
+    description: string;
+    quantity?: number;
+    unitPrice?: number;
+    amount?: number;
+  }>;
+
+  const labor = lineItems.find((item) => item.type === "labor");
+  assert.ok(labor);
+  assert.equal(labor.quantity, 3);
+  assert.equal(labor.unitPrice, 125);
+  assert.equal(labor.amount, 375);
+
+  const chlorine = lineItems.find((item) => /chlorine/i.test(item.description));
+  assert.ok(chlorine);
+  assert.equal(chlorine.amount, 148);
+
+  const acid = lineItems.find((item) => /acid/i.test(item.description));
+  assert.ok(acid, "omitted acid must be restored instead of disappearing silently");
+  assert.equal(acid.amount, undefined);
+  assert.equal(acid.unitPrice, undefined);
+  assert.notEqual(acid.amount, 0);
+
+  const openDecisions = response.body.openDecisions ?? [];
+  assert.ok(openDecisions.length > 0, "UI must not show No decisions pending");
+  assert.ok(openDecisions.some((decision: { prompt: string }) => /acid/i.test(decision.prompt)));
+  assert.equal(response.body.qualityGate.status, "needs_review");
+  assert.ok(
+    (response.body.qualityGate.blockers ?? []).some(
+      (blocker: { code?: string }) => blocker.code === "missing_price"
+    )
+  );
+});
+
+test("AG-082 equipment-replacement exact numeric amounts remain unchanged", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          tasks: [
+            {
+              description: "Circulation pump replacement labour",
+              hours: 3.25,
+              rate: 125,
+              amount: 406.25
+            }
+          ]
+        }
+      ],
+      materials: [
+        { description: "Circulation pump", quantity: 1, unitCost: 2530, amount: 2530 },
+        { description: "Fittings", quantity: 1, unitCost: 369, amount: 369 }
+      ]
+    },
+    { assumptions: [], decisions: [], unparsedLines: [] }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput:
+      "Replaced circulation pump. Pump $2,530. Fittings $369. Labour 3.25 hr at $125/hr. Removed old pump and tested system."
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  assert.equal(response.body.qualityGate.status, "pass");
+  assert.equal((response.body.openDecisions ?? []).length, 0);
+
+  const lineItems = response.body.invoice.lineItems as Array<{
+    type: string;
+    description: string;
+    quantity?: number;
+    unitPrice?: number;
+    amount?: number;
+  }>;
+
+  const labor = lineItems.find((item) => item.type === "labor");
+  assert.ok(labor);
+  assert.equal(labor.quantity, 3.25);
+  assert.equal(labor.unitPrice, 125);
+  assert.equal(labor.amount, 406.25);
+
+  const pump = lineItems.find((item) => /pump/i.test(item.description) && item.type === "material");
+  assert.ok(pump);
+  assert.equal(pump.unitPrice, 2530);
+  assert.equal(pump.amount, 2530);
+
+  const fittings = lineItems.find((item) => /fitting/i.test(item.description));
+  assert.ok(fittings);
+  assert.equal(fittings.unitPrice, 369);
+  assert.equal(fittings.amount, 369);
+
+  assert.equal(response.body.invoice.subtotal, 3305.25);
+  assert.equal(response.body.invoice.total, 3305.25);
+});
+
+test("AG-082 two-worker deterministic worker-hours remain exact", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          tasks: [{ description: "Brush clearing", hours: 7, rate: 80, amount: 560 }]
+        }
+      ],
+      materials: [{ description: "Dump fee", quantity: 1, unitCost: 64, amount: 64 }]
+    },
+    { assumptions: ["Tax assumed 0%."], decisions: [], unparsedLines: [] }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput:
+      "Two workers were there from 9:00 to 12:30 for brush clearing. Labour billed at $80 per worker-hour. Dump fee $64."
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, false);
+  assert.equal(response.body.qualityGate.status, "pass");
+  assert.equal((response.body.openDecisions ?? []).length, 0);
+
+  const lineItems = response.body.invoice.lineItems as Array<{
+    type: string;
+    description: string;
+    quantity?: number;
+    unitPrice?: number;
+    amount?: number;
+  }>;
+
+  const labor = lineItems.find((item) => item.type === "labor");
+  assert.ok(labor);
+  assert.equal(labor.quantity, 7);
+  assert.equal(labor.unitPrice, 80);
+  assert.equal(labor.amount, 560);
+
+  const dump = lineItems.find((item) => /dump/i.test(item.description));
+  assert.ok(dump);
+  assert.equal(dump.amount, 64);
+
+  assert.equal(response.body.invoice.subtotal, 624);
+  assert.equal(response.body.invoice.total, 624);
+});
+
+test("AG-088/P1: explicit missing quantity cannot default to 1 or derive amount", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          tasks: [{ description: "Opened pool", hours: 1, rate: 100, amount: 100 }]
+        }
+      ],
+      materials: [{ description: "Acid jugs", unitCost: 74 }]
+    },
+    { assumptions: [], decisions: [], unparsedLines: [] }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Added acid jugs at $74 each; quantity not recorded",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, true);
+  const acid = (response.body.invoice.lineItems as Array<Record<string, unknown>>).find((item) =>
+    /acid/i.test(String(item.description ?? ""))
+  );
+  assert.ok(acid);
+  assert.equal(acid.quantity, undefined);
+  assert.equal(acid.amount, undefined);
+  assert.notEqual(acid.quantity, 1);
+  assert.notEqual(acid.amount, 74);
+  assert.ok(
+    (response.body.openDecisions ?? []).some((decision: { prompt: string }) =>
+      /quantity/i.test(decision.prompt)
+    )
+  );
+  assert.equal(response.body.qualityGate.status, "needs_review");
+});
+
+test("AG-088/P1: free/no-charge cannot authorize a different task via one shared noun", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          tasks: [
+            { description: "Pump inspection", amount: 0 },
+            { description: "Cleaned pump baskets and confirmed circulation", amount: 0 }
+          ]
+        }
+      ],
+      materials: []
+    },
+    { assumptions: [], decisions: [], unparsedLines: [] }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "No charge for pump inspection. Cleaned pump baskets and confirmed circulation.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const lineItems = response.body.invoice.lineItems as Array<{
+    description: string;
+    amount?: number;
+    unitPrice?: number;
+  }>;
+  const inspection = lineItems.find((item) => /inspection/i.test(item.description));
+  assert.ok(inspection);
+  assert.equal(inspection.amount, 0);
+  assert.equal(
+    lineItems.some(
+      (item) => /basket|circulation/i.test(item.description) && (item.amount === 0 || item.unitPrice === 0)
+    ),
+    false,
+    "second task must not become an invented $0 charge from shared 'pump' noun"
+  );
+});
+
+test("AG-088/P2: missing-price decision cannot self-resolve from its originating statement", async () => {
+  useMockResponses([
+    {
+      workSessions: [],
+      materials: [{ description: "Acid jug", quantity: 1, unitCost: 0, amount: 0 }]
+    },
+    { assumptions: [], decisions: [], unparsedLines: [] }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Add 1 acid jug but price unknown"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, true);
+  const openDecisions = response.body.openDecisions ?? [];
+  assert.ok(
+    openDecisions.some((decision: { prompt: string }) => /acid/i.test(decision.prompt)),
+    "missing-price decision must remain open"
+  );
+  assert.equal(response.body.qualityGate.status, "needs_review");
+  const acid = (response.body.invoice.lineItems as Array<Record<string, unknown>>).find((item) =>
+    /acid/i.test(String(item.description ?? ""))
+  );
+  assert.ok(acid);
+  assert.equal(acid.amount, undefined);
+  assert.notEqual(acid.amount, 0);
+});
+
+test("AG-094: later quantity evidence resolves before invoice application", async () => {
+  useMockResponses([
+    {
+      workSessions: [],
+      materials: [{ description: "Acid jugs", unitCost: 74 }]
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Added acid jugs but quantity unknown. Acid jugs quantity is 2.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const acid = (response.body.invoice.lineItems as Array<Record<string, unknown>>).find((item) =>
+    /acid/i.test(String(item.description ?? ""))
+  );
+  assert.ok(acid);
+  assert.equal(acid.quantity, 2);
+  assert.equal(acid.unitPrice, 74);
+  assert.equal(acid.amount, 148);
+  assert.equal(
+    (response.body.openDecisions ?? []).some((decision: { evidenceField?: string }) =>
+      decision.evidenceField === "quantity"
+    ),
+    false
+  );
+});
+
+test("AG-094: acid unknown price does not suppress separately priced acid wash", async () => {
+  useMockResponses([
+    {
+      workSessions: [],
+      materials: [
+        { description: "Acid", quantity: 1, unitCost: 0, amount: 0 },
+        { description: "Acid wash", quantity: 1, unitCost: 200, amount: 200 }
+      ]
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Added 1 acid but price unknown. Acid wash for $200.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const items = response.body.invoice.lineItems as Array<Record<string, unknown>>;
+  const acid = items.find((item) => /^acid$/i.test(String(item.description ?? "").trim()));
+  const wash = items.find((item) => /wash/i.test(String(item.description ?? "")));
+  assert.ok(acid);
+  assert.ok(wash);
+  assert.equal(acid.amount, undefined);
+  assert.equal(acid.unitPrice, undefined);
+  assert.equal(wash.unitPrice, 200);
+  assert.equal(wash.amount, 200);
+  assert.equal(response.body.needsFollowUp, true);
+});
+
+test("AG-094: missing rate binds labor task and does not invent material", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          tasks: [{ description: "Repaired pump", hours: 2, rate: 90, amount: 180 }]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Repaired pump for 2 hours, but rate unknown",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const items = response.body.invoice.lineItems as Array<Record<string, unknown>>;
+  assert.equal(
+    items.some((item) => item.type === "material"),
+    false,
+    "unmatched/bound rate facts must not materialize as materials"
+  );
+  const labor = items.find((item) => item.type === "labor");
+  assert.ok(labor);
+  assert.equal(labor.unitPrice, undefined);
+  assert.equal(labor.amount, undefined);
+  assert.equal(response.body.needsFollowUp, true);
+  assert.ok(
+    (response.body.openDecisions ?? []).some(
+      (decision: { evidenceField?: string; prompt: string }) =>
+        decision.evidenceField === "rate" || /rate/i.test(decision.prompt)
+    )
+  );
+});
+
+test("AG-094: no-charge pump cannot authorize cleaned pump baskets as $0", async () => {
+  useMockResponses([
+    {
+      workSessions: [
+        {
+          tasks: [
+            { description: "Pump", amount: 0 },
+            { description: "Cleaned pump baskets", amount: 0 }
+          ]
+        }
+      ],
+      materials: []
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "No charge for pump. Cleaned pump baskets.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const items = response.body.invoice.lineItems as Array<{
+    description: string;
+    amount?: number;
+    unitPrice?: number;
+  }>;
+  assert.ok(items.some((item) => /^pump$/i.test(item.description) && item.amount === 0));
+  assert.equal(
+    items.some(
+      (item) => /basket/i.test(item.description) && (item.amount === 0 || item.unitPrice === 0)
+    ),
+    false
+  );
+});
+
+test("AG-094: later cost cannot resolve missing quantity decision", async () => {
+  useMockResponses([
+    {
+      workSessions: [],
+      materials: [{ description: "Acid jugs" }]
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Added acid jugs but quantity unknown. Acid jugs cost $74 each.",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.needsFollowUp, true);
+  const acid = (response.body.invoice.lineItems as Array<Record<string, unknown>>).find((item) =>
+    /acid/i.test(String(item.description ?? ""))
+  );
+  assert.ok(acid);
+  assert.equal(acid.quantity, undefined);
+  assert.equal(acid.unitPrice, 74);
+  assert.equal(acid.amount, undefined);
+  assert.ok(
+    (response.body.openDecisions ?? []).some(
+      (decision: { evidenceField?: string }) => decision.evidenceField === "quantity"
+    )
+  );
+});
+
+test("AG-094: ambiguous subject identity fails closed without sibling mutation", async () => {
+  useMockResponses([
+    {
+      workSessions: [],
+      materials: [
+        { description: "Filter", quantity: 1, unitCost: 40, amount: 40 },
+        { description: "Filter", quantity: 2, unitCost: 40, amount: 80 }
+      ]
+    }
+  ]);
+
+  const response = await request(app).post("/api/invoices/from-input").send({
+    messyInput: "Added filter but price unknown",
+    mode: "fast"
+  });
+
+  assert.equal(response.status, 200);
+  const filters = (response.body.invoice.lineItems as Array<Record<string, unknown>>).filter((item) =>
+    /filter/i.test(String(item.description ?? ""))
+  );
+  assert.equal(filters.length, 2);
+  assert.ok(filters.every((item) => item.unitPrice === 40));
+  assert.equal(response.body.needsFollowUp, true);
+});
+
 function useMockResponses(responses: unknown[]): void {
   const queue = [...responses];
   setJsonTaskRunnerForTests(async <T>(): Promise<T> => {
