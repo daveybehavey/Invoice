@@ -602,6 +602,11 @@
     backdrop-filter: blur(12px);
   }
 
+  /* Captions under dashboard numbers. #94a3b8 was ~2.6:1 on the white cards. */
+  .nb-dashboard-metric-label {
+    color: #334155;
+  }
+
   .nb-glass-list {
     @apply rounded-[24px] border p-3;
     border-color: rgba(20, 83, 45, 0.08);

@@ -699,7 +699,7 @@
             ].map(([label, value]) => (
               <div key={label} className="nb-subcard bg-white/90 p-4 text-center">
                 <p className="text-xl font-semibold text-[#093064]">{value}</p>
-                <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                <p className="nb-dashboard-metric-label mt-1 text-[11px] font-semibold uppercase tracking-[0.14em]">
                   {label}
                 </p>
               </div>
@@ -721,7 +721,7 @@
               {dashboardMomentum.map((item) => (
                 <div key={item.label} className="rounded-[22px] border border-slate-100 bg-white/85 p-4">
                   <p className="text-xl font-semibold text-[#093064]">{item.value}</p>
-                  <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  <p className="nb-dashboard-metric-label mt-1 text-[11px] font-semibold uppercase tracking-[0.14em]">
                     {item.label}
                   </p>
                   <p className="mt-2 text-sm leading-6 text-slate-600">{item.detail}</p>
