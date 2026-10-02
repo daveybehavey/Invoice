@@ -2269,14 +2269,30 @@ function EmailLinkVerificationPage() {
     status === "success" ? "text-emerald-700" : status === "error" ? "text-rose-600" : "text-slate-600";
 
   return (
-    <div className="nb-page nb-page--quiet">
-      <main className="nb-page-shell nb-page-shell--medium max-w-xl py-10">
-        <div className="nb-surface nb-surface--elevated">
+    <AuthStatusCard
+      title="Email sign-in"
+      message={message}
+      toneClass={toneClass}
+      showReturn={status === "error"}
+      onReturn={() => navigate("/", { replace: true })}
+    />
+  );
+}
+
+function AuthStatusCard({ title, message, toneClass, showReturn, onReturn }) {
+  return (
+    <div className="nb-page nb-page--quiet nb-auth-status">
+      <main className="nb-auth-status__frame">
+        <div className="nb-surface nb-surface--elevated nb-auth-status__card">
+          <div className="nb-auth-status__brand">
+            <img src="/icons/notebill.svg" alt="" aria-hidden="true" className="nb-auth-status__logo" />
+            <span className="nb-auth-status__wordmark">NoteBill</span>
+          </div>
           <p className="nb-kicker">Account verification</p>
-          <h1 className="nb-section-title mt-3">Email sign-in</h1>
+          <h1 className="nb-section-title mt-3">{title}</h1>
           <p className={`mt-3 text-sm leading-7 ${toneClass}`}>{message}</p>
-          {status === "error" ? (
-            <button type="button" className="nb-btn-primary mt-5" onClick={() => navigate("/", { replace: true })}>
+          {showReturn ? (
+            <button type="button" className="nb-btn-primary mt-5" onClick={onReturn}>
               Return to launcher
             </button>
           ) : null}
@@ -2351,20 +2367,13 @@ function GoogleSignInCompletionPage() {
     status === "success" ? "text-emerald-700" : status === "error" ? "text-rose-600" : "text-slate-600";
 
   return (
-    <div className="nb-page nb-page--quiet">
-      <main className="nb-page-shell nb-page-shell--medium max-w-xl py-10">
-        <div className="nb-surface nb-surface--elevated">
-          <p className="nb-kicker">Account verification</p>
-          <h1 className="nb-section-title mt-3">Google Sign-In</h1>
-          <p className={`mt-3 text-sm leading-7 ${toneClass}`}>{message}</p>
-          {status === "error" ? (
-            <button type="button" className="nb-btn-primary mt-5" onClick={() => navigate("/", { replace: true })}>
-              Return to launcher
-            </button>
-          ) : null}
-        </div>
-      </main>
-    </div>
+    <AuthStatusCard
+      title="Google Sign-In"
+      message={message}
+      toneClass={toneClass}
+      showReturn={status === "error"}
+      onReturn={() => navigate("/", { replace: true })}
+    />
   );
 }
 
@@ -2394,8 +2403,6 @@ function AppChrome({ children }) {
   const location = useLocation();
   const pathname = location.pathname || "/";
   const hiddenRoutes = [
-    "/auth/verify",
-    "/auth/google",
     "/portal",
     "/privacy",
     "/help",
@@ -2414,8 +2421,14 @@ function AppChrome({ children }) {
   ];
   const isActive = (path) => (path === "/" ? pathname === "/" : pathname === path || pathname.startsWith(`${path}/`));
 
+  const authStatusRoute =
+    pathname === "/auth/verify" ||
+    pathname.startsWith("/auth/verify/") ||
+    pathname === "/auth/google" ||
+    pathname.startsWith("/auth/google/");
+
   return (
-    <div className="min-h-screen pb-24 md:pb-0">
+    <div className={authStatusRoute ? "nb-auth-chrome" : "min-h-screen pb-24 md:pb-0"}>
       {showNav ? (
         <>
           <div className="sticky top-0 z-50 hidden border-b border-emerald-200/70 bg-[rgba(245,252,247,0.92)] backdrop-blur-xl md:block">
