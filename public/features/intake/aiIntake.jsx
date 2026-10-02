@@ -3306,7 +3306,7 @@ function AIIntake() {
                   <div className="mt-4 flex flex-wrap items-center gap-3">
                     <button
                       type="button"
-                      className="nb-btn-primary inline-flex h-11 px-5 disabled:cursor-not-allowed disabled:bg-blue-300"
+                      className="nb-btn-primary nb-intake-build inline-flex h-11 px-5"
                       onClick={() => handleSubmitUserMessage(inputValue)}
                       disabled={!inputValue.trim() || isTyping}
                     >
