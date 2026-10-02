@@ -1846,7 +1846,7 @@ function Launcher() {
                   ))}
                 </div>
               </div>
-              <div className="rounded-[30px] border border-[#4f8b5f]/20 bg-[#14532d] p-5 text-white shadow-[0_24px_60px_rgba(20,83,45,0.22)] md:p-6">
+              <div className="nb-launcher-start-cta rounded-[30px] border border-[#4f8b5f]/20 bg-[#14532d] p-5 text-white shadow-[0_24px_60px_rgba(20,83,45,0.22)] md:p-6">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#d7f1dd]">Start here</p>
                 <h2 className="mt-3 text-2xl leading-tight text-white" style={{ fontFamily: "'Fraunces', serif" }}>
                   Choose the easiest way to begin.

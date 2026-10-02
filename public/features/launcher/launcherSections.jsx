@@ -1040,130 +1040,140 @@ function LauncherAuthModal({
   const emailLinkReady = emailLinkProvider ? emailLinkProvider.available : true;
   const googleReady = Boolean(googleProvider?.available);
   return (
-    <div className="nb-modal-backdrop fixed inset-0 z-40 flex items-center justify-center px-4">
-      <div className="nb-surface nb-surface--elevated nb-hero-glow w-full max-w-md rounded-[30px] p-5 md:p-6">
-        <div className="nb-section-chip">Account access</div>
-        <h2 className="mt-4 text-2xl font-semibold text-slate-900" style={{ fontFamily: "'Fraunces', serif" }}>
-          Sign in
-        </h2>
-        <p className="mt-2 text-sm leading-6 text-slate-600">
-          Keep saved work tied to your email with whichever sign-in path is ready for this build.
-        </p>
-        {authReturnPathLabel ? (
-          <p className="mt-3 rounded-2xl border border-[#4f8b5f]/16 bg-[#f1faf3] px-3 py-2 text-xs font-semibold text-[#14532d]">
-            {authReturnPathLabel}
-          </p>
-        ) : null}
-        <div className="mt-5 space-y-2" data-testid="launcher-auth-provider-list">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Sign-in methods</p>
-          {authProvidersBusy ? (
-            <p className="text-xs text-slate-500">Checking available sign-in methods...</p>
-          ) : null}
-          {authProvidersError ? <p className="text-xs text-rose-600">{authProvidersError}</p> : null}
-          {Array.isArray(authProviders) && authProviders.length > 0 ? (
-            <div className="space-y-2">
-              {authProviders.map((provider) => {
-                const toneClass = provider.available
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-950"
-                  : "border-slate-200 bg-slate-50 text-slate-700";
-                const statusLabel = provider.available
-                  ? "Available now"
-                  : provider.implemented
-                    ? "Needs setup"
-                    : "Planned next";
-                return (
-                  <div key={provider.id} className={`rounded-[20px] border px-3 py-3 ${toneClass}`}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">{provider.label}</p>
-                        <p className="mt-1 text-xs leading-5 text-slate-600">
-                          {provider.warning || (provider.available ? "Ready to use." : "Not available yet.")}
-                        </p>
+    <div className="nb-modal-backdrop fixed inset-0 z-40 overflow-y-auto overscroll-contain">
+      <div className="flex min-h-full items-center justify-center px-4 py-6 sm:py-8">
+        <div
+          className="nb-surface nb-surface--elevated nb-hero-glow nb-auth-modal flex w-full max-w-md flex-col rounded-[30px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="launcher-auth-modal-title"
+        >
+          <div className="nb-auth-modal__body min-h-0 flex-1 overflow-y-auto px-5 pb-2 pt-5 md:px-6 md:pt-6">
+            <div className="nb-section-chip">Account access</div>
+            <h2
+              id="launcher-auth-modal-title"
+              className="mt-4 text-2xl font-semibold text-slate-900"
+              style={{ fontFamily: "'Fraunces', serif" }}
+            >
+              Sign in
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Keep saved work tied to your email with whichever sign-in path is ready for this build.
+            </p>
+            {authReturnPathLabel ? (
+              <p className="mt-3 rounded-2xl border border-[#4f8b5f]/16 bg-[#f1faf3] px-3 py-2 text-xs font-semibold text-[#14532d]">
+                {authReturnPathLabel}
+              </p>
+            ) : null}
+            <div className="mt-5 space-y-2" data-testid="launcher-auth-provider-list">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Sign-in methods</p>
+              {authProvidersBusy ? (
+                <p className="text-xs text-slate-500">Checking available sign-in methods...</p>
+              ) : null}
+              {authProvidersError ? <p className="text-xs text-rose-600">{authProvidersError}</p> : null}
+              {Array.isArray(authProviders) && authProviders.length > 0 ? (
+                <div className="space-y-2">
+                  {authProviders.map((provider) => {
+                    const toneClass = provider.available
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                      : "border-slate-200 bg-slate-50 text-slate-700";
+                    const statusLabel = provider.available
+                      ? "Available now"
+                      : provider.implemented
+                        ? "Needs setup"
+                        : "Planned next";
+                    const statusPillClass = provider.available
+                      ? "bg-emerald-800 text-white"
+                      : provider.implemented
+                        ? "bg-slate-700 text-white"
+                        : "bg-slate-600 text-white";
+                    const isGoogle = provider.id === "google";
+                    return (
+                      <div key={provider.id} className={`rounded-[20px] border px-3 py-3 ${toneClass}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold text-slate-900">{provider.label}</p>
+                            <p className="mt-1 text-xs leading-5 text-slate-600">
+                              {provider.warning || (provider.available ? "Ready to use." : "Not available yet.")}
+                            </p>
+                          </div>
+                          <span
+                            className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] ${statusPillClass}`}
+                          >
+                            {statusLabel}
+                          </span>
+                        </div>
+                        {isGoogle ? (
+                          <button
+                            type="button"
+                            className={`${googleReady ? "nb-btn-primary" : "nb-btn-secondary"} mt-3 w-full rounded-xl px-3 py-1.5 text-sm disabled:opacity-60`}
+                            onClick={onStartGoogle}
+                            disabled={authBusy || !googleReady}
+                          >
+                            {authBusy && authFlow === "google"
+                              ? "Opening Google..."
+                              : googleReady
+                                ? "Continue with Google"
+                                : "Google Sign-In unavailable"}
+                          </button>
+                        ) : null}
                       </div>
-                      <span className="rounded-full bg-white/80 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em]">
-                        {statusLabel}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-        {googleProvider ? (
-          <div className="nb-glass-list mt-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="text-sm font-semibold text-slate-900">Google Sign-In</p>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
-                  {googleProvider.warning ||
-                    "Use your Google account and come right back with the same NoteBill session model."}
-                </p>
-              </div>
-              <button
-                type="button"
-                className={`${googleReady ? "nb-btn-primary" : "nb-btn-secondary"} rounded-xl px-3 py-1.5 text-sm disabled:opacity-60`}
-                onClick={onStartGoogle}
-                disabled={authBusy || !googleReady}
+            <label className="mt-5 block text-sm font-semibold text-slate-700" htmlFor="launcher-auth-email">
+              Email link sign-in
+            </label>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              {emailLinkProvider?.warning || "We'll send a secure sign-in link to your inbox."}
+            </p>
+            <input
+              id="launcher-auth-email"
+              type="email"
+              autoFocus
+              value={authEmail}
+              onChange={onChangeEmail}
+              className="nb-input mt-1 rounded-xl px-3 py-2"
+              placeholder="you@example.com"
+              disabled={authBusy || !emailLinkReady}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !authBusy) {
+                  event.preventDefault();
+                  onSubmit();
+                }
+              }}
+            />
+            {authEmailError ? <p className="mt-2 text-sm text-rose-600">{authEmailError}</p> : null}
+            {authNotice ? <p className="mt-2 text-sm text-sky-700">{authNotice}</p> : null}
+            {authPreviewUrl ? (
+              <a
+                href={authPreviewUrl}
+                className="mt-2 inline-flex text-sm font-semibold text-[#14532d] underline underline-offset-2"
               >
-                {authBusy && authFlow === "google"
-                  ? "Opening Google..."
-                  : googleReady
-                    ? "Continue with Google"
-                    : "Google Sign-In unavailable"}
-              </button>
-            </div>
+                Open preview sign-in link
+              </a>
+            ) : null}
           </div>
-        ) : null}
-        <label className="mt-5 block text-sm font-semibold text-slate-700" htmlFor="launcher-auth-email">
-          Email link sign-in
-        </label>
-        <p className="mt-1 text-xs leading-5 text-slate-500">
-          {emailLinkProvider?.warning || "We&apos;ll send a secure sign-in link to your inbox."}
-        </p>
-        <input
-          id="launcher-auth-email"
-          type="email"
-          autoFocus
-          value={authEmail}
-          onChange={onChangeEmail}
-          className="nb-input mt-1 rounded-xl px-3 py-2"
-          placeholder="you@example.com"
-          disabled={authBusy || !emailLinkReady}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !authBusy) {
-              event.preventDefault();
-              onSubmit();
-            }
-          }}
-        />
-        {authEmailError ? <p className="mt-2 text-sm text-rose-600">{authEmailError}</p> : null}
-        {authNotice ? <p className="mt-2 text-sm text-sky-700">{authNotice}</p> : null}
-        {authPreviewUrl ? (
-          <a
-            href={authPreviewUrl}
-            className="mt-2 inline-flex text-sm font-semibold text-[#14532d] underline underline-offset-2"
-          >
-            Open preview sign-in link
-          </a>
-        ) : null}
-        <div className="mt-4 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            className="nb-btn-secondary rounded-xl px-3 py-1.5 disabled:opacity-60"
-            onClick={onCancel}
-            disabled={authBusy}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="nb-btn-primary rounded-xl px-3 py-1.5 disabled:opacity-60"
-            onClick={onSubmit}
-            disabled={authBusy || !emailLinkReady}
-          >
-            {authBusy && authFlow === "email_link" ? "Sending link..." : "Email sign-in link"}
-          </button>
+          <div className="nb-auth-modal__footer flex shrink-0 items-center justify-end gap-2 border-t border-[#4f8b5f]/12 bg-[rgba(255,255,255,0.92)] px-5 py-4 md:px-6">
+            <button
+              type="button"
+              className="nb-btn-secondary rounded-xl px-3 py-1.5 disabled:opacity-60"
+              onClick={onCancel}
+              disabled={authBusy}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="nb-btn-primary rounded-xl px-3 py-1.5 disabled:opacity-60"
+              onClick={onSubmit}
+              disabled={authBusy || !emailLinkReady}
+            >
+              {authBusy && authFlow === "email_link" ? "Sending link..." : "Email sign-in link"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
