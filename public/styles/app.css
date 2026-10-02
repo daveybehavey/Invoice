@@ -184,6 +184,18 @@
     color: var(--nb-text-secondary);
   }
 
+  /* Legal / help / feedback action chips sit under the lede, never beside it. */
+  .nb-public-info-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    max-width: 100%;
+    margin-top: 1rem;
+    clear: both;
+  }
+
   .nb-surface {
     @apply rounded-[28px] border p-4 md:p-5;
     border-color: var(--nb-border-soft);
