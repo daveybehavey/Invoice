@@ -2380,18 +2380,20 @@ function GoogleSignInCompletionPage() {
 function Placeholder({ title, description }) {
   const navigate = useNavigate();
   return (
-    <div className="nb-page nb-page--quiet">
-      <main className="nb-page-shell nb-page-shell--medium max-w-xl py-10">
-        <button
-          type="button"
-          className="nb-btn-ghost"
-          onClick={() => navigate("/")}
-        >
-          Back to launcher
-        </button>
-        <div className="nb-surface nb-surface--elevated mt-4">
+    <div className="nb-page nb-page--quiet nb-not-found">
+      <main className="nb-not-found__frame">
+        <div className="nb-surface nb-surface--elevated nb-not-found__card">
+          <div className="nb-auth-status__brand">
+            <img src="/icons/notebill.svg" alt="" aria-hidden="true" className="nb-auth-status__logo" />
+            <span className="nb-auth-status__wordmark">NoteBill</span>
+          </div>
           <h1 className="nb-section-title">{title}</h1>
-          <p className="mt-2 text-sm text-slate-600">{description}</p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
+          <div className="nb-not-found__actions">
+            <button type="button" className="nb-btn-primary" onClick={() => navigate("/")}>
+              Back to launcher
+            </button>
+          </div>
         </div>
       </main>
     </div>

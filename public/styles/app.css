@@ -118,6 +118,36 @@
     color: var(--nb-text-primary);
   }
 
+  /* Unknown routes: one compact card under the public header. */
+  .nb-not-found {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: calc(100dvh - 11rem);
+    padding: 1.25rem 1rem 1.5rem;
+  }
+
+  @media (min-width: 768px) {
+    .nb-not-found {
+      min-height: calc(100dvh - 7.5rem);
+      padding: 2rem 1.5rem 2.5rem;
+    }
+  }
+
+  .nb-not-found__frame {
+    width: min(100%, 24rem);
+  }
+
+  .nb-not-found__card {
+    text-align: center;
+  }
+
+  .nb-not-found__actions {
+    display: flex;
+    justify-content: center;
+    margin-top: 1.25rem;
+  }
+
   .nb-page-shell {
     @apply relative mx-auto w-full px-4 py-6 md:px-6 md:py-8;
   }
