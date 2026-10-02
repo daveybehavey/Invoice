@@ -1985,7 +1985,7 @@ function InspectorPanel({
                 Store this invoice so you can reopen or duplicate it later.
               </p>
               {planSummary ? (
-                <p className={`text-xs ${planLimitReached ? "font-semibold text-amber-700" : "text-slate-500"}`}>
+                <p className={`text-xs ${planLimitReached ? "font-semibold text-amber-700" : "text-[#12281a]"}`}>
                   {planSummary}
                 </p>
               ) : null}

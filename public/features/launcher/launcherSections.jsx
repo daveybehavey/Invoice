@@ -42,7 +42,7 @@ function LauncherAccountStrip({
           {authSession?.email ? `Signed in as ${authSession.email}` : "Not signed in (local mode)"}
         </p>
         {planSummary ? (
-          <p className={`mt-1 text-xs ${planAtLimit ? "text-amber-700" : "text-slate-500"}`}>{planSummary}</p>
+          <p className={`mt-1 text-xs ${planAtLimit ? "text-amber-700" : "text-[#12281a]"}`}>{planSummary}</p>
         ) : null}
         {planWarning && !planAtLimit ? (
           <p className="mt-1 text-xs font-semibold text-amber-700">{planWarning}</p>
