@@ -559,6 +559,32 @@
     color: var(--nb-text-primary);
   }
 
+  .nb-library-status {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  .nb-library-status button {
+    flex: 1 1 auto;
+    white-space: nowrap;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+
+  @media (min-width: 768px) {
+    .nb-library-status {
+      width: fit-content;
+      max-width: 100%;
+    }
+
+    .nb-library-status button {
+      flex: 0 0 auto;
+      padding-left: 0.75rem;
+      padding-right: 0.75rem;
+    }
+  }
+
   .nb-accent-panel {
     @apply rounded-[26px] border p-4 md:p-5;
     border-color: rgba(79, 139, 95, 0.2);
