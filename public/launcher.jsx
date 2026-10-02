@@ -2614,12 +2614,27 @@ function PublicInfoPage({ kicker, title, intro, sections, footerNote, actions, c
                 ))}
                 {section.items?.length ? (
                   <ul className="mt-3 space-y-2 text-sm leading-7 text-slate-700 md:text-[15px]">
-                    {section.items.map((item) => (
-                      <li key={item} className="flex items-start gap-3">
-                        <span className="mt-[0.55rem] inline-flex h-2 w-2 rounded-full bg-[#4f8b5f]" />
-                        <span>{item}</span>
-                      </li>
-                    ))}
+                    {section.items.map((item, index) => {
+                      const linked = item && typeof item === "object" && item.href && item.label;
+                      const key = linked ? `${item.href}:${item.label}` : `${index}:${String(item)}`;
+                      return (
+                        <li key={key} className="flex items-start gap-3">
+                          <span className="mt-[0.55rem] inline-flex h-2 w-2 shrink-0 rounded-full bg-[#4f8b5f]" />
+                          <span>
+                            {linked ? (
+                              <a
+                                className="font-semibold text-[#14532d] underline underline-offset-4"
+                                href={item.href}
+                              >
+                                {item.label}
+                              </a>
+                            ) : (
+                              item
+                            )}
+                          </span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 ) : null}
               </section>
@@ -2800,13 +2815,6 @@ function PrivacyPage() {
 }
 
 function SupportPage() {
-  const legal = window.InvoiceLegalFoundation;
-  const termsVersion = legal?.LEGAL_TERMS_VERSION || "2026-08-12.1";
-  const versionedTerms =
-    typeof legal?.buildVersionedTermsPath === "function"
-      ? legal.buildVersionedTermsPath(termsVersion)
-      : `/terms?version=${encodeURIComponent(termsVersion)}`;
-
   return (
     <PublicInfoPage
       kicker="Support"
@@ -2815,7 +2823,7 @@ function SupportPage() {
       footerNote={`Last updated: ${PUBLIC_INFO_LAST_UPDATED}.`}
       actions={[
         { href: "/", label: "Open NoteBill", tone: "primary" },
-        { href: versionedTerms, label: "Terms", tone: "ghost" },
+        { href: "/terms", label: "Terms", tone: "ghost" },
         { href: "/privacy", label: "Privacy", tone: "ghost" },
         { href: "/data-deletion", label: "Data deletion", tone: "ghost" }
       ]}
@@ -2823,14 +2831,14 @@ function SupportPage() {
         {
           title: "Contact",
           items: [
-            `Support email: ${SUPPORT_EMAIL}`,
+            { label: `Support email: ${SUPPORT_EMAIL}`, href: `mailto:${SUPPORT_EMAIL}` },
             `Contact email: ${CONTACT_EMAIL}`,
             `Info email: ${INFO_EMAIL}`,
             `Direct contact: ${DIRECT_CONTACT_EMAIL}`,
-            `Website: ${NOTE_BILL_SITE_URL}`,
-            `Terms (current version): ${versionedTerms}`,
-            "Privacy: /privacy",
-            `Cancellation: ${versionedTerms}#cancellation`,
+            { label: `Website: ${NOTE_BILL_SITE_URL}`, href: NOTE_BILL_SITE_URL },
+            { label: "Terms of Service", href: "/terms" },
+            { label: "Privacy policy", href: "/privacy" },
+            { label: "Cancellation", href: "/terms#cancellation" },
             "Service name: NoteBill"
           ],
           paragraphs: []
@@ -2841,12 +2849,6 @@ function SupportPage() {
             "NoteBill Pro is $19 USD per month and renews automatically until you cancel.",
             "Cancel anytime without a fee through Manage billing (Stripe customer portal). Cancellation takes effect at the end of the current paid period; Pro access continues until then.",
             "Initial-payment goodwill refunds may be requested within 7 days via support@notebill.app. Duplicate or erroneous charges can be corrected. Otherwise renewals are non-refundable, subject to non-waivable statutory rights."
-          ]
-        },
-        {
-          title: "Contract copy",
-          paragraphs: [
-            "You can open, download/print, or email the exact registered Terms version for your records. Email delivery uses your signed-in account address when transactional email is configured; download/print is always available."
           ]
         },
         {
@@ -2879,9 +2881,7 @@ function SupportPage() {
           paragraphs: []
         }
       ]}
-    >
-      <ContractCopyControls termsVersion={termsVersion} termsHref={versionedTerms} />
-    </PublicInfoPage>
+    />
   );
 }
 
