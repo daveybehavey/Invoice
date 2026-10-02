@@ -198,8 +198,25 @@ test("public policy pages render from their routes", async () => {
     await page.goto(`${baseUrl}/support`);
     await page.waitForSelector("h1");
     assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Support");
-    assert.equal(await page.getByText("Support email: support@notebill.app", { exact: true }).isVisible(), true);
+    const supportMailto = page.getByRole("link", { name: "Support email: support@notebill.app" });
+    assert.equal(await supportMailto.isVisible(), true);
+    assert.equal(await supportMailto.getAttribute("href"), "mailto:support@notebill.app");
     await page.getByText("$19 USD per month", { exact: false }).waitFor({ state: "visible" });
+    assert.equal(await page.getByRole("link", { name: "Open versioned Terms" }).count(), 0);
+    assert.equal(await page.getByRole("link", { name: "Download/print Terms" }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Email me a copy" }).count(), 0);
+    assert.equal(await page.getByTestId("contract-copy-controls").count(), 0);
+    assert.equal(await page.getByRole("heading", { name: "Contract copy" }).count(), 0);
+    const contact = page.locator("section").filter({ has: page.getByRole("heading", { name: "Contact", exact: true }) });
+    const contactText = (await contact.innerText()) ?? "";
+    assert.doesNotMatch(contactText, /\/privacy|\/terms/);
+    assert.equal(await contact.getByRole("link", { name: "Terms of Service" }).getAttribute("href"), "/terms");
+    assert.equal(await contact.getByRole("link", { name: "Privacy policy" }).getAttribute("href"), "/privacy");
+    assert.equal(await contact.getByRole("link", { name: "Cancellation" }).getAttribute("href"), "/terms#cancellation");
+    assert.equal(
+      await page.getByTestId("public-info-actions").getByRole("link", { name: "Terms", exact: true }).getAttribute("href"),
+      "/terms"
+    );
 
     await page.goto(`${baseUrl}/help`);
     await page.waitForSelector("h1");
