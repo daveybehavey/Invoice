@@ -377,13 +377,13 @@
 
   .nb-usage-meter__label {
     @apply min-w-0 font-semibold;
-    color: #334155;
+    color: #12281a;
     overflow-wrap: anywhere;
   }
 
   .nb-usage-meter__remaining {
     @apply max-w-full justify-self-end text-right font-medium;
-    color: #64748b;
+    color: #334155;
     overflow-wrap: anywhere;
   }
 

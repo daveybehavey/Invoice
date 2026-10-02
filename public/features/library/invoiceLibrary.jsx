@@ -2729,7 +2729,7 @@
               ) : null}
             </div>
             {planSummary ? (
-              <p className={`mt-2 text-xs ${planLimitReached ? "font-semibold text-amber-700" : "text-slate-500"}`}>
+              <p className={`mt-2 text-xs ${planLimitReached ? "font-semibold text-amber-700" : "text-[#12281a]"}`}>
                 {planSummary}
               </p>
             ) : null}
