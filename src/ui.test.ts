@@ -1215,7 +1215,7 @@ test("daily scratchpad can hand a note off to Billie intake", async () => {
     await openDailyScratchpad(page);
     await scratchpadNoteEditor(page).fill("Installed replacement filter and checked pressure.");
     await page
-      .getByPlaceholder("Tags, comma separated: client, job, materials")
+      .getByPlaceholder("Tags: client, job, materials")
       .fill("hvac, urgent");
     await page.getByRole("button", { name: "Save note" }).click();
     await page.getByRole("button", { name: "Open with Billie" }).waitFor({ state: "visible" });
@@ -1278,13 +1278,13 @@ test("daily scratchpad tags notes and filters by tag", async () => {
 
     await scratchpadNoteEditor(page).fill("Installed replacement filter and checked pressure.");
     await page
-      .getByPlaceholder("Tags, comma separated: client, job, materials")
+      .getByPlaceholder("Tags: client, job, materials")
       .fill("plumbing, urgent");
     await page.getByRole("button", { name: "Save note" }).click();
 
     await scratchpadNoteEditor(page).fill("Replaced outlet cover and verified power.");
     await page
-      .getByPlaceholder("Tags, comma separated: client, job, materials")
+      .getByPlaceholder("Tags: client, job, materials")
       .fill("electrical");
     await page.getByRole("button", { name: "Save note" }).click();
 

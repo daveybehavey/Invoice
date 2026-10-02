@@ -595,7 +595,7 @@
                 <input
                   type="text"
                   className="nb-input w-full rounded-[24px] px-4 py-3 text-base"
-                  placeholder="Tags, comma separated: client, job, materials"
+                  placeholder="Tags: client, job, materials"
                   value={tagText}
                   onChange={(event) => setTagText(event.target.value)}
                 />
