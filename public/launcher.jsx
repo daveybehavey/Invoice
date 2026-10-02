@@ -2580,13 +2580,11 @@ function PublicInfoPage({ kicker, title, intro, sections, footerNote, actions, c
     <div className="nb-page nb-page--quiet">
       <main className="nb-page-shell nb-page-shell--medium py-8 md:py-10">
         <div className="nb-surface nb-surface--elevated">
-          <div className="flex flex-col gap-3 border-b border-slate-200/80 pb-5 md:flex-row md:items-end md:justify-between">
-            <div>
-              <p className="nb-kicker">{kicker}</p>
-              <h1 className="nb-title mt-3 text-4xl md:text-5xl">{title}</h1>
-              <p className="nb-copy mt-4 max-w-3xl">{intro}</p>
-            </div>
-            <div className="flex flex-wrap gap-3">
+          <div className="border-b border-slate-200/80 pb-5">
+            <p className="nb-kicker">{kicker}</p>
+            <h1 className="nb-title mt-3 text-4xl md:text-5xl">{title}</h1>
+            <p className="nb-copy mt-4 max-w-3xl">{intro}</p>
+            <div className="nb-public-info-actions" data-testid="public-info-actions">
               {pageActions.map((action) => (
                 <a
                   key={`${action.href}:${action.label}`}
