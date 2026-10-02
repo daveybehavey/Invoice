@@ -2403,13 +2403,7 @@ function AppChrome({ children }) {
   const location = useLocation();
   const pathname = location.pathname || "/";
   const hiddenRoutes = [
-    "/portal",
-    "/privacy",
-    "/help",
-    "/support",
-    "/feedback",
-    "/data-deletion",
-    "/delete-account"
+    "/portal"
   ];
   const showNav = !hiddenRoutes.some((route) => pathname === route || pathname.startsWith(`${route}/`));
   const navItems = [
