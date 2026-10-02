@@ -1880,22 +1880,22 @@ function Launcher() {
                   Guest mode keeps the app simple. Sign in anytime from the launcher when you want saved work tied to
                   your account.
                 </p>
-                <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#d7f1dd]">
+                <div className="mt-4 grid w-full grid-cols-3 gap-1 text-[10px] font-semibold uppercase leading-none tracking-[0.04em] text-[#d7f1dd] min-[380px]:text-[11px] min-[380px]:tracking-[0.08em]">
                   <a
                     href="/terms"
-                    className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#d7f1dd]/50 underline-offset-4 hover:bg-white/10 hover:text-white"
+                    className="inline-flex min-h-10 w-full min-w-0 items-center justify-center whitespace-nowrap rounded-full px-0.5 text-center underline decoration-[#d7f1dd]/50 underline-offset-4 hover:bg-white/10 hover:text-white"
                   >
                     Terms
                   </a>
                   <a
                     href="/privacy"
-                    className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#d7f1dd]/50 underline-offset-4 hover:bg-white/10 hover:text-white"
+                    className="inline-flex min-h-10 w-full min-w-0 items-center justify-center whitespace-nowrap rounded-full px-0.5 text-center underline decoration-[#d7f1dd]/50 underline-offset-4 hover:bg-white/10 hover:text-white"
                   >
                     Privacy
                   </a>
                   <a
                     href="/support"
-                    className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#d7f1dd]/50 underline-offset-4 hover:bg-white/10 hover:text-white"
+                    className="inline-flex min-h-10 w-full min-w-0 items-center justify-center whitespace-nowrap rounded-full px-0.5 text-center underline decoration-[#d7f1dd]/50 underline-offset-4 hover:bg-white/10 hover:text-white"
                   >
                     Support
                   </a>
@@ -2039,28 +2039,28 @@ function Launcher() {
                   One clear start. Visible draft changes. No silent total edits.
                 </p>
               </div>
-              <div className="mt-4 flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.18em] text-[#4f8b5f]">
+              <div className="mt-4 grid w-full grid-cols-2 gap-1 text-[11px] font-semibold uppercase leading-none tracking-[0.06em] text-[#4f8b5f] min-[480px]:flex min-[480px]:flex-wrap min-[480px]:items-center min-[480px]:gap-3 min-[480px]:text-xs min-[480px]:tracking-[0.18em]">
                 <a
                   href="/terms"
-                  className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d]"
+                  className="inline-flex min-h-10 w-full min-w-0 items-center justify-center whitespace-nowrap rounded-full px-2 text-center underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d] min-[480px]:w-auto min-[480px]:px-3"
                 >
                   Terms
                 </a>
                 <a
                   href="/privacy"
-                  className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d]"
+                  className="inline-flex min-h-10 w-full min-w-0 items-center justify-center whitespace-nowrap rounded-full px-2 text-center underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d] min-[480px]:w-auto min-[480px]:px-3"
                 >
                   Privacy
                 </a>
                 <a
                   href="/terms#cancellation"
-                  className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d]"
+                  className="inline-flex min-h-10 w-full min-w-0 items-center justify-center whitespace-nowrap rounded-full px-2 text-center underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d] min-[480px]:w-auto min-[480px]:px-3"
                 >
                   Cancellation
                 </a>
                 <a
                   href="/support"
-                  className="inline-flex min-h-10 items-center rounded-full px-3 underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d]"
+                  className="inline-flex min-h-10 w-full min-w-0 items-center justify-center whitespace-nowrap rounded-full px-2 text-center underline decoration-[#4f8b5f]/50 underline-offset-4 hover:bg-[#eef8f1] hover:text-[#14532d] min-[480px]:w-auto min-[480px]:px-3"
                 >
                   Support
                 </a>
