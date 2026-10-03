@@ -1975,13 +1975,36 @@ function AIIntake() {
     formatRateToken
   });
 
+  const readPendingScratchpadSeedText = () => {
+    const seedFromScoped = readDraftFromStorage(scratchpadSeedStorageKey);
+    const seedFromLegacy =
+      !seedFromScoped && scratchpadSeedStorageKey !== legacyScratchpadSeedStorageKey
+        ? readDraftFromStorage(legacyScratchpadSeedStorageKey)
+        : null;
+    const seed = seedFromScoped ?? seedFromLegacy;
+    return typeof seed?.text === "string" ? seed.text.trim() : "";
+  };
+
+  const attachJobNoteToDraft = (draft) => {
+    const transcriptNote = typeof draft?.sourceNote === "string" ? draft.sourceNote.trim() : "";
+    const seedText = readPendingScratchpadSeedText();
+    const sourceNote = (transcriptNote || seedText).slice(0, 20000);
+    return {
+      ...draft,
+      ...(sourceNote ? { sourceNote } : {}),
+      ...(seedText ? { clearScratchpadSeedOnSave: true } : {})
+    };
+  };
+
   const handleGenerateInvoice = () => {
     if (!finishedInvoice) {
       return;
     }
     try {
-      const draft = applyBusinessProfileToDraft(
-        buildDraftFromInvoice(finishedInvoice, pendingTaxRate ?? "0", lastTranscriptRef.current)
+      const draft = attachJobNoteToDraft(
+        applyBusinessProfileToDraft(
+          buildDraftFromInvoice(finishedInvoice, pendingTaxRate ?? "0", lastTranscriptRef.current)
+        )
       );
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
       completeOnboardingStep("open_editor");
@@ -2014,8 +2037,10 @@ function AIIntake() {
       return;
     }
     try {
-      const draft = applyBusinessProfileToDraft(
-        buildDraftFromInvoice(finishedInvoice, pendingTaxRate ?? "0", lastTranscriptRef.current)
+      const draft = attachJobNoteToDraft(
+        applyBusinessProfileToDraft(
+          buildDraftFromInvoice(finishedInvoice, pendingTaxRate ?? "0", lastTranscriptRef.current)
+        )
       );
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
       window.localStorage.setItem(
@@ -2379,7 +2404,7 @@ function AIIntake() {
         ? `Scratchpad note loaded with tags: ${seedTags.map((tag) => `#${tag}`).join(", ")}`
         : "Scratchpad note loaded into Billie intake."
     );
-    window.localStorage.removeItem(seedFromScoped ? scratchpadSeedStorageKey : legacyScratchpadSeedStorageKey);
+    // Keep the seed until the invoice is saved so a refresh can still recover the note.
   }, [scratchpadSeedStorageKey, legacyScratchpadSeedStorageKey, inputValue, messages.length]);
 
   useEffect(() => {

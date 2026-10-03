@@ -213,6 +213,8 @@
         typeof options.importSourceFileName === "string" ? options.importSourceFileName.trim() : "",
       billToDetails: invoice?.customerName ?? "",
       notes: invoice?.notes ?? "",
+      sourceNote:
+        typeof options.sourceNote === "string" ? options.sourceNote.trim().slice(0, 20000) : "",
       paymentLinkUrl: invoice?.paymentLinkUrl ?? "",
       portalAccessToken: invoice?.portalAccessToken ?? "",
       taxRate: options.taxRate ?? "0",

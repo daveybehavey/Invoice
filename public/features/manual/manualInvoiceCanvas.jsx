@@ -408,6 +408,12 @@ function ManualInvoiceCanvas() {
   );
   const [billToDetails, setBillToDetails] = useState(() => initialDraft?.billToDetails ?? "");
   const [notes, setNotes] = useState(() => initialDraft?.notes ?? "");
+  const [sourceNote] = useState(() =>
+    typeof initialDraft?.sourceNote === "string" ? initialDraft.sourceNote : ""
+  );
+  const [clearScratchpadSeedOnSave, setClearScratchpadSeedOnSave] = useState(
+    () => initialDraft?.clearScratchpadSeedOnSave === true
+  );
   const [paymentLinkUrl, setPaymentLinkUrl] = useState(() => initialDraft?.paymentLinkUrl ?? "");
   const [paymentRecords, setPaymentRecords] = useState(() =>
     Array.isArray(initialDraft?.paymentRecords) ? initialDraft.paymentRecords : []
@@ -1651,6 +1657,8 @@ function ManualInvoiceCanvas() {
       registrationBlockVisible,
       billToDetails,
       notes,
+      sourceNote,
+      clearScratchpadSeedOnSave,
       paymentLinkUrl,
       paymentRecords,
       portalAccessToken,
@@ -1709,6 +1717,8 @@ function ManualInvoiceCanvas() {
     fromDetails,
     billToDetails,
     notes,
+    sourceNote,
+    clearScratchpadSeedOnSave,
     paymentLinkUrl,
     paymentRecords,
     taxRate,
@@ -1826,7 +1836,10 @@ function ManualInvoiceCanvas() {
           sourceType: "text_input",
           invoiceData: {
             structuredInvoice: buildStructuredInvoiceFromDraft(),
-            finishedInvoice: editableResult.invoice
+            finishedInvoice: editableResult.invoice,
+            ...(String(sourceNote ?? "").trim()
+              ? { sourceNote: String(sourceNote).trim().slice(0, 20000) }
+              : {})
           }
         })
       });
@@ -1865,6 +1878,17 @@ function ManualInvoiceCanvas() {
       completeOnboardingStep("save_invoice");
       setSaveNeedsAuth(false);
       setSaveStatus("Saved");
+      if (clearScratchpadSeedOnSave) {
+        try {
+          const scratchpadSeedStorageKey =
+            requestIdentity.getScopedStorageKey?.("invoiceScratchpadSeed") ?? "invoiceScratchpadSeed";
+          window.localStorage.removeItem(scratchpadSeedStorageKey);
+          window.localStorage.removeItem("invoiceScratchpadSeed");
+        } catch (_error) {
+          // Best-effort. The saved invoice already has the note.
+        }
+        setClearScratchpadSeedOnSave(false);
+      }
       window.setTimeout(() => setSaveStatus(""), 1500);
       void refreshAccountPlan();
     } catch (error) {
@@ -4212,6 +4236,20 @@ function ManualInvoiceCanvas() {
                   </div>
                 </div>
               </div>
+              {String(sourceNote ?? "").trim() ? (
+                <div
+                  className="rounded-xl border border-slate-200 bg-slate-50 p-3"
+                  data-testid="draft-source-note"
+                >
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Job note</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    This is the note you started from. It stays with the draft so you can check the invoice against it.
+                  </p>
+                  <p className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-sm leading-6 text-slate-800">
+                    {String(sourceNote).trim()}
+                  </p>
+                </div>
+              ) : null}
               <textarea
                 rows={4}
                 className={`w-full resize-none transition-colors duration-500 ${

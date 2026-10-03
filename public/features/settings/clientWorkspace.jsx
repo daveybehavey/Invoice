@@ -404,7 +404,8 @@
       const draft = buildDraftFromFinishedInvoice(finishedInvoice, {
         taxRate: "0",
         savedInvoiceId: invoice.invoiceId ?? "",
-        savedInvoiceStatus: invoice.status ?? ""
+        savedInvoiceStatus: invoice.status ?? "",
+        sourceNote: typeof invoice.invoiceData?.sourceNote === "string" ? invoice.invoiceData.sourceNote : ""
       });
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
       window.localStorage.setItem(

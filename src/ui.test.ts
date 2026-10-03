@@ -40,6 +40,7 @@ declare global {
     __nbDisclosureSamePromise?: boolean;
     InvoiceRequestIdentity?: {
       getAuthSession?: () => { userId?: string; email?: string } | null;
+      getScopedStorageKey?: (baseKey: string) => string;
     };
     InvoiceBillingActions?: {
       clearPendingUpgradeCheckout: () => void;
@@ -1227,6 +1228,39 @@ test("daily scratchpad can hand a note off to Billie intake", async () => {
       page.locator("#ai-intake-input"),
       "Installed replacement filter and checked pressure."
     );
+    const seedStillStored = await page.evaluate(() =>
+      Object.keys(window.localStorage).some((key) => key.includes("invoiceScratchpadSeed"))
+    );
+    assert.equal(seedStillStored, true);
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual draft shows the original job note", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "domcontentloaded" });
+    await page.evaluate(() => {
+      const identity = window.InvoiceRequestIdentity;
+      const key = identity?.getScopedStorageKey?.("invoiceDraft") ?? "invoiceDraft";
+      window.localStorage.setItem(
+        key,
+        JSON.stringify({
+          invoiceNumber: "INV-NOTE-1",
+          billToDetails: "Pool client",
+          notes: "Polished client notes",
+          sourceNote: "pool visit, 2 hours at $74, and 1 acid jug",
+          lineItems: [{ id: "line-1", description: "Pool visit", qty: "2", rate: "74" }],
+          taxRate: "0"
+        })
+      );
+    });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByTestId("draft-source-note").waitFor({ state: "visible" });
+    await page.getByText("pool visit, 2 hours at $74, and 1 acid jug").waitFor({ state: "visible" });
+    await expectValueContains(page.getByPlaceholder("Thank you for your business"), "Polished client notes");
   } finally {
     await context.close();
   }

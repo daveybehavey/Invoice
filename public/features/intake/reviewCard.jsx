@@ -192,6 +192,18 @@
             </div>
           </div>
 
+          {normalizedSourceTranscript ? (
+            <div
+              className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2"
+              data-testid="review-source-note"
+            >
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Job note</p>
+              <p className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                {typeof payload.sourceText === "string" ? payload.sourceText.trim() : ""}
+              </p>
+            </div>
+          ) : null}
+
           <div className="mt-3 space-y-3">
             <div className="nb-subcard px-3 py-2 text-sm text-slate-600">
               {payload.customerName ? (

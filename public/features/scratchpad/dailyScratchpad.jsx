@@ -107,6 +107,7 @@
     fromDetails: "",
     billToDetails: "",
     notes: noteText,
+    sourceNote: noteText,
     paymentLinkUrl: "",
     taxRate: "0",
     discountAmount: "0",
