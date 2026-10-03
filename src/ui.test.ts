@@ -11346,6 +11346,39 @@ test("manual editor export summarizes send readiness", async () => {
   }
 });
 
+test("manual editor hides copy share pack until the invoice is send-ready", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const handoff = page.getByTestId("manual-send-payment-handoff");
+    const cue = page.getByTestId("manual-onboarding-next-cue");
+    await handoff.waitFor({ state: "visible" });
+    await cue.getByText("Make this invoice send-ready first.").waitFor({ state: "visible" });
+    await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "hidden" });
+    await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "hidden" });
+
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Acid jug");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("12.50");
+
+    await cue.getByText("Make this invoice send-ready first.").waitFor({ state: "visible" });
+    await handoff.locator("p").getByText("Add client details", { exact: true }).waitFor({ state: "visible" });
+    await handoff.getByText("Save first", { exact: true }).first().waitFor({ state: "visible" });
+    await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "hidden" });
+    await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "hidden" });
+    assert.equal(await page.getByRole("button", { name: "Copy share pack" }).count(), 0);
+
+    await page.locator('textarea[placeholder="Client Name"]:visible').fill("Pool Client");
+    await cue.getByText("Your draft is ready to save.").waitFor({ state: "visible" });
+    await handoff.getByText("Ready", { exact: true }).waitFor({ state: "visible" });
+    await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "visible" });
+    await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
 test("manual editor send and payment handoff updates after save", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();

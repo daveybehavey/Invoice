@@ -1206,6 +1206,16 @@ function ManualInvoiceCanvas() {
   };
 
   const handleCopySharePack = async () => {
+    const sharePackSendReady =
+      Boolean(String(billToDetails ?? "").trim()) &&
+      lineItems.some((item) => {
+        const description = String(item?.description ?? "").trim();
+        return Boolean(description) && getLineAmount(item) > 0;
+      });
+    if (!sharePackSendReady) {
+      setSaveError("Add the client and a priced line item before copying a share pack.");
+      return;
+    }
     const sharePackText = buildSharePackText();
     if (!sharePackText) {
       setSaveError("Add a line item before copying a share pack.");
@@ -4421,7 +4431,7 @@ function ManualInvoiceCanvas() {
                     {clientPortalBusy ? "Creating..." : "Create client portal"}
                   </button>
                 ) : null}
-                {hasBillableLineItem ? (
+                {hasClientDetails && hasBillableLineItem ? (
                   <button
                     type="button"
                     className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
@@ -4492,15 +4502,17 @@ function ManualInvoiceCanvas() {
                 <span className="text-[11px] font-semibold text-slate-400">Optional</span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className="min-h-10 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-                  style={{ color: accent.primary }}
-                  onClick={handleCopySharePack}
-                  disabled={sharePackBusy}
-                >
-                  {sharePackBusy ? "Copying..." : "Copy share pack"}
-                </button>
+                {hasClientDetails && hasBillableLineItem ? (
+                  <button
+                    type="button"
+                    className="min-h-10 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                    style={{ color: accent.primary }}
+                    onClick={handleCopySharePack}
+                    disabled={sharePackBusy}
+                  >
+                    {sharePackBusy ? "Copying..." : "Copy share pack"}
+                  </button>
+                ) : null}
                 {sharePackNotice ? (
                   <span className="text-xs font-semibold text-slate-500">{sharePackNotice}</span>
                 ) : null}
