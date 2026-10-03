@@ -83,7 +83,12 @@ import {
   sendInvoiceEmail,
   sendLaunchTestEmail
 } from "./services/invoiceEmailDelivery.js";
-import { invoiceSendIsBlocked, SEND_BLOCKED_MESSAGE } from "./services/invoiceSendGate.js";
+import {
+  CLIENT_PORTAL_BLOCKED_MESSAGE,
+  invoiceSendIsBlocked,
+  PAYMENT_LINK_BLOCKED_MESSAGE,
+  SEND_BLOCKED_MESSAGE
+} from "./services/invoiceSendGate.js";
 import {
   listDueInvoiceReminderCandidates,
   runDueInvoiceReminders,
@@ -391,6 +396,14 @@ app.post("/api/invoices/:id/client-portal-link", async (req: Request, res: Respo
     const savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
     if (savedInvoice.status === "deleted") {
       throw new HttpStatusError(400, "Restore this invoice before creating a portal link.");
+    }
+    if (
+      invoiceSendIsBlocked({
+        finishedInvoice: savedInvoice.invoiceData.finishedInvoice,
+        sourceNote: savedInvoice.invoiceData.sourceNote
+      })
+    ) {
+      throw new HttpStatusError(400, CLIENT_PORTAL_BLOCKED_MESSAGE);
     }
     const portalAccessToken =
       parsedRequest.refresh || !savedInvoice.invoiceData.finishedInvoice.portalAccessToken
@@ -1472,6 +1485,14 @@ app.post("/api/invoices/:id/payment-link", async (req: Request, res: Response, n
     if (!getStripeBillingCapabilities().invoicePaymentAvailable) {
       throw new HttpStatusError(400, "Stripe invoice payments are not configured yet.");
     }
+    if (
+      invoiceSendIsBlocked({
+        finishedInvoice: savedInvoice.invoiceData.finishedInvoice,
+        sourceNote: savedInvoice.invoiceData.sourceNote
+      })
+    ) {
+      throw new HttpStatusError(400, PAYMENT_LINK_BLOCKED_MESSAGE);
+    }
     const invoice = parsedRequest.refresh
       ? await createAndPersistSavedInvoicePaymentLink({
           ownerId,
@@ -1619,6 +1640,17 @@ app.post("/api/invoices/:id/status", async (req: Request, res: Response, next: N
     const invoiceId = z.string().uuid().parse(req.params.id);
     const parsedRequest = UpdateInvoiceStatusRequestSchema.parse(req.body);
     const ownerId = getRequestOwnerId(req);
+    if (parsedRequest.status === "sent" || parsedRequest.status === "paid") {
+      const existingInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
+      if (
+        invoiceSendIsBlocked({
+          finishedInvoice: existingInvoice.invoiceData.finishedInvoice,
+          sourceNote: existingInvoice.invoiceData.sourceNote
+        })
+      ) {
+        throw new HttpStatusError(400, SEND_BLOCKED_MESSAGE);
+      }
+    }
     const invoice = await savedInvoiceRepository.updateSavedInvoiceStatus(
       invoiceId,
       parsedRequest.status,
@@ -2078,6 +2110,18 @@ async function recordSavedInvoicePayment(input: {
   ];
   const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
   const nextBalanceDue = calculateInvoiceBalance(invoiceTotal, nextPaymentRecords);
+  // Fail-closed: refuse draft→sent via partial payment when send is blocked.
+  // Full payment (→paid) is allowed even on a messy draft.
+  if (
+    savedInvoice.status === "draft" &&
+    nextBalanceDue > 0 &&
+    invoiceSendIsBlocked({
+      finishedInvoice: currentInvoice,
+      sourceNote: savedInvoice.invoiceData.sourceNote
+    })
+  ) {
+    throw new HttpStatusError(400, SEND_BLOCKED_MESSAGE);
+  }
   let nextInvoice = await savedInvoiceRepository.saveInvoiceDocument({
     ownerId: input.ownerId,
     invoiceId: input.invoiceId,
@@ -2117,6 +2161,17 @@ async function removeSavedInvoicePayment(input: {
   }
   const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
   const nextBalanceDue = calculateInvoiceBalance(invoiceTotal, nextPaymentRecords);
+  // Fail-closed: refuse paid→sent via remove-payment when send is blocked.
+  if (
+    savedInvoice.status === "paid" &&
+    nextBalanceDue > 0 &&
+    invoiceSendIsBlocked({
+      finishedInvoice: currentInvoice,
+      sourceNote: savedInvoice.invoiceData.sourceNote
+    })
+  ) {
+    throw new HttpStatusError(400, SEND_BLOCKED_MESSAGE);
+  }
   let nextInvoice = await savedInvoiceRepository.saveInvoiceDocument({
     ownerId: input.ownerId,
     invoiceId: input.invoiceId,

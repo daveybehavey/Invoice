@@ -361,7 +361,9 @@ export const InvoiceListItemSchema = z.object({
   balanceDue: OptionalNumber,
   dueDate: OptionalString,
   paymentLinkUrl: OptionalUrl,
-  paymentRecords: z.array(PaymentRecordSchema).default([])
+  paymentRecords: z.array(PaymentRecordSchema).default([]),
+  // True unless the invoice matches canCopySharePack (client, priced line, total > 0, money gate clear).
+  sendBlocked: z.boolean()
 });
 
 export const RecentClientContextItemSchema = z.object({

@@ -7,6 +7,7 @@ import {
   getInvoiceDeliverySummariesByInvoiceIds,
   recordInvoiceDeliverySend
 } from "./invoiceDeliveryStore.js";
+import { invoiceSendIsBlocked, SEND_BLOCKED_MESSAGE } from "./invoiceSendGate.js";
 
 export type InvoiceReminderSettings = {
   dueAfterDays: number;
@@ -215,43 +216,19 @@ export async function runDueInvoiceReminders(context: ReminderContext): Promise<
   const results: ReminderRunResult["results"] = [];
   for (const candidate of due) {
     try {
-      const saved = await context.repository.getSavedInvoiceById(candidate.invoiceId, context.ownerId);
-      const trackingToken = randomUUID();
-      const openTrackingPixelUrl = `${context.baseUrl}/api/invoices/${candidate.invoiceId}/delivery/opened/pixel?token=${encodeURIComponent(trackingToken)}`;
-      const sendResult = await sendInvoiceEmail({
-        recipientEmail: candidate.recipientEmail,
-        invoice: saved.invoiceData.finishedInvoice,
-        invoiceId: candidate.invoiceId,
-        openTrackingPixelUrl,
-        messageType: "reminder"
-      });
-      await recordInvoiceDeliverySend({
-        ownerId: context.ownerId,
-        invoiceId: candidate.invoiceId,
-        recipientEmail: candidate.recipientEmail,
-        trackingToken,
-        mode: sendResult.mode,
-        provider: sendResult.provider,
-        providerMessageId: sendResult.providerMessageId
-      });
-      const refreshedInvoice = await context.repository.updateSavedInvoiceStatus(
-        candidate.invoiceId,
-        "sent",
-        context.ownerId
-      );
-      const deliverySummary = await getInvoiceDeliverySummaryForInvoice({
-        ownerId: context.ownerId,
+      const reminder = await sendInvoiceReminderById({
+        ...context,
         invoiceId: candidate.invoiceId
       });
       results.push({
-        invoiceId: candidate.invoiceId,
-        invoiceNumber: candidate.invoiceNumber,
-        recipientEmail: candidate.recipientEmail,
+        invoiceId: reminder.invoiceId,
+        invoiceNumber: reminder.invoiceNumber,
+        recipientEmail: reminder.recipientEmail,
         sent: true,
-        invoiceUpdatedAt: refreshedInvoice.updatedAt,
-        delivery: deliverySummary,
-        mode: sendResult.mode,
-        provider: sendResult.provider
+        invoiceUpdatedAt: reminder.invoice.updatedAt,
+        delivery: reminder.delivery,
+        mode: reminder.mode,
+        provider: reminder.provider
       });
     } catch (error) {
       results.push({
@@ -288,6 +265,14 @@ export async function sendInvoiceReminderById(
   const saved = await context.repository.getSavedInvoiceById(context.invoiceId, context.ownerId);
   if (saved.status !== "sent") {
     throw new Error("Only sent invoices can receive reminders.");
+  }
+  if (
+    invoiceSendIsBlocked({
+      finishedInvoice: saved.invoiceData.finishedInvoice,
+      sourceNote: saved.invoiceData.sourceNote
+    })
+  ) {
+    throw new Error(SEND_BLOCKED_MESSAGE);
   }
   const deliveryByInvoice = await getInvoiceDeliverySummariesByInvoiceIds({
     ownerId: context.ownerId,

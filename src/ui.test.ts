@@ -836,6 +836,202 @@ test("manual onboarding cue updates through save, payment link, and portal setup
   }
 });
 
+test("saved draft with an unpriced line does not offer a payment link", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-payment-link-price-gate-owner");
+  });
+  const page = await context.newPage();
+  let paymentLinkRequested = false;
+  try {
+    await page.route("**/api/invoices/*/payment-link", async (route) => {
+      paymentLinkRequested = true;
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error:
+            "Cannot create a payment link while a non-waived line is $0 or a billing decision is still open."
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.locator('textarea[placeholder="Client Name"]:visible').fill("Pool Co");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Pool visit");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("2");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("74");
+    await page.getByRole("button", { name: "+ Add line item" }).click();
+    await page.locator('input[placeholder="Description"]:visible').nth(1).fill("Acid jug");
+
+    const handoff = page.getByTestId("manual-send-payment-handoff");
+    await handoff.getByRole("button", { name: "Save draft" }).click();
+    await handoff.getByText("Needs a price").first().waitFor({ state: "visible" });
+    await handoff.getByRole("button", { name: "Create payment link" }).waitFor({ state: "hidden" });
+    await page
+      .getByTestId("manual-onboarding-next-cue")
+      .getByText("A line is still $0 or waiting on a price.")
+      .waitFor({ state: "visible" });
+    assert.equal(paymentLinkRequested, false);
+  } finally {
+    await context.close();
+  }
+});
+
+test("saved draft with an unpriced line does not offer a client portal", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-client-portal-price-gate-owner");
+  });
+  const page = await context.newPage();
+  let portalRequested = false;
+  try {
+    await page.route("**/api/invoices/*/client-portal-link", async (route) => {
+      portalRequested = true;
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error:
+            "Cannot create a client portal while a non-waived line is $0 or a billing decision is still open."
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.locator('textarea[placeholder="Client Name"]:visible').fill("Pool Co");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Pool visit");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("2");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("74");
+    await page.getByRole("button", { name: "+ Add line item" }).click();
+    await page.locator('input[placeholder="Description"]:visible').nth(1).fill("Acid jug");
+
+    const handoff = page.getByTestId("manual-send-payment-handoff");
+    await handoff.getByRole("button", { name: "Save draft" }).click();
+    await handoff.getByText("Needs a price").first().waitFor({ state: "visible" });
+    await handoff.getByRole("button", { name: "Create client portal" }).waitFor({ state: "hidden" });
+    await getManualExportFormButton(page, "Create client portal").waitFor({ state: "hidden" });
+    await handoff.getByRole("button", { name: "Save draft" }).waitFor({ state: "hidden" });
+    assert.equal(portalRequested, false);
+  } finally {
+    await context.close();
+  }
+});
+
+test("saved draft with an open price and no links shows Needs a price", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-needs-price-cue-owner");
+  });
+  const page = await context.newPage();
+  let paymentLinkCalls = 0;
+  let portalCalls = 0;
+  try {
+    await page.route("**/api/invoices/*/payment-link", async (route) => {
+      paymentLinkCalls += 1;
+      await route.abort();
+    });
+    await page.route("**/api/invoices/*/client-portal-link", async (route) => {
+      portalCalls += 1;
+      await route.abort();
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const cue = page.getByTestId("manual-onboarding-next-cue");
+    await cue.getByText("Make this invoice send-ready first.").waitFor({ state: "visible" });
+
+    await page.locator('textarea[placeholder="Client Name"]:visible').fill("Northwind Roofing");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Pool cleaning");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("2");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("74");
+    await page.locator("button:visible", { hasText: "+ Add line item" }).first().click();
+    await page.locator('input[placeholder="Description"]:visible').nth(1).fill("Acid jug");
+
+    await cue.getByText("Your draft is ready to save.").waitFor({ state: "visible" });
+    await cue.getByRole("button", { name: "Save draft" }).click();
+    await cue.getByText("Needs a price").waitFor({ state: "visible" });
+    await cue.getByText("A line is still $0 or waiting on a price.").waitFor({ state: "visible" });
+    assert.equal(await cue.getByText("Nice progress").count(), 0);
+    assert.equal(
+      await cue.getByText("The draft is saved. Add the customer handoff pieces next.").count(),
+      0
+    );
+    await cue.getByRole("button", { name: "Review line items" }).waitFor({ state: "visible" });
+    assert.equal(await cue.getByRole("button", { name: "Create payment link" }).count(), 0);
+    assert.equal(await cue.getByRole("button", { name: "Create client portal" }).count(), 0);
+    assert.equal(paymentLinkCalls, 0);
+    assert.equal(portalCalls, 0);
+  } finally {
+    await context.close();
+  }
+});
+
+test("saved draft with an open price and one link shows Needs a price", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-needs-price-one-link-cue-owner");
+  });
+  const page = await context.newPage();
+  const paymentLinkUrl = "https://pay.stripe.test/plink_needs_price_one_link";
+  let paymentLinkCalls = 0;
+  let portalCalls = 0;
+  try {
+    await page.route("**/api/invoices/*/payment-link", async (route) => {
+      paymentLinkCalls += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ paymentLinkUrl })
+      });
+    });
+    await page.route("**/api/invoices/*/client-portal-link", async (route) => {
+      portalCalls += 1;
+      await route.abort();
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const cue = page.getByTestId("manual-onboarding-next-cue");
+    await cue.getByText("Make this invoice send-ready first.").waitFor({ state: "visible" });
+
+    await page.locator('textarea[placeholder="Client Name"]:visible').fill("Northwind Roofing");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Pool cleaning");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("2");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("74");
+
+    await cue.getByText("Your draft is ready to save.").waitFor({ state: "visible" });
+    await cue.getByRole("button", { name: "Save draft" }).click();
+    await cue.getByText("The draft is saved. Add the customer handoff pieces next.").waitFor({
+      state: "visible"
+    });
+    await cue.getByRole("button", { name: "Create payment link" }).click();
+    await cue.getByText("Payment link is ready. Add the portal to finish the handoff.").waitFor({
+      state: "visible"
+    });
+    await page.getByLabel("Hosted payment link").waitFor({ state: "visible" });
+    await expectValueEquals(page.getByLabel("Hosted payment link"), paymentLinkUrl);
+
+    await page.locator("button:visible", { hasText: "+ Add line item" }).first().click();
+    await page.locator('input[placeholder="Description"]:visible').nth(1).fill("Acid jug");
+
+    await cue.getByText("Needs a price").waitFor({ state: "visible" });
+    await cue.getByText("A line is still $0 or waiting on a price.").waitFor({ state: "visible" });
+    assert.equal(await cue.getByText("Nice progress").count(), 0);
+    assert.equal(
+      await cue.getByText("Payment link is ready. Add the portal to finish the handoff.").count(),
+      0
+    );
+    await cue.getByRole("button", { name: "Review line items" }).waitFor({ state: "visible" });
+    assert.equal(await cue.getByRole("button", { name: "Create payment link" }).count(), 0);
+    assert.equal(await cue.getByRole("button", { name: "Create client portal" }).count(), 0);
+    await expectValueEquals(page.getByLabel("Hosted payment link"), paymentLinkUrl);
+    await page.getByRole("link", { name: "Open hosted payment link" }).waitFor({ state: "visible" });
+    assert.equal(paymentLinkCalls, 1);
+    assert.equal(portalCalls, 0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("intake Billie next-up guide updates from notes to draft-ready state", async () => {
   useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
   const context = await browser.newContext();
@@ -10499,6 +10695,119 @@ test("invoice library shows open pay link action when payment link exists", asyn
   }
 });
 
+test("invoice library hides copy share pack when total is zero or a price is still open", async () => {
+  const context = await browser.newContext();
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-library-share-gate-owner");
+    window.__copiedSharePack = "";
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          window.__copiedSharePack = text;
+        }
+      }
+    });
+  });
+
+  const zeroResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-library-share-gate-owner"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit priced, acid jug supplier price missing.",
+        structuredInvoice: {
+          customerName: "Share Gate Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LIB-SHARE-ZERO",
+          customerName: "Share Gate Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 0,
+          total: 0,
+          balanceDue: 0
+        }
+      }
+    }
+  });
+  assert.equal(zeroResponse.status(), 200);
+
+  const openPriceResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-library-share-gate-owner"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Share Gate Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LIB-SHARE-OPEN",
+          customerName: "Share Gate Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    }
+  });
+  assert.equal(openPriceResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("INV-LIB-SHARE-ZERO", { exact: true }).waitFor({ state: "visible" });
+    const zeroCard = page.locator(".nb-surface").filter({ hasText: "INV-LIB-SHARE-ZERO" }).first();
+    assert.equal(await zeroCard.getByRole("button", { name: "Copy share pack" }).count(), 0);
+
+    await page.getByText("INV-LIB-SHARE-OPEN", { exact: true }).waitFor({ state: "visible" });
+    const openCard = page.locator(".nb-surface").filter({ hasText: "INV-LIB-SHARE-OPEN" }).first();
+    assert.equal(await openCard.getByRole("button", { name: "Copy share pack" }).count(), 0);
+    const copiedSharePack = await page.evaluate(() => window.__copiedSharePack ?? "");
+    assert.equal(String(copiedSharePack), "");
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library can create a client portal and copy a saved invoice share pack", async () => {
   const context = await browser.newContext();
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -11341,6 +11650,62 @@ test("manual editor export summarizes send readiness", async () => {
     await page.getByText("Billable item added").waitFor({ state: "visible" });
     await page.getByText("$90.00 total").waitFor({ state: "visible" });
     await page.getByText("Optional but helpful").waitFor({ state: "visible" });
+  } finally {
+    await context.close();
+  }
+});
+
+test("manual editor hides copy share pack until the invoice is send-ready", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const handoff = page.getByTestId("manual-send-payment-handoff");
+    const cue = page.getByTestId("manual-onboarding-next-cue");
+    await handoff.waitFor({ state: "visible" });
+    await cue.getByText("Make this invoice send-ready first.").waitFor({ state: "visible" });
+    await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "hidden" });
+    await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "hidden" });
+
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Acid jug");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("12.50");
+
+    await cue.getByText("Make this invoice send-ready first.").waitFor({ state: "visible" });
+    await handoff.locator("p").getByText("Add client details", { exact: true }).waitFor({ state: "visible" });
+    await handoff.getByText("Save first", { exact: true }).first().waitFor({ state: "visible" });
+    await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "hidden" });
+    await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "hidden" });
+    assert.equal(await page.getByRole("button", { name: "Copy share pack" }).count(), 0);
+
+    await page.locator('textarea[placeholder="Client Name"]:visible').fill("Pool Client");
+    await cue.getByText("Your draft is ready to save.").waitFor({ state: "visible" });
+    await handoff.getByText("Ready", { exact: true }).waitFor({ state: "visible" });
+    await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "visible" });
+    await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "+ Add line item" }).click();
+    const secondRow = page.locator("tbody tr").nth(1);
+    await secondRow.getByPlaceholder("Description", { exact: true }).fill("Filter");
+    await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "hidden" });
+    await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "hidden" });
+    assert.equal(await page.getByRole("button", { name: "Copy share pack" }).count(), 0);
+
+    await secondRow.getByPlaceholder("0", { exact: true }).fill("1");
+    await secondRow.getByPlaceholder("$0", { exact: true }).fill("10");
+    await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "visible" });
+    await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "visible" });
+
+    await page.getByLabel("Discount amount").first().fill("22.50");
+    await page.waitForFunction(() => {
+      const totalLabel = Array.from(document.querySelectorAll("span")).find(
+        (node) => node.textContent?.trim() === "Total"
+      );
+      return totalLabel?.parentElement?.querySelector("span.tabular-nums")?.textContent?.trim() === "$0.00";
+    });
+    await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "hidden" });
+    await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "hidden" });
+    assert.equal(await page.getByRole("button", { name: "Copy share pack" }).count(), 0);
   } finally {
     await context.close();
   }

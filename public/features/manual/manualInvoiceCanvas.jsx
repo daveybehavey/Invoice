@@ -1206,6 +1206,18 @@ function ManualInvoiceCanvas() {
   };
 
   const handleCopySharePack = async () => {
+    const sharePackSendReady =
+      Boolean(String(billToDetails ?? "").trim()) &&
+      lineItems.some((item) => {
+        const description = String(item?.description ?? "").trim();
+        return Boolean(description) && getLineAmount(item) > 0;
+      }) &&
+      !sendBlockedByPrice &&
+      total > 0;
+    if (!sharePackSendReady) {
+      setSaveError("Add the client and a priced line item before copying a share pack.");
+      return;
+    }
     const sharePackText = buildSharePackText();
     if (!sharePackText) {
       setSaveError("Add a line item before copying a share pack.");
@@ -2002,6 +2014,12 @@ function ManualInvoiceCanvas() {
       setPaymentLinkError("Save invoice first to create a payment link.");
       return;
     }
+    if (sendBlockedByPrice) {
+      setPaymentLinkError(
+        "Cannot create a payment link while a non-waived line is $0 or a billing decision is still open."
+      );
+      return;
+    }
     setPaymentLinkBusy(true);
     setPaymentLinkError("");
     setSaveError("");
@@ -2104,6 +2122,12 @@ function ManualInvoiceCanvas() {
       setClientPortalError("Save invoice first to create a client portal link.");
       return;
     }
+    if (sendBlockedByPrice) {
+      setClientPortalError(
+        "Cannot create a client portal while a non-waived line is $0 or a billing decision is still open."
+      );
+      return;
+    }
     setClientPortalBusy(true);
     setClientPortalError("");
     setSaveError("");
@@ -2156,7 +2180,7 @@ function ManualInvoiceCanvas() {
         onClick: () => handleRememberCurrentLineItem(currentServiceMemoryCandidate)
       });
     }
-    if (savedInvoiceId && !paymentLinkUrl.trim()) {
+    if (savedInvoiceId && !paymentLinkUrl.trim() && !sendBlockedByPrice) {
       moves.push({
         id: "payment-link",
         label: "Add a payment link",
@@ -2170,7 +2194,7 @@ function ManualInvoiceCanvas() {
         }
       });
     }
-    if (savedInvoiceId && !clientPortalUrl) {
+    if (savedInvoiceId && !clientPortalUrl && !sendBlockedByPrice) {
       moves.push({
         id: "client-portal",
         label: "Create the client portal",
@@ -2214,7 +2238,8 @@ function ManualInvoiceCanvas() {
     paymentLinkUrl,
     primaryBillToName,
     saveStatus,
-    savedInvoiceId
+    savedInvoiceId,
+    sendBlockedByPrice
   ]);
   const hasClientDetails = Boolean(String(billToDetails ?? "").trim());
   const hasBillableLineItem = lineItems.some((item) => {
@@ -2222,19 +2247,23 @@ function ManualInvoiceCanvas() {
     const amount = getLineAmount(item);
     return description && amount > 0;
   });
+  const canCopySharePack =
+    hasClientDetails && hasBillableLineItem && !sendBlockedByPrice && total > 0;
   const hasSavedDraft = Boolean(savedInvoiceId);
   const hasHostedPaymentLink = Boolean(String(paymentLinkUrl ?? "").trim());
   const hasClientPortal = Boolean(String(clientPortalUrl ?? "").trim());
   const handoffStages = [
     {
       label: "Send-ready basics",
-      value: hasClientDetails && hasBillableLineItem
-        ? "Ready"
-        : hasClientDetails
-          ? "Add a priced line item"
-          : hasBillableLineItem
-            ? "Add client details"
-            : "Add client + priced work"
+      value: sendBlockedByPrice
+        ? "Needs a price"
+        : hasClientDetails && hasBillableLineItem
+          ? "Ready"
+          : hasClientDetails
+            ? "Add a priced line item"
+            : hasBillableLineItem
+              ? "Add client details"
+              : "Add client + priced work"
     },
     {
       label: "Save",
@@ -2242,11 +2271,23 @@ function ManualInvoiceCanvas() {
     },
     {
       label: "Payment link",
-      value: hasHostedPaymentLink ? "Hosted link ready" : hasSavedDraft ? "Create link" : "Save first"
+      value: hasHostedPaymentLink
+        ? "Hosted link ready"
+        : sendBlockedByPrice
+          ? "Needs a price"
+          : hasSavedDraft
+            ? "Create link"
+            : "Save first"
     },
     {
       label: "Client portal",
-      value: hasClientPortal ? "Portal ready" : hasSavedDraft ? "Create portal" : "Save first"
+      value: hasClientPortal
+        ? "Portal ready"
+        : sendBlockedByPrice
+          ? "Needs a price"
+          : hasSavedDraft
+            ? "Create portal"
+            : "Save first"
     }
   ];
   const onboardingContextCue = useMemo(() => {
@@ -2302,7 +2343,32 @@ function ManualInvoiceCanvas() {
       };
     }
 
+    const needsAPriceCue = {
+      eyebrow: "Needs a price",
+      title: "A line is still $0 or waiting on a price.",
+      detail:
+        "Enter the missing price, or mark the line free / no-charge. A bare $0 cannot get a payment link or be sent.",
+      actions: [
+        {
+          id: "priced-work",
+          label: "Review line items",
+          onClick: () => {
+            document.querySelector('input[placeholder="Description"]')?.focus();
+          }
+        }
+      ]
+    };
+
+    // An open price blocks send even when a payment link or portal already exists.
+    // Leave those links in place; only the cue changes.
+    if (sendBlockedByPrice) {
+      return needsAPriceCue;
+    }
+
     if (!hasHostedPaymentLink && !hasClientPortal) {
+      if (sendBlockedByPrice) {
+        return needsAPriceCue;
+      }
       return {
         eyebrow: "Nice progress",
         title: "The draft is saved. Add the customer handoff pieces next.",
@@ -2317,14 +2383,18 @@ function ManualInvoiceCanvas() {
               void handleGeneratePaymentLink();
             }
           },
-          {
-            id: "client-portal",
-            label: clientPortalBusy ? "Creating..." : "Create client portal",
-            disabled: clientPortalBusy,
-            onClick: () => {
-              void handleGenerateClientPortalLink();
-            }
-          },
+          ...(sendBlockedByPrice
+            ? []
+            : [
+                {
+                  id: "client-portal",
+                  label: clientPortalBusy ? "Creating..." : "Create client portal",
+                  disabled: clientPortalBusy,
+                  onClick: () => {
+                    void handleGenerateClientPortalLink();
+                  }
+                }
+              ]),
           {
             id: "open-library",
             label: "Open library",
@@ -2334,7 +2404,7 @@ function ManualInvoiceCanvas() {
       };
     }
 
-    if (hasHostedPaymentLink && !hasClientPortal) {
+    if (hasHostedPaymentLink && !hasClientPortal && !sendBlockedByPrice) {
       return {
         eyebrow: "Nice progress",
         title: "Payment link is ready. Add the portal to finish the handoff.",
@@ -2349,12 +2419,16 @@ function ManualInvoiceCanvas() {
               void handleGenerateClientPortalLink();
             }
           },
-          {
-            id: "share-pack",
-            label: sharePackBusy ? "Copying..." : "Copy share pack",
-            disabled: sharePackBusy,
-            onClick: handleCopySharePack
-          },
+          ...(canCopySharePack
+            ? [
+                {
+                  id: "share-pack",
+                  label: sharePackBusy ? "Copying..." : "Copy share pack",
+                  disabled: sharePackBusy,
+                  onClick: handleCopySharePack
+                }
+              ]
+            : []),
           {
             id: "open-library",
             label: "Open library",
@@ -2388,36 +2462,22 @@ function ManualInvoiceCanvas() {
       };
     }
 
-    if (sendBlockedByPrice) {
-      return {
-        eyebrow: "Needs a price",
-        title: "A line is still $0 or waiting on a price.",
-        detail:
-          "Enter the missing price, or mark the line free / no-charge. A bare $0 cannot be sent.",
-        actions: [
-          {
-            id: "priced-work",
-            label: "Review line items",
-            onClick: () => {
-              document.querySelector('input[placeholder="Description"]')?.focus();
-            }
-          }
-        ]
-      };
-    }
-
     return {
       eyebrow: "Ready to send",
       title: "Everything needed for a polished handoff is ready.",
       detail:
         "Copy the share pack or export the PDF next. You already have the saved draft, payment link, and portal in place.",
       actions: [
-        {
-          id: "share-pack",
-          label: sharePackBusy ? "Copying..." : "Copy share pack",
-          disabled: sharePackBusy,
-          onClick: handleCopySharePack
-        },
+        ...(canCopySharePack
+          ? [
+              {
+                id: "share-pack",
+                label: sharePackBusy ? "Copying..." : "Copy share pack",
+                disabled: sharePackBusy,
+                onClick: handleCopySharePack
+              }
+            ]
+          : []),
         {
           id: "export-pdf",
           label: "Export PDF",
@@ -2439,6 +2499,7 @@ function ManualInvoiceCanvas() {
     handleGeneratePaymentLink,
     handleCopySharePack,
     handleSaveInvoice,
+    canCopySharePack,
     hasBillableLineItem,
     hasClientDetails,
     hasClientPortal,
@@ -4397,7 +4458,7 @@ function ManualInvoiceCanvas() {
                     {saveStatus === "Saving..." ? "Saving..." : "Save draft"}
                   </button>
                 ) : null}
-                {hasSavedDraft && !hasHostedPaymentLink ? (
+                {hasSavedDraft && !hasHostedPaymentLink && !sendBlockedByPrice ? (
                   <button
                     type="button"
                     className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
@@ -4409,7 +4470,7 @@ function ManualInvoiceCanvas() {
                     {paymentLinkBusy ? "Creating..." : "Create payment link"}
                   </button>
                 ) : null}
-                {hasSavedDraft && !hasClientPortal ? (
+                {hasSavedDraft && !hasClientPortal && !sendBlockedByPrice ? (
                   <button
                     type="button"
                     className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
@@ -4421,7 +4482,7 @@ function ManualInvoiceCanvas() {
                     {clientPortalBusy ? "Creating..." : "Create client portal"}
                   </button>
                 ) : null}
-                {hasBillableLineItem ? (
+                {canCopySharePack ? (
                   <button
                     type="button"
                     className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
@@ -4492,15 +4553,17 @@ function ManualInvoiceCanvas() {
                 <span className="text-[11px] font-semibold text-slate-400">Optional</span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className="min-h-10 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
-                  style={{ color: accent.primary }}
-                  onClick={handleCopySharePack}
-                  disabled={sharePackBusy}
-                >
-                  {sharePackBusy ? "Copying..." : "Copy share pack"}
-                </button>
+                {canCopySharePack ? (
+                  <button
+                    type="button"
+                    className="min-h-10 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                    style={{ color: accent.primary }}
+                    onClick={handleCopySharePack}
+                    disabled={sharePackBusy}
+                  >
+                    {sharePackBusy ? "Copying..." : "Copy share pack"}
+                  </button>
+                ) : null}
                 {sharePackNotice ? (
                   <span className="text-xs font-semibold text-slate-500">{sharePackNotice}</span>
                 ) : null}
@@ -4527,6 +4590,7 @@ function ManualInvoiceCanvas() {
                 <span className="text-[11px] font-semibold text-slate-400">Optional</span>
               </div>
               <div className="flex flex-wrap items-center gap-3">
+                {sendBlockedByPrice ? null : (
                 <button
                   type="button"
                   className="min-h-10 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white"
@@ -4536,6 +4600,7 @@ function ManualInvoiceCanvas() {
                 >
                   {clientPortalBusy ? "Creating portal..." : clientPortalUrl ? "Refresh client portal" : "Create client portal"}
                 </button>
+                )}
                 {clientPortalUrl ? (
                   <a
                     href={clientPortalUrl}

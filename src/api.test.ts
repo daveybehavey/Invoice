@@ -2782,6 +2782,144 @@ test("payment-link endpoint creates and persists a Stripe payment link for a sav
   );
 });
 
+test("payment-link returns 400 when a non-waived line is $0", async () => {
+  const ownerId = "payment-link-block-zero-owner";
+  let created = false;
+  setInvoicePaymentLinkCreatorForTests(async () => {
+    created = true;
+    return {
+      url: "https://pay.stripe.test/plink_should_not",
+      paymentLinkId: "plink_should_not"
+    };
+  });
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PAY-ZERO-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot create a payment link while a non-waived line is $0 or a billing decision is still open."
+  );
+  assert.equal(created, false);
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl ?? "", "");
+});
+
+test("payment-link returns 400 while a billing decision is still open", async () => {
+  const ownerId = "payment-link-block-open-owner";
+  let created = false;
+  setInvoicePaymentLinkCreatorForTests(async () => {
+    created = true;
+    return {
+      url: "https://pay.stripe.test/plink_should_not_open",
+      paymentLinkId: "plink_should_not_open"
+    };
+  });
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PAY-OPEN-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot create a payment link while a non-waived line is $0 or a billing decision is still open."
+  );
+  assert.equal(created, false);
+});
+
 test("client portal endpoint creates a tokenized customer portal link and exposes invoice history", async () => {
   const ownerId = "client-portal-owner";
 
@@ -2884,6 +3022,604 @@ test("client portal endpoint creates a tokenized customer portal link and expose
   assert.equal(publicPortalResponse.body.history.length, 1);
   assert.equal(publicPortalResponse.body.history[0].invoiceId, firstInvoiceId);
   assert.equal(publicPortalResponse.body.history[0].status, "draft");
+});
+
+test("client portal returns 400 when a non-waived line is $0", async () => {
+  const ownerId = "client-portal-block-zero-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PORTAL-ZERO-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/client-portal-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot create a client portal while a non-waived line is $0 or a billing decision is still open."
+  );
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.portalAccessToken ?? "", "");
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.total, 148);
+  assert.equal(
+    getResponse.body.invoice?.invoiceData?.sourceNote,
+    "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down."
+  );
+});
+
+test("client portal returns 400 while a billing decision is still open", async () => {
+  const ownerId = "client-portal-block-open-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PORTAL-OPEN-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/client-portal-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot create a client portal while a non-waived line is $0 or a billing decision is still open."
+  );
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.portalAccessToken ?? "", "");
+});
+
+
+test("status→sent returns 400 when a non-waived line is $0", async () => {
+  const ownerId = "status-sent-block-zero-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-STATUS-ZERO-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "sent" });
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot send while a non-waived line is $0 or a billing decision is still open."
+  );
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.body.invoice?.status, "draft");
+});
+
+test("status→sent returns 400 while a billing decision is still open", async () => {
+  const ownerId = "status-sent-block-open-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-STATUS-OPEN-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "sent" });
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot send while a non-waived line is $0 or a billing decision is still open."
+  );
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.body.invoice?.status, "draft");
+});
+
+test("status→paid returns 400 while a non-waived $0 line is on the invoice", async () => {
+  const ownerId = "status-paid-block-zero-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-STATUS-PAID-ZERO-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const listResponse = await request(app).get("/api/invoices").set("x-invoice-user-id", ownerId);
+  assert.equal(listResponse.status, 200);
+  assert.equal(listResponse.body.invoices[0].sendBlocked, true);
+
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "paid" });
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot send while a non-waived line is $0 or a billing decision is still open."
+  );
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.body.invoice?.status, "draft");
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.balanceDue, 148);
+});
+
+test("status→sent still works for a fully priced invoice", async () => {
+  const ownerId = "status-sent-happy-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-STATUS-OK-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "sent" });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.invoice.status, "sent");
+});
+
+
+test("record-payment returns 400 when partial payment would draft→sent on a blocked invoice", async () => {
+  const ownerId = "record-pay-block-draft-sent-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REC-PAY-BLOCK-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 50 });
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot send while a non-waived line is $0 or a billing decision is still open."
+  );
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.body.invoice?.status, "draft");
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.balanceDue, 148);
+  assert.equal(
+    (getResponse.body.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? []).length,
+    0
+  );
+});
+
+test("remove-payment returns 400 when removing would paid→sent on a blocked invoice", async () => {
+  const ownerId = "remove-pay-block-paid-sent-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REM-PAY-BLOCK-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  // Full-balance record-payment may still mark a draft paid. Status→paid is gated separately.
+  const paidResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 148, paidAt: "2026-10-01" });
+  assert.equal(paidResponse.status, 200);
+  assert.equal(paidResponse.body.invoice.status, "paid");
+  const paymentId = paidResponse.body.invoice.invoiceData.finishedInvoice.paymentRecords[0].id as string;
+  assert.ok(paymentId);
+
+  const blockedSave = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REM-PAY-BLOCK-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 0,
+          paymentRecords: [
+            {
+              id: paymentId,
+              amount: 148,
+              paidAt: "2026-10-01"
+            }
+          ]
+        }
+      }
+    });
+  assert.equal(blockedSave.status, 200);
+  assert.equal(blockedSave.body.invoice.status, "paid");
+
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/remove-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ paymentId });
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot send while a non-waived line is $0 or a billing decision is still open."
+  );
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.body.invoice?.status, "paid");
+  assert.equal(
+    (getResponse.body.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? []).length,
+    1
+  );
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.balanceDue, 0);
+});
+
+test("record-payment still promotes draft→sent for a fully priced invoice after partial payment", async () => {
+  const ownerId = "record-pay-happy-draft-sent-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REC-PAY-OK-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 50 });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.invoice.status, "sent");
+  assert.equal(response.body.invoice.invoiceData.finishedInvoice.balanceDue, 98);
+  assert.equal(response.body.invoice.invoiceData.finishedInvoice.paymentRecords.length, 1);
 });
 
 test("send endpoint auto-creates a payment link before delivery when Stripe payments are configured", async () => {
@@ -3626,6 +4362,205 @@ test("send-reminder endpoint reuses tracked recipient and bumps delivery/send ti
   assert.equal(reminderResponse.body.delivery?.recipientEmail, "reminder@example.com");
   assert.ok(Date.parse(reminderResponse.body.delivery?.sentAt) >= Date.parse(firstSentAt));
   assert.ok(Date.parse(reminderResponse.body.invoice?.updatedAt) > Date.parse(firstUpdatedAt));
+});
+
+
+test("send-reminder returns 400 when a non-waived line is $0", async () => {
+  const ownerId = "reminder-block-zero-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REMINDER-ZERO-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "reminder-zero@example.com" });
+  assert.equal(sendResponse.status, 200);
+
+  const updateResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REMINDER-ZERO-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(updateResponse.status, 200);
+  assert.equal(updateResponse.body.invoice.status, "sent");
+
+  const reminderResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send-reminder`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(reminderResponse.status, 400);
+  assert.equal(
+    reminderResponse.body.error,
+    "Cannot send while a non-waived line is $0 or a billing decision is still open."
+  );
+});
+
+test("send-reminder returns 400 while a billing decision is still open", async () => {
+  const ownerId = "reminder-block-open-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REMINDER-OPEN-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "reminder-open@example.com" });
+  assert.equal(sendResponse.status, 200);
+
+  const updateResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REMINDER-OPEN-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(updateResponse.status, 200);
+  assert.equal(updateResponse.body.invoice.status, "sent");
+
+  const reminderResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send-reminder`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(reminderResponse.status, 400);
+  assert.equal(
+    reminderResponse.body.error,
+    "Cannot send while a non-waived line is $0 or a billing decision is still open."
+  );
 });
 
 test("reminder run endpoint previews and sends due reminders with overrides", async () => {
