@@ -10695,7 +10695,7 @@ test("invoice library shows open pay link action when payment link exists", asyn
   }
 });
 
-test("invoice library hides copy share pack when total is zero and refuses open-price drafts", async () => {
+test("invoice library hides copy share pack when total is zero or a price is still open", async () => {
   const context = await browser.newContext();
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await context.addInitScript(() => {
@@ -10800,8 +10800,7 @@ test("invoice library hides copy share pack when total is zero and refuses open-
 
     await page.getByText("INV-LIB-SHARE-OPEN", { exact: true }).waitFor({ state: "visible" });
     const openCard = page.locator(".nb-surface").filter({ hasText: "INV-LIB-SHARE-OPEN" }).first();
-    await openCard.getByRole("button", { name: "Copy share pack" }).click();
-    await page.getByText("Finish pricing before copying a share pack.").waitFor({ state: "visible" });
+    assert.equal(await openCard.getByRole("button", { name: "Copy share pack" }).count(), 0);
     const copiedSharePack = await page.evaluate(() => window.__copiedSharePack ?? "");
     assert.equal(String(copiedSharePack), "");
   } finally {

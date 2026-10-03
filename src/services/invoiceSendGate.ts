@@ -5,7 +5,7 @@ import {
   subjectIdentityKey
 } from "./billingEvidence.js";
 
-/** Returned as the 400 error from send / status→sent / send-reminder when money is unresolved. */
+/** Returned as the 400 error from send / status→sent / status→paid / send-reminder when money is unresolved. */
 export const SEND_BLOCKED_MESSAGE =
   "Cannot send while a non-waived line is $0 or a billing decision is still open.";
 
@@ -126,4 +126,30 @@ export function invoiceSendIsBlocked(input: {
   return (
     lines.some((line) => isNonWaivedZero(line, sourceNote)) || hasOpenBillingDecision(lines, sourceNote)
   );
+}
+
+/**
+ * Same rule as the manual editor's canCopySharePack:
+ * client + priced line + total > 0 + invoiceSendIsBlocked is false.
+ * Used by the library list so Copy share pack stays hidden while send is blocked.
+ */
+export function invoiceSharePackIsBlocked(input: {
+  finishedInvoice: Pick<FinishedInvoice, "lineItems" | "customerName" | "total">;
+  sourceNote?: string;
+}): boolean {
+  const finished = input.finishedInvoice;
+  const sourceNote = typeof input.sourceNote === "string" ? input.sourceNote : "";
+  const customerName = `${finished?.customerName ?? ""}`.trim();
+  const total = Number(finished?.total);
+  const lines = Array.isArray(finished?.lineItems) ? finished.lineItems : [];
+  const describedLines = lines.filter((line) => `${line.description ?? ""}`.trim());
+  const hasPricedLine = describedLines.some((line) => {
+    const unit = Number(line.unitPrice);
+    const amount = Number(line.amount);
+    return (Number.isFinite(unit) && unit > 0) || (Number.isFinite(amount) && amount > 0);
+  });
+  if (!customerName || !hasPricedLine || !(Number.isFinite(total) && total > 0)) {
+    return true;
+  }
+  return invoiceSendIsBlocked({ finishedInvoice: finished, sourceNote });
 }

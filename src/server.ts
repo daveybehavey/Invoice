@@ -1640,7 +1640,7 @@ app.post("/api/invoices/:id/status", async (req: Request, res: Response, next: N
     const invoiceId = z.string().uuid().parse(req.params.id);
     const parsedRequest = UpdateInvoiceStatusRequestSchema.parse(req.body);
     const ownerId = getRequestOwnerId(req);
-    if (parsedRequest.status === "sent") {
+    if (parsedRequest.status === "sent" || parsedRequest.status === "paid") {
       const existingInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
       if (
         invoiceSendIsBlocked({

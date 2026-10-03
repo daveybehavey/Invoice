@@ -4322,7 +4322,7 @@
                               {actionId === invoice.invoiceId ? "Creating portal..." : "Create client portal"}
                             </button>
                           )}
-                          {Number(invoice.total) > 0 ? (
+                          {Number(invoice.total) > 0 && invoice.sendBlocked === false ? (
                             <button
                               type="button"
                               className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"

@@ -11,6 +11,7 @@ import {
   SavedInvoiceSchema,
   SavedInvoiceStatus
 } from "../models/invoice.js";
+import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
 
 const configuredStorePath = process.env.INVOICE_STORE_FILE;
 const storeFilePath = configuredStorePath
@@ -122,7 +123,11 @@ export async function listSavedInvoiceMetadata(
         balanceDue: invoice.invoiceData.finishedInvoice.balanceDue,
         dueDate: invoice.invoiceData.finishedInvoice.dueDate ?? invoice.invoiceData.structuredInvoice.dueDate,
         paymentLinkUrl: invoice.invoiceData.finishedInvoice.paymentLinkUrl,
-        paymentRecords: invoice.invoiceData.finishedInvoice.paymentRecords ?? []
+        paymentRecords: invoice.invoiceData.finishedInvoice.paymentRecords ?? [],
+        sendBlocked: invoiceSharePackIsBlocked({
+          finishedInvoice: invoice.invoiceData.finishedInvoice,
+          sourceNote: invoice.invoiceData.sourceNote
+        })
       })
     )
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));

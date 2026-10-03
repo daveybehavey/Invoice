@@ -9,6 +9,7 @@ import {
   SavedInvoiceSchema,
   SavedInvoiceStatus
 } from "../models/invoice.js";
+import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
 
 type SavedInvoiceRow = {
   invoice_id: string;
@@ -160,7 +161,11 @@ export class PostgresSavedInvoiceRepository {
         balanceDue: row.invoice_data.finishedInvoice.balanceDue,
         dueDate: row.invoice_data.finishedInvoice.dueDate ?? row.invoice_data.structuredInvoice.dueDate,
         paymentLinkUrl: row.invoice_data.finishedInvoice.paymentLinkUrl,
-        paymentRecords: row.invoice_data.finishedInvoice.paymentRecords ?? []
+        paymentRecords: row.invoice_data.finishedInvoice.paymentRecords ?? [],
+        sendBlocked: invoiceSharePackIsBlocked({
+          finishedInvoice: row.invoice_data.finishedInvoice,
+          sourceNote: row.invoice_data.sourceNote
+        })
       })
     );
   }

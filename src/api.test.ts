@@ -3272,6 +3272,73 @@ test("status→sent returns 400 while a billing decision is still open", async (
   assert.equal(getResponse.body.invoice?.status, "draft");
 });
 
+test("status→paid returns 400 while a non-waived $0 line is on the invoice", async () => {
+  const ownerId = "status-paid-block-zero-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-STATUS-PAID-ZERO-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const listResponse = await request(app).get("/api/invoices").set("x-invoice-user-id", ownerId);
+  assert.equal(listResponse.status, 200);
+  assert.equal(listResponse.body.invoices[0].sendBlocked, true);
+
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "paid" });
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot send while a non-waived line is $0 or a billing decision is still open."
+  );
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.body.invoice?.status, "draft");
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.balanceDue, 148);
+});
+
 test("status→sent still works for a fully priced invoice", async () => {
   const ownerId = "status-sent-happy-owner";
   const saveResponse = await request(app)
@@ -3395,6 +3462,53 @@ test("remove-payment returns 400 when removing would paid→sent on a blocked in
       confirmSave: true,
       sourceType: "text_input",
       invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-REM-PAY-BLOCK-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  // Full-balance record-payment may still mark a draft paid. Status→paid is gated separately.
+  const paidResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 148, paidAt: "2026-10-01" });
+  assert.equal(paidResponse.status, 200);
+  assert.equal(paidResponse.body.invoice.status, "paid");
+  const paymentId = paidResponse.body.invoice.invoiceData.finishedInvoice.paymentRecords[0].id as string;
+  assert.ok(paymentId);
+
+  const blockedSave = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
         sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
         structuredInvoice: {
           customerName: "Pool Co",
@@ -3428,7 +3542,7 @@ test("remove-payment returns 400 when removing would paid→sent on a blocked in
           balanceDue: 0,
           paymentRecords: [
             {
-              id: "pay-full-1",
+              id: paymentId,
               amount: 148,
               paidAt: "2026-10-01"
             }
@@ -3436,21 +3550,13 @@ test("remove-payment returns 400 when removing would paid→sent on a blocked in
         }
       }
     });
-  assert.equal(saveResponse.status, 200);
-  const invoiceId = saveResponse.body.invoice.invoiceId as string;
-
-  // Mark paid without going through record-payment (which would also hit the gate on draft).
-  const statusResponse = await request(app)
-    .post(`/api/invoices/${invoiceId}/status`)
-    .set("x-invoice-user-id", ownerId)
-    .send({ status: "paid" });
-  assert.equal(statusResponse.status, 200);
-  assert.equal(statusResponse.body.invoice.status, "paid");
+  assert.equal(blockedSave.status, 200);
+  assert.equal(blockedSave.body.invoice.status, "paid");
 
   const response = await request(app)
     .post(`/api/invoices/${invoiceId}/remove-payment`)
     .set("x-invoice-user-id", ownerId)
-    .send({ paymentId: "pay-full-1" });
+    .send({ paymentId });
   assert.equal(response.status, 400);
   assert.equal(
     response.body.error,
