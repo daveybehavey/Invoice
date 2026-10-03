@@ -316,9 +316,14 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   const invoiceWithHolds = applyDecisionPricingHolds(invoiceWithIssueDate, cleanedDecisions);
   const cleanedInvoice = filterInvoiceNotes(invoiceWithHolds, sourceText, cleanedDecisions);
   const cleanedAssumptions = filterAssumptionsAgainstDecisions(assumptions, cleanedDecisions);
+  const hasUnresolvedBillingFacts = hasUnresolvedAuthoritativeBillingFacts({
+    openDecisions: cleanedDecisions,
+    unresolvedFacts: unresolvedBillingFacts
+  });
   const outputQuality = evaluateInvoiceOutputQuality({
     structuredInvoice: sanitizedInvoice,
-    invoice: cleanedInvoice
+    invoice: cleanedInvoice,
+    hasUnresolvedBillingFacts
   });
 
   if (discountIntent.kind === "apply") {
@@ -336,7 +341,8 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
       unparsedLines: cleanedUnparsed,
       qualityGate: evaluateInvoiceOutputQuality({
         structuredInvoice: sanitizedInvoice,
-        invoice: discountedInvoice
+        invoice: discountedInvoice,
+        hasUnresolvedBillingFacts
       }),
       auditStatus: auditOutcome.status
     };
@@ -437,9 +443,14 @@ export async function continueInvoiceAfterLaborPricing(
     cleanedDecisions
   );
   const cleanedAssumptions = filterAssumptionsAgainstDecisions(assumptions, cleanedDecisions);
+  const hasUnresolvedBillingFacts = hasUnresolvedAuthoritativeBillingFacts({
+    openDecisions: cleanedDecisions,
+    unresolvedFacts: unresolvedBillingFacts
+  });
   const outputQuality = evaluateInvoiceOutputQuality({
     structuredInvoice: sanitizedInvoice,
-    invoice: cleanedInvoice
+    invoice: cleanedInvoice,
+    hasUnresolvedBillingFacts
   });
 
   if (discountIntent.kind === "apply") {
@@ -457,7 +468,8 @@ export async function continueInvoiceAfterLaborPricing(
       unparsedLines: cleanedUnparsed,
       qualityGate: evaluateInvoiceOutputQuality({
         structuredInvoice: sanitizedInvoice,
-        invoice: discountedInvoice
+        invoice: discountedInvoice,
+        hasUnresolvedBillingFacts
       }),
       auditStatus: auditOutcome.status
     };
@@ -583,7 +595,10 @@ export async function applyDecisionActionToDraft(
   const heldInvoice = applyDecisionPricingHolds(baseInvoice, remainingOpenDecisions);
   const qualityGate = evaluateInvoiceOutputQuality({
     structuredInvoice: nextStructuredInvoice,
-    invoice: heldInvoice
+    invoice: heldInvoice,
+    hasUnresolvedBillingFacts: hasUnresolvedAuthoritativeBillingFacts({
+      openDecisions: remainingOpenDecisions
+    })
   });
 
   let nextPendingTaxRate = sanitizeTaxRate(input.pendingTaxRate);

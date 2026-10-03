@@ -6276,6 +6276,16 @@ test("AG-094: ambiguous subject identity fails closed without sibling mutation",
   assert.equal(filters.length, 2);
   assert.ok(filters.every((item) => item.unitPrice === 40));
   assert.equal(response.body.needsFollowUp, true);
+  // Sibling prices stay $40 (fail closed), but qualityGate must not pass while the
+  // authoritative unresolved price fact remains open.
+  assert.notEqual(response.body.qualityGate.status, "pass");
+  assert.equal(response.body.qualityGate.status, "needs_review");
+  assert.ok(
+    (response.body.qualityGate.blockers ?? []).some(
+      (blocker: { code?: string }) => blocker.code === "missing_price"
+    ),
+    "unresolved authoritative billing fact must add a missing_price blocker"
+  );
 });
 
 function useMockResponses(responses: unknown[]): void {

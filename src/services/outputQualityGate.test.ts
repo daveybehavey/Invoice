@@ -385,3 +385,45 @@ test("[rule:multi_day.date_context] warns when multi-day work has weak date cont
   assert.equal(quality.status, "pass");
   assert.ok(quality.warnings.some((item) => item.code === "multi_day_structure"));
 });
+
+test("[rule:money.missing_price] blocks when authoritative billing facts are unresolved even if line prices look complete", () => {
+  const quality = evaluateInvoiceOutputQuality({
+    structuredInvoice: {
+      workSessions: [],
+      materials: [
+        { description: "Filter", quantity: 1, unitCost: 40, amount: 40 },
+        { description: "Filter", quantity: 2, unitCost: 40, amount: 80 }
+      ]
+    },
+    invoice: {
+      invoiceNumber: "INV-1001",
+      issueDate: "2026-02-25",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "line_1",
+          type: "material",
+          description: "Filter",
+          quantity: 1,
+          unitPrice: 40,
+          amount: 40
+        },
+        {
+          id: "line_2",
+          type: "material",
+          description: "Filter",
+          quantity: 2,
+          unitPrice: 40,
+          amount: 80
+        }
+      ],
+      subtotal: 120,
+      total: 120,
+      balanceDue: 120
+    },
+    hasUnresolvedBillingFacts: true
+  });
+
+  assert.equal(quality.status, "needs_review");
+  assert.ok(quality.blockers.some((item) => item.code === "missing_price"));
+});

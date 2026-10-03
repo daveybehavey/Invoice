@@ -27,6 +27,8 @@ export interface OutputQualityGate {
 interface EvaluateOutputQualityInput {
   structuredInvoice: StructuredInvoice;
   invoice: FinishedInvoice;
+  /** Authoritative ledger facts still unresolved (even when sibling line prices were left untouched). */
+  hasUnresolvedBillingFacts?: boolean;
 }
 
 const INFORMAL_DESCRIPTION_PATTERN =
@@ -47,7 +49,8 @@ const isExplicitDate = (value?: string): boolean => {
 
 export function evaluateInvoiceOutputQuality({
   structuredInvoice,
-  invoice
+  invoice,
+  hasUnresolvedBillingFacts = false
 }: EvaluateOutputQualityInput): OutputQualityGate {
   const blockers: OutputQualityIssue[] = [];
   const warnings: OutputQualityIssue[] = [];
@@ -191,6 +194,19 @@ export function evaluateInvoiceOutputQuality({
           "This looks like multi-day work. Add date context or service period for clearer client review."
       });
     }
+  }
+
+  // Authoritative unresolved billing facts must block pass even when no line item
+  // was cleared (ambiguous binds fail closed and leave sibling prices intact).
+  if (
+    hasUnresolvedBillingFacts &&
+    !blockers.some((blocker) => blocker.code === "missing_price")
+  ) {
+    blockers.push({
+      code: "missing_price",
+      message:
+        "A price, rate, or quantity is still unresolved. Enter it before generating."
+    });
   }
 
   return {
