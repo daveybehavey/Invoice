@@ -2480,6 +2480,74 @@ test("save remains explicit-only", async () => {
   assert.equal(listAfterSave.body.invoices.length, 1);
 });
 
+test("saved invoice keeps the original job note and hides it from the client portal", async () => {
+  const ownerId = "source-note-owner";
+  const sourceNote =
+    "pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote,
+        structuredInvoice: {
+          customerName: "Pool Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-SOURCE-NOTE-1",
+          issueDate: "2026-04-01",
+          customerName: "Pool Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-source-note-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+
+  assert.equal(saveResponse.status, 200);
+  assert.equal(saveResponse.body.invoice.invoiceData.sourceNote, sourceNote);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const loaded = await request(app).get(`/api/invoices/${invoiceId}`).set("x-invoice-user-id", ownerId);
+  assert.equal(loaded.status, 200);
+  assert.equal(loaded.body.invoice.invoiceData.sourceNote, sourceNote);
+  assert.equal(loaded.body.invoice.invoiceData.finishedInvoice.total, 148);
+
+  const portalResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/client-portal-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(portalResponse.status, 200);
+  assert.equal(portalResponse.body.invoice.invoiceData.sourceNote, sourceNote);
+
+  const portalToken = portalResponse.body.invoice.invoiceData.finishedInvoice.portalAccessToken as string;
+  const publicPortal = await request(app).get(
+    `/api/public/invoices/${invoiceId}/portal?token=${encodeURIComponent(portalToken)}`
+  );
+  assert.equal(publicPortal.status, 200);
+  assert.equal(publicPortal.body.invoice.invoiceData.sourceNote, undefined);
+  assert.equal(JSON.stringify(publicPortal.body).includes("acid jug"), false);
+
+  const reloaded = await request(app).get(`/api/invoices/${invoiceId}`).set("x-invoice-user-id", ownerId);
+  assert.equal(reloaded.status, 200);
+  assert.equal(reloaded.body.invoice.invoiceData.sourceNote, sourceNote);
+});
+
 test("saved invoice metadata includes structured due date", async () => {
   const ownerId = "due-date-owner";
   const saveResponse = await request(app)

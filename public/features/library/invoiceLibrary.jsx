@@ -1005,6 +1005,12 @@
         taxRate: deriveTaxRate(invoiceData.finishedInvoice),
         savedInvoiceId: savedInvoice?.invoiceId ?? "",
         savedInvoiceStatus: savedInvoice?.status ?? "",
+        sourceNote:
+          draftOptions.freshDraft === true
+            ? ""
+            : typeof invoiceData.sourceNote === "string"
+              ? invoiceData.sourceNote
+              : "",
         ...draftOptions
       });
       const draft =

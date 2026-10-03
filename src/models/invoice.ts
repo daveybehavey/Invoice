@@ -298,9 +298,25 @@ export const InvoicePdfExportRequestSchema = z.object({
 export const SavedInvoiceStatusSchema = z.enum(["draft", "sent", "paid", "deleted"]);
 export const SavedInvoiceSourceTypeSchema = z.enum(["text_input", "upload"]);
 
+const SourceNoteSchema = z.preprocess((value) => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    return value;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed.length > 20000 ? trimmed.slice(0, 20000) : trimmed;
+}, z.string().min(1).max(20000).optional());
+
 export const SavedInvoiceDataSchema = z.object({
   structuredInvoice: StructuredInvoiceSchema,
-  finishedInvoice: FinishedInvoiceSchema
+  finishedInvoice: FinishedInvoiceSchema,
+  // Original job note the user typed. Not a price and not client-facing copy.
+  sourceNote: SourceNoteSchema
 });
 
 export const SavedInvoiceSchema = z.object({

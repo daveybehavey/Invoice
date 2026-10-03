@@ -400,7 +400,7 @@ app.post("/api/invoices/:id/client-portal-link", async (req: Request, res: Respo
       invoiceId,
       sourceType: savedInvoice.sourceType,
       invoiceData: {
-        structuredInvoice: savedInvoice.invoiceData.structuredInvoice,
+        ...savedInvoice.invoiceData,
         finishedInvoice: {
           ...savedInvoice.invoiceData.finishedInvoice,
           portalAccessToken

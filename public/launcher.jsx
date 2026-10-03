@@ -1590,7 +1590,11 @@ function Launcher() {
       const draft = buildDraftFromFinishedInvoice(finishedInvoice, {
         taxRate: deriveTaxRate(finishedInvoice),
         savedInvoiceId: savedInvoice?.invoiceId ?? "",
-        savedInvoiceStatus: savedInvoice?.status ?? "draft"
+        savedInvoiceStatus: savedInvoice?.status ?? "draft",
+        sourceNote:
+          typeof savedInvoice?.invoiceData?.sourceNote === "string"
+            ? savedInvoice.invoiceData.sourceNote
+            : ""
       });
       window.localStorage.setItem(draftStorageKey, JSON.stringify(draft));
       if (options?.openWithBillie) {

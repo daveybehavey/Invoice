@@ -339,6 +339,7 @@
       fromDetails: "",
       billToDetails: invoice?.customerName ?? "",
       notes: invoice?.notes ?? "",
+      sourceNote: typeof transcript === "string" ? transcript.trim().slice(0, 20000) : "",
       taxRate: taxOverride ?? "0",
       lineItems: lineItems.length
         ? lineItems
