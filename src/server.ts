@@ -83,7 +83,7 @@ import {
   sendInvoiceEmail,
   sendLaunchTestEmail
 } from "./services/invoiceEmailDelivery.js";
-import { invoiceSendIsBlocked, SEND_BLOCKED_MESSAGE } from "./services/invoiceSendGate.js";
+import { invoiceSendIsBlocked, PAYMENT_LINK_BLOCKED_MESSAGE, SEND_BLOCKED_MESSAGE } from "./services/invoiceSendGate.js";
 import {
   listDueInvoiceReminderCandidates,
   runDueInvoiceReminders,
@@ -1471,6 +1471,14 @@ app.post("/api/invoices/:id/payment-link", async (req: Request, res: Response, n
     }
     if (!getStripeBillingCapabilities().invoicePaymentAvailable) {
       throw new HttpStatusError(400, "Stripe invoice payments are not configured yet.");
+    }
+    if (
+      invoiceSendIsBlocked({
+        finishedInvoice: savedInvoice.invoiceData.finishedInvoice,
+        sourceNote: savedInvoice.invoiceData.sourceNote
+      })
+    ) {
+      throw new HttpStatusError(400, PAYMENT_LINK_BLOCKED_MESSAGE);
     }
     const invoice = parsedRequest.refresh
       ? await createAndPersistSavedInvoicePaymentLink({

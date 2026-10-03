@@ -2014,6 +2014,12 @@ function ManualInvoiceCanvas() {
       setPaymentLinkError("Save invoice first to create a payment link.");
       return;
     }
+    if (sendBlockedByPrice) {
+      setPaymentLinkError(
+        "Cannot create a payment link while a non-waived line is $0 or a billing decision is still open."
+      );
+      return;
+    }
     setPaymentLinkBusy(true);
     setPaymentLinkError("");
     setSaveError("");
@@ -2168,7 +2174,7 @@ function ManualInvoiceCanvas() {
         onClick: () => handleRememberCurrentLineItem(currentServiceMemoryCandidate)
       });
     }
-    if (savedInvoiceId && !paymentLinkUrl.trim()) {
+    if (savedInvoiceId && !paymentLinkUrl.trim() && !sendBlockedByPrice) {
       moves.push({
         id: "payment-link",
         label: "Add a payment link",
@@ -2226,7 +2232,8 @@ function ManualInvoiceCanvas() {
     paymentLinkUrl,
     primaryBillToName,
     saveStatus,
-    savedInvoiceId
+    savedInvoiceId,
+    sendBlockedByPrice
   ]);
   const hasClientDetails = Boolean(String(billToDetails ?? "").trim());
   const hasBillableLineItem = lineItems.some((item) => {
@@ -2242,13 +2249,15 @@ function ManualInvoiceCanvas() {
   const handoffStages = [
     {
       label: "Send-ready basics",
-      value: hasClientDetails && hasBillableLineItem
-        ? "Ready"
-        : hasClientDetails
-          ? "Add a priced line item"
-          : hasBillableLineItem
-            ? "Add client details"
-            : "Add client + priced work"
+      value: sendBlockedByPrice
+        ? "Needs a price"
+        : hasClientDetails && hasBillableLineItem
+          ? "Ready"
+          : hasClientDetails
+            ? "Add a priced line item"
+            : hasBillableLineItem
+              ? "Add client details"
+              : "Add client + priced work"
     },
     {
       label: "Save",
@@ -2256,7 +2265,13 @@ function ManualInvoiceCanvas() {
     },
     {
       label: "Payment link",
-      value: hasHostedPaymentLink ? "Hosted link ready" : hasSavedDraft ? "Create link" : "Save first"
+      value: hasHostedPaymentLink
+        ? "Hosted link ready"
+        : sendBlockedByPrice
+          ? "Needs a price"
+          : hasSavedDraft
+            ? "Create link"
+            : "Save first"
     },
     {
       label: "Client portal",
@@ -2310,6 +2325,24 @@ function ManualInvoiceCanvas() {
             disabled: saveStatus === "Saving...",
             onClick: () => {
               void handleSaveInvoice();
+            }
+          }
+        ]
+      };
+    }
+
+    if (sendBlockedByPrice) {
+      return {
+        eyebrow: "Needs a price",
+        title: "A line is still $0 or waiting on a price.",
+        detail:
+          "Enter the missing price, or mark the line free / no-charge. A bare $0 cannot get a payment link or be sent.",
+        actions: [
+          {
+            id: "priced-work",
+            label: "Review line items",
+            onClick: () => {
+              document.querySelector('input[placeholder="Description"]')?.focus();
             }
           }
         ]
@@ -2401,24 +2434,6 @@ function ManualInvoiceCanvas() {
             id: "open-library",
             label: "Open library",
             onClick: () => navigate("/invoices")
-          }
-        ]
-      };
-    }
-
-    if (sendBlockedByPrice) {
-      return {
-        eyebrow: "Needs a price",
-        title: "A line is still $0 or waiting on a price.",
-        detail:
-          "Enter the missing price, or mark the line free / no-charge. A bare $0 cannot be sent.",
-        actions: [
-          {
-            id: "priced-work",
-            label: "Review line items",
-            onClick: () => {
-              document.querySelector('input[placeholder="Description"]')?.focus();
-            }
           }
         ]
       };
@@ -4420,7 +4435,7 @@ function ManualInvoiceCanvas() {
                     {saveStatus === "Saving..." ? "Saving..." : "Save draft"}
                   </button>
                 ) : null}
-                {hasSavedDraft && !hasHostedPaymentLink ? (
+                {hasSavedDraft && !hasHostedPaymentLink && !sendBlockedByPrice ? (
                   <button
                     type="button"
                     className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"

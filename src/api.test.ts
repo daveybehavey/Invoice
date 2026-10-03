@@ -2782,6 +2782,144 @@ test("payment-link endpoint creates and persists a Stripe payment link for a sav
   );
 });
 
+test("payment-link returns 400 when a non-waived line is $0", async () => {
+  const ownerId = "payment-link-block-zero-owner";
+  let created = false;
+  setInvoicePaymentLinkCreatorForTests(async () => {
+    created = true;
+    return {
+      url: "https://pay.stripe.test/plink_should_not",
+      paymentLinkId: "plink_should_not"
+    };
+  });
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PAY-ZERO-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot create a payment link while a non-waived line is $0 or a billing decision is still open."
+  );
+  assert.equal(created, false);
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl ?? "", "");
+});
+
+test("payment-link returns 400 while a billing decision is still open", async () => {
+  const ownerId = "payment-link-block-open-owner";
+  let created = false;
+  setInvoicePaymentLinkCreatorForTests(async () => {
+    created = true;
+    return {
+      url: "https://pay.stripe.test/plink_should_not_open",
+      paymentLinkId: "plink_should_not_open"
+    };
+  });
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PAY-OPEN-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot create a payment link while a non-waived line is $0 or a billing decision is still open."
+  );
+  assert.equal(created, false);
+});
+
 test("client portal endpoint creates a tokenized customer portal link and exposes invoice history", async () => {
   const ownerId = "client-portal-owner";
 
