@@ -872,7 +872,8 @@ export function applyBillingEvidenceLedger(
             workSessions[taskRef.sessionIndex].tasks[taskRef.taskIndex] = {
               ...taskRef.task,
               amount: 0,
-              rate: 0
+              rate: 0,
+              explicitFree: true
             };
             boundWaivedIdentities.add(
               subjectIdentityKey(taskRef.task.description) ||
@@ -880,7 +881,7 @@ export function applyBillingEvidenceLedger(
             );
           } else if (zeroMaterials.length === 1 && zeroTasks.length === 0) {
             const { material, index } = zeroMaterials[0];
-            materials[index] = { ...material, unitCost: 0, amount: 0 };
+            materials[index] = { ...material, unitCost: 0, amount: 0, explicitFree: true };
             boundWaivedIdentities.add(
               subjectIdentityKey(material.description) || normalizeBillingText(material.description)
             );
@@ -889,7 +890,8 @@ export function applyBillingEvidenceLedger(
             workSessions[taskRef.sessionIndex].tasks[taskRef.taskIndex] = {
               ...taskRef.task,
               amount: 0,
-              rate: 0
+              rate: 0,
+              explicitFree: true
             };
             boundWaivedIdentities.add(
               subjectIdentityKey(taskRef.task.description) ||
@@ -964,6 +966,7 @@ export function applyBillingEvidenceLedger(
       } else if (fact.state === "waived") {
         material.unitCost = 0;
         material.amount = 0;
+        material.explicitFree = true;
         boundWaivedIdentities.add(candidate.identity);
       }
       materials[candidate.index] = material;
@@ -993,6 +996,7 @@ export function applyBillingEvidenceLedger(
     } else if (fact.state === "waived") {
       task.amount = 0;
       task.rate = 0;
+      task.explicitFree = true;
       boundWaivedIdentities.add(candidate.identity);
     } else {
       // Known non-rate on labor without category support — fail closed.

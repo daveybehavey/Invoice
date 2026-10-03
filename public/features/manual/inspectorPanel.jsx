@@ -1083,7 +1083,8 @@ function InspectorPanel({
         description: polishLineItemDescription(item.description?.trim()) || "Untitled line item",
         qty: hasQuantity ? quantity : null,
         rate: hasRate ? rate : null,
-        amount: hasQuantity && hasRate ? quantity * rate : null
+        amount: hasQuantity && hasRate ? quantity * rate : null,
+        explicitFree: item.explicitFree === true
       };
     });
   const previewItems =
@@ -1139,7 +1140,48 @@ function InspectorPanel({
   );
   const hasInvoiceTotal = Number.isFinite(previewTotal) && previewTotal > 0;
   const hasPaymentTerms = Boolean(previewData?.notes?.trim() || previewPaymentLink);
-  const sendReady = hasClientDetails && hasBillableLineItem && hasInvoiceTotal;
+  const explicitFreeSentence =
+    /\b(?:no charge|no-charge|didn't charge|did not charge|didnt charge|not charged|no cost|complimentary|\bfree\b)\b/i;
+  const previewSourceNote = `${previewData?.sourceNote ?? ""}`;
+  const lineIsExplicitFree = (item) => {
+    const rateIsPositive = Number.isFinite(item.rate) && item.rate > 0;
+    if (item.explicitFree === true && !rateIsPositive) {
+      return true;
+    }
+    const description = `${item.description ?? ""}`.trim().toLowerCase();
+    if (!description || !previewSourceNote || rateIsPositive || item.placeholder) {
+      return false;
+    }
+    const tokens = description.split(/[^a-z0-9]+/).filter((token) => token.length > 3);
+    if (!tokens.length) {
+      return false;
+    }
+    return previewSourceNote.split(/[\n.!?]+/).some((sentence) => {
+      if (!explicitFreeSentence.test(sentence)) {
+        return false;
+      }
+      const hay = sentence.toLowerCase();
+      return tokens.every((token) => hay.includes(token));
+    });
+  };
+  const hasNonWaivedZeroLine = parsedLineItems.some(
+    (item) =>
+      !item.placeholder &&
+      ((Number.isFinite(item.amount) && item.amount === 0) ||
+        (Number.isFinite(item.rate) && item.rate === 0) ||
+        (Number.isFinite(item.qty) && item.qty === 0)) &&
+      !lineIsExplicitFree(item)
+  );
+  const hasOpenBillingDecision = parsedLineItems.some(
+    (item) =>
+      !item.placeholder &&
+      `${item.description ?? ""}`.trim() &&
+      `${item.description ?? ""}` !== "Untitled line item" &&
+      (item.amount === null || item.rate === null || item.qty === null) &&
+      !lineIsExplicitFree(item)
+  );
+  const sendReady =
+    hasClientDetails && hasBillableLineItem && hasInvoiceTotal && !hasNonWaivedZeroLine && !hasOpenBillingDecision;
   const readinessItems = [
     {
       id: "client",

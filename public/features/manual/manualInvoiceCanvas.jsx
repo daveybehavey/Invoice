@@ -821,6 +821,49 @@ function ManualInvoiceCanvas() {
   };
 
   const getLineAmount = (item) => parseNumber(item.qty) * parseNumber(item.rate);
+  const explicitFreeSentence =
+    /\b(?:no charge|no-charge|didn't charge|did not charge|didnt charge|not charged|no cost|complimentary|\bfree\b)\b/i;
+  const lineIsExplicitFree = (item) => {
+    const rateText = `${item?.rate ?? ""}`.trim();
+    const rate = Number.parseFloat(rateText);
+    const rateIsPositive = rateText !== "" && Number.isFinite(rate) && rate > 0;
+    if (item?.explicitFree === true && !rateIsPositive) {
+      return true;
+    }
+    const description = `${item?.description ?? ""}`.trim().toLowerCase();
+    const note = `${sourceNote ?? ""}`;
+    if (!description || !note || rateIsPositive) {
+      return false;
+    }
+    const tokens = description.split(/[^a-z0-9]+/).filter((token) => token.length > 3);
+    if (!tokens.length) {
+      return false;
+    }
+    return note.split(/[\n.!?]+/).some((sentence) => {
+      if (!explicitFreeSentence.test(sentence)) {
+        return false;
+      }
+      const hay = sentence.toLowerCase();
+      return tokens.every((token) => hay.includes(token));
+    });
+  };
+  const describedLines = lineItems.filter((item) => `${item?.description ?? ""}`.trim());
+  const hasNonWaivedZeroLine = describedLines.some((item) => {
+    const rateText = `${item?.rate ?? ""}`.trim();
+    const qtyText = `${item?.qty ?? ""}`.trim();
+    const rate = Number.parseFloat(rateText);
+    const qty = Number.parseFloat(qtyText);
+    const zeroRate = rateText !== "" && Number.isFinite(rate) && rate === 0;
+    const zeroQty = qtyText !== "" && Number.isFinite(qty) && qty === 0;
+    return (zeroRate || zeroQty) && !lineIsExplicitFree(item);
+  });
+  const hasOpenBillingDecision = describedLines.some((item) => {
+    const rateText = `${item?.rate ?? ""}`.trim();
+    const qtyText = `${item?.qty ?? ""}`.trim();
+    const missing = rateText === "" || qtyText === "" || !Number.isFinite(Number.parseFloat(rateText));
+    return missing && !lineIsExplicitFree(item);
+  });
+  const sendBlockedByPrice = hasNonWaivedZeroLine || hasOpenBillingDecision;
   const subtotal = lineItems.reduce((sum, item) => sum + getLineAmount(item), 0);
   const effectiveDiscountAmount = Math.min(subtotal, Math.max(0, parseNumber(discountAmount)));
   const discountedSubtotal = Math.max(0, subtotal - effectiveDiscountAmount);
@@ -838,6 +881,7 @@ function ManualInvoiceCanvas() {
     registrationBlockVisible,
     billToDetails,
     notes,
+    sourceNote,
     paymentLinkUrl,
     paymentRecords,
     amountPaid,
@@ -1498,7 +1542,12 @@ function ManualInvoiceCanvas() {
         description: polishLineItemDescription(item.description),
         quantity: item.qty === "" ? undefined : parseNumber(item.qty),
         unitPrice: item.rate === "" ? undefined : parseNumber(item.rate),
-        amount: getLineAmount(item)
+        amount: getLineAmount(item),
+        ...(`${item.rate ?? ""}`.trim() !== "" &&
+        Number.parseFloat(item.rate) === 0 &&
+        item.explicitFree === true
+          ? { explicitFree: true }
+          : {})
       })),
       notes: notes?.trim() || undefined,
       paymentLinkUrl: paymentLinkUrl?.trim() || undefined,
@@ -1604,7 +1653,8 @@ function ManualInvoiceCanvas() {
           id: item.id ?? `line-${Date.now()}-${index}`,
           description: polishLineItemDescription(item.description ?? ""),
           qty: Number.isFinite(item.quantity) ? String(item.quantity) : "",
-          rate: Number.isFinite(item.unitPrice) ? String(item.unitPrice) : ""
+          rate: Number.isFinite(item.unitPrice) ? String(item.unitPrice) : "",
+          ...(item.explicitFree === true ? { explicitFree: true } : {})
         }))
       );
     }
@@ -2338,6 +2388,24 @@ function ManualInvoiceCanvas() {
       };
     }
 
+    if (sendBlockedByPrice) {
+      return {
+        eyebrow: "Needs a price",
+        title: "A line is still $0 or waiting on a price.",
+        detail:
+          "Enter the missing price, or mark the line free / no-charge. A bare $0 cannot be sent.",
+        actions: [
+          {
+            id: "priced-work",
+            label: "Review line items",
+            onClick: () => {
+              document.querySelector('input[placeholder="Description"]')?.focus();
+            }
+          }
+        ]
+      };
+    }
+
     return {
       eyebrow: "Ready to send",
       title: "Everything needed for a polished handoff is ready.",
@@ -2376,6 +2444,7 @@ function ManualInvoiceCanvas() {
     hasClientPortal,
     hasHostedPaymentLink,
     hasSavedDraft,
+    sendBlockedByPrice,
     onboardingStatus.completionVisible,
     onboardingStatus.visible,
     navigate,

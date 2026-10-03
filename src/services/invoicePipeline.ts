@@ -2151,7 +2151,8 @@ function applyBillingWaiveToStructuredInvoice(
       return {
         ...task,
         rate: 0,
-        amount: 0
+        amount: 0,
+        explicitFree: true
       };
     })
   }));
@@ -2163,7 +2164,8 @@ function applyBillingWaiveToStructuredInvoice(
     return {
       ...material,
       unitCost: 0,
-      amount: 0
+      amount: 0,
+      explicitFree: true
     };
   });
 
@@ -2226,7 +2228,8 @@ function applyBillingExclusionToStructuredInvoice(
       return {
         ...task,
         rate: typeof task.rate === "number" ? 0 : task.rate,
-        amount: 0
+        amount: 0,
+        explicitFree: true
       };
     })
   }));
@@ -2238,7 +2241,8 @@ function applyBillingExclusionToStructuredInvoice(
     return {
       ...material,
       unitCost: typeof material.unitCost === "number" ? 0 : material.unitCost,
-      amount: 0
+      amount: 0,
+      explicitFree: true
     };
   });
 
@@ -3781,6 +3785,7 @@ function finalizeRewordedLineItemDescription(originalDescription: string, rewrit
   return polishedRewritten;
 }
 
+
 function buildLaborLineItem(task: Task, sessionDate?: string) {
   const hours = task.hours;
   const rate = task.rate;
@@ -3797,7 +3802,8 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
       quantity: roundToCents(hours),
       unitPrice: roundToCents(rate),
       amount: roundToCents(typeof amount === "number" ? amount : hours * rate),
-      sourceSessionDate: sessionDate
+      sourceSessionDate: sessionDate,
+      ...(task.explicitFree ? { explicitFree: true } : {})
     };
   }
 
@@ -3808,7 +3814,8 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
       quantity: roundToCents(hours),
       unitPrice: roundToCents(amount / hours),
       amount: roundToCents(amount),
-      sourceSessionDate: sessionDate
+      sourceSessionDate: sessionDate,
+      ...(task.explicitFree ? { explicitFree: true } : {})
     };
   }
 
@@ -3819,7 +3826,8 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
       quantity: roundToCents(amount / rate),
       unitPrice: roundToCents(rate),
       amount: roundToCents(amount),
-      sourceSessionDate: sessionDate
+      sourceSessionDate: sessionDate,
+      ...(task.explicitFree ? { explicitFree: true } : {})
     };
   }
 
@@ -3830,7 +3838,8 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
       quantity: 1,
       unitPrice: roundToCents(amount),
       amount: roundToCents(amount),
-      sourceSessionDate: sessionDate
+      sourceSessionDate: sessionDate,
+      ...(task.explicitFree ? { explicitFree: true } : {})
     };
   }
 
@@ -3841,7 +3850,8 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
       quantity: roundToCents(hours),
       unitPrice: undefined,
       amount: undefined,
-      sourceSessionDate: sessionDate
+      sourceSessionDate: sessionDate,
+      ...(task.explicitFree ? { explicitFree: true } : {})
     };
   }
 
@@ -3852,7 +3862,8 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
       quantity: 1,
       unitPrice: roundToCents(rate),
       amount: roundToCents(rate),
-      sourceSessionDate: sessionDate
+      sourceSessionDate: sessionDate,
+      ...(task.explicitFree ? { explicitFree: true } : {})
     };
   }
 
@@ -3862,7 +3873,8 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
     quantity: 1,
     unitPrice: undefined,
     amount: undefined,
-    sourceSessionDate: sessionDate
+    sourceSessionDate: sessionDate,
+    ...(task.explicitFree ? { explicitFree: true } : {})
   };
 }
 
@@ -3909,6 +3921,7 @@ function buildMaterialLineItem(
     description,
     quantity: typeof safeQuantity === "number" ? roundToCents(safeQuantity) : undefined,
     unitPrice: typeof unitPrice === "number" ? roundToCents(unitPrice) : undefined,
-    amount: typeof amount === "number" ? roundToCents(amount) : undefined
+    amount: typeof amount === "number" ? roundToCents(amount) : undefined,
+    ...(material.explicitFree ? { explicitFree: true } : {})
   };
 }

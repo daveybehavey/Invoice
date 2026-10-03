@@ -83,6 +83,7 @@ import {
   sendInvoiceEmail,
   sendLaunchTestEmail
 } from "./services/invoiceEmailDelivery.js";
+import { invoiceSendIsBlocked, SEND_BLOCKED_MESSAGE } from "./services/invoiceSendGate.js";
 import {
   listDueInvoiceReminderCandidates,
   runDueInvoiceReminders,
@@ -1401,6 +1402,14 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
     if (existingInvoice.status === "deleted") {
       throw new HttpStatusError(400, "Restore this invoice before sending.");
     }
+    if (
+      invoiceSendIsBlocked({
+        finishedInvoice: existingInvoice.invoiceData.finishedInvoice,
+        sourceNote: existingInvoice.invoiceData.sourceNote
+      })
+    ) {
+      throw new HttpStatusError(400, SEND_BLOCKED_MESSAGE);
+    }
     const invoiceWithPaymentLink = await ensureSavedInvoicePaymentLink({
       ownerId,
       invoice: existingInvoice,
@@ -1956,6 +1965,12 @@ async function ensureSavedInvoicePaymentLink(input: {
   }
   const capabilities = getStripeBillingCapabilities();
   if (!capabilities.invoicePaymentAvailable) {
+    return input.invoice;
+  }
+  const finishedInvoice = input.invoice.invoiceData.finishedInvoice;
+  const total = Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0);
+  // Stripe still refuses a $0 payment link. Explicit free invoices may send without one.
+  if (!Number.isFinite(total) || total <= 0) {
     return input.invoice;
   }
   return createAndPersistSavedInvoicePaymentLink(input);

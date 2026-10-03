@@ -67,7 +67,9 @@ export const TaskSchema = z.object({
   description: z.string().min(1),
   hours: OptionalNumber,
   rate: OptionalNumber,
-  amount: OptionalNumber
+  amount: OptionalNumber,
+  // User or source explicitly marked this labor line free / no-charge. Not an invented $0.
+  explicitFree: z.boolean().optional()
 });
 
 export const WorkSessionSchema = z.object({
@@ -79,7 +81,9 @@ export const MaterialSchema = z.object({
   description: z.string().min(1),
   quantity: OptionalNumber,
   unitCost: OptionalNumber,
-  amount: OptionalNumber
+  amount: OptionalNumber,
+  // User or source explicitly marked this material free / no-charge. Not an invented $0.
+  explicitFree: z.boolean().optional()
 });
 
 export const StructuredInvoiceSchema = z.object({
@@ -101,7 +105,9 @@ export const InvoiceLineItemSchema = z.object({
   quantity: OptionalNumber,
   unitPrice: OptionalNumber,
   amount: OptionalNumber,
-  sourceSessionDate: OptionalString
+  sourceSessionDate: OptionalString,
+  // Only an explicit free / no-charge may be sent at $0.
+  explicitFree: z.boolean().optional()
 });
 
 export const InvoiceDecisionSchema = z.object({
