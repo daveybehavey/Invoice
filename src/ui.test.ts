@@ -836,6 +836,46 @@ test("manual onboarding cue updates through save, payment link, and portal setup
   }
 });
 
+test("saved draft with an unpriced line does not offer a client portal", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-client-portal-price-gate-owner");
+  });
+  const page = await context.newPage();
+  let portalRequested = false;
+  try {
+    await page.route("**/api/invoices/*/client-portal-link", async (route) => {
+      portalRequested = true;
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error:
+            "Cannot create a client portal while a non-waived line is $0 or a billing decision is still open."
+        })
+      });
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    await page.locator('textarea[placeholder="Client Name"]:visible').fill("Pool Co");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Pool visit");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("2");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("74");
+    await page.getByRole("button", { name: "+ Add line item" }).click();
+    await page.locator('input[placeholder="Description"]:visible').nth(1).fill("Acid jug");
+
+    const handoff = page.getByTestId("manual-send-payment-handoff");
+    await handoff.getByRole("button", { name: "Save draft" }).click();
+    await handoff.getByText("Needs a price").first().waitFor({ state: "visible" });
+    await handoff.getByRole("button", { name: "Create client portal" }).waitFor({ state: "hidden" });
+    await getManualExportFormButton(page, "Create client portal").waitFor({ state: "hidden" });
+    await handoff.getByRole("button", { name: "Save draft" }).waitFor({ state: "hidden" });
+    assert.equal(portalRequested, false);
+  } finally {
+    await context.close();
+  }
+});
+
 test("intake Billie next-up guide updates from notes to draft-ready state", async () => {
   useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
   const context = await browser.newContext();

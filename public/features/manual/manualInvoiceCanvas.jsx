@@ -2104,6 +2104,12 @@ function ManualInvoiceCanvas() {
       setClientPortalError("Save invoice first to create a client portal link.");
       return;
     }
+    if (sendBlockedByPrice) {
+      setClientPortalError(
+        "Cannot create a client portal while a non-waived line is $0 or a billing decision is still open."
+      );
+      return;
+    }
     setClientPortalBusy(true);
     setClientPortalError("");
     setSaveError("");
@@ -2170,7 +2176,7 @@ function ManualInvoiceCanvas() {
         }
       });
     }
-    if (savedInvoiceId && !clientPortalUrl) {
+    if (savedInvoiceId && !clientPortalUrl && !sendBlockedByPrice) {
       moves.push({
         id: "client-portal",
         label: "Create the client portal",
@@ -2214,7 +2220,8 @@ function ManualInvoiceCanvas() {
     paymentLinkUrl,
     primaryBillToName,
     saveStatus,
-    savedInvoiceId
+    savedInvoiceId,
+    sendBlockedByPrice
   ]);
   const hasClientDetails = Boolean(String(billToDetails ?? "").trim());
   const hasBillableLineItem = lineItems.some((item) => {
@@ -2246,7 +2253,13 @@ function ManualInvoiceCanvas() {
     },
     {
       label: "Client portal",
-      value: hasClientPortal ? "Portal ready" : hasSavedDraft ? "Create portal" : "Save first"
+      value: hasClientPortal
+        ? "Portal ready"
+        : sendBlockedByPrice
+          ? "Needs a price"
+          : hasSavedDraft
+            ? "Create portal"
+            : "Save first"
     }
   ];
   const onboardingContextCue = useMemo(() => {
@@ -2317,14 +2330,18 @@ function ManualInvoiceCanvas() {
               void handleGeneratePaymentLink();
             }
           },
-          {
-            id: "client-portal",
-            label: clientPortalBusy ? "Creating..." : "Create client portal",
-            disabled: clientPortalBusy,
-            onClick: () => {
-              void handleGenerateClientPortalLink();
-            }
-          },
+          ...(sendBlockedByPrice
+            ? []
+            : [
+                {
+                  id: "client-portal",
+                  label: clientPortalBusy ? "Creating..." : "Create client portal",
+                  disabled: clientPortalBusy,
+                  onClick: () => {
+                    void handleGenerateClientPortalLink();
+                  }
+                }
+              ]),
           {
             id: "open-library",
             label: "Open library",
@@ -2334,7 +2351,7 @@ function ManualInvoiceCanvas() {
       };
     }
 
-    if (hasHostedPaymentLink && !hasClientPortal) {
+    if (hasHostedPaymentLink && !hasClientPortal && !sendBlockedByPrice) {
       return {
         eyebrow: "Nice progress",
         title: "Payment link is ready. Add the portal to finish the handoff.",
@@ -4409,7 +4426,7 @@ function ManualInvoiceCanvas() {
                     {paymentLinkBusy ? "Creating..." : "Create payment link"}
                   </button>
                 ) : null}
-                {hasSavedDraft && !hasClientPortal ? (
+                {hasSavedDraft && !hasClientPortal && !sendBlockedByPrice ? (
                   <button
                     type="button"
                     className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
@@ -4527,6 +4544,7 @@ function ManualInvoiceCanvas() {
                 <span className="text-[11px] font-semibold text-slate-400">Optional</span>
               </div>
               <div className="flex flex-wrap items-center gap-3">
+                {sendBlockedByPrice ? null : (
                 <button
                   type="button"
                   className="min-h-10 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white"
@@ -4536,6 +4554,7 @@ function ManualInvoiceCanvas() {
                 >
                   {clientPortalBusy ? "Creating portal..." : clientPortalUrl ? "Refresh client portal" : "Create client portal"}
                 </button>
+                )}
                 {clientPortalUrl ? (
                   <a
                     href={clientPortalUrl}

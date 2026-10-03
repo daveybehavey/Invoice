@@ -9,6 +9,10 @@ import {
 export const SEND_BLOCKED_MESSAGE =
   "Cannot send while a non-waived line is $0 or a billing decision is still open.";
 
+/** Returned as the 400 error from POST /api/invoices/:id/client-portal-link. */
+export const CLIENT_PORTAL_BLOCKED_MESSAGE =
+  "Cannot create a client portal while a non-waived line is $0 or a billing decision is still open.";
+
 const FREE_SENTENCE_MARKERS =
   /\b(?:no charge|no-charge|didn't charge|did not charge|didnt charge|not charged|no cost|complimentary|\bfree\b)\b/i;
 
