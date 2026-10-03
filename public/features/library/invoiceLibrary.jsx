@@ -2596,18 +2596,124 @@
     return shareLines.join("\n");
   };
 
+  const explicitFreeSentence =
+    /\b(?:no charge|no-charge|didn't charge|did not charge|didnt charge|not charged|no cost|complimentary|\bfree\b)\b/i;
+
+  const libraryLineIsExplicitFree = (line, sourceNote = "") => {
+    const unit = Number(line?.unitPrice);
+    const amount = Number(line?.amount);
+    const positivePrice = Number.isFinite(unit) && unit > 0;
+    if (line?.explicitFree === true && !positivePrice) {
+      return true;
+    }
+    const description = `${line?.description ?? ""}`.trim().toLowerCase();
+    const note = `${sourceNote ?? ""}`;
+    if (!description || !note || positivePrice) {
+      return false;
+    }
+    const tokens = description.split(/[^a-z0-9]+/).filter((token) => token.length > 3);
+    if (!tokens.length) {
+      return false;
+    }
+    return note.split(/[\n.!?]+/).some((sentence) => {
+      if (!explicitFreeSentence.test(sentence)) {
+        return false;
+      }
+      const hay = sentence.toLowerCase();
+      return tokens.every((token) => hay.includes(token));
+    });
+  };
+
+  /**
+   * Mirror the manual editor share-pack send-ready gate:
+   * client + priced line + no open/$0 price + total > 0.
+   */
+  const librarySharePackIsBlocked = (savedInvoice) => {
+    const finished = savedInvoice?.invoiceData?.finishedInvoice ?? savedInvoice ?? {};
+    const sourceNote =
+      typeof savedInvoice?.invoiceData?.sourceNote === "string"
+        ? savedInvoice.invoiceData.sourceNote
+        : typeof savedInvoice?.sourceNote === "string"
+          ? savedInvoice.sourceNote
+          : "";
+    const customerName = `${finished.customerName ?? savedInvoice?.customerName ?? ""}`.trim();
+    const total = Number(finished.total ?? savedInvoice?.total);
+    const lines = Array.isArray(finished.lineItems) ? finished.lineItems : [];
+    const describedLines = lines.filter((line) => `${line?.description ?? ""}`.trim());
+    const hasPricedLine = describedLines.some((line) => {
+      const unit = Number(line?.unitPrice);
+      const amount = Number(line?.amount);
+      return (Number.isFinite(unit) && unit > 0) || (Number.isFinite(amount) && amount > 0);
+    });
+    const hasNonWaivedZero = describedLines.some((line) => {
+      if (libraryLineIsExplicitFree(line, sourceNote)) {
+        return false;
+      }
+      const unit = Number(line?.unitPrice);
+      const amount = Number(line?.amount);
+      return (Number.isFinite(amount) && amount === 0) || (Number.isFinite(unit) && unit === 0);
+    });
+    const hasOpenPrice = describedLines.some((line) => {
+      if (libraryLineIsExplicitFree(line, sourceNote)) {
+        return false;
+      }
+      const unit = line?.unitPrice;
+      const amount = line?.amount;
+      const qty = line?.quantity;
+      const missingUnit = unit === undefined || unit === null || unit === "" || !Number.isFinite(Number(unit));
+      const missingAmount = amount === undefined || amount === null || amount === "" || !Number.isFinite(Number(amount));
+      const missingQty = qty === undefined || qty === null || qty === "" || !Number.isFinite(Number(qty));
+      return missingUnit || missingAmount || missingQty;
+    });
+    if (!customerName || !hasPricedLine || !(Number.isFinite(total) && total > 0)) {
+      return true;
+    }
+    return hasNonWaivedZero || hasOpenPrice;
+  };
+
   const handleCopyInvoiceSharePack = async (invoice) => {
-    const sharePackText = buildLibrarySharePackText(invoice);
-    if (!sharePackText) {
-      setHandoffNotice("No share pack is available for this invoice yet.");
+    if (!invoice?.invoiceId) {
+      return;
+    }
+    if (!(Number(invoice.total) > 0)) {
+      setHandoffNotice("Finish pricing before copying a share pack.");
       return;
     }
     setHandoffNotice("");
+    setActionId(invoice.invoiceId);
     try {
+      const payload = await requestJson(
+        `/api/invoices/${invoice.invoiceId}`,
+        undefined,
+        "Failed to load invoice for share pack."
+      );
+      const savedInvoice = payload?.invoice ?? null;
+      if (!savedInvoice || librarySharePackIsBlocked(savedInvoice)) {
+        setHandoffNotice("Finish pricing before copying a share pack.");
+        return;
+      }
+      const finished = savedInvoice.invoiceData?.finishedInvoice ?? {};
+      const shareInvoice = {
+        invoiceId: savedInvoice.invoiceId,
+        invoiceNumber: finished.invoiceNumber ?? invoice.invoiceNumber,
+        customerName: finished.customerName ?? invoice.customerName,
+        total: finished.total ?? invoice.total,
+        dueDate: finished.dueDate ?? invoice.dueDate,
+        paymentLinkUrl: finished.paymentLinkUrl ?? invoice.paymentLinkUrl,
+        portalAccessToken: finished.portalAccessToken ?? invoice.portalAccessToken,
+        notes: finished.notes ?? invoice.notes
+      };
+      const sharePackText = buildLibrarySharePackText(shareInvoice);
+      if (!sharePackText) {
+        setHandoffNotice("No share pack is available for this invoice yet.");
+        return;
+      }
       await navigator.clipboard?.writeText?.(sharePackText);
       setHandoffNotice("Share pack copied. Paste it into email or chat.");
     } catch (copyError) {
-      setHandoffNotice(copyError?.message || "Could not copy the share pack.");
+      handleLibraryError(copyError, copyError?.message || "Could not copy the share pack.");
+    } finally {
+      setActionId("");
     }
   };
 
@@ -4216,14 +4322,16 @@
                               {actionId === invoice.invoiceId ? "Creating portal..." : "Create client portal"}
                             </button>
                           )}
-                          <button
-                            type="button"
-                            className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"
-                            onClick={() => void handleCopyInvoiceSharePack(invoice)}
-                            disabled={isDeleting}
-                          >
-                              Copy share pack
+                          {Number(invoice.total) > 0 ? (
+                            <button
+                              type="button"
+                              className="nb-btn-secondary rounded-xl px-4 py-2 text-sm disabled:cursor-not-allowed disabled:text-slate-300"
+                              onClick={() => void handleCopyInvoiceSharePack(invoice)}
+                              disabled={isDeleting || actionId === invoice.invoiceId}
+                            >
+                              {actionId === invoice.invoiceId ? "Copying..." : "Copy share pack"}
                             </button>
+                          ) : null}
                             </>
                           ) : null}
                           {!isEstimateDocument && recurringEntry ? (

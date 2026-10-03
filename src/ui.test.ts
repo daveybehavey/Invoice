@@ -10499,6 +10499,120 @@ test("invoice library shows open pay link action when payment link exists", asyn
   }
 });
 
+test("invoice library hides copy share pack when total is zero and refuses open-price drafts", async () => {
+  const context = await browser.newContext();
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-library-share-gate-owner");
+    window.__copiedSharePack = "";
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          window.__copiedSharePack = text;
+        }
+      }
+    });
+  });
+
+  const zeroResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-library-share-gate-owner"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit priced, acid jug supplier price missing.",
+        structuredInvoice: {
+          customerName: "Share Gate Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LIB-SHARE-ZERO",
+          customerName: "Share Gate Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 0,
+          total: 0,
+          balanceDue: 0
+        }
+      }
+    }
+  });
+  assert.equal(zeroResponse.status(), 200);
+
+  const openPriceResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": "ui-library-share-gate-owner"
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Share Gate Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-LIB-SHARE-OPEN",
+          customerName: "Share Gate Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    }
+  });
+  assert.equal(openPriceResponse.status(), 200);
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    await page.getByText("INV-LIB-SHARE-ZERO", { exact: true }).waitFor({ state: "visible" });
+    const zeroCard = page.locator(".nb-surface").filter({ hasText: "INV-LIB-SHARE-ZERO" }).first();
+    assert.equal(await zeroCard.getByRole("button", { name: "Copy share pack" }).count(), 0);
+
+    await page.getByText("INV-LIB-SHARE-OPEN", { exact: true }).waitFor({ state: "visible" });
+    const openCard = page.locator(".nb-surface").filter({ hasText: "INV-LIB-SHARE-OPEN" }).first();
+    await openCard.getByRole("button", { name: "Copy share pack" }).click();
+    await page.getByText("Finish pricing before copying a share pack.").waitFor({ state: "visible" });
+    const copiedSharePack = await page.evaluate(() => window.__copiedSharePack ?? "");
+    assert.equal(String(copiedSharePack), "");
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library can create a client portal and copy a saved invoice share pack", async () => {
   const context = await browser.newContext();
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
