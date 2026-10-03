@@ -5,7 +5,7 @@ import {
   subjectIdentityKey
 } from "./billingEvidence.js";
 
-/** Returned as the 400 error from POST /api/invoices/:id/send. */
+/** Returned as the 400 error from send / status→sent / send-reminder when money is unresolved. */
 export const SEND_BLOCKED_MESSAGE =
   "Cannot send while a non-waived line is $0 or a billing decision is still open.";
 

@@ -1640,6 +1640,17 @@ app.post("/api/invoices/:id/status", async (req: Request, res: Response, next: N
     const invoiceId = z.string().uuid().parse(req.params.id);
     const parsedRequest = UpdateInvoiceStatusRequestSchema.parse(req.body);
     const ownerId = getRequestOwnerId(req);
+    if (parsedRequest.status === "sent") {
+      const existingInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
+      if (
+        invoiceSendIsBlocked({
+          finishedInvoice: existingInvoice.invoiceData.finishedInvoice,
+          sourceNote: existingInvoice.invoiceData.sourceNote
+        })
+      ) {
+        throw new HttpStatusError(400, SEND_BLOCKED_MESSAGE);
+      }
+    }
     const invoice = await savedInvoiceRepository.updateSavedInvoiceStatus(
       invoiceId,
       parsedRequest.status,
