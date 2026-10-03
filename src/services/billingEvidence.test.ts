@@ -3,12 +3,14 @@ import test from "node:test";
 import {
   applyBillingEvidenceLedger,
   buildBillingEvidenceLedger,
+  hasUnresolvedAuthoritativeBillingFacts,
   parseBillingEvidence,
   projectUnresolvedEvidenceToDecisions,
   reduceBillingEvidence,
   subjectIdentityKey
 } from "./billingEvidence.js";
 import { StructuredInvoice } from "../models/invoice.js";
+import { evaluateInvoiceOutputQuality } from "./outputQualityGate.js";
 
 test("AG-094 ledger: later quantity resolves before invoice application", () => {
   const source =
@@ -156,4 +158,81 @@ test("AG-094 ledger: originating statement cannot self-resolve", () => {
   assert.equal(reduced.length, 1);
   assert.equal(reduced[0].state, "unresolved");
   assert.equal(reduced[0].field, "price");
+});
+
+test("mentioned item with unstated price stays unresolved when the note says the price was not written down", () => {
+  const source =
+    "pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.";
+  const applied = applyBillingEvidenceLedger(
+    {
+      workSessions: [
+        {
+          tasks: [{ description: "Pool visit", hours: 2, rate: 74, amount: 148 }]
+        }
+      ],
+      materials: []
+    } as StructuredInvoice,
+    source
+  );
+
+  const labor = applied.structuredInvoice.workSessions[0].tasks[0];
+  assert.equal(labor.hours, 2);
+  assert.equal(labor.rate, 74);
+  assert.equal(labor.amount, 148);
+
+  const acid = applied.structuredInvoice.materials.find((item) => /acid jug/i.test(item.description));
+  assert.ok(acid, "acid jug must stay visible");
+  assert.equal(acid.quantity, 1);
+  assert.equal(acid.unitCost, undefined);
+  assert.equal(acid.amount, undefined);
+  assert.notEqual(acid.unitCost, 0);
+  assert.notEqual(acid.amount, 0);
+
+  const acidPrice = applied.unresolvedFacts.find(
+    (fact) =>
+      fact.state === "unresolved" &&
+      fact.subjectKind === "material" &&
+      fact.field === "price" &&
+      /acid jug/i.test(fact.subjectLabel)
+  );
+  assert.ok(acidPrice);
+  assert.equal(acidPrice.value, undefined);
+
+  const decisions = projectUnresolvedEvidenceToDecisions(applied.unresolvedFacts);
+  assert.ok(decisions.some((decision) => /acid jug/i.test(decision.prompt)));
+
+  const quality = evaluateInvoiceOutputQuality({
+    structuredInvoice: applied.structuredInvoice,
+    hasUnresolvedBillingFacts: hasUnresolvedAuthoritativeBillingFacts({
+      unresolvedFacts: applied.unresolvedFacts,
+      openDecisions: decisions
+    }),
+    invoice: {
+      invoiceNumber: "INV-1001",
+      currency: "USD",
+      lineItems: [
+        {
+          id: "labor",
+          type: "labor",
+          description: "Pool visit",
+          quantity: labor.hours,
+          unitPrice: labor.rate,
+          amount: labor.amount
+        },
+        {
+          id: "acid",
+          type: "material",
+          description: acid.description,
+          quantity: acid.quantity,
+          unitPrice: acid.unitCost,
+          amount: acid.amount
+        }
+      ],
+      subtotal: 148,
+      total: 148,
+      balanceDue: 148
+    }
+  });
+  assert.notEqual(quality.status, "pass");
+  assert.ok(quality.blockers.some((blocker) => blocker.code === "missing_price"));
 });

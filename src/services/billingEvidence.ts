@@ -107,7 +107,7 @@ const STOP_WORDS = new Set([
 ]);
 
 const MISSING_PRICE_MARKERS =
-  /\b(?:(?:supplier\s+)?(?:price|cost|rate)\s+not\s+(?:written(?:\s+down)?|recorded|noted|available|known)|(?:price|cost|rate)\s+(?:unknown|missing|tbd|tba)|(?:don't|do\s+not|didn'?t|did\s+not)\s+know\s+(?:the\s+)?(?:price|cost|rate)|forgot\s+(?:the\s+)?(?:price|cost|rate)|(?:no|missing)\s+(?:unit\s+)?(?:price|cost))\b/i;
+  /\b(?:(?:supplier\s+)?(?:price|cost|rate)\s+(?:(?:was|is|were)\s+)?not\s+(?:written(?:\s+down)?|recorded|noted|available|known)|(?:supplier\s+)?(?:price|cost|rate)\s+(?:wasn'?t|isn'?t|weren'?t)\s+(?:written(?:\s+down)?|recorded|noted|available|known)|(?:price|cost|rate)\s+(?:unknown|missing|tbd|tba)|(?:don't|do\s+not|didn'?t|did\s+not)\s+know\s+(?:the\s+)?(?:price|cost|rate)|forgot\s+(?:the\s+)?(?:price|cost|rate)|(?:no|missing)\s+(?:unit\s+)?(?:price|cost))\b/i;
 
 const MISSING_QUANTITY_MARKERS =
   /\b(?:(?:quantity|qty|count)\s+not\s+(?:written(?:\s+down)?|recorded|noted|available|known)|(?:quantity|qty|count)\s+(?:unknown|missing|tbd|tba)|(?:don't|do\s+not|didn'?t|did\s+not)\s+know\s+(?:the\s+)?(?:quantity|qty|count)|(?:no|missing)\s+(?:quantity|qty|count))\b/i;
@@ -265,6 +265,11 @@ function detectSubjectKind(sentence: string, field: BillingEvidenceField, label:
   if (field === "rate") {
     return "labor";
   }
+  // A counted jug in a mixed labor sentence ("2 hours at $74, and 1 acid jug")
+  // is still a material. Do not let hours/visit elsewhere in the sentence win.
+  if (/\bjugs?\b/i.test(label)) {
+    return "material";
+  }
   const haystack = `${sentence} ${label}`;
   const looksLikeMaterialVerb = /\b(?:added|used|installed|purchased|bought|jug|jugs|material)\b/i.test(
     haystack
@@ -329,6 +334,22 @@ function extractMissingSubject(
     const label = cleanSubjectLabel(genericItem[1]);
     if (label) {
       return { label };
+    }
+  }
+
+  // "…, and 1 acid jug but the supplier price was not written down" has no
+  // added/used verb. Take the counted noun that the missing-value clause modifies.
+  const countedBeforeBut = sentence.match(
+    /\b(\d+(?:\.\d+)?)\s+([a-z][a-z\s'-]{0,48}?)\s*,?\s+but\b/i
+  );
+  if (countedBeforeBut) {
+    const quantity = Number(countedBeforeBut[1]);
+    const label = cleanSubjectLabel(countedBeforeBut[2]);
+    if (label && !/^(?:hours?|hrs?|mins?|minutes?)$/i.test(label)) {
+      return {
+        label,
+        quantityHint: Number.isFinite(quantity) && quantity > 0 ? quantity : undefined
+      };
     }
   }
 
