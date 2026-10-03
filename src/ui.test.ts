@@ -918,6 +918,54 @@ test("saved draft with an unpriced line does not offer a client portal", async (
   }
 });
 
+test("saved draft with an open price and no links shows Needs a price", async () => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-needs-price-cue-owner");
+  });
+  const page = await context.newPage();
+  let paymentLinkCalls = 0;
+  let portalCalls = 0;
+  try {
+    await page.route("**/api/invoices/*/payment-link", async (route) => {
+      paymentLinkCalls += 1;
+      await route.abort();
+    });
+    await page.route("**/api/invoices/*/client-portal-link", async (route) => {
+      portalCalls += 1;
+      await route.abort();
+    });
+
+    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const cue = page.getByTestId("manual-onboarding-next-cue");
+    await cue.getByText("Make this invoice send-ready first.").waitFor({ state: "visible" });
+
+    await page.locator('textarea[placeholder="Client Name"]:visible').fill("Northwind Roofing");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Pool cleaning");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("2");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("74");
+    await page.locator("button:visible", { hasText: "+ Add line item" }).first().click();
+    await page.locator('input[placeholder="Description"]:visible').nth(1).fill("Acid jug");
+
+    await cue.getByText("Your draft is ready to save.").waitFor({ state: "visible" });
+    await cue.getByRole("button", { name: "Save draft" }).click();
+    await cue.getByText("Needs a price").waitFor({ state: "visible" });
+    await cue.getByText("A line is still $0 or waiting on a price.").waitFor({ state: "visible" });
+    assert.equal(await cue.getByText("Nice progress").count(), 0);
+    assert.equal(
+      await cue.getByText("The draft is saved. Add the customer handoff pieces next.").count(),
+      0
+    );
+    await cue.getByRole("button", { name: "Review line items" }).waitFor({ state: "visible" });
+    assert.equal(await cue.getByRole("button", { name: "Create payment link" }).count(), 0);
+    assert.equal(await cue.getByRole("button", { name: "Create client portal" }).count(), 0);
+    assert.equal(paymentLinkCalls, 0);
+    assert.equal(portalCalls, 0);
+  } finally {
+    await context.close();
+  }
+});
+
 test("intake Billie next-up guide updates from notes to draft-ready state", async () => {
   useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
   const context = await browser.newContext();

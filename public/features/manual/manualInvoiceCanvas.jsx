@@ -2343,25 +2343,26 @@ function ManualInvoiceCanvas() {
       };
     }
 
-    if (sendBlockedByPrice) {
-      return {
-        eyebrow: "Needs a price",
-        title: "A line is still $0 or waiting on a price.",
-        detail:
-          "Enter the missing price, or mark the line free / no-charge. A bare $0 cannot get a payment link or be sent.",
-        actions: [
-          {
-            id: "priced-work",
-            label: "Review line items",
-            onClick: () => {
-              document.querySelector('input[placeholder="Description"]')?.focus();
-            }
+    const needsAPriceCue = {
+      eyebrow: "Needs a price",
+      title: "A line is still $0 or waiting on a price.",
+      detail:
+        "Enter the missing price, or mark the line free / no-charge. A bare $0 cannot get a payment link or be sent.",
+      actions: [
+        {
+          id: "priced-work",
+          label: "Review line items",
+          onClick: () => {
+            document.querySelector('input[placeholder="Description"]')?.focus();
           }
-        ]
-      };
-    }
+        }
+      ]
+    };
 
     if (!hasHostedPaymentLink && !hasClientPortal) {
+      if (sendBlockedByPrice) {
+        return needsAPriceCue;
+      }
       return {
         eyebrow: "Nice progress",
         title: "The draft is saved. Add the customer handoff pieces next.",
@@ -2453,6 +2454,10 @@ function ManualInvoiceCanvas() {
           }
         ]
       };
+    }
+
+    if (sendBlockedByPrice) {
+      return needsAPriceCue;
     }
 
     return {
