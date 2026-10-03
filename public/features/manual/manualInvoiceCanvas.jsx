@@ -1211,7 +1211,9 @@ function ManualInvoiceCanvas() {
       lineItems.some((item) => {
         const description = String(item?.description ?? "").trim();
         return Boolean(description) && getLineAmount(item) > 0;
-      });
+      }) &&
+      !sendBlockedByPrice &&
+      total > 0;
     if (!sharePackSendReady) {
       setSaveError("Add the client and a priced line item before copying a share pack.");
       return;
@@ -2232,6 +2234,8 @@ function ManualInvoiceCanvas() {
     const amount = getLineAmount(item);
     return description && amount > 0;
   });
+  const canCopySharePack =
+    hasClientDetails && hasBillableLineItem && !sendBlockedByPrice && total > 0;
   const hasSavedDraft = Boolean(savedInvoiceId);
   const hasHostedPaymentLink = Boolean(String(paymentLinkUrl ?? "").trim());
   const hasClientPortal = Boolean(String(clientPortalUrl ?? "").trim());
@@ -2359,12 +2363,16 @@ function ManualInvoiceCanvas() {
               void handleGenerateClientPortalLink();
             }
           },
-          {
-            id: "share-pack",
-            label: sharePackBusy ? "Copying..." : "Copy share pack",
-            disabled: sharePackBusy,
-            onClick: handleCopySharePack
-          },
+          ...(canCopySharePack
+            ? [
+                {
+                  id: "share-pack",
+                  label: sharePackBusy ? "Copying..." : "Copy share pack",
+                  disabled: sharePackBusy,
+                  onClick: handleCopySharePack
+                }
+              ]
+            : []),
           {
             id: "open-library",
             label: "Open library",
@@ -2422,12 +2430,16 @@ function ManualInvoiceCanvas() {
       detail:
         "Copy the share pack or export the PDF next. You already have the saved draft, payment link, and portal in place.",
       actions: [
-        {
-          id: "share-pack",
-          label: sharePackBusy ? "Copying..." : "Copy share pack",
-          disabled: sharePackBusy,
-          onClick: handleCopySharePack
-        },
+        ...(canCopySharePack
+          ? [
+              {
+                id: "share-pack",
+                label: sharePackBusy ? "Copying..." : "Copy share pack",
+                disabled: sharePackBusy,
+                onClick: handleCopySharePack
+              }
+            ]
+          : []),
         {
           id: "export-pdf",
           label: "Export PDF",
@@ -2449,6 +2461,7 @@ function ManualInvoiceCanvas() {
     handleGeneratePaymentLink,
     handleCopySharePack,
     handleSaveInvoice,
+    canCopySharePack,
     hasBillableLineItem,
     hasClientDetails,
     hasClientPortal,
@@ -4431,7 +4444,7 @@ function ManualInvoiceCanvas() {
                     {clientPortalBusy ? "Creating..." : "Create client portal"}
                   </button>
                 ) : null}
-                {hasClientDetails && hasBillableLineItem ? (
+                {canCopySharePack ? (
                   <button
                     type="button"
                     className="inline-flex min-h-10 items-center rounded-full border border-[#6993d2]/20 bg-white px-3 text-sm font-semibold text-[#285ea8] transition hover:border-[#6993d2]/35 disabled:cursor-not-allowed disabled:opacity-60"
@@ -4502,7 +4515,7 @@ function ManualInvoiceCanvas() {
                 <span className="text-[11px] font-semibold text-slate-400">Optional</span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {hasClientDetails && hasBillableLineItem ? (
+                {canCopySharePack ? (
                   <button
                     type="button"
                     className="min-h-10 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"

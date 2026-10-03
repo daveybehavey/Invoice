@@ -11374,6 +11374,29 @@ test("manual editor hides copy share pack until the invoice is send-ready", asyn
     await handoff.getByText("Ready", { exact: true }).waitFor({ state: "visible" });
     await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "visible" });
     await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "visible" });
+
+    await page.getByRole("button", { name: "+ Add line item" }).click();
+    const secondRow = page.locator("tbody tr").nth(1);
+    await secondRow.getByPlaceholder("Description", { exact: true }).fill("Filter");
+    await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "hidden" });
+    await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "hidden" });
+    assert.equal(await page.getByRole("button", { name: "Copy share pack" }).count(), 0);
+
+    await secondRow.getByPlaceholder("0", { exact: true }).fill("1");
+    await secondRow.getByPlaceholder("$0", { exact: true }).fill("10");
+    await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "visible" });
+    await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "visible" });
+
+    await page.getByLabel("Discount amount").first().fill("22.50");
+    await page.waitForFunction(() => {
+      const totalLabel = Array.from(document.querySelectorAll("span")).find(
+        (node) => node.textContent?.trim() === "Total"
+      );
+      return totalLabel?.parentElement?.querySelector("span.tabular-nums")?.textContent?.trim() === "$0.00";
+    });
+    await handoff.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "hidden" });
+    await getManualExportFormButton(page, "Copy share pack").waitFor({ state: "hidden" });
+    assert.equal(await page.getByRole("button", { name: "Copy share pack" }).count(), 0);
   } finally {
     await context.close();
   }
