@@ -190,6 +190,25 @@ function buildSubjectId(kind: BillingSubjectKind, identity: string): string {
   return `subj-${kind}-${hashString(subjectIdentityKey(identity) || normalizeBillingText(identity))}`;
 }
 
+export function subjectIdFor(kind: BillingSubjectKind, identity: string): string {
+  return buildSubjectId(kind, identity);
+}
+
+export function descriptionMatchesSubjectId(
+  kind: BillingSubjectKind,
+  description: string,
+  subjectId: string
+): boolean {
+  if (!subjectId) {
+    return false;
+  }
+  const identity = subjectIdentityKey(description) || normalizeBillingText(description);
+  if (!identity) {
+    return false;
+  }
+  return buildSubjectId(kind, identity) === subjectId;
+}
+
 function cleanSubjectLabel(raw: string): string {
   return raw
     .replace(

@@ -1124,6 +1124,10 @@ app.post("/api/invoices/apply-decision", async (req: Request, res: Response, nex
     const timingAfterApply = performance.now();
 
     const responsePayload: Record<string, unknown> = {
+      needsFollowUp: hasUnresolvedNumericBillingFollowUp({
+        openDecisions: result.openDecisions,
+        qualityGate: result.qualityGate
+      }),
       structuredInvoice: result.structuredInvoice,
       invoice: result.invoice,
       openDecisions: result.openDecisions,

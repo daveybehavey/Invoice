@@ -1016,6 +1016,22 @@ function AIIntake() {
     }
   };
 
+  const handleDecisionValueAnswer = (action, value, options = {}) => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue) || numericValue < 0) {
+      showBillieStatus(
+        { kind: "warning", text: "Enter a valid amount on that line." },
+        { durationMs: 4000 }
+      );
+      return;
+    }
+    const message =
+      typeof options.message === "string" && options.message.trim()
+        ? options.message.trim()
+        : `Set ${action?.evidenceField || "value"} to ${numericValue}.`;
+    handleDecisionAction({ ...action, type: "set_value", value: numericValue }, message);
+  };
+
   const handleDecisionRequestComplete = (result) => {
     setOptimisticDecisionState(null);
     if (result?.status === "error") {
@@ -1339,7 +1355,11 @@ function AIIntake() {
     text: `Decision needed: ${decision.prompt}`,
     prompt: decision.prompt,
     kind: decision.kind,
-    context: decision.sourceSnippet ?? ""
+    context: decision.sourceSnippet ?? "",
+    evidenceField: decision.evidenceField,
+    subjectId: decision.subjectId,
+    sourceSnippet: decision.sourceSnippet,
+    keywords: decision.keywords
   }));
   const decisionApplyPending = Boolean(optimisticDecisionState?.pending);
   const optimisticHiddenDecisionIds = new Set(
@@ -2243,8 +2263,9 @@ function AIIntake() {
       typeof seed?.sourceText === "string" && seed.sourceText.trim()
         ? seed.sourceText.trim()
         : userText;
-    const nextSeedFollowUp = payload?.needsFollowUp ? payload.followUp ?? null : null;
-    const nextSeedInvoice = payload?.needsFollowUp ? null : payload?.invoice ?? null;
+    const nextSeedFollowUp = payload?.followUp ?? null;
+    const hasStructuredSeedFollowUp = Boolean(nextSeedFollowUp?.type || nextSeedFollowUp?.message);
+    const nextSeedInvoice = hasStructuredSeedFollowUp ? null : payload?.invoice ?? null;
     const nextSeedQuality = payload?.qualityGate ?? null;
     setImportStudioContext({
       fileName,
@@ -2257,7 +2278,7 @@ function AIIntake() {
       needsFollowUp: Boolean(payload?.needsFollowUp)
     });
     const seedReadiness = evaluateResponseReadiness({
-      followUp: nextSeedFollowUp,
+      followUp: hasStructuredSeedFollowUp ? nextSeedFollowUp : null,
       finishedInvoice: nextSeedInvoice,
       openDecisionCount: nextOpenDecisions.length,
       qualityBlockerCount: nextSeedQuality?.blockerCount ?? 0,
@@ -2297,9 +2318,9 @@ function AIIntake() {
     lastUserMessageRef.current = userText;
     lastIntakeModeRef.current = "full";
 
-    if (payload?.needsFollowUp) {
+    if (hasStructuredSeedFollowUp) {
       setLaborPricingNote("");
-      setFollowUp(payload.followUp ?? null);
+      setFollowUp(nextSeedFollowUp);
       setFinishedInvoice(null);
       setIntakePhase(seedReadiness.targetPhase);
       return;
@@ -2554,7 +2575,7 @@ function AIIntake() {
         title: "Resolve the money decisions first.",
         detail:
           displayOpenDecisionCount === 1
-            ? "There is 1 billable choice still open. Pick Add or Skip so Billie can finish the draft safely."
+            ? "There is 1 billable choice still open. Enter the missing price, mark Free, or Skip so Billie can finish the draft safely."
             : `There are ${displayOpenDecisionCount} billable choices still open. Clear those first so the draft can move forward safely.`,
         actions: [
           {
@@ -3556,6 +3577,7 @@ function AIIntake() {
                 decisionIncludeButtonClass={decisionIncludeButtonClass}
                 decisionExcludeButtonClass={decisionExcludeButtonClass}
                 handleDecisionAction={handleDecisionAction}
+                handleDecisionValueAnswer={handleDecisionValueAnswer}
                 hasMoreDecisions={hasMoreDecisions}
                 showAllDecisions={showAllDecisions}
                 clampedDecisionIndex={clampedDecisionIndex}

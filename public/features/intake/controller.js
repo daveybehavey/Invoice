@@ -31,12 +31,60 @@
     if (!invoice || !action) {
       return invoice;
     }
+    if (action.type === "waive" && action.snippet) {
+      const decisionKeywords = new Set(extractKeywords(action.snippet));
+      if (!decisionKeywords.size) {
+        return invoice;
+      }
+      const nextLineItems = Array.isArray(invoice.lineItems)
+        ? invoice.lineItems.map((item) => {
+            const itemKeywords = new Set(extractKeywords(item.description ?? ""));
+            let overlapCount = 0;
+            decisionKeywords.forEach((keyword) => {
+              if (itemKeywords.has(keyword)) {
+                overlapCount += 1;
+              }
+            });
+            if (overlapCount < 1) {
+              return item;
+            }
+            return {
+              ...item,
+              unitPrice: 0,
+              amount: 0
+            };
+          })
+        : invoice.lineItems;
+      return {
+        ...invoice,
+        lineItems: nextLineItems
+      };
+    }
     if (action.type !== "exclude" || !action.snippet) {
       return invoice;
     }
     const decisionKeywords = new Set(extractKeywords(action.snippet));
     if (decisionKeywords.size === 0) {
       return invoice;
+    }
+    // Missing-price Skip removes the line; legacy Add/Skip zeroes ambiguous billables.
+    if (action.evidenceField) {
+      const nextLineItems = Array.isArray(invoice.lineItems)
+        ? invoice.lineItems.filter((item) => {
+            const itemKeywords = new Set(extractKeywords(item.description ?? ""));
+            let overlapCount = 0;
+            decisionKeywords.forEach((keyword) => {
+              if (itemKeywords.has(keyword)) {
+                overlapCount += 1;
+              }
+            });
+            return overlapCount < 1;
+          })
+        : invoice.lineItems;
+      return {
+        ...invoice,
+        lineItems: nextLineItems
+      };
     }
     const nextLineItems = Array.isArray(invoice.lineItems)
       ? invoice.lineItems.map((item) => {
@@ -178,7 +226,7 @@
     }
     summaryLines.push("Check the draft snapshot below.");
     if (decisions.length > 0) {
-      return `${summaryLines.join(" ")}\n\nNext: choose Add or Skip in Decisions.`;
+      return `${summaryLines.join(" ")}\n\nNext: enter the missing price or choose Free / Skip in Decisions.`;
     }
     if (qualityBlockerCount > 0) {
       return `${summaryLines.join(" ")}\n\nNext: fix flagged review items.`;
@@ -252,7 +300,7 @@
 
   const buildDecisionFollowUp = (decisions) => {
     const lines = decisions.map((decision) => `- ${decision.prompt}`);
-    return `Open decisions:\n${lines.join("\n")}\n\nNext: choose Add or Skip.`;
+    return `Open decisions:\n${lines.join("\n")}\n\nNext: enter the missing price, mark Free, or Skip.`;
   };
 
   const buildDraftFromInvoice = (invoice, taxOverride, transcript = "") => {
@@ -371,6 +419,17 @@
       }
     }
     const snippet = action.snippet ? shortenSnippet(action.snippet, 36) : "that item";
+    if (action.type === "set_value") {
+      const amount =
+        typeof action.value === "number" && Number.isFinite(action.value) ? action.value : null;
+      const label = amount === null ? `Saved ${snippet}.` : `Set ${snippet} to $${amount}.`;
+      return progressText ? `${label} ${progressText}` : label;
+    }
+    if (action.type === "waive") {
+      return progressText
+        ? `Marked ${snippet} as free / no charge. ${progressText}`
+        : `Marked ${snippet} as free / no charge.`;
+    }
     if (action.type === "include") {
       return progressText ? `Added ${snippet}. ${progressText}` : `Added ${snippet}.`;
     }
@@ -391,9 +450,31 @@
       .trim();
     const cleanedDisplaySnippet = snippet.replace(/^bill\s+/i, "").replace(/[?!.,;:]+$/g, "").trim();
     const actionSnippet = cleanedActionSnippet || cleanedDisplaySnippet || "this item";
-    const baseAction = { id: decision.id, kind: decision.kind, snippet: rawSnippet };
-    const display =
-      decision.kind === "tax"
+    const evidenceField = decision.evidenceField;
+    const isMissingValueDecision =
+      decision.kind === "billing" &&
+      (evidenceField === "price" ||
+        evidenceField === "cost" ||
+        evidenceField === "rate" ||
+        evidenceField === "quantity");
+    const fieldLabel =
+      evidenceField === "quantity"
+        ? "quantity"
+        : evidenceField === "rate"
+          ? "rate"
+          : evidenceField === "cost"
+            ? "cost"
+            : "unit price";
+    const baseAction = {
+      id: decision.id,
+      kind: decision.kind,
+      snippet: rawSnippet,
+      evidenceField,
+      subjectId: decision.subjectId
+    };
+    const display = isMissingValueDecision
+      ? decision.prompt ?? `Enter ${fieldLabel} for ${cleanedDisplaySnippet || "this item"}`
+      : decision.kind === "tax"
         ? "Apply tax?"
         : cleanedDisplaySnippet
           ? `Bill ${cleanedDisplaySnippet}?`
@@ -404,12 +485,23 @@
       decision.kind === "tax" ? "Apply tax." : `Bill ${actionSnippet}.`;
     const excludeValue =
       decision.kind === "tax" ? "No tax." : `Don't bill ${actionSnippet}.`;
+    const valuePlaceholder =
+      evidenceField === "quantity"
+        ? "Qty"
+        : evidenceField === "rate"
+          ? "$/hr"
+          : "$";
     return {
       display,
       includeLabel,
       excludeLabel,
       includeValue,
       excludeValue,
+      isMissingValueDecision,
+      evidenceField,
+      fieldLabel,
+      valuePlaceholder,
+      canWaive: isMissingValueDecision && evidenceField !== "quantity",
       includeAction:
         decision.kind === "tax"
           ? { ...baseAction, type: "tax_apply" }
@@ -417,7 +509,9 @@
       excludeAction:
         decision.kind === "tax"
           ? { ...baseAction, type: "tax_skip" }
-          : { ...baseAction, type: "exclude" }
+          : { ...baseAction, type: "exclude" },
+      setValueAction: { ...baseAction, type: "set_value" },
+      waiveAction: { ...baseAction, type: "waive" }
     };
   };
 
