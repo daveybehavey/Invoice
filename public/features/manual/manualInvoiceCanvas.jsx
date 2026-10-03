@@ -2359,6 +2359,12 @@ function ManualInvoiceCanvas() {
       ]
     };
 
+    // An open price blocks send even when a payment link or portal already exists.
+    // Leave those links in place; only the cue changes.
+    if (sendBlockedByPrice) {
+      return needsAPriceCue;
+    }
+
     if (!hasHostedPaymentLink && !hasClientPortal) {
       if (sendBlockedByPrice) {
         return needsAPriceCue;
@@ -2454,10 +2460,6 @@ function ManualInvoiceCanvas() {
           }
         ]
       };
-    }
-
-    if (sendBlockedByPrice) {
-      return needsAPriceCue;
     }
 
     return {
