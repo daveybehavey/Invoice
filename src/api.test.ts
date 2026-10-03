@@ -3024,6 +3024,131 @@ test("client portal endpoint creates a tokenized customer portal link and expose
   assert.equal(publicPortalResponse.body.history[0].status, "draft");
 });
 
+test("client portal returns 400 when a non-waived line is $0", async () => {
+  const ownerId = "client-portal-block-zero-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PORTAL-ZERO-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/client-portal-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot create a client portal while a non-waived line is $0 or a billing decision is still open."
+  );
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.portalAccessToken ?? "", "");
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.total, 148);
+  assert.equal(
+    getResponse.body.invoice?.invoiceData?.sourceNote,
+    "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down."
+  );
+});
+
+test("client portal returns 400 while a billing decision is still open", async () => {
+  const ownerId = "client-portal-block-open-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-PORTAL-OPEN-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/client-portal-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.body.error,
+    "Cannot create a client portal while a non-waived line is $0 or a billing decision is still open."
+  );
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.body.invoice?.invoiceData?.finishedInvoice?.portalAccessToken ?? "", "");
+});
+
 test("send endpoint auto-creates a payment link before delivery when Stripe payments are configured", async () => {
   const ownerId = "payment-send-owner";
   let createCount = 0;

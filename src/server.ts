@@ -83,7 +83,12 @@ import {
   sendInvoiceEmail,
   sendLaunchTestEmail
 } from "./services/invoiceEmailDelivery.js";
-import { invoiceSendIsBlocked, PAYMENT_LINK_BLOCKED_MESSAGE, SEND_BLOCKED_MESSAGE } from "./services/invoiceSendGate.js";
+import {
+  CLIENT_PORTAL_BLOCKED_MESSAGE,
+  invoiceSendIsBlocked,
+  PAYMENT_LINK_BLOCKED_MESSAGE,
+  SEND_BLOCKED_MESSAGE
+} from "./services/invoiceSendGate.js";
 import {
   listDueInvoiceReminderCandidates,
   runDueInvoiceReminders,
@@ -391,6 +396,14 @@ app.post("/api/invoices/:id/client-portal-link", async (req: Request, res: Respo
     const savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
     if (savedInvoice.status === "deleted") {
       throw new HttpStatusError(400, "Restore this invoice before creating a portal link.");
+    }
+    if (
+      invoiceSendIsBlocked({
+        finishedInvoice: savedInvoice.invoiceData.finishedInvoice,
+        sourceNote: savedInvoice.invoiceData.sourceNote
+      })
+    ) {
+      throw new HttpStatusError(400, CLIENT_PORTAL_BLOCKED_MESSAGE);
     }
     const portalAccessToken =
       parsedRequest.refresh || !savedInvoice.invoiceData.finishedInvoice.portalAccessToken
