@@ -2302,6 +2302,26 @@ function ManualInvoiceCanvas() {
       };
     }
 
+    // An open price blocks send even when a payment link or portal already exists.
+    // Leave those links in place; only the cue changes.
+    if (sendBlockedByPrice) {
+      return {
+        eyebrow: "Needs a price",
+        title: "A line is still $0 or waiting on a price.",
+        detail:
+          "Enter the missing price, or mark the line free / no-charge. A bare $0 cannot be sent.",
+        actions: [
+          {
+            id: "priced-work",
+            label: "Review line items",
+            onClick: () => {
+              document.querySelector('input[placeholder="Description"]')?.focus();
+            }
+          }
+        ]
+      };
+    }
+
     if (!hasHostedPaymentLink && !hasClientPortal) {
       return {
         eyebrow: "Nice progress",
@@ -2383,24 +2403,6 @@ function ManualInvoiceCanvas() {
             id: "open-library",
             label: "Open library",
             onClick: () => navigate("/invoices")
-          }
-        ]
-      };
-    }
-
-    if (sendBlockedByPrice) {
-      return {
-        eyebrow: "Needs a price",
-        title: "A line is still $0 or waiting on a price.",
-        detail:
-          "Enter the missing price, or mark the line free / no-charge. A bare $0 cannot be sent.",
-        actions: [
-          {
-            id: "priced-work",
-            label: "Review line items",
-            onClick: () => {
-              document.querySelector('input[placeholder="Description"]')?.focus();
-            }
           }
         ]
       };
