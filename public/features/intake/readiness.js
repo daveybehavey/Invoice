@@ -185,7 +185,8 @@
           id: lineItem.id ?? `line-${Date.now()}-${index}`,
           description: polishLineItemDescription(lineItem.description ?? ""),
           qty: finalQty,
-          rate: rateValue
+          rate: rateValue,
+          ...(lineItem.explicitFree === true ? { explicitFree: true } : {})
         };
       }) ?? [];
 

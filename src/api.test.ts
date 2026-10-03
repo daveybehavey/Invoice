@@ -6415,3 +6415,278 @@ function structuredWithLaborPricing() {
     materials: [{ description: "Pipe tape", quantity: 1, unitCost: 7, amount: 7 }]
   };
 }
+
+test("send returns 400 when a non-waived line is $0", async () => {
+  const ownerId = "send-block-zero-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-SEND-ZERO-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "pool@example.com" });
+  assert.equal(sendResponse.status, 400);
+  assert.equal(
+    sendResponse.body.error,
+    "Cannot send while a non-waived line is $0 or a billing decision is still open."
+  );
+
+  const listResponse = await request(app).get("/api/invoices").set("x-invoice-user-id", ownerId);
+  assert.equal(listResponse.body.invoices[0].status, "draft");
+});
+
+test("send returns 400 while a billing decision is still open", async () => {
+  const ownerId = "send-block-open-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-SEND-OPEN-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "pool@example.com" });
+  assert.equal(sendResponse.status, 400);
+  assert.equal(
+    sendResponse.body.error,
+    "Cannot send while a non-waived line is $0 or a billing decision is still open."
+  );
+});
+
+test("send allows an explicit free line at $0 and keeps known math", async () => {
+  const ownerId = "send-allow-free-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74. Acid jug is no charge.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-SEND-FREE-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0,
+              explicitFree: true
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "pool@example.com" });
+  assert.equal(sendResponse.status, 200);
+  assert.equal(sendResponse.body.invoice.status, "sent");
+  const lines = sendResponse.body.invoice.invoiceData.finishedInvoice.lineItems;
+  const pool = lines.find((line: { description: string }) => /pool/i.test(line.description));
+  const acid = lines.find((line: { description: string }) => /acid/i.test(line.description));
+  assert.equal(pool.quantity, 2);
+  assert.equal(pool.unitPrice, 74);
+  assert.equal(pool.amount, 148);
+  assert.equal(acid.amount, 0);
+  assert.equal(acid.explicitFree, true);
+  assert.equal(sendResponse.body.invoice.invoiceData.finishedInvoice.total, 148);
+});
+
+test("send allows a source-note no-charge line at $0 without a stored flag", async () => {
+  const ownerId = "send-allow-source-free-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "No charge for the acid jug. Pool visit was 2 hours at $74.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-SEND-FREE-2",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            },
+            {
+              id: "acid-1",
+              type: "material",
+              description: "Acid jug",
+              quantity: 1,
+              unitPrice: 0,
+              amount: 0
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "pool@example.com" });
+  assert.equal(sendResponse.status, 200);
+  assert.equal(sendResponse.body.invoice.invoiceData.finishedInvoice.lineItems[0].amount, 148);
+});
+
+test("send stays open when a skipped missing price is not on the invoice", async () => {
+  const ownerId = "send-skip-closed-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        sourceNote: "Pool visit, 2 hours at $74, and 1 acid jug but the supplier price was not written down.",
+        structuredInvoice: {
+          customerName: "Pool Co",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-SEND-SKIP-1",
+          customerName: "Pool Co",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "labor-1",
+              type: "labor",
+              description: "Pool visit",
+              quantity: 2,
+              unitPrice: 74,
+              amount: 148
+            }
+          ],
+          subtotal: 148,
+          total: 148,
+          balanceDue: 148
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "pool@example.com" });
+  assert.equal(sendResponse.status, 200);
+  assert.equal(sendResponse.body.invoice.invoiceData.finishedInvoice.total, 148);
+});
