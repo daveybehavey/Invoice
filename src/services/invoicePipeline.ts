@@ -14,6 +14,15 @@ import {
   Task
 } from "../models/invoice.js";
 import { evaluateInvoiceOutputQuality, OutputQualityGate } from "./outputQualityGate.js";
+import {
+  applyBillingEvidenceLedger,
+  BillingEvidence,
+  descriptionMatchesSubjectId,
+  hasUnresolvedAuthoritativeBillingFacts,
+  materialHasUnresolvedField,
+  projectUnresolvedEvidenceToDecisions,
+  subjectIdentityKey
+} from "./billingEvidence.js";
 
 type CreateInvoiceInput = {
   messyInput?: string;
@@ -186,15 +195,37 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   const namedInvoice = applyCustomerNameFallback(structuredInvoice, sourceText);
   const optionalLaborTasks = identifyOptionalLaborTasks(structuredInvoice, sourceText);
   const sanitizedNotes = sanitizeStructuredNotes(namedInvoice.notes);
-  const sanitizedInvoice: StructuredInvoice = {
-    ...namedInvoice,
-    notes: sanitizedNotes.cleanedNotes
-  };
-  const unpricedLaborTasks = extractUnpricedLaborTasks(namedInvoice).filter(
+  const pricingSafe = applyBillingEvidenceLedger(
+    {
+      ...namedInvoice,
+      notes: sanitizedNotes.cleanedNotes
+    },
+    sourceText
+  );
+  const sanitizedInvoice: StructuredInvoice = pricingSafe.structuredInvoice;
+  const unresolvedBillingFacts = pricingSafe.unresolvedFacts;
+  const lineBoundUnresolvedFacts = pricingSafe.lineBoundUnresolvedFacts;
+  const ledgerBillingDecisions = projectUnresolvedEvidenceToDecisions(unresolvedBillingFacts);
+  const unpricedLaborTasks = extractUnpricedLaborTasks(sanitizedInvoice).filter(
     (taskRef) => !optionalLaborTasks.has(normalizeDecisionText(taskRef.task.description))
   );
 
-  if (needsLaborPricingFollowUp(unpricedLaborTasks)) {
+  const laborCoveredByLedgerRateFacts =
+    unpricedLaborTasks.length > 0 &&
+    unpricedLaborTasks.every((taskRef) => {
+      const identity =
+        subjectIdentityKey(taskRef.task.description) ||
+        normalizeDecisionText(taskRef.task.description);
+      return unresolvedBillingFacts.some(
+        (fact) =>
+          fact.state === "unresolved" &&
+          fact.subjectKind === "labor" &&
+          (fact.field === "rate" || fact.field === "price" || fact.field === "cost") &&
+          subjectIdentityKey(fact.subjectIdentity) === identity
+      );
+    });
+
+  if (needsLaborPricingFollowUp(unpricedLaborTasks) && !laborCoveredByLedgerRateFacts) {
     const unparsedLines = filterUnparsedLines(
       mergeUnparsedLines(
       sanitizedNotes.removedLines,
@@ -204,7 +235,7 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     return {
       kind: "labor_pricing_follow_up",
       structuredInvoice: sanitizedInvoice,
-      openDecisions: [],
+      openDecisions: ledgerBillingDecisions,
       assumptions: normalizeAssumptions(
         sanitizedNotes.taxAmbiguityFound ? ["Tax assumed 0%."] : [],
         taxDirective
@@ -227,7 +258,7 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
     };
   }
 
-  const invoice = await generateFinishedInvoice(sanitizedInvoice);
+  const invoice = await generateFinishedInvoice(sanitizedInvoice, lineBoundUnresolvedFacts);
   const customerFallback = extractCustomerNameFromSource(sourceText);
   const invoiceWithCustomer =
     invoice.customerName && invoice.customerName.trim()
@@ -247,13 +278,18 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   const audit = auditOutcome.audit;
   const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
   const heuristicDecisions = audit ? extractAmbiguousBillingDecisions(sourceText) : [];
-  const openDecisions = audit
+  const baseOpenDecisions = audit
     ? filterResolvedDecisions(
         mergeDecisions(auditDecisions, heuristicDecisions),
         sourceText,
         input.lastUserMessage
       )
     : detectOpenDecisionsFromText(sourceText, input.lastUserMessage);
+  // Ledger owns numeric missing-value authority; strip overlapping prompt-heuristic numeric gaps.
+  const baseWithoutNumericGaps = baseOpenDecisions.filter(
+    (decision) => !decision.evidenceField && !isLegacyUnresolvedNumericPrompt(decision)
+  );
+  const openDecisions = mergeDecisions(baseWithoutNumericGaps, ledgerBillingDecisions);
   const assumptions = normalizeAssumptions(
     [
       ...(audit?.assumptions ?? []),
@@ -280,9 +316,14 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
   const invoiceWithHolds = applyDecisionPricingHolds(invoiceWithIssueDate, cleanedDecisions);
   const cleanedInvoice = filterInvoiceNotes(invoiceWithHolds, sourceText, cleanedDecisions);
   const cleanedAssumptions = filterAssumptionsAgainstDecisions(assumptions, cleanedDecisions);
+  const hasUnresolvedBillingFacts = hasUnresolvedAuthoritativeBillingFacts({
+    openDecisions: cleanedDecisions,
+    unresolvedFacts: unresolvedBillingFacts
+  });
   const outputQuality = evaluateInvoiceOutputQuality({
     structuredInvoice: sanitizedInvoice,
-    invoice: cleanedInvoice
+    invoice: cleanedInvoice,
+    hasUnresolvedBillingFacts
   });
 
   if (discountIntent.kind === "apply") {
@@ -300,7 +341,8 @@ export async function createInvoiceFromInput(input: CreateInvoiceInput): Promise
       unparsedLines: cleanedUnparsed,
       qualityGate: evaluateInvoiceOutputQuality({
         structuredInvoice: sanitizedInvoice,
-        invoice: discountedInvoice
+        invoice: discountedInvoice,
+        hasUnresolvedBillingFacts
       }),
       auditStatus: auditOutcome.status
     };
@@ -332,11 +374,18 @@ export async function continueInvoiceAfterLaborPricing(
   const taxDirective = detectExplicitTaxDirective(source);
   const taxAmbiguity = detectTaxAmbiguity(source);
   const sanitizedNotes = sanitizeStructuredNotes(withFreeMinutes.notes);
-  const sanitizedInvoice: StructuredInvoice = {
-    ...withFreeMinutes,
-    notes: sanitizedNotes.cleanedNotes
-  };
-  const invoice = await generateFinishedInvoice(sanitizedInvoice);
+  const pricingSafe = applyBillingEvidenceLedger(
+    {
+      ...withFreeMinutes,
+      notes: sanitizedNotes.cleanedNotes
+    },
+    source
+  );
+  const sanitizedInvoice: StructuredInvoice = pricingSafe.structuredInvoice;
+  const unresolvedBillingFacts = pricingSafe.unresolvedFacts;
+  const lineBoundUnresolvedFacts = pricingSafe.lineBoundUnresolvedFacts;
+  const ledgerBillingDecisions = projectUnresolvedEvidenceToDecisions(unresolvedBillingFacts);
+  const invoice = await generateFinishedInvoice(sanitizedInvoice, lineBoundUnresolvedFacts);
   const customerFallback = extractCustomerNameFromSource(source);
   const invoiceWithCustomer =
     invoice.customerName && invoice.customerName.trim()
@@ -357,9 +406,13 @@ export async function continueInvoiceAfterLaborPricing(
   const audit = auditOutcome.audit;
   const auditDecisions = audit ? decisionsFromAudit(audit.decisions) : [];
   const heuristicDecisions = audit ? extractAmbiguousBillingDecisions(source) : [];
-  const openDecisions = audit
+  const baseOpenDecisions = audit
     ? filterResolvedDecisions(mergeDecisions(auditDecisions, heuristicDecisions), source, lastUserMessage)
     : detectOpenDecisionsFromText(source, lastUserMessage);
+  const baseWithoutNumericGaps = baseOpenDecisions.filter(
+    (decision) => !decision.evidenceField && !isLegacyUnresolvedNumericPrompt(decision)
+  );
+  const openDecisions = mergeDecisions(baseWithoutNumericGaps, ledgerBillingDecisions);
   const assumptions = normalizeAssumptions(
     [
       ...(audit?.assumptions ?? []),
@@ -390,9 +443,14 @@ export async function continueInvoiceAfterLaborPricing(
     cleanedDecisions
   );
   const cleanedAssumptions = filterAssumptionsAgainstDecisions(assumptions, cleanedDecisions);
+  const hasUnresolvedBillingFacts = hasUnresolvedAuthoritativeBillingFacts({
+    openDecisions: cleanedDecisions,
+    unresolvedFacts: unresolvedBillingFacts
+  });
   const outputQuality = evaluateInvoiceOutputQuality({
     structuredInvoice: sanitizedInvoice,
-    invoice: cleanedInvoice
+    invoice: cleanedInvoice,
+    hasUnresolvedBillingFacts
   });
 
   if (discountIntent.kind === "apply") {
@@ -410,7 +468,8 @@ export async function continueInvoiceAfterLaborPricing(
       unparsedLines: cleanedUnparsed,
       qualityGate: evaluateInvoiceOutputQuality({
         structuredInvoice: sanitizedInvoice,
-        invoice: discountedInvoice
+        invoice: discountedInvoice,
+        hasUnresolvedBillingFacts
       }),
       auditStatus: auditOutcome.status
     };
@@ -454,9 +513,6 @@ export async function applyDecisionActionToDraft(
   const currentOpenDecisions = normalizeOpenDecisions(input.openDecisions ?? []);
   const decisionAction = input.decisionAction;
   const selectedDecisions = selectTargetDecisions(currentOpenDecisions, decisionAction);
-  const selectedDecisionIds = new Set(selectedDecisions.map((decision) => decision.id));
-  const excludeSelected =
-    decisionAction.type === "exclude" || decisionAction.type === "bulk_exclude";
   const selectedTaxDecisions = selectedDecisions.filter((decision) => decision.kind === "tax");
   const taxApplySelected =
     (decisionAction.type === "tax_apply" || decisionAction.type === "bulk_include") &&
@@ -466,23 +522,83 @@ export async function applyDecisionActionToDraft(
     selectedTaxDecisions.length > 0;
 
   let nextStructuredInvoice = cloneStructuredInvoice(sanitizedInvoice);
-  if (excludeSelected) {
+  const resolvedDecisionIds = new Set<string>();
+
+  if (decisionAction.type === "set_value") {
+    const numericValue = coerceDecisionNumericValue(decisionAction.value);
+    if (numericValue === undefined) {
+      throw new Error("A numeric value is required to answer a missing price or rate.");
+    }
+    selectedDecisions
+      .filter((decision) => decision.kind === "billing" && Boolean(decision.evidenceField))
+      .forEach((decision) => {
+        nextStructuredInvoice = applyBillingValueAnswerToStructuredInvoice(
+          nextStructuredInvoice,
+          decision,
+          numericValue
+        );
+        resolvedDecisionIds.add(decision.id);
+      });
+  } else if (decisionAction.type === "waive") {
+    selectedDecisions
+      .filter((decision) => decision.kind === "billing" && Boolean(decision.evidenceField))
+      .forEach((decision) => {
+        nextStructuredInvoice = applyBillingWaiveToStructuredInvoice(nextStructuredInvoice, decision);
+        resolvedDecisionIds.add(decision.id);
+      });
+  } else if (decisionAction.type === "exclude" || decisionAction.type === "bulk_exclude") {
     selectedDecisions
       .filter((decision) => decision.kind === "billing")
       .forEach((decision) => {
-        nextStructuredInvoice = applyBillingExclusionToStructuredInvoice(nextStructuredInvoice, decision);
+        if (decision.evidenceField) {
+          // Missing-price Skip must not invent $0. Drop the line from the draft instead.
+          nextStructuredInvoice = removeBillingSubjectFromStructuredInvoice(
+            nextStructuredInvoice,
+            decision
+          );
+        } else {
+          nextStructuredInvoice = applyBillingExclusionToStructuredInvoice(
+            nextStructuredInvoice,
+            decision
+          );
+        }
+        resolvedDecisionIds.add(decision.id);
       });
+  } else if (
+    decisionAction.type === "include" ||
+    decisionAction.type === "bulk_include" ||
+    decisionAction.type === "tax_apply" ||
+    decisionAction.type === "tax_skip"
+  ) {
+    selectedDecisions.forEach((decision) => {
+      // Add alone cannot resolve a missing price/rate/quantity — keep those open.
+      if (decision.kind === "billing" && decision.evidenceField) {
+        return;
+      }
+      resolvedDecisionIds.add(decision.id);
+    });
+  }
+
+  // Tax decisions selected via exclude/bulk_exclude still clear.
+  if (decisionAction.type === "exclude" || decisionAction.type === "bulk_exclude") {
+    selectedTaxDecisions.forEach((decision) => resolvedDecisionIds.add(decision.id));
+  }
+  if (decisionAction.type === "tax_apply" || decisionAction.type === "tax_skip") {
+    selectedTaxDecisions.forEach((decision) => resolvedDecisionIds.add(decision.id));
   }
 
   const remainingOpenDecisions = currentOpenDecisions.filter(
-    (decision) => !selectedDecisionIds.has(decision.id)
+    (decision) => !resolvedDecisionIds.has(decision.id)
   );
 
   const baseInvoice = await generateFinishedInvoice(nextStructuredInvoice);
   const heldInvoice = applyDecisionPricingHolds(baseInvoice, remainingOpenDecisions);
   const qualityGate = evaluateInvoiceOutputQuality({
     structuredInvoice: nextStructuredInvoice,
-    invoice: heldInvoice
+    invoice: heldInvoice,
+    hasUnresolvedBillingFacts: hasUnresolvedAuthoritativeBillingFacts({
+      openDecisions: remainingOpenDecisions
+    })
   });
 
   let nextPendingTaxRate = sanitizeTaxRate(input.pendingTaxRate);
@@ -817,8 +933,10 @@ async function parseMessyInputToStructuredInvoice(sourceText: string): Promise<S
     "- Group work sessions by date when a date exists.",
     "- Omit unknown numeric fields instead of guessing.",
     "- Never infer or invent labor hours, labor rate, or labor amount when they are missing.",
+    "- Never invent material unitCost or amount when the notes say the price/cost is missing or not written down.",
     "- If the notes explicitly say a visit/task was free or not charged, set amount to 0 for that task.",
     "- If the notes explicitly say a part/material was free or not charged, set amount to 0 for that material.",
+    "- Do not create $0 line items for descriptive work that has no explicit billable amount or free/no-charge wording.",
     "- Use numbers (not strings) for numeric values.",
     `Source text:\n${sourceText}`
   ].join("\n");
@@ -847,6 +965,7 @@ async function auditInvoiceInterpretation(
     "Rules:",
     "- If the notes explicitly say no charge/free/didn't charge, do NOT create a decision; add an assumption instead.",
     "- If something is ambiguous (e.g. maybe/up to you/sometimes/do what makes sense), add a decision.",
+    "- If a priced item is mentioned but its price/quantity is explicitly missing (e.g. price not written down), add a billing decision and do not invent $0.",
     "- Only add a tax decision if the user explicitly asks to apply tax or gives a tax rate.",
     "- If tax is mentioned ambiguously, add assumption: \"Tax assumed 0%\".",
     "- If any source lines are not reflected in the structured invoice, list them in unparsedLines.",
@@ -920,9 +1039,11 @@ export async function runInvoiceAuditOverlay(input: {
   const taxDirective = detectExplicitTaxDirective(sourceText);
   const taxAmbiguity = detectTaxAmbiguity(sourceText);
   const audit = await auditInvoiceInterpretation(sourceText, parsedInvoice);
+  const ledgerFacts = applyBillingEvidenceLedger(parsedInvoice, sourceText).unresolvedFacts;
+  const ledgerDecisions = projectUnresolvedEvidenceToDecisions(ledgerFacts);
   if (!audit) {
     return {
-      openDecisions: [],
+      openDecisions: ledgerDecisions,
       assumptions: normalizeAssumptions(
         sanitizedNotes.taxAmbiguityFound || (taxAmbiguity && taxDirective === "none")
           ? ["Tax assumed 0%."]
@@ -935,11 +1056,15 @@ export async function runInvoiceAuditOverlay(input: {
 
   const auditDecisions = decisionsFromAudit(audit.decisions);
   const heuristicDecisions = extractAmbiguousBillingDecisions(sourceText);
-  const openDecisions = filterResolvedDecisions(
+  const baseOpenDecisions = filterResolvedDecisions(
     mergeDecisions(auditDecisions, heuristicDecisions),
     sourceText,
     input.lastUserMessage
   );
+  const baseWithoutNumericGaps = baseOpenDecisions.filter(
+    (decision) => !decision.evidenceField && !isLegacyUnresolvedNumericPrompt(decision)
+  );
+  const openDecisions = mergeDecisions(baseWithoutNumericGaps, ledgerDecisions);
   const assumptions = normalizeAssumptions(
     [
       ...audit.assumptions,
@@ -1137,11 +1262,18 @@ function applyFreeLaborMinutesFromText(
   return nextStructuredInvoice;
 }
 
-async function generateFinishedInvoice(structuredInvoice: StructuredInvoice): Promise<FinishedInvoice> {
+async function generateFinishedInvoice(
+  structuredInvoice: StructuredInvoice,
+  unresolvedFacts: BillingEvidence[] = []
+): Promise<FinishedInvoice> {
   const laborLineItems = structuredInvoice.workSessions.flatMap((session) =>
-    session.tasks.map((task) => buildLaborLineItem(task, session.date))
+    session.tasks
+      .filter((task) => shouldEmitLaborLineItem(task))
+      .map((task) => buildLaborLineItem(task, session.date))
   );
-  const materialLineItems = structuredInvoice.materials.map((material) => buildMaterialLineItem(material));
+  const materialLineItems = structuredInvoice.materials
+    .filter((material) => shouldEmitMaterialLineItem(material))
+    .map((material) => buildMaterialLineItem(material, unresolvedFacts));
 
   const invoice: FinishedInvoice = {
     documentType: "invoice",
@@ -1750,9 +1882,13 @@ function filterResolvedDecisions(
   }
 
   return decisions.filter((decision) => {
-    const resolved = candidateTexts.some((candidate) =>
-      evaluateDecisionResolution(decision, candidate).resolved
-    );
+    const resolved = candidateTexts.some((candidate) => {
+      // A fact cannot be resolved by the same originating source statement that created it.
+      if (isSameOriginatingStatement(decision.sourceSnippet, candidate)) {
+        return false;
+      }
+      return evaluateDecisionResolution(decision, candidate).resolved;
+    });
     if (resolved) {
       return false;
     }
@@ -1880,6 +2016,185 @@ function findDecisionBySnippet(
   });
 
   return bestScore > 0 ? bestDecision : undefined;
+}
+
+function coerceDecisionNumericValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return roundToCents(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.trim().replace(/[$,]/g, ""));
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return roundToCents(parsed);
+    }
+  }
+  return undefined;
+}
+
+function decisionMatchesMaterial(decision: OpenDecision, description: string): boolean {
+  if (decision.subjectId) {
+    return descriptionMatchesSubjectId("material", description, decision.subjectId);
+  }
+  const decisionKeywords = buildDecisionContextKeywords(decision);
+  if (!decisionKeywords.size) {
+    return false;
+  }
+  const itemKeywords = new Set(expandKeywordVariants(extractKeywords(description)));
+  const overlapThreshold = decisionKeywords.size <= 2 ? 1 : 2;
+  return countKeywordOverlap(decisionKeywords, itemKeywords) >= overlapThreshold;
+}
+
+function decisionMatchesLabor(decision: OpenDecision, description: string): boolean {
+  if (decision.subjectId) {
+    return descriptionMatchesSubjectId("labor", description, decision.subjectId);
+  }
+  const decisionKeywords = buildDecisionContextKeywords(decision);
+  if (!decisionKeywords.size) {
+    return false;
+  }
+  const itemKeywords = new Set(expandKeywordVariants(extractKeywords(description)));
+  const overlapThreshold = decisionKeywords.size <= 2 ? 1 : 2;
+  return countKeywordOverlap(decisionKeywords, itemKeywords) >= overlapThreshold;
+}
+
+function applyBillingValueAnswerToStructuredInvoice(
+  structuredInvoice: StructuredInvoice,
+  decision: OpenDecision,
+  value: number
+): StructuredInvoice {
+  const field = decision.evidenceField;
+  if (!field) {
+    return structuredInvoice;
+  }
+
+  let hasChanges = false;
+  const nextWorkSessions = structuredInvoice.workSessions.map((session) => ({
+    ...session,
+    tasks: session.tasks.map((task) => {
+      if (!decisionMatchesLabor(decision, task.description)) {
+        return task;
+      }
+      hasChanges = true;
+      if (field === "rate" || field === "price" || field === "cost") {
+        const hours = typeof task.hours === "number" ? task.hours : undefined;
+        return {
+          ...task,
+          rate: value,
+          amount: typeof hours === "number" ? roundToCents(hours * value) : undefined
+        };
+      }
+      if (field === "quantity") {
+        const rate = typeof task.rate === "number" ? task.rate : undefined;
+        return {
+          ...task,
+          hours: value,
+          amount: typeof rate === "number" ? roundToCents(value * rate) : undefined
+        };
+      }
+      return task;
+    })
+  }));
+
+  const nextMaterials = structuredInvoice.materials.map((material) => {
+    if (!decisionMatchesMaterial(decision, material.description)) {
+      return material;
+    }
+    hasChanges = true;
+    if (field === "quantity") {
+      const unitCost = typeof material.unitCost === "number" ? material.unitCost : undefined;
+      return {
+        ...material,
+        quantity: value,
+        amount: typeof unitCost === "number" ? roundToCents(value * unitCost) : undefined
+      };
+    }
+    // price / cost / rate on a material → unit cost
+    const quantity =
+      typeof material.quantity === "number" && material.quantity > 0 ? material.quantity : 1;
+    return {
+      ...material,
+      quantity,
+      unitCost: value,
+      amount: roundToCents(quantity * value)
+    };
+  });
+
+  if (!hasChanges) {
+    return structuredInvoice;
+  }
+
+  return {
+    ...structuredInvoice,
+    workSessions: nextWorkSessions,
+    materials: nextMaterials
+  };
+}
+
+function applyBillingWaiveToStructuredInvoice(
+  structuredInvoice: StructuredInvoice,
+  decision: OpenDecision
+): StructuredInvoice {
+  const field = decision.evidenceField;
+  if (!field || field === "quantity") {
+    // Waiving a missing quantity is not a free charge — leave unchanged.
+    return structuredInvoice;
+  }
+
+  let hasChanges = false;
+  const nextWorkSessions = structuredInvoice.workSessions.map((session) => ({
+    ...session,
+    tasks: session.tasks.map((task) => {
+      if (!decisionMatchesLabor(decision, task.description)) {
+        return task;
+      }
+      hasChanges = true;
+      return {
+        ...task,
+        rate: 0,
+        amount: 0
+      };
+    })
+  }));
+  const nextMaterials = structuredInvoice.materials.map((material) => {
+    if (!decisionMatchesMaterial(decision, material.description)) {
+      return material;
+    }
+    hasChanges = true;
+    return {
+      ...material,
+      unitCost: 0,
+      amount: 0
+    };
+  });
+
+  if (!hasChanges) {
+    return structuredInvoice;
+  }
+
+  return {
+    ...structuredInvoice,
+    workSessions: nextWorkSessions,
+    materials: nextMaterials
+  };
+}
+
+function removeBillingSubjectFromStructuredInvoice(
+  structuredInvoice: StructuredInvoice,
+  decision: OpenDecision
+): StructuredInvoice {
+  const nextWorkSessions = structuredInvoice.workSessions.map((session) => ({
+    ...session,
+    tasks: session.tasks.filter((task) => !decisionMatchesLabor(decision, task.description))
+  }));
+  const nextMaterials = structuredInvoice.materials.filter(
+    (material) => !decisionMatchesMaterial(decision, material.description)
+  );
+
+  return {
+    ...structuredInvoice,
+    workSessions: nextWorkSessions,
+    materials: nextMaterials
+  };
 }
 
 function applyBillingExclusionToStructuredInvoice(
@@ -2146,6 +2461,82 @@ function extractAmbiguousBillingDecisions(sourceText: string): OpenDecision[] {
   return decisions;
 }
 
+function fingerprintSourceSnippet(value?: string): string {
+  const normalized = normalizeDecisionText(value ?? "");
+  if (!normalized) {
+    return "";
+  }
+  return hashString(normalized);
+}
+
+function isSameOriginatingStatement(sourceSnippet: string | undefined, candidate: string): boolean {
+  const origin = normalizeDecisionText(sourceSnippet ?? "");
+  const other = normalizeDecisionText(candidate);
+  if (!origin || !other) {
+    return false;
+  }
+  if (origin === other) {
+    return true;
+  }
+  if (origin.includes(other) || other.includes(origin)) {
+    const shorter = origin.length <= other.length ? origin : other;
+    return shorter.split(/\s+/).filter(Boolean).length >= 4;
+  }
+  return fingerprintSourceSnippet(origin) === fingerprintSourceSnippet(other);
+}
+
+/** Legacy prompt-shaped numeric gaps — retired as authority; used only to strip duplicates. */
+function isLegacyUnresolvedNumericPrompt(decision: OpenDecision): boolean {
+  const prompt = decision.prompt ?? "";
+  if (/confirm\s+(?:unit\s+)?(?:price|cost|rate|quantity)\s+for/i.test(prompt)) {
+    return true;
+  }
+  if (
+    /(?:unit\s+)?(?:price|cost|rate|quantity).*(?:missing|unknown|not\s+written|not\s+recorded|tbd|confirm|what\s+should)/i.test(
+      prompt
+    )
+  ) {
+    return true;
+  }
+  if (/missing.+(?:price|cost|rate|quantity)/i.test(prompt)) {
+    return true;
+  }
+  return false;
+}
+
+export function hasUnresolvedNumericBillingFollowUp(input: {
+  openDecisions?: OpenDecision[];
+  qualityGate?: { blockers?: Array<{ code?: string }> };
+  unresolvedFacts?: BillingEvidence[];
+}): boolean {
+  void input.qualityGate;
+  return hasUnresolvedAuthoritativeBillingFacts({
+    openDecisions: input.openDecisions,
+    unresolvedFacts: input.unresolvedFacts
+  });
+}
+
+function shouldEmitLaborLineItem(task: Task): boolean {
+  if (typeof task.amount === "number") {
+    return true;
+  }
+  if (typeof task.rate === "number") {
+    return true;
+  }
+  if (typeof task.hours === "number" && task.hours > 0) {
+    return true;
+  }
+  return false;
+}
+
+function shouldEmitMaterialLineItem(material: Material): boolean {
+  if (typeof material.amount === "number" || typeof material.unitCost === "number") {
+    return true;
+  }
+  // Keep explicitly unresolved materials (missing price/quantity placeholders).
+  return Boolean(material.description?.trim());
+}
+
 function identifyOptionalLaborTasks(
   structuredInvoice: StructuredInvoice,
   sourceText: string
@@ -2262,28 +2653,45 @@ function applyDecisionPricingHolds(
   invoice: FinishedInvoice,
   openDecisions: OpenDecision[]
 ): FinishedInvoice {
-  const billingDecisions = openDecisions.filter((decision) => decision.kind === "billing");
+  // Ledger-backed numeric facts already mutated the structured invoice field-specifically.
+  // Do not re-apply fuzzy keyword holds for those projections.
+  const billingDecisions = openDecisions.filter(
+    (decision) => decision.kind === "billing" && !decision.evidenceField
+  );
   if (billingDecisions.length === 0) {
     return invoice;
   }
 
   const decisionKeywords = billingDecisions.map((decision) => ({
     decision,
-    keywords: new Set(decision.keywords ?? extractKeywords(decision.sourceSnippet ?? decision.prompt))
+    keywords: new Set(decision.keywords ?? extractKeywords(decision.sourceSnippet ?? decision.prompt)),
+    haystack: normalizeDecisionText(
+      [decision.prompt, decision.sourceSnippet ?? ""].filter(Boolean).join(" ")
+    )
   }));
 
   const nextInvoice: FinishedInvoice = {
     ...invoice,
     lineItems: invoice.lineItems.map((item) => {
       const itemKeywords = new Set(extractKeywords(item.description));
-      const matchesDecision = decisionKeywords.some(({ keywords }) => {
+      const itemNeedle = normalizeDecisionText(item.description);
+      const matchesDecision = decisionKeywords.some(({ keywords, haystack }) => {
         let overlapCount = 0;
         keywords.forEach((keyword) => {
           if (itemKeywords.has(keyword)) {
             overlapCount += 1;
           }
         });
-        return overlapCount >= 2;
+        if (overlapCount >= 2) {
+          return true;
+        }
+        if (overlapCount >= 1 && itemKeywords.size <= 2) {
+          return true;
+        }
+        if (itemNeedle && haystack.includes(itemNeedle)) {
+          return true;
+        }
+        return false;
       });
       if (!matchesDecision) {
         return item;
@@ -3059,6 +3467,81 @@ function evaluateDecisionResolution(decision: OpenDecision, resolutionText: stri
     return { resolved: false, reason: "discount_intent_missing" };
   }
 
+  const keywords = decision.keywords ?? [];
+  const promptKeywords = extractKeywords(decision.prompt ?? "");
+  const contextKeywords = expandKeywordVariants(Array.from(new Set([...keywords, ...promptKeywords])));
+  const hasContextOverlap =
+    contextKeywords.length > 0 &&
+    contextKeywords.some((keyword) => resolutionKeywords.has(keyword) || normalized.includes(keyword));
+
+  // Authoritative ledger-backed numeric decisions require field-specific evidence.
+  if (decision.evidenceField || isLegacyUnresolvedNumericPrompt(decision)) {
+    const billingNo =
+      /\bno\s+charge\b/i.test(normalized) ||
+      /\bdon(?:'|)t\s+bill\b/i.test(normalized) ||
+      /\bdo\s+not\s+bill\b/i.test(normalized) ||
+      /\bnot\s+billed\b/i.test(normalized) ||
+      /\bwaive\b/i.test(normalized) ||
+      /\bfree\b/i.test(normalized) ||
+      /\bskip\b/i.test(normalized) ||
+      /\bno\s+bill\b/i.test(normalized);
+    const itemContextKeywords = expandKeywordVariants(
+      Array.from(
+        new Set([
+          ...extractKeywords(decision.sourceSnippet ?? ""),
+          ...extractKeywords(decision.prompt ?? "")
+        ])
+      )
+    ).filter(
+      (keyword) =>
+        ![
+          "pump",
+          "basket",
+          "baskets",
+          "added",
+          "confirm",
+          "supplier",
+          "written",
+          "recorded",
+          "noted",
+          "unknown",
+          "missing",
+          "down",
+          "price",
+          "cost",
+          "rate",
+          "quantity",
+          "amount"
+        ].includes(keyword)
+    );
+    const hasItemOverlap =
+      itemContextKeywords.length > 0 &&
+      itemContextKeywords.some(
+        (keyword) => resolutionKeywords.has(keyword) || normalized.includes(keyword)
+      );
+    if (billingNo && hasItemOverlap) {
+      return { resolved: true };
+    }
+
+    const field = decision.evidenceField;
+    const hasFieldEvidence =
+      field === "quantity"
+        ? /\b(?:quantity|qty|count)\b/i.test(normalized) && /\b\d+(?:\.\d+)?\b/.test(normalized)
+        : field === "rate"
+          ? /\brate\b/i.test(normalized) && /\b\d+(?:\.\d+)?\b/.test(normalized)
+          : field === "cost"
+            ? /\bcost\b/i.test(normalized) && /\b\d+(?:\.\d+)?\b/.test(normalized)
+            : field === "price"
+              ? (/\b(?:price|\$)\b/i.test(normalized) || /\$\s*\d/.test(normalized)) &&
+                /\b\d+(?:\.\d+)?\b/.test(normalized)
+              : false;
+
+    if (hasFieldEvidence && hasItemOverlap) {
+      return { resolved: true };
+    }
+    return { resolved: false, reason: "numeric_evidence_missing" };
+  }
+
   const billingNo =
     /\bno\s+charge\b/i.test(normalized) ||
     /\bdon(?:'|)t\s+bill\b/i.test(normalized) ||
@@ -3077,10 +3560,6 @@ function evaluateDecisionResolution(decision: OpenDecision, resolutionText: stri
     return { resolved: false, reason: "billing_intent_missing" };
   }
 
-  const keywords = decision.keywords ?? [];
-  const promptKeywords = extractKeywords(decision.prompt ?? "");
-  const contextKeywords = expandKeywordVariants(Array.from(new Set([...keywords, ...promptKeywords])));
-
   const isBillToDirective = /\bbill\s+to\b/i.test(normalized);
   if (isBillToDirective) {
     const nonBillContext = contextKeywords.filter((keyword) => keyword !== "bill");
@@ -3091,10 +3570,6 @@ function evaluateDecisionResolution(decision: OpenDecision, resolutionText: stri
       return { resolved: false, reason: "bill_to_directive" };
     }
   }
-
-  const hasContextOverlap =
-    contextKeywords.length > 0 &&
-    contextKeywords.some((keyword) => resolutionKeywords.has(keyword) || normalized.includes(keyword));
 
   if (hasContextOverlap) {
     return { resolved: true };
@@ -3364,8 +3839,8 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
       type: "labor" as const,
       description,
       quantity: roundToCents(hours),
-      unitPrice: 0,
-      amount: 0,
+      unitPrice: undefined,
+      amount: undefined,
       sourceSessionDate: sessionDate
     };
   }
@@ -3385,36 +3860,55 @@ function buildLaborLineItem(task: Task, sessionDate?: string) {
     type: "labor" as const,
     description,
     quantity: 1,
-    unitPrice: 0,
-    amount: 0,
+    unitPrice: undefined,
+    amount: undefined,
     sourceSessionDate: sessionDate
   };
 }
 
-function buildMaterialLineItem(material: Material) {
-  const quantity = typeof material.quantity === "number" ? material.quantity : 1;
-  const safeQuantity = quantity > 0 ? quantity : 1;
+function buildMaterialLineItem(
+  material: Material,
+  unresolvedFacts: BillingEvidence[] = []
+) {
   const description = polishLineItemDescription(material.description);
+  const quantityUnresolved = materialHasUnresolvedField(material, unresolvedFacts, "quantity");
+  const priceUnresolved = materialHasUnresolvedField(material, unresolvedFacts, [
+    "price",
+    "cost",
+    "rate"
+  ]);
+
+  const hasExplicitQuantity = typeof material.quantity === "number" && material.quantity > 0;
+  // Safe default quantity=1 only when quantity is not an explicit unresolved fact.
+  const quantity = hasExplicitQuantity ? material.quantity : quantityUnresolved ? undefined : 1;
+  const safeQuantity =
+    typeof quantity === "number" && quantity > 0 ? quantity : undefined;
 
   let unitPrice: number | undefined;
-  if (typeof material.unitCost === "number") {
+  if (!priceUnresolved && typeof material.unitCost === "number") {
     unitPrice = material.unitCost;
-  } else if (typeof material.amount === "number") {
+  } else if (
+    !priceUnresolved &&
+    typeof material.amount === "number" &&
+    typeof safeQuantity === "number"
+  ) {
     unitPrice = material.amount / safeQuantity;
+  } else if (!priceUnresolved && typeof material.amount === "number" && !quantityUnresolved) {
+    unitPrice = material.amount;
   }
 
   const amount =
-    typeof material.amount === "number"
+    typeof material.amount === "number" && !priceUnresolved && !quantityUnresolved
       ? material.amount
-      : typeof unitPrice === "number"
+      : typeof unitPrice === "number" && typeof safeQuantity === "number"
         ? safeQuantity * unitPrice
-        : 0;
+        : undefined;
 
   return {
     type: "material" as const,
     description,
-    quantity: roundToCents(safeQuantity),
-    unitPrice: roundToCents(unitPrice ?? 0),
-    amount: roundToCents(amount)
+    quantity: typeof safeQuantity === "number" ? roundToCents(safeQuantity) : undefined,
+    unitPrice: typeof unitPrice === "number" ? roundToCents(unitPrice) : undefined,
+    amount: typeof amount === "number" ? roundToCents(amount) : undefined
   };
 }

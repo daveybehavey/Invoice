@@ -203,7 +203,7 @@
           : "No decisions pending.";
     const nextStepText =
       pendingDecisionCount > 0
-        ? "Choose Add or Skip in Decisions."
+        ? "Enter the missing price or resolve Decisions."
         : qualityBlockerCount > 0
           ? "Fix flagged review items below."
           : "Ready to generate.";

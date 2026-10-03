@@ -6,6 +6,7 @@ export type OutputQualityIssueCode =
   | "totals_conflict"
   | "labor_material_separation"
   | "labor_pricing_format"
+  | "missing_price"
   | "description_clarity"
   | "multi_day_structure";
 
@@ -26,6 +27,8 @@ export interface OutputQualityGate {
 interface EvaluateOutputQualityInput {
   structuredInvoice: StructuredInvoice;
   invoice: FinishedInvoice;
+  /** Authoritative ledger facts still unresolved (even when sibling line prices were left untouched). */
+  hasUnresolvedBillingFacts?: boolean;
 }
 
 const INFORMAL_DESCRIPTION_PATTERN =
@@ -46,7 +49,8 @@ const isExplicitDate = (value?: string): boolean => {
 
 export function evaluateInvoiceOutputQuality({
   structuredInvoice,
-  invoice
+  invoice,
+  hasUnresolvedBillingFacts = false
 }: EvaluateOutputQualityInput): OutputQualityGate {
   const blockers: OutputQualityIssue[] = [];
   const warnings: OutputQualityIssue[] = [];
@@ -127,6 +131,18 @@ export function evaluateInvoiceOutputQuality({
       return;
     }
 
+    const hasAmount = isFiniteNumber(lineItem.amount);
+    const hasUnitPrice = isFiniteNumber(lineItem.unitPrice);
+    const hasQuantity = isFiniteNumber(lineItem.quantity) && (lineItem.quantity as number) > 0;
+    const isExplicitZeroCharge = hasAmount && lineItem.amount === 0 && hasUnitPrice && lineItem.unitPrice === 0;
+    if (!isExplicitZeroCharge && (!hasAmount || !hasUnitPrice || !hasQuantity)) {
+      blockers.push({
+        code: "missing_price",
+        lineItemId: lineItem.id,
+        message: `Line item "${description}" is missing a required price, quantity, or amount.`
+      });
+    }
+
     if (INFORMAL_DESCRIPTION_PATTERN.test(description) || FIRST_PERSON_PATTERN.test(description)) {
       warnings.push({
         code: "description_clarity",
@@ -178,6 +194,19 @@ export function evaluateInvoiceOutputQuality({
           "This looks like multi-day work. Add date context or service period for clearer client review."
       });
     }
+  }
+
+  // Authoritative unresolved billing facts must block pass even when no line item
+  // was cleared (ambiguous binds fail closed and leave sibling prices intact).
+  if (
+    hasUnresolvedBillingFacts &&
+    !blockers.some((blocker) => blocker.code === "missing_price")
+  ) {
+    blockers.push({
+      code: "missing_price",
+      message:
+        "A price, rate, or quantity is still unresolved. Enter it before generating."
+    });
   }
 
   return {

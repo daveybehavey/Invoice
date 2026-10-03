@@ -115,7 +115,10 @@ export const OpenDecisionSchema = z.object({
   kind: z.enum(["tax", "billing"]),
   prompt: z.string().min(1),
   sourceSnippet: OptionalString,
-  keywords: z.array(z.string().min(1)).optional()
+  keywords: z.array(z.string().min(1)).optional(),
+  // Projections of authoritative billing-evidence ledger facts (AG-093/AG-094).
+  subjectId: OptionalString,
+  evidenceField: z.enum(["quantity", "price", "cost", "rate"]).optional()
 });
 
 export const InvoiceAuditSchema = z.object({
@@ -237,10 +240,21 @@ export const InvoiceAuditRequestSchema = z.object({
 });
 
 export const DecisionActionSchema = z.object({
-  type: z.enum(["include", "exclude", "tax_apply", "tax_skip", "bulk_include", "bulk_exclude"]),
+  type: z.enum([
+    "include",
+    "exclude",
+    "tax_apply",
+    "tax_skip",
+    "bulk_include",
+    "bulk_exclude",
+    "set_value",
+    "waive"
+  ]),
   id: OptionalString,
   kind: z.enum(["tax", "billing"]).optional(),
-  snippet: OptionalString
+  snippet: OptionalString,
+  // Deterministic answer for ledger-backed missing price/rate/quantity decisions.
+  value: OptionalNumber
 });
 
 export const ApplyDecisionRequestSchema = z.object({

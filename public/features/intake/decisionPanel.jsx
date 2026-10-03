@@ -26,6 +26,7 @@
     decisionIncludeButtonClass,
     decisionExcludeButtonClass,
     handleDecisionAction,
+    handleDecisionValueAnswer,
     hasMoreDecisions,
     showAllDecisions,
     clampedDecisionIndex,
@@ -67,6 +68,7 @@
     if (!showAssumptionsCard) {
       return null;
     }
+    const [decisionValueDrafts, setDecisionValueDrafts] = React.useState({});
     const usageToneClass =
       planUsage?.statusTone === "limit"
         ? "nb-usage-meter--limit"
@@ -114,7 +116,7 @@
             </p>
           ) : null}
           {openDecisionCount > 0 && showConfirmDetails && !showQuickDecisions ? (
-            <p className="mt-2 text-xs text-amber-800">Money decision pending. Choose Add or Skip to continue.</p>
+            <p className="mt-2 text-xs text-amber-800">Money decision pending. Enter the missing price, mark Free, or Skip.</p>
           ) : null}
           {showConfirmDetails && (showQuickDecisions || hasVisibleDetails || hasDecisions) ? (
             <>
@@ -163,11 +165,12 @@
                   {showDecisionWhy ? (
                     <p className="mt-2 text-sm text-amber-900">
                       These items were unclear in your notes. Billie does not auto-decide money.
-                      Choose Add or Skip to continue.
+                      Enter the missing price on the line, mark Free / no charge, or Skip to drop it.
                     </p>
                   ) : null}
                   <div className="mt-2 space-y-2">
                     {visibleDecisionItems.map((item) => {
+                      const actions = buildDecisionActions(item);
                       const {
                         display,
                         includeLabel,
@@ -175,32 +178,110 @@
                         includeValue,
                         excludeValue,
                         includeAction,
-                        excludeAction
-                      } = buildDecisionActions(item);
+                        excludeAction,
+                        isMissingValueDecision,
+                        fieldLabel,
+                        valuePlaceholder,
+                        canWaive,
+                        setValueAction,
+                        waiveAction
+                      } = actions;
+                      const draftValue = decisionValueDrafts[item.id] ?? "";
+                      const parsedDraft = Number(String(draftValue).replace(/[$,]/g, "").trim());
+                      const canApplyValue =
+                        Number.isFinite(parsedDraft) && parsedDraft >= 0 && String(draftValue).trim() !== "";
                       return (
                         <div key={`quick-${item.id}`} className="space-y-2">
                           <p className="text-sm text-amber-900">{display}</p>
                           {item.context ? (
                             <p className="text-xs text-amber-800">{item.context}</p>
                           ) : null}
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              className={decisionIncludeButtonClass}
-                              onClick={() => handleDecisionAction(includeAction, includeValue)}
-                              disabled={isTyping}
-                            >
-                              {includeLabel}
-                            </button>
-                            <button
-                              type="button"
-                              className={decisionExcludeButtonClass}
-                              onClick={() => handleDecisionAction(excludeAction, excludeValue)}
-                              disabled={isTyping}
-                            >
-                              {excludeLabel}
-                            </button>
-                          </div>
+                          {isMissingValueDecision ? (
+                            <div className="space-y-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <label className="sr-only" htmlFor={`decision-value-${item.id}`}>
+                                  {`Enter ${fieldLabel}`}
+                                </label>
+                                <input
+                                  id={`decision-value-${item.id}`}
+                                  type="number"
+                                  inputMode="decimal"
+                                  min="0"
+                                  step="0.01"
+                                  placeholder={valuePlaceholder || "0.00"}
+                                  value={draftValue}
+                                  onChange={(event) =>
+                                    setDecisionValueDrafts((prev) => ({
+                                      ...prev,
+                                      [item.id]: event.target.value
+                                    }))
+                                  }
+                                  disabled={isTyping || decisionApplyPending}
+                                  className="w-28 rounded-full border border-amber-200 bg-white px-3 py-1.5 text-sm text-amber-950 shadow-sm focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-200 disabled:cursor-not-allowed disabled:bg-amber-50"
+                                />
+                                <button
+                                  type="button"
+                                  className={decisionIncludeButtonClass}
+                                  onClick={() => {
+                                    if (!canApplyValue || typeof handleDecisionValueAnswer !== "function") {
+                                      return;
+                                    }
+                                    handleDecisionValueAnswer(setValueAction, parsedDraft, {
+                                      message: `Set ${fieldLabel} to ${parsedDraft}.`
+                                    });
+                                  }}
+                                  disabled={isTyping || decisionApplyPending || !canApplyValue}
+                                >
+                                  Apply {fieldLabel}
+                                </button>
+                                {canWaive ? (
+                                  <button
+                                    type="button"
+                                    className={decisionExcludeButtonClass}
+                                    onClick={() =>
+                                      handleDecisionAction(
+                                        waiveAction,
+                                        `No charge for ${item.prompt || "this item"}.`
+                                      )
+                                    }
+                                    disabled={isTyping || decisionApplyPending}
+                                  >
+                                    Free / no charge
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className={decisionExcludeButtonClass}
+                                  onClick={() => handleDecisionAction(excludeAction, excludeValue)}
+                                  disabled={isTyping || decisionApplyPending}
+                                >
+                                  Skip
+                                </button>
+                              </div>
+                              <p className="text-xs text-amber-800">
+                                Type the {fieldLabel} on this line. Skip drops the item — it does not invent $0.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className={decisionIncludeButtonClass}
+                                onClick={() => handleDecisionAction(includeAction, includeValue)}
+                                disabled={isTyping}
+                              >
+                                {includeLabel}
+                              </button>
+                              <button
+                                type="button"
+                                className={decisionExcludeButtonClass}
+                                onClick={() => handleDecisionAction(excludeAction, excludeValue)}
+                                disabled={isTyping}
+                              >
+                                {excludeLabel}
+                              </button>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -267,7 +348,13 @@
                             type="button"
                             className={decisionIncludeButtonClass}
                             onClick={() => {
-                              const includeAll = decisionItems
+                              const includeable = decisionItems.filter(
+                                (item) => !buildDecisionActions(item).isMissingValueDecision
+                              );
+                              if (!includeable.length) {
+                                return;
+                              }
+                              const includeAll = includeable
                                 .map((item) => buildDecisionActions(item).includeValue)
                                 .join("\n");
                               handleDecisionAction({ type: "bulk_include" }, includeAll);
@@ -364,6 +451,7 @@
                   </p>
                   <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-amber-900">
                     {decisionItems.map((item) => {
+                      const actions = buildDecisionActions(item);
                       const {
                         display,
                         includeLabel,
@@ -371,31 +459,100 @@
                         includeValue,
                         excludeValue,
                         includeAction,
-                        excludeAction
-                      } = buildDecisionActions(item);
+                        excludeAction,
+                        isMissingValueDecision,
+                        fieldLabel,
+                        valuePlaceholder,
+                        canWaive,
+                        setValueAction,
+                        waiveAction
+                      } = actions;
+                      const draftValue = decisionValueDrafts[item.id] ?? "";
+                      const parsedDraft = Number(String(draftValue).replace(/[$,]/g, "").trim());
+                      const canApplyValue =
+                        Number.isFinite(parsedDraft) && parsedDraft >= 0 && String(draftValue).trim() !== "";
                       return (
                         <li key={item.id}>
                           <div className="space-y-2">
                             <p>{`Decision needed: ${display}`}</p>
                             {item.context ? <p className="text-xs text-amber-800">{item.context}</p> : null}
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                className={decisionIncludeButtonClass}
-                                onClick={() => handleDecisionAction(includeAction, includeValue)}
-                                disabled={isTyping}
-                              >
-                                {includeLabel}
-                              </button>
-                              <button
-                                type="button"
-                                className={decisionExcludeButtonClass}
-                                onClick={() => handleDecisionAction(excludeAction, excludeValue)}
-                                disabled={isTyping}
-                              >
-                                {excludeLabel}
-                              </button>
-                            </div>
+                            {isMissingValueDecision ? (
+                              <div className="flex flex-wrap items-center gap-2">
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  min="0"
+                                  step="0.01"
+                                  placeholder={valuePlaceholder || "0.00"}
+                                  value={draftValue}
+                                  onChange={(event) =>
+                                    setDecisionValueDrafts((prev) => ({
+                                      ...prev,
+                                      [item.id]: event.target.value
+                                    }))
+                                  }
+                                  disabled={isTyping || decisionApplyPending}
+                                  className="w-28 rounded-full border border-amber-200 bg-white px-3 py-1.5 text-sm text-amber-950 shadow-sm focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                                />
+                                <button
+                                  type="button"
+                                  className={decisionIncludeButtonClass}
+                                  onClick={() => {
+                                    if (!canApplyValue || typeof handleDecisionValueAnswer !== "function") {
+                                      return;
+                                    }
+                                    handleDecisionValueAnswer(setValueAction, parsedDraft, {
+                                      message: `Set ${fieldLabel} to ${parsedDraft}.`
+                                    });
+                                  }}
+                                  disabled={isTyping || decisionApplyPending || !canApplyValue}
+                                >
+                                  Apply {fieldLabel}
+                                </button>
+                                {canWaive ? (
+                                  <button
+                                    type="button"
+                                    className={decisionExcludeButtonClass}
+                                    onClick={() =>
+                                      handleDecisionAction(
+                                        waiveAction,
+                                        `No charge for ${item.prompt || "this item"}.`
+                                      )
+                                    }
+                                    disabled={isTyping || decisionApplyPending}
+                                  >
+                                    Free / no charge
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className={decisionExcludeButtonClass}
+                                  onClick={() => handleDecisionAction(excludeAction, excludeValue)}
+                                  disabled={isTyping || decisionApplyPending}
+                                >
+                                  Skip
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  className={decisionIncludeButtonClass}
+                                  onClick={() => handleDecisionAction(includeAction, includeValue)}
+                                  disabled={isTyping}
+                                >
+                                  {includeLabel}
+                                </button>
+                                <button
+                                  type="button"
+                                  className={decisionExcludeButtonClass}
+                                  onClick={() => handleDecisionAction(excludeAction, excludeValue)}
+                                  disabled={isTyping}
+                                >
+                                  {excludeLabel}
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </li>
                       );
