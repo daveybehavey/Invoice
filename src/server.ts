@@ -2110,6 +2110,18 @@ async function recordSavedInvoicePayment(input: {
   ];
   const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
   const nextBalanceDue = calculateInvoiceBalance(invoiceTotal, nextPaymentRecords);
+  // Fail-closed: refuse draft→sent via partial payment when send is blocked.
+  // Full payment (→paid) is allowed even on a messy draft.
+  if (
+    savedInvoice.status === "draft" &&
+    nextBalanceDue > 0 &&
+    invoiceSendIsBlocked({
+      finishedInvoice: currentInvoice,
+      sourceNote: savedInvoice.invoiceData.sourceNote
+    })
+  ) {
+    throw new HttpStatusError(400, SEND_BLOCKED_MESSAGE);
+  }
   let nextInvoice = await savedInvoiceRepository.saveInvoiceDocument({
     ownerId: input.ownerId,
     invoiceId: input.invoiceId,
@@ -2149,6 +2161,17 @@ async function removeSavedInvoicePayment(input: {
   }
   const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
   const nextBalanceDue = calculateInvoiceBalance(invoiceTotal, nextPaymentRecords);
+  // Fail-closed: refuse paid→sent via remove-payment when send is blocked.
+  if (
+    savedInvoice.status === "paid" &&
+    nextBalanceDue > 0 &&
+    invoiceSendIsBlocked({
+      finishedInvoice: currentInvoice,
+      sourceNote: savedInvoice.invoiceData.sourceNote
+    })
+  ) {
+    throw new HttpStatusError(400, SEND_BLOCKED_MESSAGE);
+  }
   let nextInvoice = await savedInvoiceRepository.saveInvoiceDocument({
     ownerId: input.ownerId,
     invoiceId: input.invoiceId,
