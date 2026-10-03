@@ -255,7 +255,7 @@
               ) : null}
               {pendingDecisionCount > 0 ? (
                 <p className="mt-1 text-xs text-amber-700">
-                  Some amounts stay hidden until you choose Add or Skip.
+                  Some amounts stay hidden until you enter the missing price or resolve the decision.
                 </p>
               ) : null}
             </div>

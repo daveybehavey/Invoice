@@ -268,10 +268,13 @@
           clearDecisionUndoState();
         }
         const adjustedInvoice = applyDecisionActionToInvoice(payload.invoice ?? null, decisionAction);
-        const nextFollowUp = payload?.needsFollowUp ? payload.followUp ?? null : null;
+        // Structured labor/discount follow-ups carry a followUp payload. Missing-price
+        // ledger decisions only set needsFollowUp + openDecisions — keep the draft visible.
+        const nextFollowUp = payload?.followUp ?? null;
+        const hasStructuredFollowUp = Boolean(nextFollowUp?.type || nextFollowUp?.message);
         const responseReadiness = evaluateResponseReadiness({
-          followUp: nextFollowUp,
-          finishedInvoice: payload?.needsFollowUp ? null : adjustedInvoice,
+          followUp: hasStructuredFollowUp ? nextFollowUp : null,
+          finishedInvoice: hasStructuredFollowUp ? null : adjustedInvoice,
           openDecisionCount: nextOpenDecisions.length,
           qualityBlockerCount: nextOutputQuality?.blockerCount ?? 0,
           pendingLaborRate: null
@@ -279,6 +282,7 @@
         logReadinessEvent("intake_response", {
           requestId,
           payloadNeedsFollowUp: Boolean(payload?.needsFollowUp),
+          hasStructuredFollowUp,
           responseTargetPhase: responseReadiness.targetPhase,
           responseLockReason: responseReadiness.lockReason,
           responseCanGenerate: responseReadiness.canGenerate,
@@ -287,16 +291,16 @@
           hasInvoice: Boolean(adjustedInvoice)
         });
 
-        if (payload?.needsFollowUp) {
+        if (hasStructuredFollowUp) {
           setOutputQuality(null);
           setLaborPricingNote("");
           setPendingLaborRate(null);
-          setFollowUp(payload.followUp ?? null);
+          setFollowUp(nextFollowUp);
           setStructuredInvoice(payload.structuredInvoice ?? null);
           setFinishedInvoice(null);
           setIntakePhase(responseReadiness.targetPhase);
-          const followUpText = payload?.followUp?.message
-            ? `${payload.followUp.message} Reply with either "flat $300" or "$95/hr" plus hours per line. You can also tap a suggestion below.`
+          const followUpText = nextFollowUp?.message
+            ? `${nextFollowUp.message} Reply with either "flat $300" or "$95/hr" plus hours per line. You can also tap a suggestion below.`
             : "I still need labor pricing. Share either a flat amount or an hourly rate plus hours.";
           if (decisionAck) {
             appendAiMessage(decisionAck);

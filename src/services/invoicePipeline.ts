@@ -17,6 +17,7 @@ import { evaluateInvoiceOutputQuality, OutputQualityGate } from "./outputQuality
 import {
   applyBillingEvidenceLedger,
   BillingEvidence,
+  descriptionMatchesSubjectId,
   hasUnresolvedAuthoritativeBillingFacts,
   materialHasUnresolvedField,
   projectUnresolvedEvidenceToDecisions,
@@ -500,9 +501,6 @@ export async function applyDecisionActionToDraft(
   const currentOpenDecisions = normalizeOpenDecisions(input.openDecisions ?? []);
   const decisionAction = input.decisionAction;
   const selectedDecisions = selectTargetDecisions(currentOpenDecisions, decisionAction);
-  const selectedDecisionIds = new Set(selectedDecisions.map((decision) => decision.id));
-  const excludeSelected =
-    decisionAction.type === "exclude" || decisionAction.type === "bulk_exclude";
   const selectedTaxDecisions = selectedDecisions.filter((decision) => decision.kind === "tax");
   const taxApplySelected =
     (decisionAction.type === "tax_apply" || decisionAction.type === "bulk_include") &&
@@ -512,16 +510,73 @@ export async function applyDecisionActionToDraft(
     selectedTaxDecisions.length > 0;
 
   let nextStructuredInvoice = cloneStructuredInvoice(sanitizedInvoice);
-  if (excludeSelected) {
+  const resolvedDecisionIds = new Set<string>();
+
+  if (decisionAction.type === "set_value") {
+    const numericValue = coerceDecisionNumericValue(decisionAction.value);
+    if (numericValue === undefined) {
+      throw new Error("A numeric value is required to answer a missing price or rate.");
+    }
+    selectedDecisions
+      .filter((decision) => decision.kind === "billing" && Boolean(decision.evidenceField))
+      .forEach((decision) => {
+        nextStructuredInvoice = applyBillingValueAnswerToStructuredInvoice(
+          nextStructuredInvoice,
+          decision,
+          numericValue
+        );
+        resolvedDecisionIds.add(decision.id);
+      });
+  } else if (decisionAction.type === "waive") {
+    selectedDecisions
+      .filter((decision) => decision.kind === "billing" && Boolean(decision.evidenceField))
+      .forEach((decision) => {
+        nextStructuredInvoice = applyBillingWaiveToStructuredInvoice(nextStructuredInvoice, decision);
+        resolvedDecisionIds.add(decision.id);
+      });
+  } else if (decisionAction.type === "exclude" || decisionAction.type === "bulk_exclude") {
     selectedDecisions
       .filter((decision) => decision.kind === "billing")
       .forEach((decision) => {
-        nextStructuredInvoice = applyBillingExclusionToStructuredInvoice(nextStructuredInvoice, decision);
+        if (decision.evidenceField) {
+          // Missing-price Skip must not invent $0. Drop the line from the draft instead.
+          nextStructuredInvoice = removeBillingSubjectFromStructuredInvoice(
+            nextStructuredInvoice,
+            decision
+          );
+        } else {
+          nextStructuredInvoice = applyBillingExclusionToStructuredInvoice(
+            nextStructuredInvoice,
+            decision
+          );
+        }
+        resolvedDecisionIds.add(decision.id);
       });
+  } else if (
+    decisionAction.type === "include" ||
+    decisionAction.type === "bulk_include" ||
+    decisionAction.type === "tax_apply" ||
+    decisionAction.type === "tax_skip"
+  ) {
+    selectedDecisions.forEach((decision) => {
+      // Add alone cannot resolve a missing price/rate/quantity — keep those open.
+      if (decision.kind === "billing" && decision.evidenceField) {
+        return;
+      }
+      resolvedDecisionIds.add(decision.id);
+    });
+  }
+
+  // Tax decisions selected via exclude/bulk_exclude still clear.
+  if (decisionAction.type === "exclude" || decisionAction.type === "bulk_exclude") {
+    selectedTaxDecisions.forEach((decision) => resolvedDecisionIds.add(decision.id));
+  }
+  if (decisionAction.type === "tax_apply" || decisionAction.type === "tax_skip") {
+    selectedTaxDecisions.forEach((decision) => resolvedDecisionIds.add(decision.id));
   }
 
   const remainingOpenDecisions = currentOpenDecisions.filter(
-    (decision) => !selectedDecisionIds.has(decision.id)
+    (decision) => !resolvedDecisionIds.has(decision.id)
   );
 
   const baseInvoice = await generateFinishedInvoice(nextStructuredInvoice);
@@ -1946,6 +2001,185 @@ function findDecisionBySnippet(
   });
 
   return bestScore > 0 ? bestDecision : undefined;
+}
+
+function coerceDecisionNumericValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return roundToCents(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.trim().replace(/[$,]/g, ""));
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return roundToCents(parsed);
+    }
+  }
+  return undefined;
+}
+
+function decisionMatchesMaterial(decision: OpenDecision, description: string): boolean {
+  if (decision.subjectId) {
+    return descriptionMatchesSubjectId("material", description, decision.subjectId);
+  }
+  const decisionKeywords = buildDecisionContextKeywords(decision);
+  if (!decisionKeywords.size) {
+    return false;
+  }
+  const itemKeywords = new Set(expandKeywordVariants(extractKeywords(description)));
+  const overlapThreshold = decisionKeywords.size <= 2 ? 1 : 2;
+  return countKeywordOverlap(decisionKeywords, itemKeywords) >= overlapThreshold;
+}
+
+function decisionMatchesLabor(decision: OpenDecision, description: string): boolean {
+  if (decision.subjectId) {
+    return descriptionMatchesSubjectId("labor", description, decision.subjectId);
+  }
+  const decisionKeywords = buildDecisionContextKeywords(decision);
+  if (!decisionKeywords.size) {
+    return false;
+  }
+  const itemKeywords = new Set(expandKeywordVariants(extractKeywords(description)));
+  const overlapThreshold = decisionKeywords.size <= 2 ? 1 : 2;
+  return countKeywordOverlap(decisionKeywords, itemKeywords) >= overlapThreshold;
+}
+
+function applyBillingValueAnswerToStructuredInvoice(
+  structuredInvoice: StructuredInvoice,
+  decision: OpenDecision,
+  value: number
+): StructuredInvoice {
+  const field = decision.evidenceField;
+  if (!field) {
+    return structuredInvoice;
+  }
+
+  let hasChanges = false;
+  const nextWorkSessions = structuredInvoice.workSessions.map((session) => ({
+    ...session,
+    tasks: session.tasks.map((task) => {
+      if (!decisionMatchesLabor(decision, task.description)) {
+        return task;
+      }
+      hasChanges = true;
+      if (field === "rate" || field === "price" || field === "cost") {
+        const hours = typeof task.hours === "number" ? task.hours : undefined;
+        return {
+          ...task,
+          rate: value,
+          amount: typeof hours === "number" ? roundToCents(hours * value) : undefined
+        };
+      }
+      if (field === "quantity") {
+        const rate = typeof task.rate === "number" ? task.rate : undefined;
+        return {
+          ...task,
+          hours: value,
+          amount: typeof rate === "number" ? roundToCents(value * rate) : undefined
+        };
+      }
+      return task;
+    })
+  }));
+
+  const nextMaterials = structuredInvoice.materials.map((material) => {
+    if (!decisionMatchesMaterial(decision, material.description)) {
+      return material;
+    }
+    hasChanges = true;
+    if (field === "quantity") {
+      const unitCost = typeof material.unitCost === "number" ? material.unitCost : undefined;
+      return {
+        ...material,
+        quantity: value,
+        amount: typeof unitCost === "number" ? roundToCents(value * unitCost) : undefined
+      };
+    }
+    // price / cost / rate on a material → unit cost
+    const quantity =
+      typeof material.quantity === "number" && material.quantity > 0 ? material.quantity : 1;
+    return {
+      ...material,
+      quantity,
+      unitCost: value,
+      amount: roundToCents(quantity * value)
+    };
+  });
+
+  if (!hasChanges) {
+    return structuredInvoice;
+  }
+
+  return {
+    ...structuredInvoice,
+    workSessions: nextWorkSessions,
+    materials: nextMaterials
+  };
+}
+
+function applyBillingWaiveToStructuredInvoice(
+  structuredInvoice: StructuredInvoice,
+  decision: OpenDecision
+): StructuredInvoice {
+  const field = decision.evidenceField;
+  if (!field || field === "quantity") {
+    // Waiving a missing quantity is not a free charge — leave unchanged.
+    return structuredInvoice;
+  }
+
+  let hasChanges = false;
+  const nextWorkSessions = structuredInvoice.workSessions.map((session) => ({
+    ...session,
+    tasks: session.tasks.map((task) => {
+      if (!decisionMatchesLabor(decision, task.description)) {
+        return task;
+      }
+      hasChanges = true;
+      return {
+        ...task,
+        rate: 0,
+        amount: 0
+      };
+    })
+  }));
+  const nextMaterials = structuredInvoice.materials.map((material) => {
+    if (!decisionMatchesMaterial(decision, material.description)) {
+      return material;
+    }
+    hasChanges = true;
+    return {
+      ...material,
+      unitCost: 0,
+      amount: 0
+    };
+  });
+
+  if (!hasChanges) {
+    return structuredInvoice;
+  }
+
+  return {
+    ...structuredInvoice,
+    workSessions: nextWorkSessions,
+    materials: nextMaterials
+  };
+}
+
+function removeBillingSubjectFromStructuredInvoice(
+  structuredInvoice: StructuredInvoice,
+  decision: OpenDecision
+): StructuredInvoice {
+  const nextWorkSessions = structuredInvoice.workSessions.map((session) => ({
+    ...session,
+    tasks: session.tasks.filter((task) => !decisionMatchesLabor(decision, task.description))
+  }));
+  const nextMaterials = structuredInvoice.materials.filter(
+    (material) => !decisionMatchesMaterial(decision, material.description)
+  );
+
+  return {
+    ...structuredInvoice,
+    workSessions: nextWorkSessions,
+    materials: nextMaterials
+  };
 }
 
 function applyBillingExclusionToStructuredInvoice(

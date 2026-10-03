@@ -58,6 +58,8 @@ const [
   import("./services/contractCopyDelivery.js")
 ]);
 
+const { subjectIdFor } = await import("./services/billingEvidence.js");
+
 function validTermsAckFields() {
   return {
     termsVersion: LEGAL_TERMS_VERSION,
@@ -5465,6 +5467,280 @@ test("apply-decision includes timing payload only when debugTiming is enabled", 
   assert.equal(typeof withDebug.body._timing?.serverApplyMs, "number");
   assert.equal(typeof withDebug.body._timing?.serverTotalMs, "number");
   assert.ok(withDebug.body._timing.serverTotalMs >= withDebug.body._timing.serverApplyMs);
+});
+
+
+test("apply-decision set_value fills missing unit price on the same line and recalculates qty×unit", async () => {
+  setJsonTaskRunnerForTests(async () => {
+    throw new Error("apply-decision should not call runJsonTask");
+  });
+
+  const acidSubjectId = subjectIdFor("material", "Acid jug");
+  const response = await request(app).post("/api/invoices/apply-decision").send({
+    structuredInvoice: {
+      customerName: "Pool Co",
+      workSessions: [
+        {
+          date: "May 1",
+          tasks: [{ description: "Opened pool", hours: 3, rate: 125, amount: 375 }]
+        }
+      ],
+      materials: [
+        { description: "Chlorine jugs", quantity: 2, unitCost: 74, amount: 148 },
+        { description: "Acid jug", quantity: 1 }
+      ]
+    },
+    openDecisions: [
+      {
+        id: "decision-acid-price",
+        kind: "billing",
+        prompt: 'Confirm unit price for "Acid jug"?',
+        sourceSnippet: "Added 1 acid jug but supplier price not written down.",
+        keywords: ["acid", "jug"],
+        subjectId: acidSubjectId,
+        evidenceField: "price"
+      }
+    ],
+    assumptions: [],
+    unparsedLines: [],
+    decisionAction: {
+      id: "decision-acid-price",
+      type: "set_value",
+      kind: "billing",
+      snippet: "Acid jug",
+      value: 18.5
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.openDecisions.length, 0);
+  const acid = response.body.invoice.lineItems.find((line: { description: string }) =>
+    /acid/i.test(line.description)
+  );
+  assert.ok(acid);
+  assert.equal(acid.quantity, 1);
+  assert.equal(acid.unitPrice, 18.5);
+  assert.equal(acid.amount, 18.5);
+  const structuredAcid = response.body.structuredInvoice.materials.find(
+    (material: { description: string }) => /acid/i.test(material.description)
+  );
+  assert.ok(structuredAcid);
+  assert.equal(structuredAcid.unitCost, 18.5);
+  assert.equal(structuredAcid.amount, 18.5);
+  assert.equal(response.body.qualityGate.status, "pass");
+  assert.equal(response.body.invoice.total, 375 + 148 + 18.5);
+});
+
+test("apply-decision set_value fills missing labor rate and recalculates hours×rate", async () => {
+  setJsonTaskRunnerForTests(async () => {
+    throw new Error("apply-decision should not call runJsonTask");
+  });
+
+  const laborSubjectId = subjectIdFor("labor", "Faucet repair");
+  const response = await request(app).post("/api/invoices/apply-decision").send({
+    structuredInvoice: {
+      customerName: "Mike",
+      workSessions: [
+        {
+          date: "Feb 2",
+          tasks: [{ description: "Faucet repair", hours: 2 }]
+        }
+      ],
+      materials: []
+    },
+    openDecisions: [
+      {
+        id: "decision-labor-rate",
+        kind: "billing",
+        prompt: 'Confirm rate for "Faucet repair"?',
+        sourceSnippet: "Faucet repair 2 hours rate unknown",
+        keywords: ["faucet", "repair"],
+        subjectId: laborSubjectId,
+        evidenceField: "rate"
+      }
+    ],
+    assumptions: [],
+    unparsedLines: [],
+    decisionAction: {
+      id: "decision-labor-rate",
+      type: "set_value",
+      kind: "billing",
+      snippet: "Faucet repair",
+      value: 90
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.openDecisions.length, 0);
+  const labor = response.body.invoice.lineItems.find((line: { description: string }) =>
+    /faucet/i.test(line.description)
+  );
+  assert.ok(labor);
+  assert.equal(labor.quantity, 2);
+  assert.equal(labor.unitPrice, 90);
+  assert.equal(labor.amount, 180);
+  assert.equal(response.body.qualityGate.status, "pass");
+});
+
+test("apply-decision exclude on missing-price decision removes the line instead of inventing $0", async () => {
+  setJsonTaskRunnerForTests(async () => {
+    throw new Error("apply-decision should not call runJsonTask");
+  });
+
+  const acidSubjectId = subjectIdFor("material", "Acid jug");
+  const response = await request(app).post("/api/invoices/apply-decision").send({
+    structuredInvoice: {
+      customerName: "Pool Co",
+      workSessions: [
+        {
+          tasks: [{ description: "Opened pool", hours: 3, rate: 125, amount: 375 }]
+        }
+      ],
+      materials: [
+        { description: "Chlorine jugs", quantity: 2, unitCost: 74, amount: 148 },
+        { description: "Acid jug", quantity: 1 }
+      ]
+    },
+    openDecisions: [
+      {
+        id: "decision-acid-price",
+        kind: "billing",
+        prompt: 'Confirm unit price for "Acid jug"?',
+        sourceSnippet: "Added 1 acid jug but supplier price not written down.",
+        keywords: ["acid", "jug"],
+        subjectId: acidSubjectId,
+        evidenceField: "price"
+      }
+    ],
+    assumptions: [],
+    unparsedLines: [],
+    decisionAction: {
+      id: "decision-acid-price",
+      type: "exclude",
+      kind: "billing",
+      snippet: "Acid jug"
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.openDecisions.length, 0);
+  const acid = response.body.invoice.lineItems.find((line: { description: string }) =>
+    /acid/i.test(line.description)
+  );
+  assert.equal(acid, undefined, "skipped missing-price line must be removed, not kept at $0");
+  assert.equal(
+    response.body.structuredInvoice.materials.some((material: { description: string }) =>
+      /acid/i.test(material.description)
+    ),
+    false
+  );
+  assert.equal(
+    response.body.invoice.lineItems.some(
+      (line: { unitPrice?: number; amount?: number }) => line.unitPrice === 0 || line.amount === 0
+    ),
+    false,
+    "exclude must not invent a $0 charge for an unresolved price"
+  );
+  assert.equal(response.body.qualityGate.status, "pass");
+  assert.equal(response.body.invoice.total, 375 + 148);
+});
+
+test("apply-decision waive marks explicit free $0 and clears the missing-price decision", async () => {
+  setJsonTaskRunnerForTests(async () => {
+    throw new Error("apply-decision should not call runJsonTask");
+  });
+
+  const acidSubjectId = subjectIdFor("material", "Acid jug");
+  const response = await request(app).post("/api/invoices/apply-decision").send({
+    structuredInvoice: {
+      customerName: "Pool Co",
+      workSessions: [
+        {
+          tasks: [{ description: "Opened pool", hours: 3, rate: 125, amount: 375 }]
+        }
+      ],
+      materials: [{ description: "Acid jug", quantity: 1 }]
+    },
+    openDecisions: [
+      {
+        id: "decision-acid-price",
+        kind: "billing",
+        prompt: 'Confirm unit price for "Acid jug"?',
+        sourceSnippet: "Added 1 acid jug but supplier price not written down.",
+        keywords: ["acid", "jug"],
+        subjectId: acidSubjectId,
+        evidenceField: "price"
+      }
+    ],
+    assumptions: [],
+    unparsedLines: [],
+    decisionAction: {
+      id: "decision-acid-price",
+      type: "waive",
+      kind: "billing",
+      snippet: "Acid jug"
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.openDecisions.length, 0);
+  const acid = response.body.invoice.lineItems.find((line: { description: string }) =>
+    /acid/i.test(line.description)
+  );
+  assert.ok(acid);
+  assert.equal(acid.unitPrice, 0);
+  assert.equal(acid.amount, 0);
+  assert.equal(response.body.qualityGate.status, "pass");
+});
+
+test("apply-decision include alone cannot clear a missing-price evidence decision", async () => {
+  setJsonTaskRunnerForTests(async () => {
+    throw new Error("apply-decision should not call runJsonTask");
+  });
+
+  const acidSubjectId = subjectIdFor("material", "Acid jug");
+  const response = await request(app).post("/api/invoices/apply-decision").send({
+    structuredInvoice: {
+      customerName: "Pool Co",
+      workSessions: [],
+      materials: [{ description: "Acid jug", quantity: 1 }]
+    },
+    openDecisions: [
+      {
+        id: "decision-acid-price",
+        kind: "billing",
+        prompt: 'Confirm unit price for "Acid jug"?',
+        sourceSnippet: "Added 1 acid jug but supplier price not written down.",
+        keywords: ["acid", "jug"],
+        subjectId: acidSubjectId,
+        evidenceField: "price"
+      }
+    ],
+    assumptions: [],
+    unparsedLines: [],
+    decisionAction: {
+      id: "decision-acid-price",
+      type: "include",
+      kind: "billing",
+      snippet: "Acid jug"
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.openDecisions.length, 1);
+  assert.equal(response.body.openDecisions[0].id, "decision-acid-price");
+  const acid = response.body.invoice.lineItems.find((line: { description: string }) =>
+    /acid/i.test(line.description)
+  );
+  assert.ok(acid);
+  assert.equal(acid.unitPrice, undefined);
+  assert.equal(acid.amount, undefined);
+  assert.equal(response.body.qualityGate.status, "needs_review");
+  assert.ok(
+    (response.body.qualityGate.blockers ?? []).some(
+      (blocker: { code?: string }) => blocker.code === "missing_price"
+    )
+  );
 });
 
 const AG082_MISSING_PRICE_INPUT =

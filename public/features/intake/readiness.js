@@ -93,7 +93,7 @@
       ready: "Ready to generate.",
       labor_hours_missing: "Add missing hours to continue.",
       labor_pricing_missing: "Add labor pricing to continue.",
-      open_decisions: "Choose Add or Skip to continue.",
+      open_decisions: "Enter the missing price, mark Free, or Skip to continue.",
       output_quality_review: "Review flagged items to continue.",
       review_required: "Review the draft, then generate.",
       missing_input: "Paste notes to start."

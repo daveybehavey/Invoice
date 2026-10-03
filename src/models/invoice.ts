@@ -240,10 +240,21 @@ export const InvoiceAuditRequestSchema = z.object({
 });
 
 export const DecisionActionSchema = z.object({
-  type: z.enum(["include", "exclude", "tax_apply", "tax_skip", "bulk_include", "bulk_exclude"]),
+  type: z.enum([
+    "include",
+    "exclude",
+    "tax_apply",
+    "tax_skip",
+    "bulk_include",
+    "bulk_exclude",
+    "set_value",
+    "waive"
+  ]),
   id: OptionalString,
   kind: z.enum(["tax", "billing"]).optional(),
-  snippet: OptionalString
+  snippet: OptionalString,
+  // Deterministic answer for ledger-backed missing price/rate/quantity decisions.
+  value: OptionalNumber
 });
 
 export const ApplyDecisionRequestSchema = z.object({
