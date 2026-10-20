@@ -12375,7 +12375,7 @@ test("manual editor upgrade resumes checkout after email sign-in", async () => {
     assert.ok(creatorInputs.length >= 1, `expected checkout creator call, got ${JSON.stringify(creatorInputs)}`);
     assert.match(
       String(creatorInputs[0]?.successPath || ""),
-      /\/manual\?billing=success&acceptedTermsVersion=2026-08-12\.1/
+      /\/manual\?billing=success&acceptedTermsVersion=2026-10-20\.1/
     );
     assert.equal(creatorInputs[0]?.cancelPath, "/manual?billing=cancelled");
     assert.equal(typeof creatorInputs[0]?.resumeIntentId, "string");

@@ -1,9 +1,9 @@
 (() => {
-  const LEGAL_TERMS_VERSION = "2026-08-12.1";
-  const LEGAL_PRIVACY_VERSION = "2026-08-12.1";
-  const LEGAL_EFFECTIVE_DATE = "2026-08-12";
+  const LEGAL_TERMS_VERSION = "2026-10-20.1";
+  const LEGAL_PRIVACY_VERSION = "2026-10-20.1";
+  const LEGAL_EFFECTIVE_DATE = "2026-10-20";
   /** Keep IDs in sync with server listRegisteredTermsVersions (production base only). */
-  const REGISTERED_TERMS_VERSIONS = ["2026-08-12.1"];
+  const REGISTERED_TERMS_VERSIONS = ["2026-08-12.1", "2026-10-20.1"];
 
   const isRegisteredTermsVersion = (version) => {
     const trimmed = typeof version === "string" ? version.trim() : "";
@@ -14,7 +14,7 @@
     legalName: "David Heslop, carrying on business as EuroDigital",
     tradeStyle: "EuroDigital",
     productName: "NoteBill",
-    addressLine: "1193 Kangaroo Road, Metchosin, BC V9C 4C9, Canada",
+    addressLine: "Victoria, BC, Canada",
     supportEmail: "support@notebill.app",
     privacyEmail: "support@notebill.app",
     siteUrl: "https://notebill.app",

@@ -2519,9 +2519,6 @@ function AppChrome({ children }) {
 
 const PUBLIC_INFO_LAST_UPDATED = "2026-04-21";
 const SUPPORT_EMAIL = "support@notebill.app";
-const CONTACT_EMAIL = "contact@notebill.app";
-const INFO_EMAIL = "info@notebill.app";
-const DIRECT_CONTACT_EMAIL = "david@notebill.app";
 const NOTE_BILL_SITE_URL = "https://notebill.app";
 const FEEDBACK_EMAIL_SUBJECT = "NoteBill tester feedback";
 const FEEDBACK_EMAIL_BODY = [
@@ -2838,9 +2835,6 @@ function SupportPage() {
           title: "Contact",
           items: [
             { label: `Support email: ${SUPPORT_EMAIL}`, href: `mailto:${SUPPORT_EMAIL}` },
-            `Contact email: ${CONTACT_EMAIL}`,
-            `Info email: ${INFO_EMAIL}`,
-            `Direct contact: ${DIRECT_CONTACT_EMAIL}`,
             { label: `Website: ${NOTE_BILL_SITE_URL}`, href: NOTE_BILL_SITE_URL },
             { label: "Terms of Service", href: "/terms" },
             { label: "Privacy policy", href: "/privacy" },

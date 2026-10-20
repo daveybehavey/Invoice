@@ -1,6 +1,6 @@
 # NoteBill Privacy Policy
 
-Last updated: 2026-04-13
+Last updated: 2026-10-20
 
 ## Overview
 
@@ -125,6 +125,5 @@ This Privacy Policy may be updated from time to time. If material changes are ma
 
 Privacy and support requests for NoteBill can be sent to:
 
-- Developer: David Heslop
+- Developer: EuroDigital
 - Support email: `support@notebill.app`
-- Contact email: `contact@notebill.app`

@@ -8,11 +8,11 @@
 
 
 
-export const LEGAL_TERMS_VERSION = "2026-08-12.1";
+export const LEGAL_TERMS_VERSION = "2026-10-20.1";
 
-export const LEGAL_PRIVACY_VERSION = "2026-08-12.1";
+export const LEGAL_PRIVACY_VERSION = "2026-10-20.1";
 
-export const LEGAL_EFFECTIVE_DATE = "2026-08-12";
+export const LEGAL_EFFECTIVE_DATE = "2026-10-20";
 
 
 
@@ -24,7 +24,7 @@ export const LEGAL_SUPPLIER = {
 
   productName: "NoteBill",
 
-  addressLine: "1193 Kangaroo Road, Metchosin, BC V9C 4C9, Canada",
+  addressLine: "Victoria, BC, Canada",
 
   supportEmail: "support@notebill.app",
 
@@ -128,6 +128,10 @@ export type FrozenTermsFacts = {
 
     addressLine: string;
 
+    /** Full postal address used only by the Terms notices section when present. */
+
+    postalAddressLine?: string;
+
     supportEmail: string;
 
     siteUrl: string;
@@ -187,6 +191,64 @@ export const TERMS_2026_08_12_1_FACTS: Readonly<FrozenTermsFacts> = Object.freez
     tradeStyle: "EuroDigital",
 
     addressLine: "1193 Kangaroo Road, Metchosin, BC V9C 4C9, Canada",
+
+    supportEmail: "support@notebill.app",
+
+    siteUrl: "https://notebill.app",
+
+    appUrl: "https://app.notebill.app"
+
+  }),
+
+  offer: Object.freeze({
+
+    planName: "NoteBill Pro",
+
+    priceDisplay: "$19 USD",
+
+    intervalLabel: "per month",
+
+    goodwillRefundDays: 7
+
+  })
+
+});
+
+
+
+/**
+
+ * Literal freeze of Terms 2026-10-20.1 facts.
+
+ * Registered 2026-10-20 to stop publishing the supplier's residential street
+
+ * address in the current Terms and Privacy Policy: the public address line is
+
+ * locality-only. The section 13 postal notice address is retained verbatim
+
+ * from the prior version pending an owner decision on a business mailing
+
+ * address — see docs/notebill-play-console-fix-checklist.md.
+
+ */
+
+export const TERMS_2026_10_20_1_FACTS: Readonly<FrozenTermsFacts> = Object.freeze({
+
+  version: "2026-10-20.1",
+
+  effectiveDate: "2026-10-20",
+
+  privacyVersion: "2026-10-20.1",
+
+  supplier: Object.freeze({
+
+    legalName: "David Heslop, carrying on business as EuroDigital",
+
+    tradeStyle: "EuroDigital",
+
+    addressLine: "Victoria, BC, Canada",
+
+    postalAddressLine: "1193 Kangaroo Road, Metchosin, BC V9C 4C9, Canada",
 
     supportEmail: "support@notebill.app",
 
@@ -418,7 +480,7 @@ export function buildTermsSectionsFromFrozenFacts(facts: FrozenTermsFacts): Lega
 
       paragraphs: [
 
-        `Legal and support notices: ${s.supportEmail}. Postal: ${s.addressLine}.`
+        `Legal and support notices: ${s.supportEmail}. Postal: ${s.postalAddressLine ?? s.addressLine}.`
 
       ]
 
@@ -481,6 +543,22 @@ const TERMS_REGISTRY_BASE: ReadonlyMap<string, RegisteredTermsEntry> = new Map([
       effectiveDate: TERMS_2026_08_12_1_FACTS.effectiveDate,
 
       buildSections: () => buildTermsSectionsFromFrozenFacts(TERMS_2026_08_12_1_FACTS)
+
+    })
+
+  ],
+
+  [
+
+    TERMS_2026_10_20_1_FACTS.version,
+
+    Object.freeze({
+
+      version: TERMS_2026_10_20_1_FACTS.version,
+
+      effectiveDate: TERMS_2026_10_20_1_FACTS.effectiveDate,
+
+      buildSections: () => buildTermsSectionsFromFrozenFacts(TERMS_2026_10_20_1_FACTS)
 
     })
 
