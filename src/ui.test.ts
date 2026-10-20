@@ -86,11 +86,13 @@ const [
   {
     setCheckoutSessionCreatorForTests,
     clearCheckoutIntentSessionsForTests
-  }
+  },
+  { createEmailSignInToken }
 ] = await Promise.all([
   import("./server.js"),
   import("./ai/openaiClient.js"),
-  import("./services/stripeBilling.js")
+  import("./services/stripeBilling.js"),
+  import("./services/authSession.js")
 ]);
 
 let server: Server;
@@ -396,7 +398,7 @@ test("launcher welcome screen shows sign-in and guest entry", async () => {
   }
 });
 
-test("launcher sign-in modal shows provider readiness and keeps email-link flow active", async () => {
+test("launcher sign-in modal shows provider readiness and email sign-in fails closed when delivery is unconfigured", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
 
@@ -421,9 +423,12 @@ test("launcher sign-in modal shows provider readiness and keeps email-link flow 
     await page.getByLabel("Email link sign-in").fill("owner@example.com");
     await page.getByRole("button", { name: "Email sign-in link" }).click();
     await page
-      .getByText("Email delivery is not configured here, so a preview sign-in link is available below.")
+      .getByText(
+        "Email sign-in is unavailable right now. Configure a working email provider before enabling account sign-in."
+      )
+      .first()
       .waitFor({ state: "visible" });
-    await page.getByRole("link", { name: "Open preview sign-in link" }).waitFor({ state: "visible" });
+    assert.equal(await page.getByRole("link", { name: "Open preview sign-in link" }).count(), 0);
   } finally {
     await context.close();
   }
@@ -434,12 +439,9 @@ test("google sign-in completion page stores a hosted session and returns to laun
   const page = await context.newPage();
 
   try {
-    const linkResponse = await context.request.post(`${baseUrl}/api/auth/session`, {
-      data: { email: "owner@example.com" }
-    });
-    assert.equal(linkResponse.status(), 200);
-    const previewUrl = String((await linkResponse.json()).previewUrl ?? "");
-    const tokenFromLink = new URL(previewUrl).searchParams.get("token");
+    // The session endpoint fails closed when email delivery is unconfigured,
+    // so mint the sign-in token through the service and verify it directly.
+    const tokenFromLink = createEmailSignInToken("owner@example.com").token;
     assert.ok(tokenFromLink);
     const verifyResponse = await context.request.post(`${baseUrl}/api/auth/session/verify`, {
       data: { token: tokenFromLink }
@@ -472,12 +474,9 @@ test("email sign-in verification returns to the pending app route", async () => 
   const page = await context.newPage();
 
   try {
-    const linkResponse = await context.request.post(`${baseUrl}/api/auth/session`, {
-      data: { email: "owner@example.com" }
-    });
-    assert.equal(linkResponse.status(), 200);
-    const previewUrl = String((await linkResponse.json()).previewUrl ?? "");
-    const tokenFromLink = new URL(previewUrl).searchParams.get("token");
+    // The session endpoint fails closed when email delivery is unconfigured,
+    // so mint the sign-in token through the service and open the verify page.
+    const tokenFromLink = createEmailSignInToken("owner@example.com").token;
     assert.ok(tokenFromLink);
 
     await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
@@ -12254,11 +12253,16 @@ test("launcher upgrade resumes checkout after email sign-in", async () => {
       { timeout: 5000 }
     );
 
-    await page.getByLabel("Email link sign-in").fill("launcher-resume@test.dev");
-    await page.getByRole("button", { name: "Email sign-in link" }).click();
-    const previewLink = page.getByRole("link", { name: "Open preview sign-in link" });
-    await previewLink.waitFor({ state: "visible" });
-    await previewLink.click();
+    // Email sign-in fails closed when delivery is unconfigured, so complete
+    // sign-in through the verify page with a service-minted token, carrying
+    // the same pending return path the modal submit would have written.
+    const launcherSignInToken = createEmailSignInToken("launcher-resume@test.dev").token;
+    await page.evaluate(() => {
+      window.sessionStorage.setItem("invoiceAuthPendingReturnPath", "/");
+    });
+    await page.goto(`${baseUrl}/auth/verify?token=${encodeURIComponent(launcherSignInToken)}`, {
+      waitUntil: "networkidle"
+    });
     await acknowledgeCheckoutDisclosure(page);
     await page.waitForURL(/__fake-stripe-checkout\?from=launcher/, { timeout: 45000, waitUntil: "commit" });
 
@@ -12364,11 +12368,16 @@ test("manual editor upgrade resumes checkout after email sign-in", async () => {
     assert.equal(pendingPaths.cancelPath, "/manual?billing=cancelled");
     assert.ok(pendingPaths.intentId);
 
-    await page.getByLabel("Email link sign-in").fill("manual-resume@test.dev");
-    await page.getByRole("button", { name: "Email sign-in link" }).click();
-    const previewLink = page.getByRole("link", { name: "Open preview sign-in link" });
-    await previewLink.waitFor({ state: "visible" });
-    await previewLink.click();
+    // Email sign-in fails closed when delivery is unconfigured, so complete
+    // sign-in through the verify page with a service-minted token, carrying
+    // the same pending return path the modal submit would have written.
+    const manualSignInToken = createEmailSignInToken("manual-resume@test.dev").token;
+    await page.evaluate(() => {
+      window.sessionStorage.setItem("invoiceAuthPendingReturnPath", "/manual");
+    });
+    await page.goto(`${baseUrl}/auth/verify?token=${encodeURIComponent(manualSignInToken)}`, {
+      waitUntil: "networkidle"
+    });
     await acknowledgeCheckoutDisclosure(page);
     await page.waitForURL(/__fake-stripe-checkout\?from=manual/, { timeout: 45000, waitUntil: "commit" });
 
