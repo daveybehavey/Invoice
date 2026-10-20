@@ -15,6 +15,8 @@ import {
 
   assertValidTermsAcknowledgement,
 
+  buildPrivacySections,
+
   buildTermsDownloadFilename,
 
   buildTermsPlainText,
@@ -45,7 +47,7 @@ test("legal foundation snapshot encodes D1–D6 offer facts", () => {
 
   assert.match(snapshot.supplier.legalName, /David Heslop/);
 
-  assert.equal(snapshot.supplier.addressLine, "1193 Kangaroo Road, Metchosin, BC V9C 4C9, Canada");
+  assert.equal(snapshot.supplier.addressLine, "Victoria, BC, Canada");
 
   assert.equal(snapshot.offer.priceDisplay, "$19 USD");
 
@@ -61,17 +63,65 @@ test("legal foundation snapshot encodes D1–D6 offer facts", () => {
 
 
 
+test("privacy sections publish locality-only address and the support contact", () => {
+
+  const sections = buildPrivacySections();
+
+  const org = sections.find((section) => section.title === "Accountable organization");
+
+  assert.ok(org?.paragraphs.some((paragraph) => paragraph.includes("Address: Victoria, BC, Canada.")));
+
+  assert.ok(org?.paragraphs.some((paragraph) => paragraph.includes("Privacy contact: support@notebill.app.")));
+
+  const allText = sections
+
+    .map((section) => [...section.paragraphs, ...(section.items ?? [])].join("\n"))
+
+    .join("\n");
+
+  assert.doesNotMatch(allText, /Kangaroo/);
+
+});
+
+
+
 test("terms registry resolves only the registered current version", () => {
 
   clearTermsRegistryOverlaysForTests();
 
-  assert.deepEqual(listRegisteredTermsVersions(), [LEGAL_TERMS_VERSION]);
+  assert.deepEqual(listRegisteredTermsVersions(), ["2026-08-12.1", LEGAL_TERMS_VERSION]);
+
+  const prior = resolveTermsDocument("2026-08-12.1");
+
+  assert.equal(prior.isCurrent, false);
 
   const current = resolveTermsDocument();
 
   assert.equal(current.version, LEGAL_TERMS_VERSION);
 
   assert.equal(current.isCurrent, true);
+
+  const supplierSection = current.sections.find((section) =>
+
+    section.title.startsWith("1. Supplier")
+
+  );
+
+  assert.ok(
+
+    supplierSection?.paragraphs.some((paragraph) =>
+
+      paragraph.includes("Business address: Victoria, BC, Canada.")
+
+    )
+
+  );
+
+  assert.ok(
+
+    !supplierSection?.paragraphs.some((paragraph) => /Kangaroo/.test(paragraph))
+
+  );
 
   assert.equal(current.termsUrlPath, buildVersionedTermsPath(LEGAL_TERMS_VERSION));
 
@@ -169,7 +219,7 @@ test("terms plain text and download filename include version identity", () => {
 
   assert.match(plain, new RegExp(`Version: ${LEGAL_TERMS_VERSION}`));
 
-  assert.match(plain, /Effective date: 2026-08-12/);
+  assert.match(plain, /Effective date: 2026-10-20/);
 
   assert.match(plain, /15\. Contract copy and version/);
 
@@ -225,7 +275,7 @@ test("checkout disclosure snapshot matches client mirror strings", async () => {
 
   assert.match(clientSource, new RegExp(`LEGAL_TERMS_VERSION = "${LEGAL_TERMS_VERSION}"`));
 
-  assert.match(clientSource, /REGISTERED_TERMS_VERSIONS = \["2026-08-12\.1"\]/);
+  assert.match(clientSource, /REGISTERED_TERMS_VERSIONS = \["2026-08-12\.1", "2026-10-20\.1"\]/);
 
   // Evaluate client IIFE in a tiny VM-like scope by Function wrapping window export.
 
@@ -259,9 +309,11 @@ test("checkout disclosure snapshot matches client mirror strings", async () => {
 
   assert.equal(client.LEGAL_TERMS_VERSION, LEGAL_TERMS_VERSION);
 
-  assert.deepEqual(client.REGISTERED_TERMS_VERSIONS, [LEGAL_TERMS_VERSION]);
+  assert.deepEqual(client.REGISTERED_TERMS_VERSIONS, ["2026-08-12.1", LEGAL_TERMS_VERSION]);
 
   assert.equal(client.isRegisteredTermsVersion(LEGAL_TERMS_VERSION), true);
+
+  assert.equal(client.isRegisteredTermsVersion("2026-08-12.1"), true);
 
   assert.equal(client.isRegisteredTermsVersion("1999-01-01.0"), false);
 

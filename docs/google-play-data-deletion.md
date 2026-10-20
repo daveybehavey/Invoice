@@ -1,6 +1,6 @@
 # NoteBill Data Deletion Request
 
-Last updated: 2026-04-13
+Last updated: 2026-10-20
 
 If you want to request deletion of account-related data for NoteBill, email `support@notebill.app`.
 
@@ -29,5 +29,4 @@ A deletion request may include review of:
 ## Contact
 
 - Support email: `support@notebill.app`
-- Contact email: `contact@notebill.app`
-- Developer: David Heslop
+- Developer: EuroDigital

@@ -1,16 +1,13 @@
 # NoteBill Support
 
-Last updated: 2026-04-13
+Last updated: 2026-10-20
 
 This page provides public support contact details for NoteBill.
 
 ## Contact Details
 
 - Support email: `support@notebill.app`
-- Contact email: `contact@notebill.app`
-- Info email: `info@notebill.app`
-- Direct contact: `david@notebill.app`
-- Developer: David Heslop
+- Developer: EuroDigital
 
 ## What Support Can Help With
 
