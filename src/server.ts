@@ -466,19 +466,12 @@ app.post("/api/auth/session", async (req: Request, res: Response, next: NextFunc
     });
 
     if (delivery.mode === "record_only") {
-      if ((process.env.NODE_ENV ?? "development").trim() === "production") {
-        throw new HttpStatusError(
-          503,
-          "Email sign-in is unavailable right now. Configure a working email provider before enabling account sign-in."
-        );
-      }
-      res.json({
-        emailSent: false,
-        expiresAt: requested.expiresAt,
-        previewUrl: signInUrl,
-        warning: delivery.warning ?? "Email provider is not configured; using preview mode."
-      });
-      return;
+      // Fail closed in every environment: when email delivery is not
+      // configured, never hand the caller a usable sign-in link.
+      throw new HttpStatusError(
+        503,
+        "Email sign-in is unavailable right now. Configure a working email provider before enabling account sign-in."
+      );
     }
 
     res.json({

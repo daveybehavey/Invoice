@@ -47,7 +47,8 @@ const [
   { resetInvoiceEmailVerificationCacheForTests },
   { setGoogleAuthClientFactoryForTests },
   { LEGAL_TERMS_VERSION },
-  { setContractCopyEmailSenderForTests, clearContractCopyRateLimitForTests }
+  { setContractCopyEmailSenderForTests, clearContractCopyRateLimitForTests },
+  { createEmailSignInToken }
 ] = await Promise.all([
   import("./server.js"),
   import("./ai/openaiClient.js"),
@@ -55,7 +56,8 @@ const [
   import("./services/invoiceEmailDelivery.js"),
   import("./services/googleAuth.js"),
   import("./services/legalFoundation.js"),
-  import("./services/contractCopyDelivery.js")
+  import("./services/contractCopyDelivery.js"),
+  import("./services/authSession.js")
 ]);
 
 const { subjectIdFor } = await import("./services/billingEvidence.js");
@@ -97,20 +99,13 @@ if (!revenueSignalsStoreFilePath) {
 }
 const nativeFetch = globalThis.fetch;
 
-function extractTokenFromPreviewUrl(previewUrl: string): string {
-  const parsed = new URL(previewUrl);
-  const token = parsed.searchParams.get("token");
-  assert.equal(typeof token, "string");
-  assert.ok(token);
-  return token;
-}
-
 async function signInForTests(email: string) {
-  const linkResponse = await request(app).post("/api/auth/session").send({ email });
-  assert.equal(linkResponse.status, 200);
-  assert.equal(typeof linkResponse.body.previewUrl, "string");
-  const linkToken = extractTokenFromPreviewUrl(linkResponse.body.previewUrl as string);
-  const verifyResponse = await request(app).post("/api/auth/session/verify").send({ token: linkToken });
+  // The session endpoint no longer returns a preview sign-in link when email
+  // delivery is unconfigured (it fails closed with 503), so tests mint the
+  // sign-in token through the same service the handler uses and exchange it
+  // at the verify endpoint directly.
+  const requested = createEmailSignInToken(email);
+  const verifyResponse = await request(app).post("/api/auth/session/verify").send({ token: requested.token });
   assert.equal(verifyResponse.status, 200);
   return verifyResponse;
 }
@@ -6055,16 +6050,21 @@ test("recent client context returns the latest matching invoices only", async ()
   assert.equal(response.body.matches[1].invoiceNumber, "INV-1001");
 });
 
-test("auth session endpoint returns preview link in test mode and verify endpoint returns normalized user session", async () => {
+test("auth session endpoint fails closed with 503 and no preview link when email delivery is not configured", async () => {
   const response = await request(app).post("/api/auth/session").send({ email: "  TEST@Example.com  " });
 
-  assert.equal(response.status, 200);
-  assert.equal(response.body.emailSent, false);
-  assert.equal(typeof response.body.previewUrl, "string");
-  assert.equal(typeof response.body.expiresAt, "string");
+  assert.equal(response.status, 503);
+  assert.equal(
+    response.body.error,
+    "Email sign-in is unavailable right now. Configure a working email provider before enabling account sign-in."
+  );
+  assert.equal(response.body.previewUrl, undefined);
+  assert.equal(response.body.emailSent, undefined);
+});
 
-  const token = extractTokenFromPreviewUrl(response.body.previewUrl as string);
-  const verifyResponse = await request(app).post("/api/auth/session/verify").send({ token });
+test("auth verify endpoint returns normalized user session for a minted sign-in token", async () => {
+  const requested = createEmailSignInToken("  TEST@Example.com  ");
+  const verifyResponse = await request(app).post("/api/auth/session/verify").send({ token: requested.token });
 
   assert.equal(verifyResponse.status, 200);
   assert.equal(typeof verifyResponse.body.token, "string");
