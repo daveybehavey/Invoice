@@ -34,9 +34,12 @@ type StoredFinishedInvoice = SavedInvoice["invoiceData"]["finishedInvoice"];
  *   (the merge appends new ones and applies payload updates), so the
  *   records a save adds or changes get the same exact/overpayment
  *   enforcement as /record-payment: each changed record must be exactly
- *   representable in minor units, and the save's record changes must not
- *   drive the record-derived balance negative, or the save is refused
- *   atomically (nothing persisted, route answers 400). Records a save
+ *   representable in minor units, the post-merge balance must be
+ *   derivable exactly (a records-changing save whose merged total has
+ *   no exact form is refused, as /record-payment refuses it), and the
+ *   save's record changes must not drive the record-derived balance
+ *   negative, or the save is refused atomically (nothing persisted,
+ *   route answers 400). Records a save
  *   does not touch are not re-validated, and a pre-existing negative
  *   derived balance never blocks a save whose record changes are valid.
  * - Manual records written through a save or a create are INTEGRATED,
@@ -48,13 +51,15 @@ type StoredFinishedInvoice = SavedInvoice["invoiceData"]["finishedInvoice"];
  *   is itself money-bearing: it is part of the monetary fingerprint,
  *   so a save that changes only records supersedes outstanding links
  *   and bumps the monetary revision exactly like a total edit. When
- *   the derivation is indeterminate because of PRE-EXISTING state, an
- *   update preserves the EXISTING stored balanceDue and is not
- *   blocked (indeterminacy a save's own record changes cause is
- *   refused by the validation above instead). The payload's
- *   balanceDue is never stored in ANY path (fix round 7): determinate
- *   derivation writes the derived value, an indeterminate update
- *   keeps the previously stored value, and an indeterminate create
+ *   the derivation is indeterminate, an update that changes no
+ *   records preserves the EXISTING stored balanceDue and is not
+ *   blocked; an update that changes records is refused by the
+ *   validation above instead, because the post-merge balance cannot
+ *   be recomputed exactly with the new records in it (fix round 8).
+ *   The payload's balanceDue is never stored in ANY path (fix
+ *   round 7): determinate derivation writes the derived value, an
+ *   indeterminate record-unchanged update keeps the previously
+ *   stored value, and an indeterminate create
  *   is refused when the payload carries payment records — payment
  *   state cannot be represented exactly against a non-representable
  *   total — or, carrying none, stores the total as stated, which is
@@ -321,6 +326,15 @@ export function mergePaymentRecords(
  *   not validated here.
  * - Each changed record's amount must be exactly representable in
  *   minor units (toAmountMinorExact) — never rounded into validity.
+ * - The post-merge derived balance must be DERIVABLE at all: when
+ *   this save changed records and the balance is indeterminate (the
+ *   merged total, or a pre-existing record in the merged set, has no
+ *   exact minor-unit form), the save is refused — payment records
+ *   cannot be recorded against a balance that cannot be computed
+ *   exactly, the same refusal /record-payment gives this invoice and
+ *   the same rule create applies to a records-carrying payload
+ *   (fix round 8). Indeterminacy is tolerated only for saves that
+ *   changed no records; that case returns before this check.
  * - The post-merge derived balance (merged total minus ALL merged
  *   records, in integer minor units) must not be negative AS A RESULT
  *   of this save's record changes: the save is refused when the
@@ -375,7 +389,20 @@ export function assertValidSavePaymentRecordChanges(input: {
 
   const totalMajor = Number(input.merged.total ?? input.merged.balanceDue ?? 0);
   const derivedAfterMinor = calculateInvoiceBalanceMinor(totalMajor, mergedRecords);
-  if (derivedAfterMinor === null || derivedAfterMinor >= 0) {
+  if (derivedAfterMinor === null) {
+    // This save changed manual records (the no-changes case returned
+    // above), and the post-merge balance cannot be derived exactly —
+    // the merged total or a pre-existing record has no exact
+    // minor-unit form. Refuse atomically, with the same message
+    // /record-payment gives this invoice: persisting the records
+    // anyway would store payment evidence that cannot move the
+    // balance. Indeterminacy is tolerated only for saves that changed
+    // no records; those never reach this check (fix round 8).
+    throw new Error(
+      "This invoice's total or existing payments are not exact to the cent, so a payment cannot be recorded safely."
+    );
+  }
+  if (derivedAfterMinor >= 0) {
     return;
   }
   const derivedWithoutChangesMinor = calculateInvoiceBalanceMinor(totalMajor, existingRecords);
@@ -488,7 +515,11 @@ export function prepareCreatedInvoicePaymentState(
   }
   // Indeterminate (fix round 7): the payload's balanceDue is never
   // the fallback. Validation has already refused any non-representable
-  // record, so the total is what has no exact minor-unit form.
+  // record, so the total is what has no exact minor-unit form. Since
+  // fix round 8 the validator itself refuses a records-carrying
+  // create in exactly this state (its derived balance is
+  // indeterminate) before derivation runs, so the throw below is the
+  // create-side backstop of the same rule.
   if ((sanitized.paymentRecords ?? []).length > 0) {
     throw new Error(
       "This invoice's total is not exact to the cent, so a payment cannot be recorded safely."

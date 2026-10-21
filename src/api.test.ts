@@ -7911,6 +7911,122 @@ test("a whole-document save of a deleted invoice preserves deletedAt and the del
   assert.equal(storedInvoice.deletedAt, deletedAt);
 });
 
+// --- Fix round 8 (R8-P1): a save that CHANGES manual records is   ---
+// --- refused when the post-merge balance cannot be derived       ---
+// --- exactly (non-representable total). The permissive           ---
+// --- indeterminate path remains only for record-unchanged saves. ---
+
+test("a save adding a manual record to a non-representable-total invoice is refused atomically", async () => {
+  const ownerId = "settlement-r8-fractional-total-add-record-owner";
+
+  // Born record-less under the round-7 create rule: total 10.005 has
+  // no exact minor-unit form, and with no payment records nothing
+  // needs exact representation, so the create succeeds and stores
+  // balanceDue = the total as stated.
+  const createResponse = await createInvoiceWithPaymentRecords({
+    ownerId,
+    invoiceNumber: "INV-SETTLE-R8-1",
+    total: 10.005,
+    balanceDue: 0
+  });
+  assert.equal(createResponse.status, 200);
+  const invoiceId = createResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+  const created = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(created.status, "draft");
+  assert.equal(created.invoiceData.finishedInvoice.balanceDue, 10.005);
+  assert.equal((created.invoiceData.finishedInvoice.paymentRecords ?? []).length, 0);
+
+  // A whole-document save now tries to ADD an exact $5 manual record.
+  // The record itself is exact, but the post-merge balance cannot be
+  // derived exactly (the total has no exact form), so the save must
+  // be refused atomically — persisting the record anyway would store
+  // payment evidence that cannot move the balance, against a balance
+  // that stays frozen at 10.005 (fix round 8, R8-P1).
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...created.invoiceData,
+        finishedInvoice: {
+          ...created.invoiceData.finishedInvoice,
+          paymentRecords: [
+            { id: "manual-r8-fractional-total", amount: 5, paidAt: "2026-03-13", note: "Cash" }
+          ]
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 400);
+  assert.match(String(saveResponse.body.error || ""), /not exact to the cent/i);
+
+  // Nothing persisted: no record, balance and status untouched.
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "draft");
+  assert.equal(after.invoiceData.finishedInvoice.balanceDue, 10.005);
+  assert.equal((after.invoiceData.finishedInvoice.paymentRecords ?? []).length, 0);
+  assert.equal(after.invoiceData.finishedInvoice.monetaryRevision, 0);
+
+  // Parity: /record-payment refuses this same invoice for the same
+  // reason — the two writers of manual records agree.
+  const recordResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 5 });
+  assert.equal(recordResponse.status, 400);
+  assert.match(String(recordResponse.body.error || ""), /not exact to the cent/i);
+  const afterRecord = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal((afterRecord.invoiceData.finishedInvoice.paymentRecords ?? []).length, 0);
+});
+
+test("a save changing no records on a non-representable-total invoice still succeeds and changes nothing monetary", async () => {
+  const ownerId = "settlement-r8-fractional-total-note-edit-owner";
+
+  const createResponse = await createInvoiceWithPaymentRecords({
+    ownerId,
+    invoiceNumber: "INV-SETTLE-R8-2",
+    total: 10.005,
+    balanceDue: 0
+  });
+  assert.equal(createResponse.status, 200);
+  const invoiceId = createResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+  const created = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(created.invoiceData.finishedInvoice.balanceDue, 10.005);
+
+  // Note-only edit; the payload echoes the (empty) record set
+  // unchanged. The derived balance is indeterminate, but this save
+  // changed no records, so the permissive path applies — the carve-out
+  // rounds 6/7 established for record-unchanged saves on indeterminate
+  // state. Fix round 8 narrows the refusal to record-CHANGING saves
+  // only; this guard must pass on both heads.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...created.invoiceData,
+        finishedInvoice: {
+          ...created.invoiceData.finishedInvoice,
+          notes: "Gate code is 4417"
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "draft");
+  assert.equal(after.invoiceData.finishedInvoice.balanceDue, 10.005);
+  assert.equal((after.invoiceData.finishedInvoice.paymentRecords ?? []).length, 0);
+  assert.equal(after.invoiceData.finishedInvoice.monetaryRevision, 0);
+});
+
 test("stripe webhook endpoint requires signature header", async () => {
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
