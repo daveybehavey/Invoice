@@ -12,6 +12,8 @@ import {
 import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
 import {
   applyMonetaryEditInvalidation,
+  reconcilePaidStatusAfterSave,
+  sanitizeCreatedInvoicePaymentState,
   settleStripePaymentOnInvoice,
   type StripeSettlementInput,
   type StripeSettlementResult
@@ -86,20 +88,26 @@ export class PostgresSavedInvoiceRepository {
             throw new Error(`Invoice "${input.invoiceId}" was not found.`);
           }
           const existing = parseSavedInvoiceRow(existingRow);
+          const mergedFinishedInvoice = applyMonetaryEditInvalidation({
+            existing: existing.invoiceData.finishedInvoice,
+            incoming: input.invoiceData.finishedInvoice,
+            nowIso: now
+          });
           const mergedInvoiceData = {
             ...input.invoiceData,
-            finishedInvoice: applyMonetaryEditInvalidation({
-              existing: existing.invoiceData.finishedInvoice,
-              incoming: input.invoiceData.finishedInvoice,
-              nowIso: now
-            })
+            finishedInvoice: mergedFinishedInvoice
           };
+          // A monetary edit that leaves a paid invoice with a positive
+          // exact balance reopens it — decided here, inside the same
+          // FOR UPDATE transaction, from the merged state.
+          const mergedStatus = reconcilePaidStatusAfterSave(existing.status, mergedFinishedInvoice);
           const result = await client.query<SavedInvoiceRow>(
             `
               update saved_invoices
               set source_type = $3,
                   invoice_data = $4::jsonb,
                   updated_at = $5,
+                  status = $6,
                   deleted_at = null
               where invoice_id = $1 and owner_id = $2
               returning
@@ -113,7 +121,14 @@ export class PostgresSavedInvoiceRepository {
                 source_type,
                 invoice_data
             `,
-            [input.invoiceId, input.ownerId, input.sourceType, JSON.stringify(mergedInvoiceData), now]
+            [
+              input.invoiceId,
+              input.ownerId,
+              input.sourceType,
+              JSON.stringify(mergedInvoiceData),
+              now,
+              mergedStatus
+            ]
           );
           await client.query("commit");
           return parseSavedInvoiceRow(result.rows[0]);
@@ -131,7 +146,13 @@ export class PostgresSavedInvoiceRepository {
       updatedAt: now,
       status: "draft",
       sourceType: input.sourceType,
-      invoiceData: input.invoiceData
+      invoiceData: {
+        ...input.invoiceData,
+        // Server-owned payment state is server-owned at creation too:
+        // link state, unmatched payments, and the monetary revision start
+        // empty/initialized, and payload payment records are manual-only.
+        finishedInvoice: sanitizeCreatedInvoicePaymentState(input.invoiceData.finishedInvoice)
+      }
     });
 
     const result = await this.query<SavedInvoiceRow>(

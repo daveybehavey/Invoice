@@ -100,6 +100,7 @@ import {
 } from "./services/ocrMetricsExporter.js";
 import { getSavedInvoiceStoreSummary } from "./services/savedInvoiceStore.js";
 import {
+  calculateInvoiceBalanceMinor,
   findReusablePaymentLink,
   hasLegacyPaymentLink,
   invalidateLinksForBalanceChange,
@@ -2164,15 +2165,6 @@ async function createAndPersistSavedInvoicePaymentLink(input: {
   throw new HttpStatusError(409, "Invoice changed while creating a payment link. Please retry.");
 }
 
-function roundCurrencyAmount(value: number): number {
-  return Math.max(0, Number(value.toFixed(2)));
-}
-
-function calculateInvoiceBalance(total: number, paymentRecords: Array<{ amount?: number }>): number {
-  const amountPaid = paymentRecords.reduce((sum, record) => sum + Number(record?.amount ?? 0), 0);
-  return roundCurrencyAmount(total - amountPaid);
-}
-
 async function recordSavedInvoicePayment(input: {
   invoiceId: string;
   ownerId: string;
@@ -2180,12 +2172,21 @@ async function recordSavedInvoicePayment(input: {
   paidAt?: string;
   note?: string;
 }): Promise<SavedInvoice> {
-  // The whole read-modify-write runs as one fresh-state transform inside
-  // the store's serialization: the balance is recomputed from the current
-  // stored invoice, so a settlement landing concurrently is never
-  // overwritten by a snapshot taken before it.
-  let nextBalanceDue = Number.POSITIVE_INFINITY;
-  const nextInvoice = await savedInvoiceRepository.mutateSavedInvoice({
+  // The whole read-modify-write — including the status transition — runs
+  // as one fresh-state transform inside the store's serialization: the
+  // balance is recomputed from the current stored invoice and the status
+  // is decided from that same fresh state in the same mutation, so a
+  // settlement or removal landing concurrently can never be overwritten
+  // by a status computed from a stale balance in a separate call.
+  //
+  // Exact minor-unit accounting, mirroring provider settlement: the
+  // payment amount must be exactly representable in minor units and must
+  // not exceed the balance due, and "paid" requires a post-payment
+  // balance of exactly zero. A fractional-cent amount or an overpayment
+  // is refused with a 400 (nothing is recorded) rather than rounded or
+  // clamped into paid — the manual-path analogue of settlement capturing
+  // an unbindable payment as unmatched instead of applying it.
+  return savedInvoiceRepository.mutateSavedInvoice({
     invoiceId: input.invoiceId,
     ownerId: input.ownerId,
     mutate: (current) => {
@@ -2195,6 +2196,9 @@ async function recordSavedInvoicePayment(input: {
       const currentInvoice = current.invoiceData.finishedInvoice;
       if (currentInvoice.documentType === "estimate") {
         throw new HttpStatusError(400, "Convert this estimate into an invoice before recording payment.");
+      }
+      if (toAmountMinorExact(input.amount) === null) {
+        throw new HttpStatusError(400, "Payment amount must be exact to the cent.");
       }
       const nextPaymentRecords = [
         ...(currentInvoice.paymentRecords ?? []),
@@ -2206,12 +2210,21 @@ async function recordSavedInvoicePayment(input: {
         }
       ];
       const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
-      nextBalanceDue = calculateInvoiceBalance(invoiceTotal, nextPaymentRecords);
+      const nextBalanceMinor = calculateInvoiceBalanceMinor(invoiceTotal, nextPaymentRecords);
+      if (nextBalanceMinor === null) {
+        throw new HttpStatusError(
+          400,
+          "This invoice's total or existing payments are not exact to the cent, so a payment cannot be recorded safely."
+        );
+      }
+      if (nextBalanceMinor < 0) {
+        throw new HttpStatusError(400, "Payment exceeds the balance due on this invoice.");
+      }
       // Fail-closed: refuse draft→sent via partial payment when send is blocked.
       // Full payment (→paid) is allowed even on a messy draft.
       if (
         current.status === "draft" &&
-        nextBalanceDue > 0 &&
+        nextBalanceMinor > 0 &&
         invoiceSendIsBlocked({
           finishedInvoice: currentInvoice,
           sourceNote: current.invoiceData.sourceNote
@@ -2219,8 +2232,15 @@ async function recordSavedInvoicePayment(input: {
       ) {
         throw new HttpStatusError(400, SEND_BLOCKED_MESSAGE);
       }
+      const nextStatus: SavedInvoice["status"] =
+        nextBalanceMinor === 0
+          ? "paid"
+          : current.status === "draft" || current.status === "paid"
+            ? "sent"
+            : current.status;
       return {
         ...current,
+        status: nextStatus,
         invoiceData: {
           ...current.invoiceData,
           // A manual payment changes the balance, so any outstanding payment
@@ -2228,7 +2248,7 @@ async function recordSavedInvoicePayment(input: {
           finishedInvoice: invalidateLinksForBalanceChange(
             {
               ...currentInvoice,
-              balanceDue: nextBalanceDue,
+              balanceDue: nextBalanceMinor / 100,
               paymentRecords: nextPaymentRecords
             },
             new Date().toISOString()
@@ -2237,13 +2257,6 @@ async function recordSavedInvoicePayment(input: {
       };
     }
   });
-  if (nextBalanceDue <= 0 && nextInvoice.status !== "paid") {
-    return savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "paid", input.ownerId);
-  }
-  if (nextBalanceDue > 0 && nextInvoice.status === "draft") {
-    return savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "sent", input.ownerId);
-  }
-  return nextInvoice;
 }
 
 async function removeSavedInvoicePayment(input: {
@@ -2251,13 +2264,15 @@ async function removeSavedInvoicePayment(input: {
   ownerId: string;
   paymentId: string;
 }): Promise<SavedInvoice> {
-  // Same fresh-state discipline as record-payment: the removal, the
-  // balance recompute, and the send-blocked check all run against the
-  // current stored invoice inside the store's serialization. Removing a
-  // provider-evidence record is refused — settlement evidence is removed
-  // only through reconciliation, never by editing it away.
-  let nextBalanceDue = 0;
-  const nextInvoice = await savedInvoiceRepository.mutateSavedInvoice({
+  // Same fresh-state discipline as record-payment: the removal, the exact
+  // balance recompute, the send-blocked check, AND the status transition
+  // all run against the current stored invoice inside the store's
+  // serialization — the status is decided in the same mutation from
+  // fresh state, never in a separate call computed from an earlier
+  // mutation's balance. Removing a provider-evidence record is refused —
+  // settlement evidence is removed only through reconciliation, never by
+  // editing it away.
+  return savedInvoiceRepository.mutateSavedInvoice({
     invoiceId: input.invoiceId,
     ownerId: input.ownerId,
     mutate: (current) => {
@@ -2279,11 +2294,17 @@ async function removeSavedInvoicePayment(input: {
         (payment) => payment.id !== input.paymentId
       );
       const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
-      nextBalanceDue = calculateInvoiceBalance(invoiceTotal, nextPaymentRecords);
+      const nextBalanceMinor = calculateInvoiceBalanceMinor(invoiceTotal, nextPaymentRecords);
+      if (nextBalanceMinor === null) {
+        throw new HttpStatusError(
+          400,
+          "This invoice's total or remaining payments are not exact to the cent, so the balance cannot be recomputed safely."
+        );
+      }
       // Fail-closed: refuse paid→sent via remove-payment when send is blocked.
       if (
         current.status === "paid" &&
-        nextBalanceDue > 0 &&
+        nextBalanceMinor > 0 &&
         invoiceSendIsBlocked({
           finishedInvoice: currentInvoice,
           sourceNote: current.invoiceData.sourceNote
@@ -2293,12 +2314,18 @@ async function removeSavedInvoicePayment(input: {
       }
       return {
         ...current,
+        // A paid invoice left with a positive balance reopens to "sent" —
+        // decided here, inside the mutation, from the fresh balance.
+        status: current.status === "paid" && nextBalanceMinor > 0 ? "sent" : current.status,
         invoiceData: {
           ...current.invoiceData,
           finishedInvoice: invalidateLinksForBalanceChange(
             {
               ...currentInvoice,
-              balanceDue: nextBalanceDue,
+              // The stored balance never reads negative: an over-covered
+              // invoice is zero due, while the exact minor-unit value
+              // above drives the status decision.
+              balanceDue: Math.max(0, nextBalanceMinor) / 100,
               paymentRecords: nextPaymentRecords
             },
             new Date().toISOString()
@@ -2307,10 +2334,6 @@ async function removeSavedInvoicePayment(input: {
       };
     }
   });
-  if (nextInvoice.status === "paid" && nextBalanceDue > 0) {
-    return savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "sent", input.ownerId);
-  }
-  return nextInvoice;
 }
 
 function evaluatePersistenceMigrationStatus(

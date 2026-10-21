@@ -27,7 +27,11 @@ type StoredFinishedInvoice = SavedInvoice["invoiceData"]["finishedInvoice"];
  *   revision, so a link issued for amount X can never settle amount Y.
  * - Provider payment records are server-owned on every write path: client
  *   saves merge the stored records under the store's serialization and can
- *   never create, modify, or delete them.
+ *   never create, modify, or delete them. Creation is no exception: a new
+ *   invoice's link state, unmatched payments, and monetary revision start
+ *   empty/server-initialized, and create-payload records are manual-only.
+ * - A save that leaves a paid invoice with a positive exact balance
+ *   reopens it to "sent" inside the same serialized mutation.
  * - "Paid" is exact: balances are computed in integer minor units from the
  *   payment records, and paid requires a post-settlement balance of exactly
  *   zero. Non-representable totals/records and overpayments are captured as
@@ -233,6 +237,66 @@ export function mergePaymentRecords(
     merged.push(stripProviderEvidence(candidate));
   }
   return merged;
+}
+
+/**
+ * Prepare the payment state of a NEWLY created invoice. Server-owned
+ * payment state starts empty and server-initialized on every backend: a
+ * create payload can never mint a payment link (or a link URL — an
+ * installed URL with no link records would enable the legacy settlement
+ * fallback), an unmatched-payment record, a monetary revision, or
+ * provider settlement evidence. Forged provider state at create would
+ * otherwise poison settlement twice over: a forged provider record's
+ * `amountMinor` is authoritative in exact balance sums, and a forged
+ * payment-intent id in a record or an unmatched entry makes the genuine
+ * webhook for that intent return "duplicate" forever. Payload payment
+ * records are accepted only as manual records — provider fields
+ * stripped — with `amountMinor` derived server-side from the major-unit
+ * amount (left absent when the amount has no exact minor-unit
+ * representation, in which case exact balance computations fail closed
+ * downstream).
+ */
+export function sanitizeCreatedInvoicePaymentState(
+  finishedInvoice: StoredFinishedInvoice
+): StoredFinishedInvoice {
+  return {
+    ...finishedInvoice,
+    paymentLinkUrl: undefined,
+    paymentLinks: [],
+    unmatchedPayments: [],
+    monetaryRevision: 0,
+    paymentRecords: (finishedInvoice.paymentRecords ?? []).map((record) => {
+      const manual = stripProviderEvidence(record);
+      const amountMinor = toAmountMinorExact(Number(manual.amount ?? 0));
+      return amountMinor === null ? manual : { ...manual, amountMinor };
+    })
+  };
+}
+
+/**
+ * Reconcile a stored "paid" status with the balance a client save
+ * produced. This runs inside the save's serialization (both backends)
+ * against the merged invoice: a monetary edit that leaves a positive
+ * balance reopens the invoice to "sent" — the same reopened status the
+ * remove-payment path uses — instead of leaving a paid invoice with
+ * money still due. The balance is derived exactly in integer minor
+ * units: from the total and the merged payment records when they are
+ * exactly representable, otherwise from the resulting balanceDue. When
+ * no positive balance can be proven, the status is left alone.
+ */
+export function reconcilePaidStatusAfterSave(
+  status: SavedInvoice["status"],
+  finishedInvoice: StoredFinishedInvoice
+): SavedInvoice["status"] {
+  if (status !== "paid") {
+    return status;
+  }
+  const derivedMinor =
+    calculateInvoiceBalanceMinor(
+      Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0),
+      finishedInvoice.paymentRecords ?? []
+    ) ?? toAmountMinorExact(Number(finishedInvoice.balanceDue ?? 0));
+  return derivedMinor !== null && derivedMinor > 0 ? "sent" : status;
 }
 
 function stripProviderEvidence<T extends Record<string, unknown>>(record: T): T {

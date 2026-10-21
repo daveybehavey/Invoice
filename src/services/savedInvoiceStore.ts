@@ -14,6 +14,8 @@ import {
 import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
 import {
   applyMonetaryEditInvalidation,
+  reconcilePaidStatusAfterSave,
+  sanitizeCreatedInvoicePaymentState,
   settleStripePaymentOnInvoice,
   type StripeSettlementInput,
   type StripeSettlementResult
@@ -85,16 +87,21 @@ export async function saveInvoiceDocument(input: {
       // monetary revision) is merged against the freshly stored invoice
       // here, inside the mutation lock — a client save can never overwrite
       // a settlement that landed after the client's snapshot was taken.
+      const updatedFinishedInvoice = applyMonetaryEditInvalidation({
+        existing: existing.invoiceData.finishedInvoice,
+        incoming: input.invoiceData.finishedInvoice,
+        nowIso: now
+      });
       const updatedInvoice = SavedInvoiceSchema.parse({
         ...existing,
         sourceType: input.sourceType,
+        // A monetary edit that leaves a paid invoice with a positive
+        // exact balance reopens it — decided here, inside the same
+        // serialized mutation, from the merged state.
+        status: reconcilePaidStatusAfterSave(existing.status, updatedFinishedInvoice),
         invoiceData: {
           ...input.invoiceData,
-          finishedInvoice: applyMonetaryEditInvalidation({
-            existing: existing.invoiceData.finishedInvoice,
-            incoming: input.invoiceData.finishedInvoice,
-            nowIso: now
-          })
+          finishedInvoice: updatedFinishedInvoice
         },
         updatedAt: now
       });
@@ -111,7 +118,13 @@ export async function saveInvoiceDocument(input: {
       updatedAt: now,
       status: "draft",
       sourceType: input.sourceType,
-      invoiceData: input.invoiceData
+      invoiceData: {
+        ...input.invoiceData,
+        // Server-owned payment state is server-owned at creation too:
+        // link state, unmatched payments, and the monetary revision start
+        // empty/initialized, and payload payment records are manual-only.
+        finishedInvoice: sanitizeCreatedInvoicePaymentState(input.invoiceData.finishedInvoice)
+      }
     });
 
     collection.invoices.push(newInvoice);

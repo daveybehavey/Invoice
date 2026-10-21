@@ -6507,6 +6507,140 @@ test("provider settlement evidence cannot be removed through remove-payment", as
   assert.equal(after.invoiceData.finishedInvoice.balanceDue, 0);
 });
 
+test("record-payment refuses fractional-cent amounts and overpayments instead of rounding into paid", async () => {
+  const ownerId = "settlement-manual-exact-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-13");
+
+  // A fractional-cent amount that float math would round into a zero
+  // balance (240 - 240.004 clamps to 0 and marks paid) must be refused.
+  const fractional = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 240.004 });
+  assert.equal(fractional.status, 400);
+  assert.match(String(fractional.body.error || ""), /exact to the cent/i);
+
+  // An exact overpayment is refused too: nothing is recorded, because a
+  // payment that exceeds the balance cannot bind to the paid state.
+  const overpaid = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 300 });
+  assert.equal(overpaid.status, 400);
+  assert.match(String(overpaid.body.error || ""), /exceeds the balance due/i);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.invoiceData.finishedInvoice.paymentRecords.length, 0);
+  assert.equal(after.invoiceData.finishedInvoice.balanceDue, 240);
+  assert.notEqual(after.status, "paid");
+
+  // An exact full payment still records and marks the invoice paid.
+  const exact = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 240 });
+  assert.equal(exact.status, 200);
+  const settled = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(settled.status, "paid");
+  assert.equal(settled.invoiceData.finishedInvoice.balanceDue, 0);
+});
+
+test("remove-payment refuses when the invoice total is not exact to the cent", async () => {
+  const ownerId = "settlement-remove-exact-owner";
+  // An invoice whose total has no exact minor-unit representation,
+  // carrying one manual payment record.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Settlement Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-SETTLE-14",
+          issueDate: "2026-03-12",
+          customerName: "Settlement Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-settle-fractional",
+              type: "labor",
+              description: "Fractional job",
+              quantity: 1,
+              unitPrice: 10.005,
+              amount: 10.005
+            }
+          ],
+          subtotal: 10.005,
+          total: 10.005,
+          balanceDue: 10.005,
+          paymentRecords: [{ id: "fractional-total-record", amount: 5, paidAt: "2026-03-12" }]
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+
+  // The balance after removal cannot be recomputed exactly, so the
+  // removal is refused and the record stays — never float-approximated.
+  const removeResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/remove-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ paymentId: "fractional-total-record" });
+  assert.equal(removeResponse.status, 400);
+  assert.match(String(removeResponse.body.error || ""), /not exact to the cent/i);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.invoiceData.finishedInvoice.paymentRecords.length, 1);
+});
+
+test("concurrent record-payment and remove-payment leave status matching the final balance", async () => {
+  const ownerId = "settlement-split-status-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-15");
+
+  // Seed a manual payment of $100 (balance $140, status sent).
+  const seed = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 100 });
+  assert.equal(seed.status, 200);
+  const seeded = await getSettlementInvoice(ownerId, invoiceId);
+  const seedRecordId = seeded.invoiceData.finishedInvoice.paymentRecords[0]?.id as string;
+  assert.ok(seedRecordId);
+  assert.equal(seeded.status, "sent");
+  assert.equal(seeded.invoiceData.finishedInvoice.balanceDue, 140);
+
+  // Fire the remaining $140 record-payment and the removal of the seed
+  // record concurrently. Whichever order the store serializes them in,
+  // the final balance is $100 (only the $140 record remains) and the
+  // final status must match that balance — "sent", never "paid" with a
+  // zeroed balance pasted over a $100 balance by a late status write.
+  const [recordResponse, removeResponse] = await Promise.all([
+    request(app)
+      .post(`/api/invoices/${invoiceId}/record-payment`)
+      .set("x-invoice-user-id", ownerId)
+      .send({ amount: 140 }),
+    request(app)
+      .post(`/api/invoices/${invoiceId}/remove-payment`)
+      .set("x-invoice-user-id", ownerId)
+      .send({ paymentId: seedRecordId })
+  ]);
+  assert.equal(recordResponse.status, 200);
+  assert.equal(removeResponse.status, 200);
+
+  const final = await getSettlementInvoice(ownerId, invoiceId);
+  const finished = final.invoiceData.finishedInvoice;
+  assert.equal(finished.paymentRecords.length, 1);
+  assert.equal(finished.paymentRecords[0]?.amount, 140);
+  assert.equal(finished.balanceDue, 100);
+  assert.equal(final.status, "sent");
+});
+
 test("stripe webhook endpoint requires signature header", async () => {
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
