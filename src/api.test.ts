@@ -5636,6 +5636,24 @@ test("stripe payment-intent webhook marks a saved invoice paid and clears balanc
   const invoiceId = saveResponse.body.invoice.invoiceId as string;
   assert.ok(invoiceId);
 
+  // This webhook is the legacy shape (its metadata names no link
+  // record): it may settle only if the invoice provably had a legacy
+  // link. Seed that stored state directly — a payment-link URL with no
+  // link records, exactly what pre-link-record production data looks
+  // like. No API path can install it anymore: create payloads have
+  // their URLs sanitized away, by design (fix round 3, R3-P1 — a
+  // webhook for an invoice that never had a link is unmatched).
+  const storedRaw = JSON.parse(await fs.readFile(storeFilePath, "utf8")) as {
+    invoices: Array<{
+      invoiceId: string;
+      invoiceData: { finishedInvoice: { paymentLinkUrl?: string } };
+    }>;
+  };
+  const storedInvoice = storedRaw.invoices.find((invoice) => invoice.invoiceId === invoiceId);
+  assert.ok(storedInvoice);
+  storedInvoice.invoiceData.finishedInvoice.paymentLinkUrl = "https://pay.stripe.test/plink_legacy_paid_1";
+  await fs.writeFile(storeFilePath, `${JSON.stringify(storedRaw, null, 2)}\n`, "utf8");
+
   const webhookPayload = JSON.stringify({
     id: "evt_test_payment_intent_succeeded",
     object: "event",
@@ -6328,6 +6346,268 @@ test("a total with fractions of a cent can never be rounded or clamped into paid
     .send({});
   assert.equal(linkResponse.status, 400);
   assert.match(String(linkResponse.body.error || ""), /fractions of a cent/i);
+});
+
+test("a webhook for an invoice that never had a payment link is captured unmatched as unverifiable", async () => {
+  const ownerId = "settlement-no-link-owner";
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  // No payment link is ever created for this invoice: it has no stored
+  // link URL and no link records. Stripe metadata plus an exact amount
+  // and currency must not settle it — the legacy fallback has to prove
+  // a legacy link existed, and here none did.
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R3-1");
+  const response = await deliverSettlementWebhook({
+    eventId: "evt_no_link",
+    paymentIntentId: "pi_no_link",
+    invoiceId,
+    ownerId,
+    amountReceived: 24000,
+    currency: "usd"
+  });
+  assert.equal(response.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.notEqual(after.status, "paid");
+  const finished = after.invoiceData.finishedInvoice;
+  assert.equal(finished.paymentRecords.length, 0);
+  assert.equal(finished.balanceDue, 240);
+  const unmatched = finished.unmatchedPayments ?? [];
+  assert.equal(unmatched.length, 1);
+  assert.equal(unmatched[0]?.reason, "unverifiable_payment_link");
+  assert.equal(unmatched[0]?.providerPaymentIntentId, "pi_no_link");
+  assert.equal(unmatched[0]?.expectedAmountMinor, 24000);
+});
+
+test("a paid invoice edited to a non-representable total reopens instead of trusting the payload balance", async () => {
+  const ownerId = "settlement-paid-edit-fractional-owner";
+  setInvoicePaymentLinkCreatorForTests(async () => ({
+    url: "https://pay.stripe.test/plink_paid_edit_frac",
+    paymentLinkId: "plink_paid_edit_frac"
+  }));
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R3-3");
+  await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  const linked = await getSettlementInvoice(ownerId, invoiceId);
+  const linkRecordId = linked.invoiceData.finishedInvoice.paymentLinks[0]?.id as string;
+  assert.ok(linkRecordId);
+  const webhookResponse = await deliverSettlementWebhook({
+    eventId: "evt_paid_edit_frac",
+    paymentIntentId: "pi_paid_edit_frac",
+    invoiceId,
+    ownerId,
+    paymentLinkRecordId: linkRecordId,
+    amountReceived: 24000,
+    currency: "usd"
+  });
+  assert.equal(webhookResponse.status, 200);
+  const settled = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(settled.status, "paid");
+
+  // Monetary edit: the total becomes 10.005 — no exact minor-unit
+  // representation — while the payload claims balanceDue 0. The
+  // record-derived balance is indeterminate (the total cannot be
+  // represented), so the payload balance must not be the authority
+  // that keeps this invoice "paid": the save changed the money, so
+  // the paid state fails closed and reopens.
+  const editResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...settled.invoiceData,
+        finishedInvoice: {
+          ...settled.invoiceData.finishedInvoice,
+          lineItems: settled.invoiceData.finishedInvoice.lineItems.map(
+            (lineItem: Record<string, unknown>) => ({
+              ...lineItem,
+              unitPrice: 10.005,
+              amount: 10.005
+            })
+          ),
+          subtotal: 10.005,
+          total: 10.005,
+          balanceDue: 0
+        }
+      }
+    });
+  assert.equal(editResponse.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "sent");
+});
+
+test("a paid invoice survives a non-monetary edit with its exact zero balance intact", async () => {
+  const ownerId = "settlement-paid-note-edit-owner";
+  setInvoicePaymentLinkCreatorForTests(async () => ({
+    url: "https://pay.stripe.test/plink_paid_note_edit",
+    paymentLinkId: "plink_paid_note_edit"
+  }));
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R3-4");
+  await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  const linked = await getSettlementInvoice(ownerId, invoiceId);
+  const linkRecordId = linked.invoiceData.finishedInvoice.paymentLinks[0]?.id as string;
+  assert.ok(linkRecordId);
+  const webhookResponse = await deliverSettlementWebhook({
+    eventId: "evt_paid_note_edit",
+    paymentIntentId: "pi_paid_note_edit",
+    invoiceId,
+    ownerId,
+    paymentLinkRecordId: linkRecordId,
+    amountReceived: 24000,
+    currency: "usd"
+  });
+  assert.equal(webhookResponse.status, 200);
+  const settled = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(settled.status, "paid");
+
+  // Non-monetary edit only: a note. The record-derived balance is
+  // exactly zero, so the paid state stands.
+  const editResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...settled.invoiceData,
+        finishedInvoice: {
+          ...settled.invoiceData.finishedInvoice,
+          notes: "Client confirmed receipt"
+        }
+      }
+    });
+  assert.equal(editResponse.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "paid");
+  assert.equal(after.invoiceData.finishedInvoice.balanceDue, 0);
+  assert.equal(after.invoiceData.finishedInvoice.paymentRecords.length, 1);
+});
+
+test("duplicating a settled invoice starts the duplicate with empty payment state", async () => {
+  const ownerId = "settlement-duplicate-owner";
+  setInvoicePaymentLinkCreatorForTests(async () => ({
+    url: "https://pay.stripe.test/plink_dup_source",
+    paymentLinkId: "plink_dup_source"
+  }));
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R3-6");
+  // Mint a link, supersede it with a monetary edit (240 -> 250), mint a
+  // fresh link, and settle through it: the source ends paid with link
+  // history, a provider record, and monetary revision 1.
+  await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  const created = await getSettlementInvoice(ownerId, invoiceId);
+  const editResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...created.invoiceData,
+        finishedInvoice: {
+          ...created.invoiceData.finishedInvoice,
+          lineItems: created.invoiceData.finishedInvoice.lineItems.map(
+            (lineItem: Record<string, unknown>) => ({
+              ...lineItem,
+              unitPrice: 250,
+              amount: 250
+            })
+          ),
+          subtotal: 250,
+          total: 250,
+          balanceDue: 250
+        }
+      }
+    });
+  assert.equal(editResponse.status, 200);
+  await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  const relinked = await getSettlementInvoice(ownerId, invoiceId);
+  const activeLink = (relinked.invoiceData.finishedInvoice.paymentLinks ?? []).find(
+    (link: { id: string; status: string }) => link.status === "active"
+  );
+  assert.ok(activeLink);
+  const webhookResponse = await deliverSettlementWebhook({
+    eventId: "evt_dup_source",
+    paymentIntentId: "pi_dup_source",
+    invoiceId,
+    ownerId,
+    paymentLinkRecordId: activeLink.id,
+    amountReceived: 25000,
+    currency: "usd"
+  });
+  assert.equal(webhookResponse.status, 200);
+  // One stray webhook with no link record id: captured unmatched
+  // against the source (link records exist, so the legacy fallback is
+  // unverifiable), giving the source an unmatched entry too.
+  const strayResponse = await deliverSettlementWebhook({
+    eventId: "evt_dup_stray",
+    paymentIntentId: "pi_dup_stray",
+    invoiceId,
+    ownerId,
+    amountReceived: 100,
+    currency: "usd"
+  });
+  assert.equal(strayResponse.status, 200);
+
+  const source = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(source.status, "paid");
+  const sourceFinished = source.invoiceData.finishedInvoice;
+  assert.equal(sourceFinished.balanceDue, 0);
+  assert.equal(sourceFinished.paymentRecords.length, 1);
+  assert.equal((sourceFinished.paymentLinks ?? []).length, 2);
+  assert.equal((sourceFinished.unmatchedPayments ?? []).length, 1);
+  assert.equal(sourceFinished.monetaryRevision, 1);
+
+  const duplicateResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/duplicate`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(duplicateResponse.status, 200);
+  const duplicateId = duplicateResponse.body.invoice.invoiceId as string;
+  assert.ok(duplicateId);
+  assert.notEqual(duplicateId, invoiceId);
+
+  const duplicate = await getSettlementInvoice(ownerId, duplicateId);
+  assert.equal(duplicate.status, "draft");
+  const duplicateFinished = duplicate.invoiceData.finishedInvoice;
+  assert.equal(duplicateFinished.total, 250);
+  assert.equal(duplicateFinished.balanceDue, 250);
+  assert.equal((duplicateFinished.paymentRecords ?? []).length, 0);
+  assert.equal((duplicateFinished.paymentLinks ?? []).length, 0);
+  assert.equal((duplicateFinished.unmatchedPayments ?? []).length, 0);
+  assert.equal(duplicateFinished.monetaryRevision, 0);
+  assert.equal(duplicateFinished.paymentLinkUrl ?? "", "");
+
+  // The original is untouched by the duplication.
+  const sourceAfter = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(sourceAfter.status, "paid");
+  assert.equal(sourceAfter.invoiceData.finishedInvoice.balanceDue, 0);
+  assert.equal(sourceAfter.invoiceData.finishedInvoice.paymentRecords.length, 1);
+  assert.equal((sourceAfter.invoiceData.finishedInvoice.paymentLinks ?? []).length, 2);
+  assert.equal((sourceAfter.invoiceData.finishedInvoice.unmatchedPayments ?? []).length, 1);
 });
 
 test("payment-link creation racing a monetary edit installs a link bound to the fresh amount", async () => {

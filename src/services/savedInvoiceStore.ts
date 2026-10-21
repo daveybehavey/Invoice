@@ -14,8 +14,10 @@ import {
 import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
 import {
   applyMonetaryEditInvalidation,
+  computeMonetaryFingerprint,
   reconcilePaidStatusAfterSave,
   sanitizeCreatedInvoicePaymentState,
+  sanitizeDuplicatedInvoicePaymentState,
   settleStripePaymentOnInvoice,
   type StripeSettlementInput,
   type StripeSettlementResult
@@ -97,8 +99,14 @@ export async function saveInvoiceDocument(input: {
         sourceType: input.sourceType,
         // A monetary edit that leaves a paid invoice with a positive
         // exact balance reopens it — decided here, inside the same
-        // serialized mutation, from the merged state.
-        status: reconcilePaidStatusAfterSave(existing.status, updatedFinishedInvoice),
+        // serialized mutation, from the merged state. The fingerprint
+        // comparison is the same one that drives link supersession.
+        status: reconcilePaidStatusAfterSave(
+          existing.status,
+          updatedFinishedInvoice,
+          computeMonetaryFingerprint(existing.invoiceData.finishedInvoice) !==
+            computeMonetaryFingerprint(updatedFinishedInvoice)
+        ),
         invoiceData: {
           ...input.invoiceData,
           finishedInvoice: updatedFinishedInvoice
@@ -319,7 +327,15 @@ export async function duplicateSavedInvoice(
       updatedAt: now,
       status: "draft",
       sourceType: invoice.sourceType,
-      invoiceData: invoice.invoiceData
+      invoiceData: {
+        ...invoice.invoiceData,
+        // A duplicate has earned no payments and minted no links: its
+        // payment state starts sanitized, exactly as at creation, with
+        // the full total as its balance. Copying the source's payment
+        // state verbatim would also copy an active link whose Stripe
+        // metadata names the ORIGINAL invoice.
+        finishedInvoice: sanitizeDuplicatedInvoicePaymentState(invoice.invoiceData.finishedInvoice)
+      }
     });
 
     collection.invoices.push(duplicatedInvoice);

@@ -31,7 +31,10 @@ type StoredFinishedInvoice = SavedInvoice["invoiceData"]["finishedInvoice"];
  *   invoice's link state, unmatched payments, and monetary revision start
  *   empty/server-initialized, and create-payload records are manual-only.
  * - A save that leaves a paid invoice with a positive exact balance
- *   reopens it to "sent" inside the same serialized mutation.
+ *   reopens it to "sent" inside the same serialized mutation. When the
+ *   exact balance is indeterminate, a save that changed the monetary
+ *   fingerprint reopens it too — the payload balanceDue is never the
+ *   paid-state authority.
  * - "Paid" is exact: balances are computed in integer minor units from the
  *   payment records, and paid requires a post-settlement balance of exactly
  *   zero. Non-representable totals/records and overpayments are captured as
@@ -274,29 +277,68 @@ export function sanitizeCreatedInvoicePaymentState(
 }
 
 /**
+ * Prepare the payment state of a DUPLICATED invoice. A duplicate is a
+ * fresh invoice that happens to share its source's content: it has
+ * earned no payments and minted no links, so it starts with the same
+ * sanitized payment state as a creation — no provider records, no
+ * payment links, no unmatched entries, monetary revision 0, and no
+ * link URL. The URL matters most: a copied ACTIVE link's Stripe
+ * metadata names the ORIGINAL invoice, so paying the duplicate's link
+ * would settle the original. Unlike creation, a duplicate does not
+ * keep manual payment records either: its balance is its full total
+ * with zero payments applied.
+ */
+export function sanitizeDuplicatedInvoicePaymentState(
+  finishedInvoice: StoredFinishedInvoice
+): StoredFinishedInvoice {
+  const sanitized = sanitizeCreatedInvoicePaymentState(finishedInvoice);
+  return {
+    ...sanitized,
+    paymentRecords: [],
+    balanceDue: Number(sanitized.total ?? sanitized.balanceDue ?? 0)
+  };
+}
+
+/**
  * Reconcile a stored "paid" status with the balance a client save
  * produced. This runs inside the save's serialization (both backends)
  * against the merged invoice: a monetary edit that leaves a positive
  * balance reopens the invoice to "sent" — the same reopened status the
  * remove-payment path uses — instead of leaving a paid invoice with
- * money still due. The balance is derived exactly in integer minor
- * units: from the total and the merged payment records when they are
- * exactly representable, otherwise from the resulting balanceDue. When
- * no positive balance can be proven, the status is left alone.
+ * money still due.
+ *
+ * The balance is derived exactly in integer minor units from the total
+ * and the merged payment records. The payload's balanceDue is NEVER
+ * the paid-state authority: when the record-derived balance is
+ * indeterminate (a non-representable total or payment record), the
+ * outcome depends on what the save did. A save that changed the
+ * monetary fingerprint cannot prove the invoice is still fully paid,
+ * so it fails closed and reopens to "sent". A save that did not touch
+ * the monetary fingerprint leaves the status alone — a pre-existing
+ * indeterminate state is a data-quality problem, not this save's
+ * doing.
+ *
+ * `monetaryFingerprintChanged` is the same existing-vs-merged
+ * fingerprint comparison that drives payment-link supersession in
+ * applyMonetaryEditInvalidation; the caller computes it, because the
+ * caller holds both documents inside the serialization.
  */
 export function reconcilePaidStatusAfterSave(
   status: SavedInvoice["status"],
-  finishedInvoice: StoredFinishedInvoice
+  finishedInvoice: StoredFinishedInvoice,
+  monetaryFingerprintChanged: boolean
 ): SavedInvoice["status"] {
   if (status !== "paid") {
     return status;
   }
-  const derivedMinor =
-    calculateInvoiceBalanceMinor(
-      Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0),
-      finishedInvoice.paymentRecords ?? []
-    ) ?? toAmountMinorExact(Number(finishedInvoice.balanceDue ?? 0));
-  return derivedMinor !== null && derivedMinor > 0 ? "sent" : status;
+  const derivedMinor = calculateInvoiceBalanceMinor(
+    Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0),
+    finishedInvoice.paymentRecords ?? []
+  );
+  if (derivedMinor !== null) {
+    return derivedMinor > 0 ? "sent" : status;
+  }
+  return monetaryFingerprintChanged ? "sent" : status;
 }
 
 function stripProviderEvidence<T extends Record<string, unknown>>(record: T): T {
@@ -502,7 +544,9 @@ export function settleStripePaymentOnInvoice(input: {
     // Legacy payment (link minted before link records existed): the
     // PaymentIntent metadata cannot name a link record, so binding falls
     // back to an exact match against the invoice's current balance and
-    // currency. Any monetary edit since issuance breaks the amount match.
+    // currency, plus proof that such a link existed (a stored link URL
+    // with zero link records). Any monetary edit since issuance breaks
+    // the amount match.
     if (links.length > 0) {
       return unmatched("unverifiable_payment_link", expectedBalanceMinor ?? undefined);
     }
@@ -514,6 +558,14 @@ export function settleStripePaymentOnInvoice(input: {
     }
     if (normalizeMoneyCurrency(finishedInvoice.currency) !== receivedCurrency) {
       return unmatched("currency_mismatch", expectedBalanceMinor);
+    }
+    // The fallback must still prove a legacy link existed: a stored link
+    // URL with zero link records. An invoice that never had a payment
+    // link (no stored URL — e.g. a payload URL was cleared by the create
+    // sanitizer) proves nothing, and metadata plus an exact amount alone
+    // must never settle it.
+    if (!hasLegacyPaymentLink(finishedInvoice)) {
+      return unmatched("unverifiable_payment_link", expectedBalanceMinor);
     }
     boundExpectedMinor = expectedBalanceMinor;
   }

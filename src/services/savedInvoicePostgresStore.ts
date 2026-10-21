@@ -12,8 +12,10 @@ import {
 import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
 import {
   applyMonetaryEditInvalidation,
+  computeMonetaryFingerprint,
   reconcilePaidStatusAfterSave,
   sanitizeCreatedInvoicePaymentState,
+  sanitizeDuplicatedInvoicePaymentState,
   settleStripePaymentOnInvoice,
   type StripeSettlementInput,
   type StripeSettlementResult
@@ -99,8 +101,15 @@ export class PostgresSavedInvoiceRepository {
           };
           // A monetary edit that leaves a paid invoice with a positive
           // exact balance reopens it — decided here, inside the same
-          // FOR UPDATE transaction, from the merged state.
-          const mergedStatus = reconcilePaidStatusAfterSave(existing.status, mergedFinishedInvoice);
+          // FOR UPDATE transaction, from the merged state. The
+          // fingerprint comparison is the same one that drives link
+          // supersession.
+          const mergedStatus = reconcilePaidStatusAfterSave(
+            existing.status,
+            mergedFinishedInvoice,
+            computeMonetaryFingerprint(existing.invoiceData.finishedInvoice) !==
+              computeMonetaryFingerprint(mergedFinishedInvoice)
+          );
           const result = await client.query<SavedInvoiceRow>(
             `
               update saved_invoices
@@ -363,7 +372,15 @@ export class PostgresSavedInvoiceRepository {
       updatedAt: now,
       status: "draft",
       sourceType: existing.sourceType,
-      invoiceData: existing.invoiceData
+      invoiceData: {
+        ...existing.invoiceData,
+        // A duplicate has earned no payments and minted no links: its
+        // payment state starts sanitized, exactly as at creation, with
+        // the full total as its balance. Copying the source's payment
+        // state verbatim would also copy an active link whose Stripe
+        // metadata names the ORIGINAL invoice.
+        finishedInvoice: sanitizeDuplicatedInvoicePaymentState(existing.invoiceData.finishedInvoice)
+      }
     });
 
     const result = await this.query<SavedInvoiceRow>(

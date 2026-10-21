@@ -18,7 +18,14 @@ import { test } from "node:test";
  * create payloads cannot forge provider state (and a forged intent id
  * does not poison later genuine settlement), and a monetary edit that
  * leaves a paid invoice with a positive balance reopens it to "sent"
- * inside the save itself.
+ * inside the save itself. Round 3 adds: the legacy settlement fallback
+ * must prove a legacy link existed (a stored URL with zero link
+ * records) — a webhook for an invoice that never had a link lands
+ * unmatched as unverifiable while a true legacy link still settles —
+ * and a stored paid invoice whose record-derived balance is
+ * indeterminate is left alone by a save that does not change the
+ * monetary fingerprint (the payload balance is never the authority;
+ * the fail-closed reopen lives in the API-level coverage).
  *
  * Postgres note (ticket): the repo has no live-Postgres test fixture, so
  * the Postgres backend has no automated concurrency coverage yet. The
@@ -420,4 +427,114 @@ test("monetary edit on a paid invoice reopens it to sent, provider record and li
   const linksById = new Map((finished.paymentLinks ?? []).map((link) => [link.id, link.status]));
   assert.equal(linksById.get(linkRecordId), "paid");
   assert.equal(linksById.get(remintedLinkId), "superseded");
+});
+
+test("settlement with no payment link at all is captured unmatched as unverifiable", async () => {
+  const ownerId = "conc-no-link-owner";
+  const created = await repository.saveInvoiceDocument({
+    ownerId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(240)
+  });
+
+  // No link was ever minted for this invoice: no stored URL, no link
+  // records. Metadata plus an exact amount must not settle it.
+  const settlement = await repository.settleStripeInvoicePayment({
+    invoiceId: created.invoiceId,
+    ownerId,
+    eventId: "evt_conc_no_link",
+    paymentIntentId: "pi_conc_no_link",
+    amountReceivedMinor: 24000,
+    currency: "usd",
+    receivedAt: "2026-03-12T12:00:00.000Z"
+  });
+  assert.equal(settlement.outcome, "unmatched");
+  assert.equal(settlement.reason, "unverifiable_payment_link");
+
+  const final = await repository.getSavedInvoiceById(created.invoiceId, ownerId);
+  assert.notEqual(final.status, "paid");
+  assert.equal(final.invoiceData.finishedInvoice.paymentRecords.length, 0);
+  assert.equal(final.invoiceData.finishedInvoice.balanceDue, 240);
+  assert.equal((final.invoiceData.finishedInvoice.unmatchedPayments ?? []).length, 1);
+});
+
+test("a true legacy link (stored URL, no link records) settles on exact amount and currency", async () => {
+  const ownerId = "conc-true-legacy-owner";
+  const created = await repository.saveInvoiceDocument({
+    ownerId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(240)
+  });
+  // The pre-link-record production shape: a stored payment-link URL
+  // with zero link records, installed through the fresh-state mutation
+  // op — the way the fixtures above install link records. No payload
+  // can install it (the create sanitizer clears payload URLs).
+  await repository.mutateSavedInvoice({
+    invoiceId: created.invoiceId,
+    ownerId,
+    mutate: (current) => ({
+      ...current,
+      invoiceData: {
+        ...current.invoiceData,
+        finishedInvoice: {
+          ...current.invoiceData.finishedInvoice,
+          paymentLinkUrl: "https://pay.stripe.test/plink_true_legacy"
+        }
+      }
+    })
+  });
+
+  const settlement = await repository.settleStripeInvoicePayment({
+    invoiceId: created.invoiceId,
+    ownerId,
+    eventId: "evt_conc_true_legacy",
+    paymentIntentId: "pi_conc_true_legacy",
+    amountReceivedMinor: 24000,
+    currency: "usd",
+    receivedAt: "2026-03-12T12:00:00.000Z"
+  });
+  assert.equal(settlement.outcome, "settled");
+
+  const final = await repository.getSavedInvoiceById(created.invoiceId, ownerId);
+  assert.equal(final.status, "paid");
+  assert.equal(final.invoiceData.finishedInvoice.balanceDue, 0);
+  assert.equal(final.invoiceData.finishedInvoice.paymentRecords.length, 1);
+  assert.equal(
+    final.invoiceData.finishedInvoice.paymentRecords[0]?.providerPaymentIntentId,
+    "pi_conc_true_legacy"
+  );
+  assert.equal((final.invoiceData.finishedInvoice.unmatchedPayments ?? []).length, 0);
+});
+
+test("a stored paid invoice with a non-representable total is left alone by a non-monetary edit", async () => {
+  const ownerId = "conc-indeterminate-paid-owner";
+  const created = await repository.saveInvoiceDocument({
+    ownerId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(10.005)
+  });
+  // The stored state the status-transition path can produce: status
+  // "paid" with the balance forced to zero over a total that has no
+  // exact minor-unit representation. No payment records exist, so the
+  // record-derived balance is indeterminate.
+  await repository.updateSavedInvoiceStatus(created.invoiceId, "paid", ownerId);
+  const paidStored = await repository.getSavedInvoiceById(created.invoiceId, ownerId);
+  assert.equal(paidStored.status, "paid");
+  assert.equal(paidStored.invoiceData.finishedInvoice.balanceDue, 0);
+
+  // A non-monetary edit (a note), carrying the monetary fields exactly
+  // as stored — balanceDue 0 included. The monetary fingerprint does
+  // not change, so the indeterminate balance is not this save's doing
+  // and the paid status is left untouched; the payload balance is not
+  // consulted either way.
+  await repository.saveInvoiceDocument({
+    ownerId,
+    invoiceId: created.invoiceId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(10.005, { balanceDue: 0, notes: "Client confirmed receipt" })
+  });
+
+  const final = await repository.getSavedInvoiceById(created.invoiceId, ownerId);
+  assert.equal(final.status, "paid");
+  assert.equal(final.invoiceData.finishedInvoice.total, 10.005);
 });
