@@ -16,7 +16,7 @@ import {
   applyMonetaryEditInvalidation,
   computeMonetaryFingerprint,
   reconcilePaidStatusAfterSave,
-  sanitizeCreatedInvoicePaymentState,
+  prepareCreatedInvoicePaymentState,
   sanitizeDuplicatedInvoicePaymentState,
   settleStripePaymentOnInvoice,
   type StripeSettlementInput,
@@ -130,8 +130,11 @@ export async function saveInvoiceDocument(input: {
         ...input.invoiceData,
         // Server-owned payment state is server-owned at creation too:
         // link state, unmatched payments, and the monetary revision start
-        // empty/initialized, and payload payment records are manual-only.
-        finishedInvoice: sanitizeCreatedInvoicePaymentState(input.invoiceData.finishedInvoice)
+        // empty/initialized, and payload payment records are manual-only —
+        // and validated: at create every payload record is a changed
+        // record, so an over-total or fractional-cent record throws here,
+        // before the write, and the create persists nothing.
+        finishedInvoice: prepareCreatedInvoicePaymentState(input.invoiceData.finishedInvoice)
       }
     });
 

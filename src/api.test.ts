@@ -7109,6 +7109,163 @@ test("a monetary edit with a simultaneous exact manual payment keeps a paid invo
   assert.equal(finished.monetaryRevision, 1);
 });
 
+// --- Creation: payload manual records are validated like any save ---
+// At create there is no stored invoice, so every payload payment record
+// is a "changed" record: it must be exact to the cent and the records
+// together must not exceed the total. A violation refuses the create
+// with a 400 and persists nothing — an invoice cannot be born carrying
+// an overpayment or a fractional-cent record (fix round 5, R5-P1).
+
+async function listSettlementInvoiceIds(ownerId: string): Promise<string[]> {
+  const response = await request(app)
+    .get("/api/invoices")
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(response.status, 200);
+  return (response.body.invoices ?? []).map((invoice: { invoiceId: string }) => invoice.invoiceId);
+}
+
+async function createInvoiceWithPaymentRecords(input: {
+  ownerId: string;
+  invoiceNumber: string;
+  total: number;
+  balanceDue: number;
+  paymentRecords?: Array<Record<string, unknown>>;
+}) {
+  return request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", input.ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Settlement Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: input.invoiceNumber,
+          issueDate: "2026-03-12",
+          customerName: "Settlement Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-create-1",
+              type: "labor",
+              description: "Creation job",
+              quantity: 1,
+              unitPrice: input.total,
+              amount: input.total
+            }
+          ],
+          subtotal: input.total,
+          total: input.total,
+          balanceDue: input.balanceDue,
+          ...(input.paymentRecords ? { paymentRecords: input.paymentRecords } : {})
+        }
+      }
+    });
+}
+
+test("invoice creation refuses a manual payment record that exceeds the total and persists nothing", async () => {
+  const ownerId = "settlement-create-overpay-owner";
+
+  const response = await createInvoiceWithPaymentRecords({
+    ownerId,
+    invoiceNumber: "INV-SETTLE-R5-1",
+    total: 240,
+    balanceDue: 240,
+    paymentRecords: [{ id: "create-overpay-record", amount: 300, paidAt: "2026-03-12" }]
+  });
+  assert.equal(response.status, 400);
+  assert.match(String(response.body.error || ""), /exceeds the balance due/i);
+  assert.deepEqual(await listSettlementInvoiceIds(ownerId), []);
+
+  // Dressing the same record in provider fields does not dodge the
+  // validation: the create sanitizer strips provider evidence first,
+  // and the stripped manual record is what gets validated.
+  const forged = await createInvoiceWithPaymentRecords({
+    ownerId,
+    invoiceNumber: "INV-SETTLE-R5-1B",
+    total: 240,
+    balanceDue: 240,
+    paymentRecords: [
+      {
+        id: "create-forged-provider-record",
+        amount: 300,
+        paidAt: "2026-03-12",
+        provider: "stripe",
+        providerPaymentIntentId: "pi_forged_create"
+      }
+    ]
+  });
+  assert.equal(forged.status, 400);
+  assert.match(String(forged.body.error || ""), /exceeds the balance due/i);
+  assert.deepEqual(await listSettlementInvoiceIds(ownerId), []);
+});
+
+test("invoice creation refuses a manual payment record that is not exact to the cent", async () => {
+  const ownerId = "settlement-create-fractional-owner";
+
+  const response = await createInvoiceWithPaymentRecords({
+    ownerId,
+    invoiceNumber: "INV-SETTLE-R5-2",
+    total: 240,
+    balanceDue: 240,
+    paymentRecords: [{ id: "create-fractional-record", amount: 10.005, paidAt: "2026-03-12" }]
+  });
+  assert.equal(response.status, 400);
+  assert.match(String(response.body.error || ""), /exact to the cent/i);
+  assert.deepEqual(await listSettlementInvoiceIds(ownerId), []);
+});
+
+test("invoice creation accepts exact manual payment records within the total", async () => {
+  const ownerId = "settlement-create-deposit-owner";
+
+  const response = await createInvoiceWithPaymentRecords({
+    ownerId,
+    invoiceNumber: "INV-SETTLE-R5-3",
+    total: 240,
+    balanceDue: 140,
+    paymentRecords: [{ id: "create-deposit-record", amount: 100, paidAt: "2026-03-12", note: "Deposit" }]
+  });
+  assert.equal(response.status, 200);
+  const invoiceId = response.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const created = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(created.status, "draft");
+  const finished = created.invoiceData.finishedInvoice;
+  assert.equal(finished.paymentRecords.length, 1);
+  assert.equal(finished.paymentRecords[0]?.id, "create-deposit-record");
+  assert.equal(finished.paymentRecords[0]?.amount, 100);
+  // Manual at birth: no provider evidence, amountMinor derived server-side.
+  assert.equal(finished.paymentRecords[0]?.providerPaymentIntentId, undefined);
+  assert.equal(finished.paymentRecords[0]?.amountMinor, 10000);
+  // The derived balance (240 - 100) matches the stored balance due.
+  assert.equal(finished.balanceDue, 140);
+});
+
+test("invoice creation without payment records is unchanged", async () => {
+  const ownerId = "settlement-create-plain-owner";
+
+  const response = await createInvoiceWithPaymentRecords({
+    ownerId,
+    invoiceNumber: "INV-SETTLE-R5-4",
+    total: 240,
+    balanceDue: 240
+  });
+  assert.equal(response.status, 200);
+  const invoiceId = response.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const created = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(created.status, "draft");
+  assert.equal((created.invoiceData.finishedInvoice.paymentRecords ?? []).length, 0);
+  assert.equal(created.invoiceData.finishedInvoice.balanceDue, 240);
+  assert.equal(created.invoiceData.finishedInvoice.monetaryRevision, 0);
+});
+
 test("a pre-existing overpaid state does not block a save that changes no payment records", async () => {
   const ownerId = "settlement-save-preexisting-owner";
   const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R4-5");

@@ -369,6 +369,36 @@ export function sanitizeCreatedInvoicePaymentState(
 }
 
 /**
+ * Prepare AND validate the payment state of a newly created invoice:
+ * sanitizeCreatedInvoicePaymentState, then the same manual-record
+ * validation the whole-document save path enforces
+ * (assertValidSavePaymentRecordChanges). At create there is no stored
+ * invoice, so every payload record is a "changed" record: each must be
+ * exactly representable in minor units, and the derived balance (total
+ * minus all records) must not be negative. Validation runs on the
+ * SANITIZED records — a payload cannot dodge it by dressing a manual
+ * record in provider fields the sanitizer strips.
+ *
+ * Both backends call this inside their create branch, before anything
+ * is persisted: a violation throws, the create aborts (the file store
+ * never writes; the Postgres insert never runs), and the route answers
+ * 400 with the same messages /record-payment uses. Without this, an
+ * invoice could be BORN carrying an overpayment (a $300 record on a
+ * $240 total) or a fractional-cent record — states the update path has
+ * refused since fix round 4.
+ */
+export function prepareCreatedInvoicePaymentState(
+  finishedInvoice: StoredFinishedInvoice
+): StoredFinishedInvoice {
+  const sanitized = sanitizeCreatedInvoicePaymentState(finishedInvoice);
+  assertValidSavePaymentRecordChanges({
+    existing: { ...sanitized, paymentRecords: [] },
+    merged: sanitized
+  });
+  return sanitized;
+}
+
+/**
  * Prepare the payment state of a DUPLICATED invoice. A duplicate is a
  * fresh invoice that happens to share its source's content: it has
  * earned no payments and minted no links, so it starts with the same
