@@ -110,6 +110,13 @@ export class PostgresSavedInvoiceRepository {
             computeMonetaryFingerprint(existing.invoiceData.finishedInvoice) !==
               computeMonetaryFingerprint(mergedFinishedInvoice)
           );
+          // deleted_at is preserved whenever the resulting status is
+          // still "deleted" — the file store keeps the stored invoice's
+          // deletedAt on a whole-document save (its update spreads the
+          // stored row), and only the explicit restore transition may
+          // clear it. Nulling it unconditionally here left rows whose
+          // status said deleted with no deletion timestamp (fix round
+          // 7 parity nit).
           const result = await client.query<SavedInvoiceRow>(
             `
               update saved_invoices
@@ -117,7 +124,10 @@ export class PostgresSavedInvoiceRepository {
                   invoice_data = $4::jsonb,
                   updated_at = $5,
                   status = $6,
-                  deleted_at = null
+                  deleted_at = case
+                    when $6 = 'deleted' then deleted_at
+                    else null
+                  end
               where invoice_id = $1 and owner_id = $2
               returning
                 invoice_id,

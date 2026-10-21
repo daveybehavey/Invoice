@@ -6842,43 +6842,44 @@ test("record-payment refuses fractional-cent amounts and overpayments instead of
 test("remove-payment refuses when the invoice total is not exact to the cent", async () => {
   const ownerId = "settlement-remove-exact-owner";
   // An invoice whose total has no exact minor-unit representation,
-  // carrying one manual payment record.
-  const saveResponse = await request(app)
-    .post("/api/invoices/save")
-    .set("x-invoice-user-id", ownerId)
-    .send({
-      confirmSave: true,
-      sourceType: "text_input",
+  // carrying one manual payment record. Since fix round 7 the API
+  // refuses to CREATE this combination (a non-representable total with
+  // payment records — see "invoice creation refuses payment records
+  // against a total that is not exact to the cent" below), so the
+  // state this test exercises is legacy data: seed it directly in the
+  // store, as the other legacy-state fixtures do. What is under test
+  // is unchanged: remove-payment must refuse, because the balance
+  // after removal cannot be recomputed exactly.
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-14");
+  const storedRaw = JSON.parse(await fs.readFile(storeFilePath, "utf8")) as {
+    invoices: Array<{
+      invoiceId: string;
       invoiceData: {
-        structuredInvoice: {
-          customerName: "Settlement Client",
-          workSessions: [],
-          materials: []
-        },
         finishedInvoice: {
-          invoiceNumber: "INV-SETTLE-14",
-          issueDate: "2026-03-12",
-          customerName: "Settlement Client",
-          currency: "USD",
-          lineItems: [
-            {
-              id: "line-settle-fractional",
-              type: "labor",
-              description: "Fractional job",
-              quantity: 1,
-              unitPrice: 10.005,
-              amount: 10.005
-            }
-          ],
-          subtotal: 10.005,
-          total: 10.005,
-          balanceDue: 10.005,
-          paymentRecords: [{ id: "fractional-total-record", amount: 5, paidAt: "2026-03-12" }]
-        }
-      }
-    });
-  assert.equal(saveResponse.status, 200);
-  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+          lineItems: Array<Record<string, unknown>>;
+          subtotal: number;
+          total: number;
+          balanceDue: number;
+          paymentRecords: Array<Record<string, unknown>>;
+        };
+      };
+    }>;
+  };
+  const storedInvoice = storedRaw.invoices.find((invoice) => invoice.invoiceId === invoiceId);
+  assert.ok(storedInvoice);
+  const legacyFinished = storedInvoice.invoiceData.finishedInvoice;
+  legacyFinished.lineItems = legacyFinished.lineItems.map((lineItem) => ({
+    ...lineItem,
+    unitPrice: 10.005,
+    amount: 10.005
+  }));
+  legacyFinished.subtotal = 10.005;
+  legacyFinished.total = 10.005;
+  legacyFinished.balanceDue = 10.005;
+  legacyFinished.paymentRecords = [
+    { id: "fractional-total-record", amount: 5, paidAt: "2026-03-12" }
+  ];
+  await fs.writeFile(storeFilePath, `${JSON.stringify(storedRaw, null, 2)}\n`, "utf8");
 
   // The balance after removal cannot be recomputed exactly, so the
   // removal is refused and the record stays — never float-approximated.
@@ -7715,6 +7716,199 @@ test("a pre-existing overpaid state does not block a save that changes no paymen
   assert.equal(finished.paymentRecords.length, 1);
   assert.equal(finished.paymentRecords[0]?.amount, 300);
   assert.equal(finished.balanceDue, 0);
+});
+
+// --- Fix round 7: the payload's balanceDue is NEVER stored. When ---
+// --- exact derivation is indeterminate, an update preserves the   ---
+// --- previously STORED balance, and create applies its own       ---
+// --- server-side rule (records + non-representable total refuse; ---
+// --- no records -> the balance is the total as stated).           ---
+
+test("a save on an indeterminate invoice preserves the stored balanceDue, never the payload's", async () => {
+  const ownerId = "settlement-r7-indeterminate-save-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R7-1");
+
+  // Seed legacy state directly in the store: a non-representable
+  // manual record (so the record-derived balance is indeterminate)
+  // and a stored balanceDue of 140. No current API path installs
+  // this state.
+  const storedRaw = JSON.parse(await fs.readFile(storeFilePath, "utf8")) as {
+    invoices: Array<{
+      invoiceId: string;
+      invoiceData: {
+        finishedInvoice: {
+          paymentRecords: Array<Record<string, unknown>>;
+          balanceDue?: number;
+        };
+      };
+    }>;
+  };
+  const storedInvoice = storedRaw.invoices.find((invoice) => invoice.invoiceId === invoiceId);
+  assert.ok(storedInvoice);
+  storedInvoice.invoiceData.finishedInvoice.paymentRecords = [
+    { id: "seeded-r7-fractional-record", amount: 40.005, paidAt: "2026-03-01", note: "Legacy import" }
+  ];
+  storedInvoice.invoiceData.finishedInvoice.balanceDue = 140;
+  await fs.writeFile(storeFilePath, `${JSON.stringify(storedRaw, null, 2)}\n`, "utf8");
+
+  const seeded = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(seeded.invoiceData.finishedInvoice.balanceDue, 140);
+
+  // The save changes only a note, but its payload claims balanceDue
+  // 0. Derivation is indeterminate, so the stored balance must
+  // survive untouched — 140, not the payload's client-authored 0.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...seeded.invoiceData,
+        finishedInvoice: {
+          ...seeded.invoiceData.finishedInvoice,
+          notes: "Delivery instructions updated",
+          balanceDue: 0
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "draft");
+  assert.equal(after.invoiceData.finishedInvoice.balanceDue, 140);
+  assert.equal(after.invoiceData.finishedInvoice.paymentRecords.length, 1);
+  assert.equal(after.invoiceData.finishedInvoice.paymentRecords[0]?.amount, 40.005);
+});
+
+test("a save editing the total to a non-representable value preserves the stored balanceDue", async () => {
+  const ownerId = "settlement-r7-fractional-total-edit-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R7-2");
+  const before = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(before.invoiceData.finishedInvoice.balanceDue, 240);
+
+  // The edit makes the total non-representable (240.005), so no exact
+  // balance can be derived from it — and the payload's balanceDue of
+  // 0 must not become the stored truth either. The previously stored
+  // balance (240) is what survives.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...before.invoiceData,
+        finishedInvoice: {
+          ...before.invoiceData.finishedInvoice,
+          lineItems: before.invoiceData.finishedInvoice.lineItems.map(
+            (lineItem: Record<string, unknown>) => ({ ...lineItem, unitPrice: 240.005, amount: 240.005 })
+          ),
+          subtotal: 240.005,
+          total: 240.005,
+          balanceDue: 0
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.invoiceData.finishedInvoice.total, 240.005);
+  assert.equal(after.invoiceData.finishedInvoice.balanceDue, 240);
+});
+
+test("invoice creation refuses payment records against a total that is not exact to the cent", async () => {
+  const ownerId = "settlement-r7-create-fractional-total-owner";
+
+  // Total 10.005 has no exact minor-unit form; the $5 record is exact,
+  // but payment state cannot be represented exactly against that
+  // total, so the create is refused and nothing is persisted — the
+  // payload's balanceDue of 0 must not be stored either.
+  const response = await createInvoiceWithPaymentRecords({
+    ownerId,
+    invoiceNumber: "INV-SETTLE-R7-3",
+    total: 10.005,
+    balanceDue: 0,
+    paymentRecords: [{ id: "create-r7-record", amount: 5, paidAt: "2026-03-12" }]
+  });
+  assert.equal(response.status, 400);
+  assert.match(String(response.body.error || ""), /not exact to the cent/i);
+  assert.deepEqual(await listSettlementInvoiceIds(ownerId), []);
+});
+
+test("invoice creation with a non-representable total and no records stores the total as the balance", async () => {
+  const ownerId = "settlement-r7-create-fractional-plain-owner";
+
+  // No payment records: nothing about payment state needs exact
+  // representation, so the create proceeds as fractional-total
+  // creates always have — but the stored balance is the total as
+  // stated (10.005, definitionally the full amount due), never the
+  // payload's claimed 0.
+  const response = await createInvoiceWithPaymentRecords({
+    ownerId,
+    invoiceNumber: "INV-SETTLE-R7-4",
+    total: 10.005,
+    balanceDue: 0
+  });
+  assert.equal(response.status, 200);
+  const invoiceId = response.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const created = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(created.status, "draft");
+  assert.equal(created.invoiceData.finishedInvoice.total, 10.005);
+  assert.equal(created.invoiceData.finishedInvoice.balanceDue, 10.005);
+  assert.equal((created.invoiceData.finishedInvoice.paymentRecords ?? []).length, 0);
+});
+
+test("a whole-document save of a deleted invoice preserves deletedAt and the deleted status", async () => {
+  const ownerId = "settlement-r7-deleted-save-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R7-5");
+
+  const deleteResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "deleted" });
+  assert.equal(deleteResponse.status, 200);
+  assert.equal(deleteResponse.body.invoice.status, "deleted");
+  const deletedAt = deleteResponse.body.invoice.deletedAt as string;
+  assert.ok(deletedAt);
+
+  // Save the deleted invoice's document (a note edit). The file
+  // store's update spreads the stored invoice, so deletedAt has
+  // always survived here; since fix round 7 the Postgres update
+  // matches (deleted_at is preserved whenever the resulting status
+  // stays "deleted", and only the restore transition clears it) —
+  // that backend is covered by construction, as this suite has no
+  // live-Postgres fixture.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...deleteResponse.body.invoice.invoiceData,
+        finishedInvoice: {
+          ...deleteResponse.body.invoice.invoiceData.finishedInvoice,
+          notes: "Edited while deleted"
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  assert.equal(saveResponse.body.invoice.status, "deleted");
+  assert.equal(saveResponse.body.invoice.deletedAt, deletedAt);
+
+  const storedRaw = JSON.parse(await fs.readFile(storeFilePath, "utf8")) as {
+    invoices: Array<{ invoiceId: string; status: string; deletedAt?: string }>;
+  };
+  const storedInvoice = storedRaw.invoices.find((invoice) => invoice.invoiceId === invoiceId);
+  assert.ok(storedInvoice);
+  assert.equal(storedInvoice.status, "deleted");
+  assert.equal(storedInvoice.deletedAt, deletedAt);
 });
 
 test("stripe webhook endpoint requires signature header", async () => {

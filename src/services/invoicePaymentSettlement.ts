@@ -48,10 +48,17 @@ type StoredFinishedInvoice = SavedInvoice["invoiceData"]["finishedInvoice"];
  *   is itself money-bearing: it is part of the monetary fingerprint,
  *   so a save that changes only records supersedes outstanding links
  *   and bumps the monetary revision exactly like a total edit. When
- *   the derivation is indeterminate because of PRE-EXISTING state the
- *   stored balanceDue is left as the payload carries it and the save
- *   is not blocked (indeterminacy a save's own record changes cause
- *   is refused by the validation above instead).
+ *   the derivation is indeterminate because of PRE-EXISTING state, an
+ *   update preserves the EXISTING stored balanceDue and is not
+ *   blocked (indeterminacy a save's own record changes cause is
+ *   refused by the validation above instead). The payload's
+ *   balanceDue is never stored in ANY path (fix round 7): determinate
+ *   derivation writes the derived value, an indeterminate update
+ *   keeps the previously stored value, and an indeterminate create
+ *   is refused when the payload carries payment records — payment
+ *   state cannot be represented exactly against a non-representable
+ *   total — or, carrying none, stores the total as stated, which is
+ *   definitionally the full amount due.
  * - The paid status is derived in BOTH directions inside the same
  *   serialized mutation: a save that leaves a paid invoice with a
  *   positive exact balance reopens it to "sent" (and, when the exact
@@ -436,11 +443,24 @@ export function sanitizeCreatedInvoicePaymentState(
  *
  * Validation alone left the create's balance unintegrated (fix round
  * 6): the records were checked but the stored balanceDue was still
- * the payload's. The prepared document therefore also passes through
- * deriveBalanceFromPaymentRecords, so a created invoice's balance is
- * the exact record-derived value whenever it is determinate — with
- * no records that is the full total, never a payload-supplied partial
+ * the payload's. The prepared document's balance is therefore the
+ * exact record-derived value whenever it is determinate — with no
+ * records that is the full total, never a payload-supplied partial
  * balance with nothing recorded against it.
+ *
+ * When the derivation is INDETERMINATE the payload's balanceDue is
+ * still never stored (fix round 7) — there is no stored value to
+ * preserve at create, so the rule is: validation above has already
+ * refused every non-representable record, so indeterminacy here
+ * means the TOTAL has no exact minor-unit form. A create carrying
+ * payment records against such a total is refused outright (a 400 in
+ * the same exactness style): payment state cannot be represented
+ * exactly against a total that has no exact form, and inventing a
+ * balance would be worse than refusing. A create carrying NO records
+ * stores the total as stated — the full amount is definitionally
+ * due — and proceeds exactly as fractional-total creates always
+ * have; the unrepresentable total still fails closed downstream
+ * (link creation, settlement, record/remove-payment all refuse it).
  */
 export function prepareCreatedInvoicePaymentState(
   finishedInvoice: StoredFinishedInvoice
@@ -459,7 +479,24 @@ export function prepareCreatedInvoicePaymentState(
   // never negative. Both backends persist this prepared document, and
   // derive the created status from it (see
   // reconcilePaidStatusAfterSave).
-  return deriveBalanceFromPaymentRecords(sanitized);
+  const derivedBalanceMinor = calculateInvoiceBalanceMinor(
+    Number(sanitized.total ?? sanitized.balanceDue ?? 0),
+    sanitized.paymentRecords ?? []
+  );
+  if (derivedBalanceMinor !== null) {
+    return { ...sanitized, balanceDue: Math.max(0, derivedBalanceMinor) / 100 };
+  }
+  // Indeterminate (fix round 7): the payload's balanceDue is never
+  // the fallback. Validation has already refused any non-representable
+  // record, so the total is what has no exact minor-unit form.
+  if ((sanitized.paymentRecords ?? []).length > 0) {
+    throw new Error(
+      "This invoice's total is not exact to the cent, so a payment cannot be recorded safely."
+    );
+  }
+  // No records: the balance is the total as stated — the full amount
+  // is definitionally due — not whatever the payload claimed.
+  return { ...sanitized, balanceDue: Number(sanitized.total ?? sanitized.balanceDue ?? 0) };
 }
 
 /**
@@ -620,8 +657,15 @@ export function applyMonetaryEditInvalidation(input: {
   // it in integer minor units so a stale payload cannot resurrect a
   // pre-settlement balance (or erase the zero a settlement produced),
   // and so the manual records this very save merged are reflected in
-  // the stored balance (fix round 6).
-  const prepared = deriveBalanceFromPaymentRecords(serverOwned);
+  // the stored balance (fix round 6). When the derivation is
+  // indeterminate (pre-existing non-representable state), the balance
+  // that survives is the EXISTING stored one — never the payload's,
+  // which is client-authored and could name any amount at all (fix
+  // round 7).
+  const prepared = deriveBalanceFromPaymentRecords(
+    serverOwned,
+    existing.balanceDue ?? existing.total
+  );
   if (computeMonetaryFingerprint(existing) === computeMonetaryFingerprint(prepared)) {
     return prepared;
   }
@@ -641,12 +685,17 @@ export function applyMonetaryEditInvalidation(input: {
  * still owes, everywhere.
  *
  * Two standing limits:
- * - Indeterminate (a non-representable total or record): the invoice
- *   is returned unchanged and the balance stays as carried. A save's
- *   own record changes can no longer produce indeterminacy here (they
- *   are validated first), so what remains is pre-existing state, and
- *   a pre-existing data-quality problem must not rewrite — or block —
- *   an unrelated save.
+ * - Indeterminate (a non-representable total or record): the stored
+ *   balance becomes `indeterminateBalanceDue` when the caller supplies
+ *   one — the save path passes the EXISTING stored balance (falling
+ *   back to the stored total, the codebase's standing balanceDue
+ *   default), because the payload's balanceDue is client-authored and
+ *   must never become stored truth (fix round 7). A save's own record
+ *   changes can no longer produce indeterminacy here (they are
+ *   validated first), so what remains is pre-existing state, and a
+ *   pre-existing data-quality problem must not rewrite — or block —
+ *   an unrelated save. Creation does not use this fallback: its
+ *   indeterminate rule lives in prepareCreatedInvoicePaymentState.
  * - Negative (records exceed the total): the stored field never reads
  *   negative — the schema rejects it, and the codebase's field
  *   convention (see remove-payment) is that an over-covered invoice is
@@ -655,14 +704,17 @@ export function applyMonetaryEditInvalidation(input: {
  *   reconcilePaidStatusAfterSave.
  */
 function deriveBalanceFromPaymentRecords(
-  finishedInvoice: StoredFinishedInvoice
+  finishedInvoice: StoredFinishedInvoice,
+  indeterminateBalanceDue?: number
 ): StoredFinishedInvoice {
   const balanceMinor = calculateInvoiceBalanceMinor(
     Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0),
     finishedInvoice.paymentRecords ?? []
   );
   if (balanceMinor === null) {
-    return finishedInvoice;
+    return indeterminateBalanceDue === undefined
+      ? finishedInvoice
+      : { ...finishedInvoice, balanceDue: indeterminateBalanceDue };
   }
   return { ...finishedInvoice, balanceDue: Math.max(0, balanceMinor) / 100 };
 }
