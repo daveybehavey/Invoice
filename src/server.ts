@@ -100,13 +100,12 @@ import {
 } from "./services/ocrMetricsExporter.js";
 import { getSavedInvoiceStoreSummary } from "./services/savedInvoiceStore.js";
 import {
-  applyMonetaryEditInvalidation,
   findReusablePaymentLink,
   hasLegacyPaymentLink,
   invalidateLinksForBalanceChange,
   normalizeMoneyCurrency,
   supersedeActivePaymentLinks,
-  toAmountMinor
+  toAmountMinorExact
 } from "./services/invoicePaymentSettlement.js";
 import { getFlowFrictionSnapshot } from "./services/flowFrictionReport.js";
 import { getIntakeTelemetryTrends } from "./services/intakeTelemetryTrends.js";
@@ -423,20 +422,26 @@ app.post("/api/invoices/:id/client-portal-link", async (req: Request, res: Respo
     ) {
       throw new HttpStatusError(400, CLIENT_PORTAL_BLOCKED_MESSAGE);
     }
-    const portalAccessToken =
-      parsedRequest.refresh || !savedInvoice.invoiceData.finishedInvoice.portalAccessToken
-        ? randomUUID()
-        : savedInvoice.invoiceData.finishedInvoice.portalAccessToken;
-    const invoice = await savedInvoiceRepository.saveInvoiceDocument({
-      ownerId,
+    // The token is written through a fresh-state transform inside the
+    // store's serialization — never as a whole-document save of the
+    // snapshot read above, which could overwrite a concurrent settlement.
+    let portalAccessToken = "";
+    const invoice = await savedInvoiceRepository.mutateSavedInvoice({
       invoiceId,
-      sourceType: savedInvoice.sourceType,
-      invoiceData: {
-        ...savedInvoice.invoiceData,
-        finishedInvoice: {
-          ...savedInvoice.invoiceData.finishedInvoice,
-          portalAccessToken
-        }
+      ownerId,
+      mutate: (current) => {
+        const existingToken = current.invoiceData.finishedInvoice.portalAccessToken;
+        portalAccessToken = parsedRequest.refresh || !existingToken ? randomUUID() : existingToken;
+        return {
+          ...current,
+          invoiceData: {
+            ...current.invoiceData,
+            finishedInvoice: {
+              ...current.invoiceData.finishedInvoice,
+              portalAccessToken
+            }
+          }
+        };
       }
     });
     res.json({
@@ -1297,30 +1302,17 @@ app.post("/api/invoices/save", async (req: Request, res: Response, next: NextFun
       }
     }
 
-    let effectiveInvoiceData = parsedRequest.invoiceData;
-    if (parsedRequest.invoiceId) {
-      // Payment-link state is server-owned: a save may not resurrect a
-      // superseded link, and a monetary edit must invalidate outstanding
-      // links so a link issued for amount X can never settle amount Y.
-      const existingInvoice = await savedInvoiceRepository
-        .getSavedInvoiceById(parsedRequest.invoiceId, ownerId)
-        .catch(() => null);
-      if (existingInvoice) {
-        effectiveInvoiceData = {
-          ...parsedRequest.invoiceData,
-          finishedInvoice: applyMonetaryEditInvalidation({
-            existing: existingInvoice.invoiceData.finishedInvoice,
-            incoming: parsedRequest.invoiceData.finishedInvoice,
-            nowIso: new Date().toISOString()
-          })
-        };
-      }
-    }
+    // Payment-link state and provider payment records are server-owned:
+    // the store merges them against the freshly stored invoice inside its
+    // serialization (see saveInvoiceDocument), and a monetary edit made by
+    // this save invalidates outstanding links there — a link issued for
+    // amount X can never settle amount Y, and a save can never overwrite a
+    // settlement that landed after the client's snapshot was taken.
     const savedInvoice = await savedInvoiceRepository.saveInvoiceDocument({
       ownerId,
       invoiceId: parsedRequest.invoiceId,
       sourceType: parsedRequest.sourceType,
-      invoiceData: effectiveInvoiceData
+      invoiceData: parsedRequest.invoiceData
     });
     if (!parsedRequest.invoiceId) {
       await trackRevenueSignalSafely({
@@ -2051,63 +2043,125 @@ async function ensureSavedInvoicePaymentLink(input: {
   return createAndPersistSavedInvoicePaymentLink(input);
 }
 
+/** Thrown inside the link-persist transform when the invoice's money moved
+ * after the Stripe link was minted (concurrent edit, payment, or
+ * settlement): the minted link collects a now-wrong amount, so it must not
+ * be installed. The caller retries once against fresh state. */
+class PaymentLinkStateChangedError extends Error {
+  constructor() {
+    super("Invoice monetary state changed while creating a payment link.");
+    this.name = "PaymentLinkStateChangedError";
+  }
+}
+
 async function createAndPersistSavedInvoicePaymentLink(input: {
   ownerId: string;
   invoice: Awaited<ReturnType<typeof savedInvoiceRepository.getSavedInvoiceById>>;
   baseUrl: string;
 }) {
-  const finishedInvoice = input.invoice.invoiceData.finishedInvoice;
-  if (finishedInvoice.documentType === "estimate") {
-    throw new HttpStatusError(400, "Convert this estimate into an invoice before creating a payment link.");
-  }
-  const total = Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0);
-  if (!Number.isFinite(total) || total <= 0) {
-    throw new HttpStatusError(400, "Invoice total must be greater than 0 before creating a payment link.");
-  }
-
-  const nowIso = new Date().toISOString();
-  const paymentLinkRecordId = randomUUID();
-  const amountMinor = toAmountMinor(total);
-  const paymentLink = await createStripeInvoicePaymentLink({
-    invoiceId: input.invoice.invoiceId,
-    ownerId: input.ownerId,
-    baseUrl: input.baseUrl,
-    invoiceNumber: finishedInvoice.invoiceNumber,
-    customerName: finishedInvoice.customerName,
-    total,
-    currency: finishedInvoice.currency,
-    paymentLinkRecordId,
-    amountMinor
-  });
-
-  // The new link supersedes every previously active link; the record is the
-  // durable binding a later settlement is verified against.
-  const superseded = supersedeActivePaymentLinks(finishedInvoice, nowIso);
-  return savedInvoiceRepository.saveInvoiceDocument({
-    ownerId: input.ownerId,
-    invoiceId: input.invoice.invoiceId,
-    sourceType: input.invoice.sourceType,
-    invoiceData: {
-      ...input.invoice.invoiceData,
-      finishedInvoice: {
-        ...superseded,
-        paymentLinkUrl: paymentLink.url,
-        paymentLinks: [
-          ...(superseded.paymentLinks ?? []),
-          {
-            id: paymentLinkRecordId,
-            provider: "stripe" as const,
-            providerPaymentLinkId: paymentLink.paymentLinkId,
-            amountMinor,
-            currency: normalizeMoneyCurrency(finishedInvoice.currency).toUpperCase(),
-            invoiceRevision: finishedInvoice.monetaryRevision ?? 0,
-            status: "active" as const,
-            createdAt: nowIso
-          }
-        ]
-      }
+  // The Stripe call cannot run inside the store's serialization, so the
+  // flow is: read current state, mint at Stripe, then persist through a
+  // fresh-state transform that refuses to install the link if the money
+  // moved in between. A refused link is orphaned at Stripe (harmless: a
+  // payment on it binds to no local record and lands as unmatched), and
+  // creation retries once against the fresh state.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const currentInvoice =
+      attempt === 0
+        ? input.invoice
+        : await savedInvoiceRepository.getSavedInvoiceById(input.invoice.invoiceId, input.ownerId);
+    const finishedInvoice = currentInvoice.invoiceData.finishedInvoice;
+    if (finishedInvoice.documentType === "estimate") {
+      throw new HttpStatusError(400, "Convert this estimate into an invoice before creating a payment link.");
     }
-  });
+    const total = Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0);
+    if (!Number.isFinite(total) || total <= 0) {
+      if (attempt > 0) {
+        // A concurrent settlement/payment zeroed the balance between
+        // attempts: there is nothing left to collect.
+        return currentInvoice;
+      }
+      throw new HttpStatusError(400, "Invoice total must be greater than 0 before creating a payment link.");
+    }
+    const amountMinor = toAmountMinorExact(total);
+    if (amountMinor === null) {
+      throw new HttpStatusError(
+        400,
+        "Invoice balance includes fractions of a cent and cannot be collected exactly. Adjust the invoice total before creating a payment link."
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    const paymentLinkRecordId = randomUUID();
+    const mintedRevision = finishedInvoice.monetaryRevision ?? 0;
+    const mintedCurrency = normalizeMoneyCurrency(finishedInvoice.currency);
+    const paymentLink = await createStripeInvoicePaymentLink({
+      invoiceId: input.invoice.invoiceId,
+      ownerId: input.ownerId,
+      baseUrl: input.baseUrl,
+      invoiceNumber: finishedInvoice.invoiceNumber,
+      customerName: finishedInvoice.customerName,
+      total,
+      currency: finishedInvoice.currency,
+      paymentLinkRecordId,
+      amountMinor
+    });
+
+    try {
+      // The new link supersedes every previously active link; the record is
+      // the durable binding a later settlement is verified against. The
+      // transform runs on the freshly stored invoice, so a concurrent edit
+      // or settlement is preserved rather than overwritten.
+      return await savedInvoiceRepository.mutateSavedInvoice({
+        invoiceId: input.invoice.invoiceId,
+        ownerId: input.ownerId,
+        mutate: (fresh) => {
+          const freshFinished = fresh.invoiceData.finishedInvoice;
+          const freshAmountMinor = toAmountMinorExact(
+            Number(freshFinished.balanceDue ?? freshFinished.total ?? 0)
+          );
+          if (
+            freshFinished.documentType === "estimate" ||
+            freshAmountMinor !== amountMinor ||
+            normalizeMoneyCurrency(freshFinished.currency) !== mintedCurrency ||
+            (freshFinished.monetaryRevision ?? 0) !== mintedRevision
+          ) {
+            throw new PaymentLinkStateChangedError();
+          }
+          const superseded = supersedeActivePaymentLinks(freshFinished, nowIso);
+          return {
+            ...fresh,
+            invoiceData: {
+              ...fresh.invoiceData,
+              finishedInvoice: {
+                ...superseded,
+                paymentLinkUrl: paymentLink.url,
+                paymentLinks: [
+                  ...(superseded.paymentLinks ?? []),
+                  {
+                    id: paymentLinkRecordId,
+                    provider: "stripe" as const,
+                    providerPaymentLinkId: paymentLink.paymentLinkId,
+                    amountMinor,
+                    currency: mintedCurrency.toUpperCase(),
+                    invoiceRevision: mintedRevision,
+                    status: "active" as const,
+                    createdAt: nowIso
+                  }
+                ]
+              }
+            }
+          };
+        }
+      });
+    } catch (error) {
+      if (error instanceof PaymentLinkStateChangedError) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new HttpStatusError(409, "Invoice changed while creating a payment link. Please retry.");
 }
 
 function roundCurrencyAmount(value: number): number {
@@ -2126,59 +2180,68 @@ async function recordSavedInvoicePayment(input: {
   paidAt?: string;
   note?: string;
 }): Promise<SavedInvoice> {
-  const savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(input.invoiceId, input.ownerId);
-  if (savedInvoice.status === "deleted") {
-    throw new HttpStatusError(400, "Restore this invoice before recording a payment.");
-  }
-  if (savedInvoice.invoiceData.finishedInvoice.documentType === "estimate") {
-    throw new HttpStatusError(400, "Convert this estimate into an invoice before recording payment.");
-  }
-  const currentInvoice = savedInvoice.invoiceData.finishedInvoice;
-  const nextPaymentRecords = [
-    ...(currentInvoice.paymentRecords ?? []),
-    {
-      id: randomUUID(),
-      amount: input.amount,
-      paidAt: input.paidAt?.trim() || new Date().toISOString().slice(0, 10),
-      note: input.note?.trim() || undefined
-    }
-  ];
-  const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
-  const nextBalanceDue = calculateInvoiceBalance(invoiceTotal, nextPaymentRecords);
-  // Fail-closed: refuse draft→sent via partial payment when send is blocked.
-  // Full payment (→paid) is allowed even on a messy draft.
-  if (
-    savedInvoice.status === "draft" &&
-    nextBalanceDue > 0 &&
-    invoiceSendIsBlocked({
-      finishedInvoice: currentInvoice,
-      sourceNote: savedInvoice.invoiceData.sourceNote
-    })
-  ) {
-    throw new HttpStatusError(400, SEND_BLOCKED_MESSAGE);
-  }
-  let nextInvoice = await savedInvoiceRepository.saveInvoiceDocument({
-    ownerId: input.ownerId,
+  // The whole read-modify-write runs as one fresh-state transform inside
+  // the store's serialization: the balance is recomputed from the current
+  // stored invoice, so a settlement landing concurrently is never
+  // overwritten by a snapshot taken before it.
+  let nextBalanceDue = Number.POSITIVE_INFINITY;
+  const nextInvoice = await savedInvoiceRepository.mutateSavedInvoice({
     invoiceId: input.invoiceId,
-    sourceType: savedInvoice.sourceType,
-    invoiceData: {
-      ...savedInvoice.invoiceData,
-      // A manual payment changes the balance, so any outstanding payment
-      // link now collects the wrong amount and is invalidated with the edit.
-      finishedInvoice: invalidateLinksForBalanceChange(
+    ownerId: input.ownerId,
+    mutate: (current) => {
+      if (current.status === "deleted") {
+        throw new HttpStatusError(400, "Restore this invoice before recording a payment.");
+      }
+      const currentInvoice = current.invoiceData.finishedInvoice;
+      if (currentInvoice.documentType === "estimate") {
+        throw new HttpStatusError(400, "Convert this estimate into an invoice before recording payment.");
+      }
+      const nextPaymentRecords = [
+        ...(currentInvoice.paymentRecords ?? []),
         {
-          ...currentInvoice,
-          balanceDue: nextBalanceDue,
-          paymentRecords: nextPaymentRecords
-        },
-        new Date().toISOString()
-      )
+          id: randomUUID(),
+          amount: input.amount,
+          paidAt: input.paidAt?.trim() || new Date().toISOString().slice(0, 10),
+          note: input.note?.trim() || undefined
+        }
+      ];
+      const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
+      nextBalanceDue = calculateInvoiceBalance(invoiceTotal, nextPaymentRecords);
+      // Fail-closed: refuse draft→sent via partial payment when send is blocked.
+      // Full payment (→paid) is allowed even on a messy draft.
+      if (
+        current.status === "draft" &&
+        nextBalanceDue > 0 &&
+        invoiceSendIsBlocked({
+          finishedInvoice: currentInvoice,
+          sourceNote: current.invoiceData.sourceNote
+        })
+      ) {
+        throw new HttpStatusError(400, SEND_BLOCKED_MESSAGE);
+      }
+      return {
+        ...current,
+        invoiceData: {
+          ...current.invoiceData,
+          // A manual payment changes the balance, so any outstanding payment
+          // link now collects the wrong amount and is invalidated with the edit.
+          finishedInvoice: invalidateLinksForBalanceChange(
+            {
+              ...currentInvoice,
+              balanceDue: nextBalanceDue,
+              paymentRecords: nextPaymentRecords
+            },
+            new Date().toISOString()
+          )
+        }
+      };
     }
   });
-  if (nextBalanceDue <= 0 && savedInvoice.status !== "paid") {
-    nextInvoice = await savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "paid", input.ownerId);
-  } else if (nextBalanceDue > 0 && savedInvoice.status === "draft") {
-    nextInvoice = await savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "sent", input.ownerId);
+  if (nextBalanceDue <= 0 && nextInvoice.status !== "paid") {
+    return savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "paid", input.ownerId);
+  }
+  if (nextBalanceDue > 0 && nextInvoice.status === "draft") {
+    return savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "sent", input.ownerId);
   }
   return nextInvoice;
 }
@@ -2188,48 +2251,64 @@ async function removeSavedInvoicePayment(input: {
   ownerId: string;
   paymentId: string;
 }): Promise<SavedInvoice> {
-  const savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(input.invoiceId, input.ownerId);
-  if (savedInvoice.status === "deleted") {
-    throw new HttpStatusError(400, "Restore this invoice before editing payments.");
-  }
-  const currentInvoice = savedInvoice.invoiceData.finishedInvoice;
-  const nextPaymentRecords = (currentInvoice.paymentRecords ?? []).filter(
-    (payment) => payment.id !== input.paymentId
-  );
-  if (nextPaymentRecords.length === (currentInvoice.paymentRecords ?? []).length) {
-    throw new HttpStatusError(404, "Payment record not found.");
-  }
-  const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
-  const nextBalanceDue = calculateInvoiceBalance(invoiceTotal, nextPaymentRecords);
-  // Fail-closed: refuse paid→sent via remove-payment when send is blocked.
-  if (
-    savedInvoice.status === "paid" &&
-    nextBalanceDue > 0 &&
-    invoiceSendIsBlocked({
-      finishedInvoice: currentInvoice,
-      sourceNote: savedInvoice.invoiceData.sourceNote
-    })
-  ) {
-    throw new HttpStatusError(400, SEND_BLOCKED_MESSAGE);
-  }
-  let nextInvoice = await savedInvoiceRepository.saveInvoiceDocument({
-    ownerId: input.ownerId,
+  // Same fresh-state discipline as record-payment: the removal, the
+  // balance recompute, and the send-blocked check all run against the
+  // current stored invoice inside the store's serialization. Removing a
+  // provider-evidence record is refused — settlement evidence is removed
+  // only through reconciliation, never by editing it away.
+  let nextBalanceDue = 0;
+  const nextInvoice = await savedInvoiceRepository.mutateSavedInvoice({
     invoiceId: input.invoiceId,
-    sourceType: savedInvoice.sourceType,
-    invoiceData: {
-      ...savedInvoice.invoiceData,
-      finishedInvoice: invalidateLinksForBalanceChange(
-        {
-          ...currentInvoice,
-          balanceDue: nextBalanceDue,
-          paymentRecords: nextPaymentRecords
-        },
-        new Date().toISOString()
-      )
+    ownerId: input.ownerId,
+    mutate: (current) => {
+      if (current.status === "deleted") {
+        throw new HttpStatusError(400, "Restore this invoice before editing payments.");
+      }
+      const currentInvoice = current.invoiceData.finishedInvoice;
+      const target = (currentInvoice.paymentRecords ?? []).find((payment) => payment.id === input.paymentId);
+      if (!target) {
+        throw new HttpStatusError(404, "Payment record not found.");
+      }
+      if (target.providerPaymentIntentId) {
+        throw new HttpStatusError(
+          400,
+          "Provider payment records are settlement evidence and cannot be removed here."
+        );
+      }
+      const nextPaymentRecords = (currentInvoice.paymentRecords ?? []).filter(
+        (payment) => payment.id !== input.paymentId
+      );
+      const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
+      nextBalanceDue = calculateInvoiceBalance(invoiceTotal, nextPaymentRecords);
+      // Fail-closed: refuse paid→sent via remove-payment when send is blocked.
+      if (
+        current.status === "paid" &&
+        nextBalanceDue > 0 &&
+        invoiceSendIsBlocked({
+          finishedInvoice: currentInvoice,
+          sourceNote: current.invoiceData.sourceNote
+        })
+      ) {
+        throw new HttpStatusError(400, SEND_BLOCKED_MESSAGE);
+      }
+      return {
+        ...current,
+        invoiceData: {
+          ...current.invoiceData,
+          finishedInvoice: invalidateLinksForBalanceChange(
+            {
+              ...currentInvoice,
+              balanceDue: nextBalanceDue,
+              paymentRecords: nextPaymentRecords
+            },
+            new Date().toISOString()
+          )
+        }
+      };
     }
   });
-  if (savedInvoice.status === "paid" && nextBalanceDue > 0) {
-    nextInvoice = await savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "sent", input.ownerId);
+  if (nextInvoice.status === "paid" && nextBalanceDue > 0) {
+    return savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "sent", input.ownerId);
   }
   return nextInvoice;
 }

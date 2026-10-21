@@ -11,10 +11,16 @@ import {
 } from "../models/invoice.js";
 import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
 import {
+  applyMonetaryEditInvalidation,
   settleStripePaymentOnInvoice,
   type StripeSettlementInput,
   type StripeSettlementResult
 } from "./invoicePaymentSettlement.js";
+
+/** A transform applied to the freshly stored invoice inside the store's
+ * serialization (a FOR UPDATE transaction). It must compute the next state
+ * from the invoice it is given — never from a snapshot read earlier. */
+export type SavedInvoiceMutation = (invoice: SavedInvoice) => SavedInvoice;
 
 type SavedInvoiceRow = {
   invoice_id: string;
@@ -49,32 +55,73 @@ export class PostgresSavedInvoiceRepository {
     const now = new Date().toISOString();
 
     if (input.invoiceId) {
-      const result = await this.query<SavedInvoiceRow>(
-        `
-          update saved_invoices
-          set source_type = $3,
-              invoice_data = $4::jsonb,
-              updated_at = $5,
-              deleted_at = null
-          where invoice_id = $1 and owner_id = $2
-          returning
-            invoice_id,
-            owner_id,
-            created_at,
-            updated_at,
-            status,
-            previous_status,
-            deleted_at,
-            source_type,
-            invoice_data
-        `,
-        [input.invoiceId, input.ownerId, input.sourceType, JSON.stringify(input.invoiceData), now]
-      );
-      const row = result.rows[0];
-      if (!row) {
-        throw new Error(`Invoice "${input.invoiceId}" was not found.`);
-      }
-      return parseSavedInvoiceRow(row);
+      // The update runs in one transaction with the row locked, and the
+      // server-owned payment state is merged against the freshly locked
+      // row — the same guarantee the file store's mutation lock gives —
+      // so a client save can never overwrite a settlement that landed
+      // after the client's snapshot was taken.
+      return this.withClient(async (client) => {
+        await client.query("begin");
+        try {
+          const existingResult = await client.query<SavedInvoiceRow>(
+            `
+              select
+                invoice_id,
+                owner_id,
+                created_at,
+                updated_at,
+                status,
+                previous_status,
+                deleted_at,
+                source_type,
+                invoice_data
+              from saved_invoices
+              where invoice_id = $1 and owner_id = $2
+              for update
+            `,
+            [input.invoiceId, input.ownerId]
+          );
+          const existingRow = existingResult.rows[0];
+          if (!existingRow) {
+            throw new Error(`Invoice "${input.invoiceId}" was not found.`);
+          }
+          const existing = parseSavedInvoiceRow(existingRow);
+          const mergedInvoiceData = {
+            ...input.invoiceData,
+            finishedInvoice: applyMonetaryEditInvalidation({
+              existing: existing.invoiceData.finishedInvoice,
+              incoming: input.invoiceData.finishedInvoice,
+              nowIso: now
+            })
+          };
+          const result = await client.query<SavedInvoiceRow>(
+            `
+              update saved_invoices
+              set source_type = $3,
+                  invoice_data = $4::jsonb,
+                  updated_at = $5,
+                  deleted_at = null
+              where invoice_id = $1 and owner_id = $2
+              returning
+                invoice_id,
+                owner_id,
+                created_at,
+                updated_at,
+                status,
+                previous_status,
+                deleted_at,
+                source_type,
+                invoice_data
+            `,
+            [input.invoiceId, input.ownerId, input.sourceType, JSON.stringify(mergedInvoiceData), now]
+          );
+          await client.query("commit");
+          return parseSavedInvoiceRow(result.rows[0]);
+        } catch (error) {
+          await client.query("rollback").catch(() => undefined);
+          throw error;
+        }
+      });
     }
 
     const invoice = SavedInvoiceSchema.parse({
@@ -464,6 +511,89 @@ export class PostgresSavedInvoiceRepository {
           reason: settled.reason,
           invoice: parseSavedInvoiceRow(updated.rows[0])
         };
+      } catch (error) {
+        await client.query("rollback").catch(() => undefined);
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Apply a transform to a saved invoice inside one transaction with the
+   * row locked (SELECT ... FOR UPDATE): the transform reads the current
+   * stored invoice and its result is committed in the same transaction,
+   * so concurrent writers serialize instead of overwriting each other
+   * with stale snapshots.
+   */
+  async mutateSavedInvoice(input: {
+    invoiceId: string;
+    ownerId: string;
+    mutate: SavedInvoiceMutation;
+  }): Promise<SavedInvoice> {
+    await this.ensureReady();
+    return this.withClient(async (client) => {
+      await client.query("begin");
+      try {
+        const result = await client.query<SavedInvoiceRow>(
+          `
+            select
+              invoice_id,
+              owner_id,
+              created_at,
+              updated_at,
+              status,
+              previous_status,
+              deleted_at,
+              source_type,
+              invoice_data
+            from saved_invoices
+            where invoice_id = $1 and owner_id = $2
+            for update
+          `,
+          [input.invoiceId, input.ownerId]
+        );
+        const row = result.rows[0];
+        if (!row) {
+          throw new Error(`Invoice "${input.invoiceId}" was not found.`);
+        }
+
+        const existing = parseSavedInvoiceRow(row);
+        const mutated = SavedInvoiceSchema.parse({
+          ...input.mutate(existing),
+          updatedAt: new Date().toISOString()
+        });
+        const updated = await client.query<SavedInvoiceRow>(
+          `
+            update saved_invoices
+            set status = $3,
+                previous_status = $4,
+                deleted_at = $5,
+                updated_at = $6,
+                invoice_data = $7::jsonb
+            where invoice_id = $1 and owner_id = $2
+            returning
+              invoice_id,
+              owner_id,
+              created_at,
+              updated_at,
+              status,
+              previous_status,
+              deleted_at,
+              source_type,
+              invoice_data
+          `,
+          [
+            input.invoiceId,
+            input.ownerId,
+            mutated.status,
+            mutated.previousStatus ?? null,
+            mutated.deletedAt ?? null,
+            mutated.updatedAt,
+            JSON.stringify(mutated.invoiceData)
+          ]
+        );
+        await client.query("commit");
+        return parseSavedInvoiceRow(updated.rows[0]);
       } catch (error) {
         await client.query("rollback").catch(() => undefined);
         throw error;

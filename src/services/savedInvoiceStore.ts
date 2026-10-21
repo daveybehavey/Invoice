@@ -13,10 +13,16 @@ import {
 } from "../models/invoice.js";
 import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
 import {
+  applyMonetaryEditInvalidation,
   settleStripePaymentOnInvoice,
   type StripeSettlementInput,
   type StripeSettlementResult
 } from "./invoicePaymentSettlement.js";
+
+/** A transform applied to the freshly stored invoice inside the store's
+ * serialization. It must compute the next state from the invoice it is
+ * given — never from a snapshot read before the lock. */
+export type SavedInvoiceMutation = (invoice: SavedInvoice) => SavedInvoice;
 
 const configuredStorePath = process.env.INVOICE_STORE_FILE;
 const storeFilePath = configuredStorePath
@@ -75,10 +81,21 @@ export async function saveInvoiceDocument(input: {
       }
 
       const existing = collection.invoices[invoiceIndex];
+      // Server-owned payment state (link state, provider payment records,
+      // monetary revision) is merged against the freshly stored invoice
+      // here, inside the mutation lock — a client save can never overwrite
+      // a settlement that landed after the client's snapshot was taken.
       const updatedInvoice = SavedInvoiceSchema.parse({
         ...existing,
         sourceType: input.sourceType,
-        invoiceData: input.invoiceData,
+        invoiceData: {
+          ...input.invoiceData,
+          finishedInvoice: applyMonetaryEditInvalidation({
+            existing: existing.invoiceData.finishedInvoice,
+            incoming: input.invoiceData.finishedInvoice,
+            nowIso: now
+          })
+        },
         updatedAt: now
       });
 
@@ -134,6 +151,38 @@ export async function settleStripeInvoicePayment(
     collection.invoices[invoiceIndex] = updatedInvoice;
     await writeCollection(collection);
     return { outcome: result.outcome, reason: result.reason, invoice: updatedInvoice };
+  });
+}
+
+/**
+ * Apply a transform to a saved invoice inside the store's mutation lock:
+ * the transform reads the current stored invoice and its result is written
+ * back in the same critical section, so concurrent writers (settlements,
+ * saves, manual payments, link creation) serialize instead of overwriting
+ * each other with stale snapshots.
+ */
+export async function mutateSavedInvoice(input: {
+  invoiceId: string;
+  ownerId: string;
+  mutate: SavedInvoiceMutation;
+}): Promise<SavedInvoice> {
+  return withMutationLock(async () => {
+    const collection = await readCollection();
+    const invoiceIndex = collection.invoices.findIndex(
+      (invoice) => invoice.invoiceId === input.invoiceId && invoice.ownerId === input.ownerId
+    );
+    if (invoiceIndex === -1) {
+      throw new Error(`Invoice "${input.invoiceId}" was not found.`);
+    }
+
+    const existing = collection.invoices[invoiceIndex];
+    const updatedInvoice = SavedInvoiceSchema.parse({
+      ...input.mutate(existing),
+      updatedAt: new Date().toISOString()
+    });
+    collection.invoices[invoiceIndex] = updatedInvoice;
+    await writeCollection(collection);
+    return updatedInvoice;
   });
 }
 
