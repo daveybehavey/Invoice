@@ -30,6 +30,15 @@ type StoredFinishedInvoice = SavedInvoice["invoiceData"]["finishedInvoice"];
  *   never create, modify, or delete them. Creation is no exception: a new
  *   invoice's link state, unmatched payments, and monetary revision start
  *   empty/server-initialized, and create-payload records are manual-only.
+ * - The whole-document save is also a writer of MANUAL payment records
+ *   (the merge appends new ones and applies payload updates), so the
+ *   records a save adds or changes get the same exact/overpayment
+ *   enforcement as /record-payment: each changed record must be exactly
+ *   representable in minor units, and the save's record changes must not
+ *   drive the record-derived balance negative, or the save is refused
+ *   atomically (nothing persisted, route answers 400). Records a save
+ *   does not touch are not re-validated, and a pre-existing negative
+ *   derived balance never blocks a save whose record changes are valid.
  * - A save that leaves a paid invoice with a positive exact balance
  *   reopens it to "sent" inside the same serialized mutation. When the
  *   exact balance is indeterminate, a save that changed the monetary
@@ -243,6 +252,89 @@ export function mergePaymentRecords(
 }
 
 /**
+ * Validate the manual payment records a whole-document save adds or
+ * changes. This runs inside applyMonetaryEditInvalidation — inside the
+ * store's serialization in both backends — against the merged invoice,
+ * and throws on violation: the store then aborts the save atomically
+ * (the file store never writes; the Postgres transaction rolls back)
+ * and the route surfaces the error as a 400, the same refusal style
+ * /record-payment and payment-link creation use.
+ *
+ * The exact rule:
+ * - A manual record is "changed by this save" when its id is new, or
+ *   its amount differs from the stored manual record with the same id.
+ *   Provider records are server-owned, never client-changed, and are
+ *   not validated here.
+ * - Each changed record's amount must be exactly representable in
+ *   minor units (toAmountMinorExact) — never rounded into validity.
+ * - The post-merge derived balance (merged total minus ALL merged
+ *   records, in integer minor units) must not be negative AS A RESULT
+ *   of this save's record changes: the save is refused when the
+ *   post-merge balance is negative AND the stored records against the
+ *   same merged total did not already derive a balance at least as
+ *   negative. A negativity that pre-existed this save's changes is not
+ *   this save's doing and does not block it.
+ * - Records the save does not touch are not re-validated, and a save
+ *   that changes no records is never refused here: a pre-existing
+ *   negative or indeterminate derived state (seeded/legacy data) must
+ *   not block unrelated edits. When the pre-change balance is
+ *   indeterminate only because a record this save replaces was
+ *   non-representable, the post-merge balance alone decides.
+ */
+export function assertValidSavePaymentRecordChanges(input: {
+  existing: StoredFinishedInvoice;
+  merged: StoredFinishedInvoice;
+}): void {
+  const existingRecords = input.existing.paymentRecords ?? [];
+  const mergedRecords = input.merged.paymentRecords ?? [];
+  const existingById = new Map(existingRecords.map((record) => [record.id, record]));
+
+  const changedManualRecords: StoredFinishedInvoice["paymentRecords"] = [];
+  for (const record of mergedRecords) {
+    if (isProviderPaymentRecord(record)) {
+      continue;
+    }
+    const stored = existingById.get(record.id);
+    if (!stored) {
+      // Appended by this save.
+      changedManualRecords.push(record);
+    } else if (
+      !isProviderPaymentRecord(stored) &&
+      Number(record.amount ?? 0) !== Number(stored.amount ?? 0)
+    ) {
+      // A stored manual record whose amount this save changed. (When
+      // the stored counterpart is a provider record, the merge kept
+      // that record verbatim, so the merged record IS the provider
+      // record and was already skipped above.)
+      changedManualRecords.push(record);
+    }
+  }
+  if (changedManualRecords.length === 0) {
+    return;
+  }
+
+  for (const record of changedManualRecords) {
+    if (toAmountMinorExact(Number(record.amount ?? 0)) === null) {
+      throw new Error("Payment amount must be exact to the cent.");
+    }
+  }
+
+  const totalMajor = Number(input.merged.total ?? input.merged.balanceDue ?? 0);
+  const derivedAfterMinor = calculateInvoiceBalanceMinor(totalMajor, mergedRecords);
+  if (derivedAfterMinor === null || derivedAfterMinor >= 0) {
+    return;
+  }
+  const derivedWithoutChangesMinor = calculateInvoiceBalanceMinor(totalMajor, existingRecords);
+  if (derivedWithoutChangesMinor !== null && derivedWithoutChangesMinor <= derivedAfterMinor) {
+    // The negativity pre-existed this save's record changes (the stored
+    // records against this same total were already at least as far
+    // under water); the changes did not create or deepen it.
+    return;
+  }
+  throw new Error("Payment exceeds the balance due on this invoice.");
+}
+
+/**
  * Prepare the payment state of a NEWLY created invoice. Server-owned
  * payment state starts empty and server-initialized on every backend: a
  * create payload can never mint a payment link (or a link URL — an
@@ -322,6 +414,17 @@ export function sanitizeDuplicatedInvoicePaymentState(
  * fingerprint comparison that drives payment-link supersession in
  * applyMonetaryEditInvalidation; the caller computes it, because the
  * caller holds both documents inside the serialization.
+ *
+ * Semantics for the values this can now see: because
+ * applyMonetaryEditInvalidation validates the manual records a save
+ * adds or changes, a save's own record changes can no longer produce
+ * a negative derived balance here. derivedMinor > 0 reopens to
+ * "sent"; derivedMinor === 0 keeps "paid"; derivedMinor null follows
+ * the fingerprint rule above. A negative derivedMinor remains
+ * reachable only from state this save's record changes did not create
+ * — a pre-existing overpaid balance, or a total reduced below the
+ * recorded payments by an edit that changed no records — and keeps
+ * the stored status: the save did not manufacture the overpayment.
  */
 export function reconcilePaidStatusAfterSave(
   status: SavedInvoice["status"],
@@ -378,6 +481,12 @@ export function applyMonetaryEditInvalidation(input: {
     paymentLinkUrl: existing.paymentLinkUrl,
     unmatchedPayments: existing.unmatchedPayments ?? []
   };
+  // The merge makes this save a writer of manual payment records, so
+  // the records it adds or changes are validated with the same
+  // exact/overpayment enforcement as /record-payment — here, inside
+  // the serialization, before anything is derived or persisted. A
+  // violation throws and the save aborts atomically in both backends.
+  assertValidSavePaymentRecordChanges({ existing, merged: serverOwned });
   // Once provider evidence exists, the balance is a fact derived from the
   // payment records, not a client-writable field: recompute it in integer
   // minor units so a stale payload cannot resurrect a pre-settlement

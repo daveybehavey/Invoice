@@ -6921,6 +6921,259 @@ test("concurrent record-payment and remove-payment leave status matching the fin
   assert.equal(final.status, "sent");
 });
 
+// --- Fix round 4: the whole-document save is a writer of manual ---
+// --- payment records and enforces the same exact/overpayment rules ---
+
+test("a whole-document save cannot append a manual payment that overpays a paid invoice", async () => {
+  const ownerId = "settlement-save-append-overpay-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R4-1");
+  // Pay in full through the manual endpoint: one manual record of $240,
+  // status paid, balance 0.
+  const payResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 240 });
+  assert.equal(payResponse.status, 200);
+  const before = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(before.status, "paid");
+  assert.equal(before.invoiceData.finishedInvoice.balanceDue, 0);
+  const storeTextBefore = await fs.readFile(storeFilePath, "utf8");
+
+  // The save appends a $50 manual record on top of the settled $240.
+  // /record-payment refuses exactly this as an overpayment; the save
+  // path must refuse it too — atomically, persisting nothing.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...before.invoiceData,
+        finishedInvoice: {
+          ...before.invoiceData.finishedInvoice,
+          paymentRecords: [
+            ...before.invoiceData.finishedInvoice.paymentRecords,
+            { id: "manual-save-append", amount: 50, paidAt: "2026-03-13", note: "Second cheque" }
+          ]
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 400);
+  assert.match(String(saveResponse.body.error || ""), /exceeds the balance due/i);
+
+  // Nothing was persisted: the stored invoice is byte-identical.
+  assert.equal(await fs.readFile(storeFilePath, "utf8"), storeTextBefore);
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "paid");
+  assert.equal(after.invoiceData.finishedInvoice.paymentRecords.length, 1);
+  assert.equal(after.invoiceData.finishedInvoice.balanceDue, 0);
+});
+
+test("a whole-document save cannot enlarge a manual payment into an overpayment", async () => {
+  const ownerId = "settlement-save-enlarge-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R4-2");
+  const recordResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 100 });
+  assert.equal(recordResponse.status, 200);
+  const before = await getSettlementInvoice(ownerId, invoiceId);
+  const recordId = before.invoiceData.finishedInvoice.paymentRecords[0]?.id as string;
+  assert.ok(recordId);
+  assert.equal(before.invoiceData.finishedInvoice.balanceDue, 140);
+
+  // Same record, amount edited 100 -> 300 in the save payload: the
+  // merged records would exceed the $240 total.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...before.invoiceData,
+        finishedInvoice: {
+          ...before.invoiceData.finishedInvoice,
+          paymentRecords: before.invoiceData.finishedInvoice.paymentRecords.map(
+            (record: { id: string; amount: number }) =>
+              record.id === recordId ? { ...record, amount: 300 } : record
+          )
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 400);
+  assert.match(String(saveResponse.body.error || ""), /exceeds the balance due/i);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "sent");
+  assert.equal(after.invoiceData.finishedInvoice.paymentRecords.length, 1);
+  assert.equal(after.invoiceData.finishedInvoice.paymentRecords[0]?.amount, 100);
+  assert.equal(after.invoiceData.finishedInvoice.balanceDue, 140);
+});
+
+test("a whole-document save cannot add a manual payment that is not exact to the cent", async () => {
+  const ownerId = "settlement-save-fractional-record-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R4-3");
+  const before = await getSettlementInvoice(ownerId, invoiceId);
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...before.invoiceData,
+        finishedInvoice: {
+          ...before.invoiceData.finishedInvoice,
+          paymentRecords: [{ id: "manual-save-fractional", amount: 10.005, paidAt: "2026-03-13" }]
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 400);
+  assert.match(String(saveResponse.body.error || ""), /exact to the cent/i);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.invoiceData.finishedInvoice.paymentRecords.length, 0);
+  assert.equal(after.invoiceData.finishedInvoice.balanceDue, 240);
+  assert.notEqual(after.status, "paid");
+});
+
+test("a monetary edit with a simultaneous exact manual payment keeps a paid invoice paid", async () => {
+  const ownerId = "settlement-save-simultaneous-owner";
+  setInvoicePaymentLinkCreatorForTests(async () => ({
+    url: "https://pay.stripe.test/plink_save_simultaneous",
+    paymentLinkId: "plink_save_simultaneous"
+  }));
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R4-4");
+  await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  const linked = await getSettlementInvoice(ownerId, invoiceId);
+  const linkRecordId = linked.invoiceData.finishedInvoice.paymentLinks[0]?.id as string;
+  const webhookResponse = await deliverSettlementWebhook({
+    eventId: "evt_save_simultaneous",
+    paymentIntentId: "pi_save_simultaneous",
+    invoiceId,
+    ownerId,
+    paymentLinkRecordId: linkRecordId,
+    amountReceived: 24000,
+    currency: "usd"
+  });
+  assert.equal(webhookResponse.status, 200);
+  const settled = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(settled.status, "paid");
+
+  // One save: the total rises 240 -> 300 AND a $60 manual payment lands
+  // in the same document. The merged records derive exactly zero, so
+  // the save is valid and the invoice stays paid.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...settled.invoiceData,
+        finishedInvoice: {
+          ...settled.invoiceData.finishedInvoice,
+          lineItems: settled.invoiceData.finishedInvoice.lineItems.map(
+            (lineItem: Record<string, unknown>) => ({ ...lineItem, unitPrice: 300, amount: 300 })
+          ),
+          subtotal: 300,
+          total: 300,
+          balanceDue: 300,
+          paymentRecords: [
+            ...settled.invoiceData.finishedInvoice.paymentRecords,
+            { id: "manual-save-top-up", amount: 60, paidAt: "2026-03-13", note: "Top-up cheque" }
+          ]
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "paid");
+  const finished = after.invoiceData.finishedInvoice;
+  assert.equal(finished.total, 300);
+  assert.equal(finished.balanceDue, 0);
+  assert.equal(finished.paymentRecords.length, 2);
+  assert.equal(finished.monetaryRevision, 1);
+});
+
+test("a pre-existing overpaid state does not block a save that changes no payment records", async () => {
+  const ownerId = "settlement-save-preexisting-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R4-5");
+
+  // Seed an overpaid state directly in the store — a $300 manual record
+  // against a $240 total, status paid. The record-derived balance is
+  // -$60 (the stored balanceDue field cannot hold a negative value —
+  // the schema rejects it — which is exactly why the derived balance,
+  // not the field, is the paid-state authority). No current API path
+  // installs this state.
+  const storedRaw = JSON.parse(await fs.readFile(storeFilePath, "utf8")) as {
+    invoices: Array<{
+      invoiceId: string;
+      status: string;
+      invoiceData: {
+        finishedInvoice: {
+          paymentRecords: Array<Record<string, unknown>>;
+          balanceDue?: number;
+        };
+      };
+    }>;
+  };
+  const storedInvoice = storedRaw.invoices.find((invoice) => invoice.invoiceId === invoiceId);
+  assert.ok(storedInvoice);
+  storedInvoice.status = "paid";
+  storedInvoice.invoiceData.finishedInvoice.paymentRecords = [
+    { id: "seeded-manual-overpay", amount: 300, paidAt: "2026-03-01", note: "Legacy overpayment" }
+  ];
+  storedInvoice.invoiceData.finishedInvoice.balanceDue = 0;
+  await fs.writeFile(storeFilePath, `${JSON.stringify(storedRaw, null, 2)}\n`, "utf8");
+
+  const seeded = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(seeded.status, "paid");
+  assert.equal(seeded.invoiceData.finishedInvoice.balanceDue, 0);
+
+  // A non-monetary edit carrying the records unchanged must still save:
+  // the save changes no records, so the pre-existing overpaid state is
+  // not re-validated and cannot block it — and the save leaves that
+  // state exactly as it found it.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...seeded.invoiceData,
+        finishedInvoice: {
+          ...seeded.invoiceData.finishedInvoice,
+          notes: "Delivery instructions updated"
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "paid");
+  const finished = after.invoiceData.finishedInvoice;
+  assert.equal(finished.notes, "Delivery instructions updated");
+  assert.equal(finished.paymentRecords.length, 1);
+  assert.equal(finished.paymentRecords[0]?.amount, 300);
+  assert.equal(finished.balanceDue, 0);
+});
+
 test("stripe webhook endpoint requires signature header", async () => {
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
