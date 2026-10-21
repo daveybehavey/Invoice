@@ -99,6 +99,15 @@ import {
   isOcrMetricsExportConfigured
 } from "./services/ocrMetricsExporter.js";
 import { getSavedInvoiceStoreSummary } from "./services/savedInvoiceStore.js";
+import {
+  applyMonetaryEditInvalidation,
+  findReusablePaymentLink,
+  hasLegacyPaymentLink,
+  invalidateLinksForBalanceChange,
+  normalizeMoneyCurrency,
+  supersedeActivePaymentLinks,
+  toAmountMinor
+} from "./services/invoicePaymentSettlement.js";
 import { getFlowFrictionSnapshot } from "./services/flowFrictionReport.js";
 import { getIntakeTelemetryTrends } from "./services/intakeTelemetryTrends.js";
 import {
@@ -164,7 +173,16 @@ app.post(
           : Buffer.from(typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {}), "utf8");
       const result = await processStripeWebhookEvent({ rawBody, signature });
       if (result.invoicePayment) {
-        await markSavedInvoicePaidFromStripePayment(result.invoicePayment);
+        await savedInvoiceRepository.settleStripeInvoicePayment({
+          invoiceId: result.invoicePayment.invoiceId,
+          ownerId: result.invoicePayment.ownerId,
+          eventId: result.invoicePayment.eventId,
+          paymentIntentId: result.invoicePayment.paymentIntentId,
+          paymentLinkRecordId: result.invoicePayment.paymentLinkRecordId,
+          amountReceivedMinor: result.invoicePayment.amountReceivedMinor,
+          currency: result.invoicePayment.currency,
+          receivedAt: new Date().toISOString()
+        });
       }
       res.json({ ok: true, handled: result.handled, eventType: result.eventType });
     } catch (error) {
@@ -1279,11 +1297,30 @@ app.post("/api/invoices/save", async (req: Request, res: Response, next: NextFun
       }
     }
 
+    let effectiveInvoiceData = parsedRequest.invoiceData;
+    if (parsedRequest.invoiceId) {
+      // Payment-link state is server-owned: a save may not resurrect a
+      // superseded link, and a monetary edit must invalidate outstanding
+      // links so a link issued for amount X can never settle amount Y.
+      const existingInvoice = await savedInvoiceRepository
+        .getSavedInvoiceById(parsedRequest.invoiceId, ownerId)
+        .catch(() => null);
+      if (existingInvoice) {
+        effectiveInvoiceData = {
+          ...parsedRequest.invoiceData,
+          finishedInvoice: applyMonetaryEditInvalidation({
+            existing: existingInvoice.invoiceData.finishedInvoice,
+            incoming: parsedRequest.invoiceData.finishedInvoice,
+            nowIso: new Date().toISOString()
+          })
+        };
+      }
+    }
     const savedInvoice = await savedInvoiceRepository.saveInvoiceDocument({
       ownerId,
       invoiceId: parsedRequest.invoiceId,
       sourceType: parsedRequest.sourceType,
-      invoiceData: parsedRequest.invoiceData
+      invoiceData: effectiveInvoiceData
     });
     if (!parsedRequest.invoiceId) {
       await trackRevenueSignalSafely({
@@ -1474,6 +1511,9 @@ app.post("/api/invoices/:id/payment-link", async (req: Request, res: Response, n
     const savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
     if (savedInvoice.status === "deleted") {
       throw new HttpStatusError(400, "Restore this invoice before creating a payment link.");
+    }
+    if (savedInvoice.invoiceData.finishedInvoice.documentType === "estimate") {
+      throw new HttpStatusError(400, "Convert this estimate into an invoice before creating a payment link.");
     }
     if (!getStripeBillingCapabilities().invoicePaymentAvailable) {
       throw new HttpStatusError(400, "Stripe invoice payments are not configured yet.");
@@ -1984,15 +2024,25 @@ async function ensureSavedInvoicePaymentLink(input: {
   invoice: Awaited<ReturnType<typeof savedInvoiceRepository.getSavedInvoiceById>>;
   baseUrl: string;
 }) {
-  const existingPaymentLink = input.invoice.invoiceData.finishedInvoice.paymentLinkUrl?.trim();
-  if (existingPaymentLink) {
+  const finishedInvoice = input.invoice.invoiceData.finishedInvoice;
+  if (finishedInvoice.documentType === "estimate") {
+    return input.invoice;
+  }
+  // Reuse an existing link only while it is verifiably bound to the current
+  // balance, currency, and monetary revision. A stored URL on its own is no
+  // longer proof that the link still collects the right amount. Links minted
+  // before link records existed keep the legacy reuse behaviour and settle
+  // through the legacy exact-amount binding.
+  if (
+    finishedInvoice.paymentLinkUrl?.trim() &&
+    (hasLegacyPaymentLink(finishedInvoice) || findReusablePaymentLink(finishedInvoice))
+  ) {
     return input.invoice;
   }
   const capabilities = getStripeBillingCapabilities();
   if (!capabilities.invoicePaymentAvailable) {
     return input.invoice;
   }
-  const finishedInvoice = input.invoice.invoiceData.finishedInvoice;
   const total = Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0);
   // Stripe still refuses a $0 payment link. Explicit free invoices may send without one.
   if (!Number.isFinite(total) || total <= 0) {
@@ -2007,11 +2057,17 @@ async function createAndPersistSavedInvoicePaymentLink(input: {
   baseUrl: string;
 }) {
   const finishedInvoice = input.invoice.invoiceData.finishedInvoice;
+  if (finishedInvoice.documentType === "estimate") {
+    throw new HttpStatusError(400, "Convert this estimate into an invoice before creating a payment link.");
+  }
   const total = Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0);
   if (!Number.isFinite(total) || total <= 0) {
     throw new HttpStatusError(400, "Invoice total must be greater than 0 before creating a payment link.");
   }
 
+  const nowIso = new Date().toISOString();
+  const paymentLinkRecordId = randomUUID();
+  const amountMinor = toAmountMinor(total);
   const paymentLink = await createStripeInvoicePaymentLink({
     invoiceId: input.invoice.invoiceId,
     ownerId: input.ownerId,
@@ -2019,9 +2075,14 @@ async function createAndPersistSavedInvoicePaymentLink(input: {
     invoiceNumber: finishedInvoice.invoiceNumber,
     customerName: finishedInvoice.customerName,
     total,
-    currency: finishedInvoice.currency
+    currency: finishedInvoice.currency,
+    paymentLinkRecordId,
+    amountMinor
   });
 
+  // The new link supersedes every previously active link; the record is the
+  // durable binding a later settlement is verified against.
+  const superseded = supersedeActivePaymentLinks(finishedInvoice, nowIso);
   return savedInvoiceRepository.saveInvoiceDocument({
     ownerId: input.ownerId,
     invoiceId: input.invoice.invoiceId,
@@ -2029,43 +2090,24 @@ async function createAndPersistSavedInvoicePaymentLink(input: {
     invoiceData: {
       ...input.invoice.invoiceData,
       finishedInvoice: {
-        ...finishedInvoice,
-        paymentLinkUrl: paymentLink.url
+        ...superseded,
+        paymentLinkUrl: paymentLink.url,
+        paymentLinks: [
+          ...(superseded.paymentLinks ?? []),
+          {
+            id: paymentLinkRecordId,
+            provider: "stripe" as const,
+            providerPaymentLinkId: paymentLink.paymentLinkId,
+            amountMinor,
+            currency: normalizeMoneyCurrency(finishedInvoice.currency).toUpperCase(),
+            invoiceRevision: finishedInvoice.monetaryRevision ?? 0,
+            status: "active" as const,
+            createdAt: nowIso
+          }
+        ]
       }
     }
   });
-}
-
-async function markSavedInvoicePaidFromStripePayment(input: {
-  invoiceId: string;
-  ownerId: string;
-  paymentIntentId: string;
-}): Promise<void> {
-  let savedInvoice;
-  try {
-    savedInvoice = await savedInvoiceRepository.getSavedInvoiceById(input.invoiceId, input.ownerId);
-  } catch (_error) {
-    return;
-  }
-  if (savedInvoice.status === "deleted") {
-    return;
-  }
-  const currentInvoice = savedInvoice.invoiceData.finishedInvoice;
-  await savedInvoiceRepository.saveInvoiceDocument({
-    ownerId: input.ownerId,
-    invoiceId: input.invoiceId,
-    sourceType: savedInvoice.sourceType,
-    invoiceData: {
-      ...savedInvoice.invoiceData,
-      finishedInvoice: {
-        ...currentInvoice,
-        balanceDue: 0
-      }
-    }
-  });
-  if (savedInvoice.status !== "paid") {
-    await savedInvoiceRepository.updateSavedInvoiceStatus(input.invoiceId, "paid", input.ownerId);
-  }
 }
 
 function roundCurrencyAmount(value: number): number {
@@ -2121,11 +2163,16 @@ async function recordSavedInvoicePayment(input: {
     sourceType: savedInvoice.sourceType,
     invoiceData: {
       ...savedInvoice.invoiceData,
-      finishedInvoice: {
-        ...currentInvoice,
-        balanceDue: nextBalanceDue,
-        paymentRecords: nextPaymentRecords
-      }
+      // A manual payment changes the balance, so any outstanding payment
+      // link now collects the wrong amount and is invalidated with the edit.
+      finishedInvoice: invalidateLinksForBalanceChange(
+        {
+          ...currentInvoice,
+          balanceDue: nextBalanceDue,
+          paymentRecords: nextPaymentRecords
+        },
+        new Date().toISOString()
+      )
     }
   });
   if (nextBalanceDue <= 0 && savedInvoice.status !== "paid") {
@@ -2171,11 +2218,14 @@ async function removeSavedInvoicePayment(input: {
     sourceType: savedInvoice.sourceType,
     invoiceData: {
       ...savedInvoice.invoiceData,
-      finishedInvoice: {
-        ...currentInvoice,
-        balanceDue: nextBalanceDue,
-        paymentRecords: nextPaymentRecords
-      }
+      finishedInvoice: invalidateLinksForBalanceChange(
+        {
+          ...currentInvoice,
+          balanceDue: nextBalanceDue,
+          paymentRecords: nextPaymentRecords
+        },
+        new Date().toISOString()
+      )
     }
   });
   if (savedInvoice.status === "paid" && nextBalanceDue > 0) {

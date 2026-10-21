@@ -13,8 +13,13 @@ import {
   listSavedInvoiceMetadata,
   restoreSavedInvoice,
   saveInvoiceDocument,
+  settleStripeInvoicePayment,
   updateSavedInvoiceStatus
 } from "./savedInvoiceStore.js";
+import type {
+  StripeSettlementInput,
+  StripeSettlementResult
+} from "./invoicePaymentSettlement.js";
 import { PostgresSavedInvoiceRepository } from "./savedInvoicePostgresStore.js";
 
 export type SavedInvoiceBackend = "file" | "postgres";
@@ -56,6 +61,7 @@ export interface SavedInvoiceRepository {
   ): Promise<SavedInvoice>;
   restoreSavedInvoice(invoiceId: string, ownerId: string): Promise<SavedInvoice>;
   deleteSavedInvoice(invoiceId: string, ownerId: string): Promise<void>;
+  settleStripeInvoicePayment(input: StripeSettlementInput): Promise<StripeSettlementResult>;
 }
 
 class FileSavedInvoiceRepository implements SavedInvoiceRepository {
@@ -115,6 +121,10 @@ class FileSavedInvoiceRepository implements SavedInvoiceRepository {
 
   async deleteSavedInvoice(invoiceId: string, ownerId: string): Promise<void> {
     return deleteSavedInvoice(invoiceId, ownerId);
+  }
+
+  async settleStripeInvoicePayment(input: StripeSettlementInput): Promise<StripeSettlementResult> {
+    return settleStripeInvoicePayment(input);
   }
 }
 

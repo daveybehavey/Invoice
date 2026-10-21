@@ -10,6 +10,11 @@ import {
   SavedInvoiceStatus
 } from "../models/invoice.js";
 import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
+import {
+  settleStripePaymentOnInvoice,
+  type StripeSettlementInput,
+  type StripeSettlementResult
+} from "./invoicePaymentSettlement.js";
 
 type SavedInvoiceRow = {
   invoice_id: string;
@@ -382,6 +387,88 @@ export class PostgresSavedInvoiceRepository {
       throw new Error(`Invoice "${invoiceId}" was not found.`);
     }
     return parseSavedInvoiceRow(row);
+  }
+
+  /**
+   * Atomically settle a provider payment: the invoice row is locked
+   * (SELECT ... FOR UPDATE) inside one transaction while the dedupe check,
+   * binding verification, payment record, balance, link state, and status
+   * are computed and committed together.
+   */
+  async settleStripeInvoicePayment(input: StripeSettlementInput): Promise<StripeSettlementResult> {
+    await this.ensureReady();
+    return this.withClient(async (client) => {
+      await client.query("begin");
+      try {
+        const result = await client.query<SavedInvoiceRow>(
+          `
+            select
+              invoice_id,
+              owner_id,
+              created_at,
+              updated_at,
+              status,
+              previous_status,
+              deleted_at,
+              source_type,
+              invoice_data
+            from saved_invoices
+            where invoice_id = $1 and owner_id = $2
+            for update
+          `,
+          [input.invoiceId, input.ownerId]
+        );
+        const row = result.rows[0];
+        if (!row) {
+          await client.query("commit");
+          return { outcome: "not_found" as const };
+        }
+
+        const existing = parseSavedInvoiceRow(row);
+        const settled = settleStripePaymentOnInvoice({ invoice: existing, settlement: input });
+        if (!settled.changed) {
+          await client.query("commit");
+          return { outcome: settled.outcome, reason: settled.reason, invoice: existing };
+        }
+
+        const now = new Date().toISOString();
+        const updated = await client.query<SavedInvoiceRow>(
+          `
+            update saved_invoices
+            set status = $3,
+                updated_at = $4,
+                invoice_data = $5::jsonb
+            where invoice_id = $1 and owner_id = $2
+            returning
+              invoice_id,
+              owner_id,
+              created_at,
+              updated_at,
+              status,
+              previous_status,
+              deleted_at,
+              source_type,
+              invoice_data
+          `,
+          [
+            input.invoiceId,
+            input.ownerId,
+            settled.invoice.status,
+            now,
+            JSON.stringify(settled.invoice.invoiceData)
+          ]
+        );
+        await client.query("commit");
+        return {
+          outcome: settled.outcome,
+          reason: settled.reason,
+          invoice: parseSavedInvoiceRow(updated.rows[0])
+        };
+      } catch (error) {
+        await client.query("rollback").catch(() => undefined);
+        throw error;
+      }
+    });
   }
 
   async restoreSavedInvoice(invoiceId: string, ownerId: string): Promise<SavedInvoice> {

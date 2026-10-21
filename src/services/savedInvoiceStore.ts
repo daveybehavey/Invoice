@@ -12,6 +12,11 @@ import {
   SavedInvoiceStatus
 } from "../models/invoice.js";
 import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
+import {
+  settleStripePaymentOnInvoice,
+  type StripeSettlementInput,
+  type StripeSettlementResult
+} from "./invoicePaymentSettlement.js";
 
 const configuredStorePath = process.env.INVOICE_STORE_FILE;
 const storeFilePath = configuredStorePath
@@ -95,6 +100,40 @@ export async function saveInvoiceDocument(input: {
     collection.invoices.push(newInvoice);
     await writeCollection(collection);
     return newInvoice;
+  });
+}
+
+/**
+ * Atomically settle a provider payment against a saved invoice. Runs inside
+ * the store's mutation lock, so the dedupe check, binding verification,
+ * payment record, balance, link state, and status are committed together —
+ * a replayed or racing webhook cannot double-apply.
+ */
+export async function settleStripeInvoicePayment(
+  input: StripeSettlementInput
+): Promise<StripeSettlementResult> {
+  return withMutationLock(async () => {
+    const collection = await readCollection();
+    const invoiceIndex = collection.invoices.findIndex(
+      (invoice) => invoice.invoiceId === input.invoiceId && invoice.ownerId === input.ownerId
+    );
+    if (invoiceIndex === -1) {
+      return { outcome: "not_found" as const };
+    }
+
+    const existing = collection.invoices[invoiceIndex];
+    const result = settleStripePaymentOnInvoice({ invoice: existing, settlement: input });
+    if (!result.changed) {
+      return { outcome: result.outcome, reason: result.reason, invoice: existing };
+    }
+
+    const updatedInvoice = SavedInvoiceSchema.parse({
+      ...result.invoice,
+      updatedAt: new Date().toISOString()
+    });
+    collection.invoices[invoiceIndex] = updatedInvoice;
+    await writeCollection(collection);
+    return { outcome: result.outcome, reason: result.reason, invoice: updatedInvoice };
   });
 }
 
