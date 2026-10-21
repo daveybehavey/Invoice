@@ -99,11 +99,11 @@ export class PostgresSavedInvoiceRepository {
             ...input.invoiceData,
             finishedInvoice: mergedFinishedInvoice
           };
-          // A monetary edit that leaves a paid invoice with a positive
-          // exact balance reopens it — decided here, inside the same
-          // FOR UPDATE transaction, from the merged state. The
-          // fingerprint comparison is the same one that drives link
-          // supersession.
+          // The paid status is derived from the merged records here,
+          // inside the same FOR UPDATE transaction: a positive exact
+          // balance reopens a paid invoice, and records that exactly
+          // cover the total pay a draft/sent one. The fingerprint
+          // comparison is the same one that drives link supersession.
           const mergedStatus = reconcilePaidStatusAfterSave(
             existing.status,
             mergedFinishedInvoice,
@@ -148,12 +148,17 @@ export class PostgresSavedInvoiceRepository {
       });
     }
 
+    const createdFinishedInvoice = prepareCreatedInvoicePaymentState(input.invoiceData.finishedInvoice);
     const invoice = SavedInvoiceSchema.parse({
       invoiceId: randomUUID(),
       ownerId: input.ownerId,
       createdAt: now,
       updatedAt: now,
-      status: "draft",
+      // The created status is derived from the prepared payment state,
+      // not hardcoded: a create whose records exactly cover a positive
+      // total is born paid; anything else starts as a draft. Estimates
+      // never derive a payment status (the reconciler excludes them).
+      status: reconcilePaidStatusAfterSave("draft", createdFinishedInvoice, false),
       sourceType: input.sourceType,
       invoiceData: {
         ...input.invoiceData,
@@ -162,8 +167,10 @@ export class PostgresSavedInvoiceRepository {
         // empty/initialized, and payload payment records are manual-only —
         // and validated: at create every payload record is a changed
         // record, so an over-total or fractional-cent record throws here,
-        // before the insert, and the create persists nothing.
-        finishedInvoice: prepareCreatedInvoicePaymentState(input.invoiceData.finishedInvoice)
+        // before the insert, and the create persists nothing. The prepared
+        // document's balanceDue is the record-derived value, never the
+        // payload's.
+        finishedInvoice: createdFinishedInvoice
       }
     });
 

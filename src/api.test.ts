@@ -4676,7 +4676,13 @@ test("reminder run endpoint skips invoices with no open balance", async () => {
           ],
           subtotal: 120,
           total: 120,
-          balanceDue: 0
+          // The payload used to assert balanceDue: 0 here with nothing
+          // recorded against the $120 total. Since fix round 6 the
+          // balance is derived from payment records at create, so that
+          // fixture would store the full $120 due; "no open balance"
+          // is now reached the integrated way below — the invoice is
+          // sent, then paid in full through record-payment.
+          balanceDue: 120
         }
       }
     });
@@ -4688,6 +4694,14 @@ test("reminder run endpoint skips invoices with no open balance", async () => {
     .set("x-invoice-user-id", ownerId)
     .send({ recipientEmail: "zero-balance-reminder@example.com" });
   assert.equal(sendResponse.status, 200);
+
+  // Pay the sent invoice in full: the balance is now genuinely zero
+  // (record-derived), so the reminder run must skip it.
+  const payResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 120 });
+  assert.equal(payResponse.status, 200);
 
   await mutateDeliveryStoreEntry(invoiceId, (entry) => ({
     ...entry,
@@ -7264,6 +7278,378 @@ test("invoice creation without payment records is unchanged", async () => {
   assert.equal((created.invoiceData.finishedInvoice.paymentRecords ?? []).length, 0);
   assert.equal(created.invoiceData.finishedInvoice.balanceDue, 240);
   assert.equal(created.invoiceData.finishedInvoice.monetaryRevision, 0);
+});
+
+// --- Fix round 6: manual records written through save/create are ---
+// --- INTEGRATED — balance derived from ALL records, the record set ---
+// --- is money-bearing for supersession, status derived both ways ---
+
+test("a save adding a manual payment derives the balance and supersedes the outstanding link", async () => {
+  const ownerId = "settlement-r6-integrate-owner";
+  setInvoicePaymentLinkCreatorForTests(async () => ({
+    url: "https://pay.stripe.test/plink_r6_integrate",
+    paymentLinkId: "plink_r6_integrate"
+  }));
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R6-1");
+  await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  const linked = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(linked.invoiceData.finishedInvoice.paymentLinks[0]?.status, "active");
+  assert.equal(linked.invoiceData.finishedInvoice.monetaryRevision, 0);
+
+  // One whole-document save: a new exact $40 manual record lands while
+  // the payload's balanceDue is held at $240. Before fix round 6 the
+  // record was validated but never integrated — the stored balance
+  // stayed $240, the fingerprint (which omitted paymentRecords) did
+  // not move, and the $240 link stayed live against a balance that
+  // was really $200.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...linked.invoiceData,
+        finishedInvoice: {
+          ...linked.invoiceData.finishedInvoice,
+          paymentRecords: [
+            ...(linked.invoiceData.finishedInvoice.paymentRecords ?? []),
+            { id: "manual-r6-partial", amount: 40, paidAt: "2026-03-13", note: "Cash deposit" }
+          ],
+          balanceDue: 240
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "draft");
+  const finished = after.invoiceData.finishedInvoice;
+  assert.equal(finished.paymentRecords.length, 1);
+  // The stored balance is derived from the records, not the payload.
+  assert.equal(finished.balanceDue, 200);
+  // The record set is money-bearing: the link is superseded and the
+  // monetary revision bumped, exactly as for a total edit.
+  assert.equal(finished.paymentLinks[0]?.status, "superseded");
+  assert.equal(finished.paymentLinkUrl ?? "", "");
+  assert.equal(finished.monetaryRevision, 1);
+});
+
+test("a save recording a full manual payment marks a sent invoice paid", async () => {
+  const ownerId = "settlement-r6-full-manual-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R6-2");
+  const sentResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "sent" });
+  assert.equal(sentResponse.status, 200);
+  const sent = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(sent.status, "sent");
+
+  // The save appends an exact $240 manual record with the payload
+  // balanceDue still claiming $240. Status derivation used to be
+  // one-directional (it only repaired an already-paid status), so the
+  // invoice stayed "sent" with a stored $240 balance despite being
+  // fully paid on paper.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...sent.invoiceData,
+        finishedInvoice: {
+          ...sent.invoiceData.finishedInvoice,
+          paymentRecords: [
+            { id: "manual-r6-full", amount: 240, paidAt: "2026-03-13", note: "Paid in full by cheque" }
+          ],
+          balanceDue: 240
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "paid");
+  assert.equal(after.invoiceData.finishedInvoice.balanceDue, 0);
+  assert.equal(after.invoiceData.finishedInvoice.paymentRecords.length, 1);
+});
+
+test("invoice creation derives the balance from its payment records, never the payload balance", async () => {
+  const ownerId = "settlement-r6-create-derive-owner";
+
+  const response = await createInvoiceWithPaymentRecords({
+    ownerId,
+    invoiceNumber: "INV-SETTLE-R6-3",
+    total: 240,
+    // An arbitrary payload balance: round 5 validated the record but
+    // stored this number verbatim.
+    balanceDue: 999,
+    paymentRecords: [{ id: "create-r6-deposit", amount: 100, paidAt: "2026-03-12" }]
+  });
+  assert.equal(response.status, 200);
+  const invoiceId = response.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const created = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(created.status, "draft");
+  assert.equal(created.invoiceData.finishedInvoice.balanceDue, 140);
+  assert.equal(created.invoiceData.finishedInvoice.paymentRecords.length, 1);
+});
+
+test("invoice creation with records covering the total is born paid", async () => {
+  const ownerId = "settlement-r6-create-paid-owner";
+
+  const response = await createInvoiceWithPaymentRecords({
+    ownerId,
+    invoiceNumber: "INV-SETTLE-R6-4",
+    total: 240,
+    balanceDue: 999,
+    paymentRecords: [{ id: "create-r6-full", amount: 240, paidAt: "2026-03-12" }]
+  });
+  assert.equal(response.status, 200);
+  const invoiceId = response.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const created = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(created.status, "paid");
+  assert.equal(created.invoiceData.finishedInvoice.balanceDue, 0);
+  assert.equal(created.invoiceData.finishedInvoice.paymentRecords.length, 1);
+});
+
+test("a settled invoice's payment state is untouched by an unrelated save", async () => {
+  const ownerId = "settlement-r6-settled-guard-owner";
+  setInvoicePaymentLinkCreatorForTests(async () => ({
+    url: "https://pay.stripe.test/plink_r6_guard",
+    paymentLinkId: "plink_r6_guard"
+  }));
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R6-5");
+  await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  const linked = await getSettlementInvoice(ownerId, invoiceId);
+  const linkRecordId = linked.invoiceData.finishedInvoice.paymentLinks[0]?.id as string;
+  const webhookResponse = await deliverSettlementWebhook({
+    eventId: "evt_r6_guard",
+    paymentIntentId: "pi_r6_guard",
+    invoiceId,
+    ownerId,
+    paymentLinkRecordId: linkRecordId,
+    amountReceived: 24000,
+    currency: "usd"
+  });
+  assert.equal(webhookResponse.status, 200);
+  const settled = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(settled.status, "paid");
+  assert.equal(settled.invoiceData.finishedInvoice.monetaryRevision, 0);
+
+  // A non-monetary save re-sending the stored document: the merged
+  // record set is identical to the stored one (settlement's own
+  // record write never passes through the save comparison), so no
+  // spurious monetary change is seen — status, balance, link state,
+  // and revision are all exactly as the settlement left them.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...settled.invoiceData,
+        finishedInvoice: {
+          ...settled.invoiceData.finishedInvoice,
+          notes: "Client confirmed receipt"
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "paid");
+  const finished = after.invoiceData.finishedInvoice;
+  assert.equal(finished.balanceDue, 0);
+  assert.equal(finished.paymentRecords.length, 1);
+  assert.equal(finished.paymentLinks[0]?.status, "paid");
+  assert.equal(finished.monetaryRevision, 0);
+});
+
+test("a non-monetary save on a manual-records invoice leaves the derived balance and revision stable", async () => {
+  const ownerId = "settlement-r6-manual-stable-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R6-6");
+  const recordResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 100 });
+  assert.equal(recordResponse.status, 200);
+  const before = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(before.invoiceData.finishedInvoice.balanceDue, 140);
+  assert.equal(before.invoiceData.finishedInvoice.monetaryRevision, 1);
+
+  // The save echoes the stored document (records included) with only
+  // a note changed. The record set the merge produces is the stored
+  // set, so derivation is stable and no revision bump occurs.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...before.invoiceData,
+        finishedInvoice: {
+          ...before.invoiceData.finishedInvoice,
+          notes: "Site visit confirmed"
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "sent");
+  assert.equal(after.invoiceData.finishedInvoice.balanceDue, 140);
+  assert.equal(after.invoiceData.finishedInvoice.monetaryRevision, 1);
+  assert.equal(after.invoiceData.finishedInvoice.paymentRecords.length, 1);
+});
+
+test("a pre-existing indeterminate record state neither blocks nor is rewritten by an unrelated save", async () => {
+  const ownerId = "settlement-r6-indeterminate-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-R6-7");
+
+  // Seed a non-representable manual record directly in the store —
+  // legacy data no current API path installs. The record-derived
+  // balance is indeterminate (the record has no exact minor-unit
+  // form), so derivation has nothing exact to write.
+  const storedRaw = JSON.parse(await fs.readFile(storeFilePath, "utf8")) as {
+    invoices: Array<{
+      invoiceId: string;
+      invoiceData: {
+        finishedInvoice: {
+          paymentRecords: Array<Record<string, unknown>>;
+        };
+      };
+    }>;
+  };
+  const storedInvoice = storedRaw.invoices.find((invoice) => invoice.invoiceId === invoiceId);
+  assert.ok(storedInvoice);
+  storedInvoice.invoiceData.finishedInvoice.paymentRecords = [
+    { id: "seeded-fractional-record", amount: 40.005, paidAt: "2026-03-01", note: "Legacy import" }
+  ];
+  await fs.writeFile(storeFilePath, `${JSON.stringify(storedRaw, null, 2)}\n`, "utf8");
+
+  const seeded = await getSettlementInvoice(ownerId, invoiceId);
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...seeded.invoiceData,
+        finishedInvoice: {
+          ...seeded.invoiceData.finishedInvoice,
+          notes: "Delivery instructions updated"
+        }
+      }
+    });
+  // Not blocked (the save changed no records), and the pre-existing
+  // state is left exactly as it was: balance, record, revision, status.
+  assert.equal(saveResponse.status, 200);
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "draft");
+  const finished = after.invoiceData.finishedInvoice;
+  assert.equal(finished.balanceDue, 240);
+  assert.equal(finished.paymentRecords.length, 1);
+  assert.equal(finished.paymentRecords[0]?.amount, 40.005);
+  assert.equal(finished.monetaryRevision, 0);
+});
+
+test("an estimate never gains payment state from records at create or on save", async () => {
+  const ownerId = "settlement-r6-estimate-owner";
+
+  // Create an estimate whose records cover its total in full — the
+  // mirror of the invoice case that is born paid. An estimate has no
+  // payment state to derive, so it stays a draft.
+  const createResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Estimate Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          documentType: "estimate",
+          invoiceNumber: "EST-SETTLE-R6-1",
+          issueDate: "2026-03-12",
+          customerName: "Estimate Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-r6-est-1",
+              type: "labor",
+              description: "Estimate job",
+              quantity: 1,
+              unitPrice: 240,
+              amount: 240
+            }
+          ],
+          subtotal: 240,
+          total: 240,
+          balanceDue: 240,
+          paymentRecords: [
+            { id: "estimate-r6-record", amount: 240, paidAt: "2026-03-12" }
+          ]
+        }
+      }
+    });
+  assert.equal(createResponse.status, 200);
+  const invoiceId = createResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const created = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(created.status, "draft");
+  assert.equal((created.invoiceData.finishedInvoice.paymentLinks ?? []).length, 0);
+  assert.equal(created.invoiceData.finishedInvoice.paymentLinkUrl ?? "", "");
+
+  // A save on the estimate changes nothing about that: still a draft,
+  // still no link state, whatever its records say.
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...created.invoiceData,
+        finishedInvoice: {
+          ...created.invoiceData.finishedInvoice,
+          notes: "Estimate revised"
+        }
+      }
+    });
+  assert.equal(saveResponse.status, 200);
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.status, "draft");
+  assert.equal((after.invoiceData.finishedInvoice.paymentLinks ?? []).length, 0);
 });
 
 test("a pre-existing overpaid state does not block a save that changes no payment records", async () => {

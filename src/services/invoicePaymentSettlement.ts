@@ -39,11 +39,27 @@ type StoredFinishedInvoice = SavedInvoice["invoiceData"]["finishedInvoice"];
  *   atomically (nothing persisted, route answers 400). Records a save
  *   does not touch are not re-validated, and a pre-existing negative
  *   derived balance never blocks a save whose record changes are valid.
- * - A save that leaves a paid invoice with a positive exact balance
- *   reopens it to "sent" inside the same serialized mutation. When the
- *   exact balance is indeterminate, a save that changed the monetary
- *   fingerprint reopens it too — the payload balanceDue is never the
- *   paid-state authority.
+ * - Manual records written through a save or a create are INTEGRATED,
+ *   not merely validated (fix round 6): on both paths the stored
+ *   balanceDue is the value derived in exact minor units from the total
+ *   minus ALL payment records (provider and manual) whenever that
+ *   derivation is determinate — the payload's balanceDue is never
+ *   stored when an exact derived value exists. The payment-record set
+ *   is itself money-bearing: it is part of the monetary fingerprint,
+ *   so a save that changes only records supersedes outstanding links
+ *   and bumps the monetary revision exactly like a total edit. When
+ *   the derivation is indeterminate because of PRE-EXISTING state the
+ *   stored balanceDue is left as the payload carries it and the save
+ *   is not blocked (indeterminacy a save's own record changes cause
+ *   is refused by the validation above instead).
+ * - The paid status is derived in BOTH directions inside the same
+ *   serialized mutation: a save that leaves a paid invoice with a
+ *   positive exact balance reopens it to "sent" (and, when the exact
+ *   balance is indeterminate, a save that changed the monetary
+ *   fingerprint reopens it too), and a save or create whose records
+ *   exactly cover a positive total moves a draft/sent invoice to
+ *   "paid". The payload balanceDue is never the paid-state authority.
+ *   Estimates never gain payment-state behaviour from a save.
  * - "Paid" is exact: balances are computed in integer minor units from the
  *   payment records, and paid requires a post-settlement balance of exactly
  *   zero. Non-representable totals/records and overpayments are captured as
@@ -176,6 +192,24 @@ function roundCurrencyAmount(value: number): number {
  * Stable fingerprint of every money-bearing field of a finished invoice.
  * Non-monetary edits (notes, names, dates) must NOT invalidate payment
  * links; any change here must.
+ *
+ * The payment-record set is money-bearing (fix round 6): adding,
+ * removing, or re-pricing a record changes what the invoice has
+ * collected exactly as surely as editing the total, so the record set
+ * is fingerprinted alongside the totals. This function is the ONE
+ * definition of "the money changed" for every consumer — link
+ * supersession and the monetary-revision bump inside
+ * applyMonetaryEditInvalidation, and the fingerprintChanged input both
+ * stores pass to the paid-status reconciler — so record changes flow
+ * through all of them from this single comparison (the save transform
+ * compares the STORED document against this save's merged document;
+ * settlement's own record writes never pass through that comparison).
+ *
+ * Only merge-stable record fields are fingerprinted: id, major-unit
+ * amount, and the provider payment-intent id, in id order. amountMinor
+ * is deliberately excluded — the save merge legitimately strips and
+ * re-derives it, so including it would make an unrelated save that
+ * merely re-sends the stored records look like a monetary change.
  */
 export function computeMonetaryFingerprint(finishedInvoice: StoredFinishedInvoice): string {
   const lineItems = (finishedInvoice.lineItems ?? []).map((lineItem) => ({
@@ -183,13 +217,26 @@ export function computeMonetaryFingerprint(finishedInvoice: StoredFinishedInvoic
     quantity: Number(lineItem.quantity ?? 0),
     unitPrice: Number(lineItem.unitPrice ?? 0)
   }));
+  const paymentRecords = (finishedInvoice.paymentRecords ?? [])
+    .map((record) => ({
+      id: String(record.id ?? ""),
+      amount: Number(record.amount ?? 0),
+      providerPaymentIntentId: record.providerPaymentIntentId ?? null
+    }))
+    .sort(
+      (a, b) =>
+        a.id.localeCompare(b.id) ||
+        a.amount - b.amount ||
+        String(a.providerPaymentIntentId).localeCompare(String(b.providerPaymentIntentId))
+    );
   return JSON.stringify({
     currency: normalizeMoneyCurrency(finishedInvoice.currency),
     subtotal: Number(finishedInvoice.subtotal ?? 0),
     discountAmount: Number(finishedInvoice.discountAmount ?? 0),
     total: Number(finishedInvoice.total ?? 0),
     balanceDue: Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0),
-    lineItems
+    lineItems,
+    paymentRecords
   });
 }
 
@@ -386,6 +433,14 @@ export function sanitizeCreatedInvoicePaymentState(
  * invoice could be BORN carrying an overpayment (a $300 record on a
  * $240 total) or a fractional-cent record — states the update path has
  * refused since fix round 4.
+ *
+ * Validation alone left the create's balance unintegrated (fix round
+ * 6): the records were checked but the stored balanceDue was still
+ * the payload's. The prepared document therefore also passes through
+ * deriveBalanceFromPaymentRecords, so a created invoice's balance is
+ * the exact record-derived value whenever it is determinate — with
+ * no records that is the full total, never a payload-supplied partial
+ * balance with nothing recorded against it.
  */
 export function prepareCreatedInvoicePaymentState(
   finishedInvoice: StoredFinishedInvoice
@@ -395,7 +450,16 @@ export function prepareCreatedInvoicePaymentState(
     existing: { ...sanitized, paymentRecords: [] },
     merged: sanitized
   });
-  return sanitized;
+  // The balance is integrated at birth, not merely validated (fix
+  // round 6): a create carrying payment records stores the balance
+  // derived from them in exact minor units — never the payload's
+  // balanceDue, which round 5's positive test happened to supply
+  // correctly and a wrong value would have sailed through. Derivation
+  // runs after validation, so a determinate derived balance here is
+  // never negative. Both backends persist this prepared document, and
+  // derive the created status from it (see
+  // reconcilePaidStatusAfterSave).
+  return deriveBalanceFromPaymentRecords(sanitized);
 }
 
 /**
@@ -422,17 +486,31 @@ export function sanitizeDuplicatedInvoicePaymentState(
 }
 
 /**
- * Reconcile a stored "paid" status with the balance a client save
- * produced. This runs inside the save's serialization (both backends)
- * against the merged invoice: a monetary edit that leaves a positive
- * balance reopens the invoice to "sent" — the same reopened status the
- * remove-payment path uses — instead of leaving a paid invoice with
- * money still due.
+ * Derive an invoice's paid status from the balance its payment
+ * records produce. This runs inside the save's serialization (both
+ * backends) against the merged invoice, and at creation against the
+ * prepared invoice. Derivation runs in BOTH directions (fix round 6):
+ *
+ * - Down: a monetary edit that leaves a paid invoice with a positive
+ *   balance reopens it to "sent" — the same reopened status the
+ *   remove-payment path uses — instead of leaving a paid invoice with
+ *   money still due.
+ * - Up: an invoice whose records exactly cover a positive total
+ *   becomes "paid" when its current status is "draft" or "sent" — a
+ *   whole-document save (or a create) that records the full payment
+ *   manually has, in fact, paid the invoice, and leaving it non-paid
+ *   would understate what was collected. Other lifecycle states
+ *   ("deleted", and "paid" itself) are never moved by this direction,
+ *   a zero-total invoice never flips (nothing was ever owed), and at
+ *   least one payment record must exist (an exactly-zero derived
+ *   balance over a positive total already implies one, but the guard
+ *   is stated, not inferred).
  *
  * The balance is derived exactly in integer minor units from the total
  * and the merged payment records. The payload's balanceDue is NEVER
  * the paid-state authority: when the record-derived balance is
- * indeterminate (a non-representable total or payment record), the
+ * indeterminate (a non-representable total or payment record), no
+ * upward derivation is possible, and for an already-paid invoice the
  * outcome depends on what the save did. A save that changed the
  * monetary fingerprint cannot prove the invoice is still fully paid,
  * so it fails closed and reopens to "sent". A save that did not touch
@@ -440,38 +518,58 @@ export function sanitizeDuplicatedInvoicePaymentState(
  * indeterminate state is a data-quality problem, not this save's
  * doing.
  *
+ * Estimates are excluded entirely: an estimate has no payment state
+ * to derive (payment links are already refused for estimates on the
+ * same documentType test), so a save can neither reopen nor pay one.
+ *
  * `monetaryFingerprintChanged` is the same existing-vs-merged
  * fingerprint comparison that drives payment-link supersession in
  * applyMonetaryEditInvalidation; the caller computes it, because the
- * caller holds both documents inside the serialization.
+ * caller holds both documents inside the serialization. At creation
+ * there is no stored document and callers pass false.
  *
  * Semantics for the values this can now see: because
  * applyMonetaryEditInvalidation validates the manual records a save
  * adds or changes, a save's own record changes can no longer produce
- * a negative derived balance here. derivedMinor > 0 reopens to
- * "sent"; derivedMinor === 0 keeps "paid"; derivedMinor null follows
- * the fingerprint rule above. A negative derivedMinor remains
+ * a negative derived balance here. derivedMinor > 0 reopens a paid
+ * invoice to "sent"; derivedMinor === 0 keeps "paid" (and pays a
+ * draft/sent invoice under the guards above); derivedMinor null
+ * follows the fingerprint rule above. A negative derivedMinor remains
  * reachable only from state this save's record changes did not create
  * — a pre-existing overpaid balance, or a total reduced below the
  * recorded payments by an edit that changed no records — and keeps
- * the stored status: the save did not manufacture the overpayment.
+ * the stored status in both directions: the save did not manufacture
+ * the overpayment, and an over-covered invoice is not "exactly paid"
+ * either.
  */
 export function reconcilePaidStatusAfterSave(
   status: SavedInvoice["status"],
   finishedInvoice: StoredFinishedInvoice,
   monetaryFingerprintChanged: boolean
 ): SavedInvoice["status"] {
-  if (status !== "paid") {
+  if (finishedInvoice.documentType === "estimate") {
     return status;
   }
+  const paymentRecords = finishedInvoice.paymentRecords ?? [];
   const derivedMinor = calculateInvoiceBalanceMinor(
     Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0),
-    finishedInvoice.paymentRecords ?? []
+    paymentRecords
   );
-  if (derivedMinor !== null) {
-    return derivedMinor > 0 ? "sent" : status;
+  if (status === "paid") {
+    if (derivedMinor !== null) {
+      return derivedMinor > 0 ? "sent" : status;
+    }
+    return monetaryFingerprintChanged ? "sent" : status;
   }
-  return monetaryFingerprintChanged ? "sent" : status;
+  if (status === "draft" || status === "sent") {
+    const totalMinor = toAmountMinorExact(
+      Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0)
+    );
+    if (derivedMinor === 0 && totalMinor !== null && totalMinor > 0 && paymentRecords.length > 0) {
+      return "paid";
+    }
+  }
+  return status;
 }
 
 function stripProviderEvidence<T extends Record<string, unknown>>(record: T): T {
@@ -517,11 +615,13 @@ export function applyMonetaryEditInvalidation(input: {
   // the serialization, before anything is derived or persisted. A
   // violation throws and the save aborts atomically in both backends.
   assertValidSavePaymentRecordChanges({ existing, merged: serverOwned });
-  // Once provider evidence exists, the balance is a fact derived from the
-  // payment records, not a client-writable field: recompute it in integer
-  // minor units so a stale payload cannot resurrect a pre-settlement
-  // balance (or erase the zero a settlement produced).
-  const prepared = deriveBalanceFromProviderRecords(serverOwned);
+  // The balance is a fact derived from the payment records — ALL of
+  // them, provider and manual — not a client-writable field: recompute
+  // it in integer minor units so a stale payload cannot resurrect a
+  // pre-settlement balance (or erase the zero a settlement produced),
+  // and so the manual records this very save merged are reflected in
+  // the stored balance (fix round 6).
+  const prepared = deriveBalanceFromPaymentRecords(serverOwned);
   if (computeMonetaryFingerprint(existing) === computeMonetaryFingerprint(prepared)) {
     return prepared;
   }
@@ -531,21 +631,40 @@ export function applyMonetaryEditInvalidation(input: {
   };
 }
 
-function deriveBalanceFromProviderRecords(
+/**
+ * Derive the stored balanceDue from the payment records: total minus
+ * ALL records (provider and manual), in integer minor units. This is
+ * the one balance derivation for the save transform and for creation,
+ * and it is deliberately the same computation settlement and the
+ * record/remove-payment endpoints perform with
+ * calculateInvoiceBalanceMinor — one definition of what an invoice
+ * still owes, everywhere.
+ *
+ * Two standing limits:
+ * - Indeterminate (a non-representable total or record): the invoice
+ *   is returned unchanged and the balance stays as carried. A save's
+ *   own record changes can no longer produce indeterminacy here (they
+ *   are validated first), so what remains is pre-existing state, and
+ *   a pre-existing data-quality problem must not rewrite — or block —
+ *   an unrelated save.
+ * - Negative (records exceed the total): the stored field never reads
+ *   negative — the schema rejects it, and the codebase's field
+ *   convention (see remove-payment) is that an over-covered invoice is
+ *   zero due — so the field is clamped to zero while the exact signed
+ *   value remains the paid-status authority in
+ *   reconcilePaidStatusAfterSave.
+ */
+function deriveBalanceFromPaymentRecords(
   finishedInvoice: StoredFinishedInvoice
 ): StoredFinishedInvoice {
-  const records = finishedInvoice.paymentRecords ?? [];
-  if (!records.some((record) => isProviderPaymentRecord(record))) {
-    return finishedInvoice;
-  }
   const balanceMinor = calculateInvoiceBalanceMinor(
     Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0),
-    records
+    finishedInvoice.paymentRecords ?? []
   );
   if (balanceMinor === null) {
     return finishedInvoice;
   }
-  return { ...finishedInvoice, balanceDue: balanceMinor / 100 };
+  return { ...finishedInvoice, balanceDue: Math.max(0, balanceMinor) / 100 };
 }
 
 /** Server-side mutation (manual payment recorded/removed) changed the balance. */
