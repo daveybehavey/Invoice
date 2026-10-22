@@ -92,7 +92,8 @@ export async function saveInvoiceDocument(input: {
       const updatedFinishedInvoice = applyMonetaryEditInvalidation({
         existing: existing.invoiceData.finishedInvoice,
         incoming: input.invoiceData.finishedInvoice,
-        nowIso: now
+        nowIso: now,
+        existingStatus: existing.status
       });
       const updatedInvoice = SavedInvoiceSchema.parse({
         ...existing,

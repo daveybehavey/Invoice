@@ -2041,7 +2041,10 @@ async function ensureSavedInvoicePaymentLink(input: {
   if (!Number.isFinite(total) || total <= 0) {
     return input.invoice;
   }
-  return createAndPersistSavedInvoicePaymentLink(input);
+  // Non-refresh requests converge: if a concurrent request installs a
+  // reusable link while this one is minting, the persist step returns
+  // that link instead of superseding it (fix round 10).
+  return createAndPersistSavedInvoicePaymentLink({ ...input, reuseConcurrentLink: true });
 }
 
 /** Thrown inside the link-persist transform when the invoice's money moved
@@ -2059,6 +2062,11 @@ async function createAndPersistSavedInvoicePaymentLink(input: {
   ownerId: string;
   invoice: Awaited<ReturnType<typeof savedInvoiceRepository.getSavedInvoiceById>>;
   baseUrl: string;
+  /** Non-refresh requests only: when the persist transform finds a
+   * reusable link already installed (a concurrent request won the
+   * race), return that link instead of superseding it with the one
+   * minted here. An explicit refresh always installs its new link. */
+  reuseConcurrentLink?: boolean;
 }) {
   // The Stripe call cannot run inside the store's serialization, so the
   // flow is: read current state, mint at Stripe, then persist through a
@@ -2118,6 +2126,17 @@ async function createAndPersistSavedInvoicePaymentLink(input: {
         ownerId: input.ownerId,
         mutate: (fresh) => {
           const freshFinished = fresh.invoiceData.finishedInvoice;
+          if (input.reuseConcurrentLink && findReusablePaymentLink(freshFinished)) {
+            // A concurrent non-refresh request installed a link bound
+            // to the current money while this request was minting.
+            // Reuse it: installing the link minted here would
+            // supersede the one the other caller already returned,
+            // and a payment on that superseded URL would land
+            // unmatched (fix round 10). The link minted here is
+            // orphaned at Stripe — a payment on it binds to no local
+            // record and is captured as unmatched, never applied.
+            return fresh;
+          }
           const freshAmountMinor = toAmountMinorExact(
             Number(freshFinished.balanceDue ?? freshFinished.total ?? 0)
           );

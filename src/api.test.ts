@@ -6716,6 +6716,65 @@ test("payment-link creation racing a monetary edit installs a link bound to the 
   assert.equal(finished.paymentLinkUrl, "https://pay.stripe.test/plink_race_fresh");
 });
 
+test("concurrent non-refresh payment-link requests converge on one reusable link", async () => {
+  const ownerId = "payment-link-concurrent-owner";
+  // Rendezvous stub: neither mint resolves until BOTH requests have
+  // minted, so the two installs are guaranteed to overlap — the exact
+  // interleaving under which two non-refresh requests used to install
+  // two different links and supersede each other. The timeout fallback
+  // turns a broken rendezvous into a failed assertion, never a hang.
+  let mintCount = 0;
+  let releaseMints!: () => void;
+  const bothMinted = new Promise<void>((resolve) => {
+    releaseMints = resolve;
+  });
+  setInvoicePaymentLinkCreatorForTests(async () => {
+    mintCount += 1;
+    const myMint = mintCount;
+    if (mintCount === 2) {
+      releaseMints();
+    }
+    await Promise.race([
+      bothMinted,
+      new Promise<void>((resolve) => setTimeout(resolve, 5000))
+    ]);
+    return {
+      url: `https://pay.stripe.test/plink_concurrent_${myMint}`,
+      paymentLinkId: `plink_concurrent_${myMint}`
+    };
+  });
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const invoiceId = await saveSettlementInvoice(ownerId, 240, "INV-SETTLE-12");
+  const [firstResponse, secondResponse] = await Promise.all([
+    request(app)
+      .post(`/api/invoices/${invoiceId}/payment-link`)
+      .set("x-invoice-user-id", ownerId)
+      .send({}),
+    request(app)
+      .post(`/api/invoices/${invoiceId}/payment-link`)
+      .set("x-invoice-user-id", ownerId)
+      .send({})
+  ]);
+
+  assert.equal(firstResponse.status, 200);
+  assert.equal(secondResponse.status, 200);
+  assert.equal(mintCount, 2);
+  // Both callers leave with the SAME link: the second install reuses
+  // the link the first one installed instead of superseding it, so no
+  // customer can be handed a URL whose settlement lands unmatched.
+  assert.ok(firstResponse.body.paymentLinkUrl);
+  assert.equal(firstResponse.body.paymentLinkUrl, secondResponse.body.paymentLinkUrl);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  const finished = after.invoiceData.finishedInvoice;
+  const activeLinks = (finished.paymentLinks ?? []).filter(
+    (link: { status?: string }) => link.status === "active"
+  );
+  assert.equal(activeLinks.length, 1);
+  assert.equal(finished.paymentLinkUrl, firstResponse.body.paymentLinkUrl);
+});
+
 test("settlement composes with an earlier manual payment: both records count toward paid", async () => {
   const ownerId = "settlement-compose-owner";
   setInvoicePaymentLinkCreatorForTests(async () => ({

@@ -93,7 +93,8 @@ export class PostgresSavedInvoiceRepository {
           const mergedFinishedInvoice = applyMonetaryEditInvalidation({
             existing: existing.invoiceData.finishedInvoice,
             incoming: input.invoiceData.finishedInvoice,
-            nowIso: now
+            nowIso: now,
+            existingStatus: existing.status
           });
           const mergedInvoiceData = {
             ...input.invoiceData,
@@ -110,6 +111,23 @@ export class PostgresSavedInvoiceRepository {
             computeMonetaryFingerprint(existing.invoiceData.finishedInvoice) !==
               computeMonetaryFingerprint(mergedFinishedInvoice)
           );
+          // Validate the merged document BEFORE the update commits
+          // (fix round 10): this transaction previously wrote the
+          // merged document and committed first, parsing the returned
+          // row only afterwards — a schema-invalid merged document
+          // (the old unclamped balance derivation could produce a
+          // negative balanceDue) was then durably stored and only
+          // failed on the next read. The file store parses its merged
+          // document before writing; parsing here, inside the
+          // transaction, makes an invalid merge roll back instead.
+          // The parsed values are what the update below persists.
+          const validatedMerged = SavedInvoiceSchema.parse({
+            ...existing,
+            sourceType: input.sourceType,
+            status: mergedStatus,
+            invoiceData: mergedInvoiceData,
+            updatedAt: now
+          });
           // deleted_at is preserved whenever the resulting status is
           // still "deleted" — the file store keeps the stored invoice's
           // deletedAt on a whole-document save (its update spreads the
@@ -143,10 +161,10 @@ export class PostgresSavedInvoiceRepository {
             [
               input.invoiceId,
               input.ownerId,
-              input.sourceType,
-              JSON.stringify(mergedInvoiceData),
-              now,
-              mergedStatus
+              validatedMerged.sourceType,
+              JSON.stringify(validatedMerged.invoiceData),
+              validatedMerged.updatedAt,
+              validatedMerged.status
             ]
           );
           await client.query("commit");

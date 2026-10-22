@@ -538,3 +538,168 @@ test("a stored paid invoice with a non-representable total is left alone by a no
   assert.equal(final.status, "paid");
   assert.equal(final.invoiceData.finishedInvoice.total, 10.005);
 });
+
+// ---------------------------------------------------------------------------
+// Fix round 10: grandfathered paid state, and custom payment URLs.
+//
+// Historical invoices paid through the pre-#82 Stripe webhook were stored
+// as status "paid" / balanceDue 0 with NO payment records (the status
+// endpoint produces the same shape). Record-derived accounting reads "no
+// records" as "nothing paid", so before this round even a notes-only save
+// recomputed the full total due and reopened the invoice to "sent" — a
+// paid $240 invoice became $240 collectible again with no monetary edit.
+// ---------------------------------------------------------------------------
+
+async function createGrandfatheredPaidInvoice(ownerId: string, total: number) {
+  const created = await repository.saveInvoiceDocument({
+    ownerId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(total)
+  });
+  // The pre-#82 production shape, seeded the way production produced it:
+  // the old webhook / status transition marked the invoice paid and
+  // zeroed the balance without creating any payment record.
+  await repository.updateSavedInvoiceStatus(created.invoiceId, "paid", ownerId);
+  const stored = await repository.getSavedInvoiceById(created.invoiceId, ownerId);
+  assert.equal(stored.status, "paid");
+  assert.equal(stored.invoiceData.finishedInvoice.balanceDue, 0);
+  assert.equal((stored.invoiceData.finishedInvoice.paymentRecords ?? []).length, 0);
+  return created.invoiceId;
+}
+
+test("grandfathered paid invoice (no payment records) survives a notes-only save", async () => {
+  const ownerId = "conc-grandfathered-owner";
+  const invoiceId = await createGrandfatheredPaidInvoice(ownerId, 240);
+
+  // A notes-only save, carrying the monetary fields exactly as stored.
+  // No monetary field changes and no record is added, so the historical
+  // paid state is preserved verbatim: still paid, still zero due, and
+  // the monetary revision does not move.
+  await repository.saveInvoiceDocument({
+    ownerId,
+    invoiceId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(240, { balanceDue: 0, notes: "Client confirmed receipt" })
+  });
+
+  const final = await repository.getSavedInvoiceById(invoiceId, ownerId);
+  assert.equal(final.status, "paid");
+  assert.equal(final.invoiceData.finishedInvoice.balanceDue, 0);
+  assert.equal(final.invoiceData.finishedInvoice.monetaryRevision, 0);
+});
+
+test("a monetary edit voids grandfathering: the edited total becomes collectible", async () => {
+  const ownerId = "conc-grandfathered-edit-owner";
+  const invoiceId = await createGrandfatheredPaidInvoice(ownerId, 240);
+
+  // Editing the total asserts new money against an invoice whose only
+  // payment evidence is the historical paid flag. The grandfathered
+  // state cannot speak for the new total, so the save behaves like any
+  // monetary edit on a paid invoice: the full edited total is due and
+  // the invoice reopens to "sent".
+  await repository.saveInvoiceDocument({
+    ownerId,
+    invoiceId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(300)
+  });
+
+  const final = await repository.getSavedInvoiceById(invoiceId, ownerId);
+  assert.equal(final.status, "sent");
+  assert.equal(final.invoiceData.finishedInvoice.balanceDue, 300);
+  assert.equal(final.invoiceData.finishedInvoice.monetaryRevision, 1);
+});
+
+test("the first real payment record on a grandfathered invoice switches it to record-derived accounting", async () => {
+  const ownerId = "conc-grandfathered-record-owner";
+
+  // A record that exactly covers the total: the invoice stays paid, now
+  // backed by an actual record instead of the historical flag.
+  const fullId = await createGrandfatheredPaidInvoice(ownerId, 240);
+  await repository.saveInvoiceDocument({
+    ownerId,
+    invoiceId: fullId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(240, {
+      balanceDue: 0,
+      paymentRecords: [
+        { id: "gf-record-full", amount: 240, paidAt: "2026-03-12", note: "Cash" }
+      ]
+    })
+  });
+  const full = await repository.getSavedInvoiceById(fullId, ownerId);
+  assert.equal(full.status, "paid");
+  assert.equal(full.invoiceData.finishedInvoice.balanceDue, 0);
+  assert.equal((full.invoiceData.finishedInvoice.paymentRecords ?? []).length, 1);
+
+  // A partial record asserts the invoice was NOT in fact fully paid:
+  // record-derived accounting takes over from this mutation onward, so
+  // the remainder is collectible again and the invoice reopens.
+  const partialId = await createGrandfatheredPaidInvoice(ownerId, 240);
+  await repository.saveInvoiceDocument({
+    ownerId,
+    invoiceId: partialId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(240, {
+      balanceDue: 200,
+      paymentRecords: [
+        { id: "gf-record-partial", amount: 40, paidAt: "2026-03-12", note: "Cash" }
+      ]
+    })
+  });
+  const partial = await repository.getSavedInvoiceById(partialId, ownerId);
+  assert.equal(partial.status, "sent");
+  assert.equal(partial.invoiceData.finishedInvoice.balanceDue, 200);
+  assert.equal((partial.invoiceData.finishedInvoice.paymentRecords ?? []).length, 1);
+});
+
+test("a custom payment URL persists on an invoice with no managed link records, and never overrides a managed link", async () => {
+  const ownerId = "conc-custom-url-owner";
+  const created = await repository.saveInvoiceDocument({
+    ownerId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(240)
+  });
+
+  // The manual editor's Payment link field is a real editing flow for
+  // invoices without managed link records: entering a URL persists, and
+  // clearing the field clears it.
+  await repository.saveInvoiceDocument({
+    ownerId,
+    invoiceId: created.invoiceId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(240, { paymentLinkUrl: "https://pay.example/custom-link" })
+  });
+  const withUrl = await repository.getSavedInvoiceById(created.invoiceId, ownerId);
+  assert.equal(
+    withUrl.invoiceData.finishedInvoice.paymentLinkUrl,
+    "https://pay.example/custom-link"
+  );
+
+  await repository.saveInvoiceDocument({
+    ownerId,
+    invoiceId: created.invoiceId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(240)
+  });
+  const cleared = await repository.getSavedInvoiceById(created.invoiceId, ownerId);
+  assert.ok(!cleared.invoiceData.finishedInvoice.paymentLinkUrl);
+
+  // With a managed link record installed, the URL is server-owned: a
+  // payload URL can never replace the bound Stripe link.
+  const managed = await createInvoiceWithActiveLink("conc-custom-url-managed-owner", 240);
+  await repository.saveInvoiceDocument({
+    ownerId: "conc-custom-url-managed-owner",
+    invoiceId: managed.invoiceId,
+    sourceType: "text_input",
+    invoiceData: invoiceData(240, { paymentLinkUrl: "https://pay.example/override" })
+  });
+  const managedAfter = await repository.getSavedInvoiceById(
+    managed.invoiceId,
+    "conc-custom-url-managed-owner"
+  );
+  assert.equal(
+    managedAfter.invoiceData.finishedInvoice.paymentLinkUrl,
+    "https://pay.stripe.test/plink_conc"
+  );
+});

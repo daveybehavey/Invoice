@@ -76,6 +76,14 @@ type StoredFinishedInvoice = SavedInvoice["invoiceData"]["finishedInvoice"];
  *   payment records, and paid requires a post-settlement balance of exactly
  *   zero. Non-representable totals/records and overpayments are captured as
  *   unmatched with a reason — never rounded or clamped into paid.
+ * - Grandfathered paid state (fix round 10): an invoice stored paid
+ *   with a zero balance and no payment records was paid before
+ *   record-derived accounting existed (the pre-#82 webhook wrote no
+ *   records). A save that changes no monetary field and adds no record
+ *   preserves that state exactly; a monetary edit voids it (the edit
+ *   is accounted record-derived, like any paid invoice's edit), and
+ *   the first real payment record ends it by making the invoice
+ *   record-backed. See isGrandfatheredPaidState.
  *
  * Amounts cross the provider boundary in integer minor units. Conversion
  * uses the codebase's existing two-decimal convention; currency-exponent
@@ -610,6 +618,47 @@ export function sanitizeDuplicatedInvoicePaymentState(
  * the overpayment, and an over-covered invoice is not "exactly paid"
  * either.
  */
+/**
+ * Grandfathered paid state (fix round 10): an invoice stored as
+ * status "paid" with a zero balance and NO payment records. That shape
+ * is how the pre-#82 Stripe webhook stored every provider-paid invoice
+ * (it zeroed the balance and never wrote a payment record), and the
+ * status endpoint still produces it. The payment is real — only its
+ * record is missing — so record-derived accounting must not read "no
+ * records" as "nothing paid" for this shape: before fix round 10, a
+ * notes-only save on such an invoice recomputed the full total due and
+ * reopened it to "sent".
+ *
+ * The preservation rule, applied coherently by the save transform and
+ * the paid-status reconciler:
+ * - A save that changes no monetary field and adds no payment record
+ *   preserves the state exactly: balance stays zero, status stays
+ *   "paid", the monetary revision does not move.
+ * - A monetary edit voids the grandfathering. The historical flag
+ *   cannot speak for money it never described, so the edit behaves
+ *   exactly like a monetary edit on any paid invoice: the balance is
+ *   the record-derived value (the full edited total, with no records)
+ *   and the invoice reopens to "sent".
+ * - The first real payment record ends the grandfathering the other
+ *   way: record-derived accounting takes over from that mutation
+ *   onward. A record covering the total leaves the invoice paid, now
+ *   record-backed; a partial record reopens it with the remainder due.
+ */
+export function isGrandfatheredPaidState(
+  status: SavedInvoice["status"],
+  finishedInvoice: StoredFinishedInvoice
+): boolean {
+  if (status !== "paid") {
+    return false;
+  }
+  if ((finishedInvoice.paymentRecords ?? []).length > 0) {
+    return false;
+  }
+  return (
+    toAmountMinorExact(Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0)) === 0
+  );
+}
+
 export function reconcilePaidStatusAfterSave(
   status: SavedInvoice["status"],
   finishedInvoice: StoredFinishedInvoice,
@@ -625,7 +674,23 @@ export function reconcilePaidStatusAfterSave(
   );
   if (status === "paid") {
     if (derivedMinor !== null) {
-      return derivedMinor > 0 ? "sent" : status;
+      if (derivedMinor > 0) {
+        // Grandfathered paid state (fix round 10): paid, zero balance,
+        // no payment records — the payment predates record-derived
+        // accounting, so the records' silence is not evidence of
+        // non-payment. A save that changed no monetary field leaves
+        // the status alone; a monetary edit (or a first record, which
+        // puts records in the set and takes this branch out of the
+        // grandfathered shape) reopens on the derived balance as usual.
+        const grandfathered =
+          paymentRecords.length === 0 &&
+          !monetaryFingerprintChanged &&
+          toAmountMinorExact(
+            Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0)
+          ) === 0;
+        return grandfathered ? status : "sent";
+      }
+      return status;
     }
     return monetaryFingerprintChanged ? "sent" : status;
   }
@@ -657,15 +722,22 @@ function stripProviderEvidence<T extends Record<string, unknown>>(record: T): T 
  * stored one. This runs INSIDE the store's serialization (mutation lock /
  * FOR UPDATE transaction) against the freshly stored invoice — never
  * against a snapshot read earlier — so a save can never overwrite a
- * settlement that landed in between. Payment-link state and provider
+ * settlement that landed in between. Payment-link records and provider
  * payment records are server-owned and always taken from the stored
- * invoice; when the monetary fingerprint changed, links are superseded
- * and the monetary revision is bumped.
+ * invoice; the link URL is server-owned only while a link record
+ * exists (with none, it is the editor's custom payment-link field and
+ * the incoming value persists). When the monetary fingerprint changed,
+ * links are superseded and the monetary revision is bumped.
  */
 export function applyMonetaryEditInvalidation(input: {
   existing: StoredFinishedInvoice;
   incoming: StoredFinishedInvoice;
   nowIso: string;
+  /** The stored invoice's status, when the caller has it (both stores
+   * do). Grandfathered-paid preservation (fix round 10) is keyed on it:
+   * the finished invoice alone cannot distinguish a historically paid
+   * invoice from an unpaid one carrying a zero balance. */
+  existingStatus?: SavedInvoice["status"];
 }): StoredFinishedInvoice {
   const { existing, incoming, nowIso } = input;
   const paymentRecords = mergePaymentRecords(existing.paymentRecords, incoming.paymentRecords);
@@ -674,7 +746,15 @@ export function applyMonetaryEditInvalidation(input: {
     paymentRecords,
     monetaryRevision: existing.monetaryRevision ?? 0,
     paymentLinks: existing.paymentLinks ?? [],
-    paymentLinkUrl: existing.paymentLinkUrl,
+    // The link URL is server-owned only while a managed link record
+    // exists to bind it. With no link records the URL is the manual
+    // editor's custom payment-link field — a real editing flow
+    // (entering, replacing, and clearing it must persist) — so the
+    // incoming value is taken, exactly as the pre-#82 save behaved.
+    paymentLinkUrl:
+      (existing.paymentLinks ?? []).length === 0
+        ? incoming.paymentLinkUrl
+        : existing.paymentLinkUrl,
     unmatchedPayments: existing.unmatchedPayments ?? []
   };
   // The merge makes this save a writer of manual payment records, so
@@ -697,6 +777,28 @@ export function applyMonetaryEditInvalidation(input: {
     serverOwned,
     existing.balanceDue ?? existing.total
   );
+  if (
+    input.existingStatus !== undefined &&
+    isGrandfatheredPaidState(input.existingStatus, existing) &&
+    paymentRecords.length === 0
+  ) {
+    // Grandfathered paid state (fix round 10): the derivation above
+    // reads the empty record set as "nothing paid" and would resurrect
+    // the full total as the balance. Preserve the stored zero balance
+    // instead, and let the monetary fingerprint decide: unchanged
+    // (a notes-only save) returns the preserved document untouched —
+    // no reopening, no revision bump — while a genuine monetary edit
+    // falls through to the normal path with the record-derived
+    // document, voiding the grandfathering (see
+    // isGrandfatheredPaidState).
+    const preserved: StoredFinishedInvoice = {
+      ...prepared,
+      balanceDue: existing.balanceDue ?? prepared.balanceDue
+    };
+    if (computeMonetaryFingerprint(existing) === computeMonetaryFingerprint(preserved)) {
+      return preserved;
+    }
+  }
   if (computeMonetaryFingerprint(existing) === computeMonetaryFingerprint(prepared)) {
     return prepared;
   }
