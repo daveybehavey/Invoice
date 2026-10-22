@@ -104,7 +104,15 @@ type StoredFinishedInvoice = SavedInvoice["invoiceData"]["finishedInvoice"];
  *   the derivation's `total ?? balanceDue` fallback read the
  *   already-reduced balance the client echoed back as if it were the
  *   original total, so every echo save subtracted the records again
- *   ($60 -> $20 -> $0 across three identical saves).
+ *   ($60 -> $20 -> $0 across three identical saves). The record/remove
+ *   payment writers enforce the same invariant (fix round 12): round
+ *   11 anchored only the save path, so a total-less legacy invoice
+ *   still decayed through its writers — recording $40 then $20 read
+ *   the shrinking balance ($100 -> $60) as the total and landed at
+ *   $0/paid, and removing a record could not restore the balance.
+ *   Those writers now reconstruct and persist the stable total from
+ *   fresh stored state before recomputing, and fail closed when the
+ *   reconstruction is not exactly representable.
  *
  * Amounts cross the provider boundary in integer minor units. Conversion
  * uses the codebase's existing two-decimal convention; currency-exponent
@@ -909,8 +917,12 @@ export function applyMonetaryEditInvalidation(input: {
  * balance or any record has no exact minor-unit form: total-less
  * state that cannot be reconstructed exactly keeps the standing
  * indeterminate behaviour instead of gaining an invented total.
+ * Exported for the record/remove payment writers (fix round 12),
+ * which anchor their recompute to this same reconstruction and
+ * persist it as the invoice's total, under the same fail-closed
+ * policy.
  */
-function reconstructGrossTotalMinor(
+export function reconstructGrossTotalMinor(
   finishedInvoice: StoredFinishedInvoice
 ): number | null {
   const balanceMinor = toAmountMinorExact(

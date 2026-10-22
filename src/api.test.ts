@@ -8237,6 +8237,136 @@ test("repeated echo saves of an invoice without a total do not decay the record-
   }
 });
 
+async function seedTotalLessLegacyInvoice(
+  invoiceId: string,
+  seed: { balanceDue: number; paymentRecords: Array<Record<string, unknown>> }
+) {
+  const storedRaw = JSON.parse(await fs.readFile(storeFilePath, "utf8")) as {
+    invoices: Array<{
+      invoiceId: string;
+      invoiceData: {
+        finishedInvoice: {
+          total?: number;
+          balanceDue: number;
+          paymentRecords: Array<Record<string, unknown>>;
+        };
+      };
+    }>;
+  };
+  const storedInvoice = storedRaw.invoices.find((invoice) => invoice.invoiceId === invoiceId);
+  assert.ok(storedInvoice);
+  const finished = storedInvoice.invoiceData.finishedInvoice;
+  delete finished.total;
+  finished.balanceDue = seed.balanceDue;
+  finished.paymentRecords = seed.paymentRecords;
+  await fs.writeFile(storeFilePath, `${JSON.stringify(storedRaw, null, 2)}\n`, "utf8");
+}
+
+test("sequential record-payments on a total-less legacy invoice anchor to the reconstructed gross, not the shrinking balance", async () => {
+  const ownerId = "settlement-r12-record-anchor-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 100, "INV-SETTLE-R12-1");
+
+  // Legacy state (the G-dot round-11 re-gate case): no total field at
+  // all, balanceDue $100, no payment records. No current API path
+  // installs a total-less invoice, so seed it directly in the store,
+  // as the other legacy-state fixtures do.
+  await seedTotalLessLegacyInvoice(invoiceId, { balanceDue: 100, paymentRecords: [] });
+  const seeded = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(seeded.invoiceData.finishedInvoice.total, undefined);
+  assert.equal(seeded.invoiceData.finishedInvoice.balanceDue, 100);
+
+  // First recorded payment: $40 against the $100 gross leaves $60 —
+  // and the writer must persist the reconstructed $100 total so the
+  // anchor survives for the next writer.
+  const firstResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 40, paidAt: "2026-03-12" });
+  assert.equal(firstResponse.status, 200);
+  const afterFirst = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(afterFirst.invoiceData.finishedInvoice.balanceDue, 60);
+  assert.equal(afterFirst.invoiceData.finishedInvoice.total, 100);
+  assert.equal(afterFirst.invoiceData.finishedInvoice.monetaryRevision, 1);
+
+  // Second recorded payment: $20 more against the SAME $100 gross
+  // leaves $40 still due. Before the fix, the writer read the
+  // already-reduced $60 balance as the total and subtracted both
+  // records again (60 - 40 - 20 = 0), marking the invoice paid with
+  // only $60 of its $100 collected.
+  const secondResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 20, paidAt: "2026-03-13" });
+  assert.equal(secondResponse.status, 200);
+  const afterSecond = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(afterSecond.invoiceData.finishedInvoice.total, 100);
+  assert.equal(afterSecond.invoiceData.finishedInvoice.balanceDue, 40);
+  assert.equal(afterSecond.status, "sent");
+  assert.equal((afterSecond.invoiceData.finishedInvoice.paymentRecords ?? []).length, 2);
+  assert.equal(afterSecond.invoiceData.finishedInvoice.monetaryRevision, 2);
+});
+
+test("remove-payment on a total-less legacy invoice restores the balance against the reconstructed gross", async () => {
+  const ownerId = "settlement-r12-remove-anchor-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 100, "INV-SETTLE-R12-2");
+
+  // Legacy state exactly as the pre-round-12 record writer left it:
+  // no total, one $40 record, and the already-reduced $60 balance.
+  await seedTotalLessLegacyInvoice(invoiceId, {
+    balanceDue: 60,
+    paymentRecords: [{ id: "legacy-record-40", amount: 40, paidAt: "2026-03-12" }]
+  });
+
+  // Removing the only record must restore the full $100 balance
+  // against the reconstructed gross (60 + 40). Before the fix, the
+  // writer read the reduced $60 balance as the total, so the removal
+  // left $60 due on an invoice with nothing paid against it.
+  const removeResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/remove-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ paymentId: "legacy-record-40" });
+  assert.equal(removeResponse.status, 200);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.invoiceData.finishedInvoice.total, 100);
+  assert.equal(after.invoiceData.finishedInvoice.balanceDue, 100);
+  assert.equal((after.invoiceData.finishedInvoice.paymentRecords ?? []).length, 0);
+});
+
+test("repeated record/remove cycles on a total-less legacy invoice do not drift the balance, total, or revision", async () => {
+  const ownerId = "settlement-r12-cycle-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 100, "INV-SETTLE-R12-3");
+  await seedTotalLessLegacyInvoice(invoiceId, { balanceDue: 100, paymentRecords: [] });
+
+  // Two identical record-then-remove cycles. Each mutation bumps the
+  // monetary revision exactly once (the standing link invalidation);
+  // materializing the stable total inside the first mutation must not
+  // add a bump of its own, and the balance must return to exactly $100
+  // after every removal — no drift across cycles.
+  for (let cycle = 1; cycle <= 2; cycle += 1) {
+    const recordResponse = await request(app)
+      .post(`/api/invoices/${invoiceId}/record-payment`)
+      .set("x-invoice-user-id", ownerId)
+      .send({ amount: 25, paidAt: "2026-03-12" });
+    assert.equal(recordResponse.status, 200);
+    const recorded = await getSettlementInvoice(ownerId, invoiceId);
+    assert.equal(recorded.invoiceData.finishedInvoice.total, 100, `total in cycle ${cycle}`);
+    assert.equal(recorded.invoiceData.finishedInvoice.balanceDue, 75, `balance after record in cycle ${cycle}`);
+    const paymentId = recorded.invoiceData.finishedInvoice.paymentRecords[0]?.id as string;
+    assert.ok(paymentId);
+
+    const removeResponse = await request(app)
+      .post(`/api/invoices/${invoiceId}/remove-payment`)
+      .set("x-invoice-user-id", ownerId)
+      .send({ paymentId });
+    assert.equal(removeResponse.status, 200);
+    const removed = await getSettlementInvoice(ownerId, invoiceId);
+    assert.equal(removed.invoiceData.finishedInvoice.total, 100, `total after remove in cycle ${cycle}`);
+    assert.equal(removed.invoiceData.finishedInvoice.balanceDue, 100, `balance after remove in cycle ${cycle}`);
+    assert.equal(removed.invoiceData.finishedInvoice.monetaryRevision, cycle * 2, `revision after cycle ${cycle}`);
+  }
+});
+
 test("stripe webhook endpoint requires signature header", async () => {
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";

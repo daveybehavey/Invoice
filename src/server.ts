@@ -106,6 +106,7 @@ import {
   hasLegacyPaymentLink,
   invalidateLinksForBalanceChange,
   normalizeMoneyCurrency,
+  reconstructGrossTotalMinor,
   supersedeActivePaymentLinks,
   toAmountMinorExact
 } from "./services/invoicePaymentSettlement.js";
@@ -2206,6 +2207,33 @@ async function createAndPersistSavedInvoicePaymentLink(input: {
   throw new HttpStatusError(409, "Invoice changed while creating a payment link. Please retry.");
 }
 
+/**
+ * The stable total a record/remove payment mutation anchors its
+ * balance recompute to, in major units — or null when the stored
+ * state cannot anchor exactly (fix round 12). An invoice carrying a
+ * total anchors to it. A total-less (legacy) invoice anchors to the
+ * gross reconstructed from the fresh stored state — stored balance
+ * plus all stored payment records, the save path's exact
+ * reconstruction — and the mutation persists that value as the
+ * invoice's total, so no later writer can mistake the shrinking
+ * balance for the gross. Before this round these writers fell back
+ * to `total ?? balanceDue`: recording $40 then $20 on a total-less
+ * $100 invoice subtracted both records from the already-reduced $60
+ * balance and landed at $0/paid, and removing a record restored
+ * nothing. When reconstruction has no exact minor-unit form the
+ * mutation fails closed, exactly as it does for a non-representable
+ * stored total.
+ */
+function stableTotalForPaymentMutation(
+  currentInvoice: SavedInvoice["invoiceData"]["finishedInvoice"]
+): number | null {
+  if (currentInvoice.total != null) {
+    return Number(currentInvoice.total);
+  }
+  const reconstructedGrossMinor = reconstructGrossTotalMinor(currentInvoice);
+  return reconstructedGrossMinor === null ? null : reconstructedGrossMinor / 100;
+}
+
 async function recordSavedInvoicePayment(input: {
   invoiceId: string;
   ownerId: string;
@@ -2250,7 +2278,13 @@ async function recordSavedInvoicePayment(input: {
           note: input.note?.trim() || undefined
         }
       ];
-      const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
+      const invoiceTotal = stableTotalForPaymentMutation(currentInvoice);
+      if (invoiceTotal === null) {
+        throw new HttpStatusError(
+          400,
+          "This invoice's total or existing payments are not exact to the cent, so a payment cannot be recorded safely."
+        );
+      }
       const nextBalanceMinor = calculateInvoiceBalanceMinor(invoiceTotal, nextPaymentRecords);
       if (nextBalanceMinor === null) {
         throw new HttpStatusError(
@@ -2289,6 +2323,11 @@ async function recordSavedInvoicePayment(input: {
           finishedInvoice: invalidateLinksForBalanceChange(
             {
               ...currentInvoice,
+              // Persist the stable total the recompute anchored to
+              // (fix round 12): for a total-less legacy invoice this
+              // materializes the reconstructed gross; for one already
+              // carrying a total it restates the same value.
+              total: invoiceTotal,
               balanceDue: nextBalanceMinor / 100,
               paymentRecords: nextPaymentRecords
             },
@@ -2334,7 +2373,13 @@ async function removeSavedInvoicePayment(input: {
       const nextPaymentRecords = (currentInvoice.paymentRecords ?? []).filter(
         (payment) => payment.id !== input.paymentId
       );
-      const invoiceTotal = Number(currentInvoice.total ?? currentInvoice.balanceDue ?? 0);
+      const invoiceTotal = stableTotalForPaymentMutation(currentInvoice);
+      if (invoiceTotal === null) {
+        throw new HttpStatusError(
+          400,
+          "This invoice's total or remaining payments are not exact to the cent, so the balance cannot be recomputed safely."
+        );
+      }
       const nextBalanceMinor = calculateInvoiceBalanceMinor(invoiceTotal, nextPaymentRecords);
       if (nextBalanceMinor === null) {
         throw new HttpStatusError(
@@ -2363,6 +2408,9 @@ async function removeSavedInvoicePayment(input: {
           finishedInvoice: invalidateLinksForBalanceChange(
             {
               ...currentInvoice,
+              // Persist the stable total the recompute anchored to
+              // (fix round 12), as in record-payment.
+              total: invoiceTotal,
               // The stored balance never reads negative: an over-covered
               // invoice is zero due, while the exact minor-unit value
               // above drives the status decision.
