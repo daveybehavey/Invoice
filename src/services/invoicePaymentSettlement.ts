@@ -84,6 +84,27 @@ type StoredFinishedInvoice = SavedInvoice["invoiceData"]["finishedInvoice"];
  *   is accounted record-derived, like any paid invoice's edit), and
  *   the first real payment record ends it by making the invoice
  *   record-backed. See isGrandfatheredPaidState.
+ * - A payment link may only be minted or reused for an EXACTLY
+ *   COLLECTIBLE balance (fix round 11): the stored balance, the total,
+ *   and every payment record must have exact minor-unit forms, and
+ *   the record-derived balance (total minus all records) must equal
+ *   the stored balance — the same arithmetic settlement's exact paid
+ *   test performs. Before this round, link creation validated only
+ *   the preserved balance: editing a $100 invoice's total to $100.005
+ *   preserved an exact $100 balance, so a $100 link was minted whose
+ *   payment settlement then rejected as non_representable_total,
+ *   stranding real money as unmatched. See
+ *   getExactCollectibleBalanceMinor.
+ * - An invoice with no total of its own gets a STABLE total persisted
+ *   (fix round 11): creation stores the authored balanceDue as the
+ *   total (the gross the first derivation runs against), and a save
+ *   whose stored invoice still carries no total reconstructs the
+ *   gross — stored balance plus all stored payment records, the sum
+ *   payments leave invariant — and persists it. Before this round,
+ *   the derivation's `total ?? balanceDue` fallback read the
+ *   already-reduced balance the client echoed back as if it were the
+ *   original total, so every echo save subtracted the records again
+ *   ($60 -> $20 -> $0 across three identical saves).
  *
  * Amounts cross the provider boundary in integer minor units. Conversion
  * uses the codebase's existing two-decimal convention; currency-exponent
@@ -500,7 +521,20 @@ export function sanitizeCreatedInvoicePaymentState(
 export function prepareCreatedInvoicePaymentState(
   finishedInvoice: StoredFinishedInvoice
 ): StoredFinishedInvoice {
-  const sanitized = sanitizeCreatedInvoicePaymentState(finishedInvoice);
+  const sanitizedRaw = sanitizeCreatedInvoicePaymentState(finishedInvoice);
+  // Persist a stable total (fix round 11): an invoice created without
+  // a total of its own takes the authored balanceDue as its total —
+  // that value IS the gross the derivation below runs against (a
+  // create carrying balanceDue $100 and a $40 record stores a $60
+  // balance). Without a persisted total, later saves could not tell
+  // the gross from the reduced balance they echo back, and the
+  // derivation subtracted the records again on every save.
+  const sanitized: StoredFinishedInvoice =
+    sanitizedRaw.total == null &&
+    typeof sanitizedRaw.balanceDue === "number" &&
+    Number.isFinite(sanitizedRaw.balanceDue)
+      ? { ...sanitizedRaw, total: sanitizedRaw.balanceDue }
+      : sanitizedRaw;
   assertValidSavePaymentRecordChanges({
     existing: { ...sanitized, paymentRecords: [] },
     merged: sanitized
@@ -741,8 +775,36 @@ export function applyMonetaryEditInvalidation(input: {
 }): StoredFinishedInvoice {
   const { existing, incoming, nowIso } = input;
   const paymentRecords = mergePaymentRecords(existing.paymentRecords, incoming.paymentRecords);
+  // Anchor the save to a stable total (fix round 11). An incoming
+  // total wins; an omitted one falls back to the stored total; when
+  // neither side carries a total, the gross is reconstructed from the
+  // stored invoice — stored balance plus all stored payment records,
+  // the sum payments leave invariant — and persisted on the merged
+  // document. Without this anchor the balance derivation below read
+  // the already-reduced balance the client echoed back as if it were
+  // the original total and subtracted the records again on every save
+  // ($60 -> $20 -> $0 across three identical saves). Reconstruction
+  // requires exact minor-unit forms; when the stored state has none,
+  // no total is materialized and the derivation keeps its standing
+  // indeterminate behaviour. The fingerprint comparisons below run
+  // against an existing document carrying the same reconstructed
+  // total, so materializing it never reads as a monetary change by
+  // itself.
+  const reconstructedGrossMinor =
+    existing.total == null && incoming.total == null
+      ? reconstructGrossTotalMinor(existing)
+      : null;
+  const stableTotal =
+    incoming.total ??
+    existing.total ??
+    (reconstructedGrossMinor !== null ? reconstructedGrossMinor / 100 : undefined);
+  const existingForFingerprint: StoredFinishedInvoice =
+    reconstructedGrossMinor !== null
+      ? { ...existing, total: reconstructedGrossMinor / 100 }
+      : existing;
   const serverOwned: StoredFinishedInvoice = {
     ...incoming,
+    total: stableTotal,
     paymentRecords,
     monetaryRevision: existing.monetaryRevision ?? 0,
     paymentLinks: existing.paymentLinks ?? [],
@@ -795,11 +857,11 @@ export function applyMonetaryEditInvalidation(input: {
       ...prepared,
       balanceDue: existing.balanceDue ?? prepared.balanceDue
     };
-    if (computeMonetaryFingerprint(existing) === computeMonetaryFingerprint(preserved)) {
+    if (computeMonetaryFingerprint(existingForFingerprint) === computeMonetaryFingerprint(preserved)) {
       return preserved;
     }
   }
-  if (computeMonetaryFingerprint(existing) === computeMonetaryFingerprint(prepared)) {
+  if (computeMonetaryFingerprint(existingForFingerprint) === computeMonetaryFingerprint(prepared)) {
     return prepared;
   }
   return {
@@ -836,6 +898,34 @@ export function applyMonetaryEditInvalidation(input: {
  *   value remains the paid-status authority in
  *   reconcilePaidStatusAfterSave.
  */
+/**
+ * The gross total a stored invoice's balance was derived against, in
+ * exact minor units, reconstructed for an invoice that carries no
+ * total of its own: stored balance plus every payment record. Payments
+ * leave that sum invariant — a settlement or a recorded payment moves
+ * money between the two terms without changing their total — so it is
+ * recoverable at any point in the invoice's life, and it is the only
+ * stable anchor a total-less invoice has. Returns null when the
+ * balance or any record has no exact minor-unit form: total-less
+ * state that cannot be reconstructed exactly keeps the standing
+ * indeterminate behaviour instead of gaining an invented total.
+ */
+function reconstructGrossTotalMinor(
+  finishedInvoice: StoredFinishedInvoice
+): number | null {
+  const balanceMinor = toAmountMinorExact(
+    Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0)
+  );
+  if (balanceMinor === null) {
+    return null;
+  }
+  const paidMinor = sumPaymentRecordsMinor(finishedInvoice.paymentRecords ?? []);
+  if (paidMinor === null) {
+    return null;
+  }
+  return balanceMinor + paidMinor;
+}
+
 function deriveBalanceFromPaymentRecords(
   finishedInvoice: StoredFinishedInvoice,
   indeterminateBalanceDue?: number
@@ -863,6 +953,41 @@ export function invalidateLinksForBalanceChange(
   };
 }
 
+/**
+ * The exact amount a payment link for this invoice may collect, in
+ * minor units — or null when no link may be minted or reused at all
+ * (fix round 11). A link is collectible only when settlement's exact
+ * paid test would accept its payment: the stored balance must have an
+ * exact minor-unit form, and the record-derived balance — the total
+ * minus every payment record, computed with the same anchor
+ * settlement uses (`total ?? balanceDue`) — must exist exactly and
+ * EQUAL the stored balance. Any gap means a payment on the link would
+ * be rejected as unmatched (a non-representable total or record, an
+ * overpayment against the record-derived balance) or would
+ * under-collect against what the records say is still owed, so the
+ * link must not exist. This is deliberately the exact complement of
+ * the checks settleStripePaymentOnInvoice performs, so "collectible"
+ * can never drift from "settlement would accept it".
+ */
+export function getExactCollectibleBalanceMinor(
+  finishedInvoice: StoredFinishedInvoice
+): number | null {
+  const balanceMinor = toAmountMinorExact(
+    Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0)
+  );
+  if (balanceMinor === null) {
+    return null;
+  }
+  const derivedMinor = calculateInvoiceBalanceMinor(
+    Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0),
+    finishedInvoice.paymentRecords ?? []
+  );
+  if (derivedMinor === null || derivedMinor !== balanceMinor) {
+    return null;
+  }
+  return balanceMinor;
+}
+
 export function findReusablePaymentLink(finishedInvoice: StoredFinishedInvoice): PaymentLinkRecord | null {
   const paymentLinkUrl = finishedInvoice.paymentLinkUrl?.trim();
   if (!paymentLinkUrl) {
@@ -873,6 +998,14 @@ export function findReusablePaymentLink(finishedInvoice: StoredFinishedInvoice):
     Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0)
   );
   if (expectedAmountMinor === null) {
+    return null;
+  }
+  // Reuse is a fresh decision to keep collecting on this link, so it
+  // takes the same collectibility gate as minting (fix round 11): a
+  // link bound to a balance settlement would reject or under-collect
+  // against is not reusable, however well it matches the stored
+  // balance field.
+  if (getExactCollectibleBalanceMinor(finishedInvoice) !== expectedAmountMinor) {
     return null;
   }
   const active = links.find(

@@ -8086,6 +8086,157 @@ test("a save changing no records on a non-representable-total invoice still succ
   assert.equal(after.invoiceData.finishedInvoice.monetaryRevision, 0);
 });
 
+test("payment-link creation is refused after a fractional-cent edit makes the total non-representable", async () => {
+  const ownerId = "settlement-r11-fractional-link-owner";
+  let mintCount = 0;
+  setInvoicePaymentLinkCreatorForTests(async () => {
+    mintCount += 1;
+    return {
+      url: `https://pay.stripe.test/plink_r11_${mintCount}`,
+      paymentLinkId: `plink_r11_${mintCount}`
+    };
+  });
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+
+  const invoiceId = await saveSettlementInvoice(ownerId, 100, "INV-SETTLE-R11-1");
+
+  // Sanity: the healthy $100 invoice mints a link, so the refusal below
+  // is caused by the fractional-cent edit, not by the link machinery.
+  const healthyLink = await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(healthyLink.status, 200);
+  assert.equal(mintCount, 1);
+
+  // Edit the total to $100.005 without touching the payment records
+  // (the G-dot round-10 recheck case): the save preserves the exact
+  // $100 balance because no exact balance can be derived from the new
+  // total. A link minted now would collect that preserved $100, but
+  // settlement rejects the payment as non_representable_total — the
+  // link must not exist at all.
+  const before = await getSettlementInvoice(ownerId, invoiceId);
+  const editResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      invoiceId,
+      sourceType: "text_input",
+      invoiceData: {
+        ...before.invoiceData,
+        finishedInvoice: {
+          ...before.invoiceData.finishedInvoice,
+          lineItems: before.invoiceData.finishedInvoice.lineItems.map(
+            (lineItem: Record<string, unknown>) => ({ ...lineItem, unitPrice: 100.005, amount: 100.005 })
+          ),
+          subtotal: 100.005,
+          total: 100.005,
+          balanceDue: 0
+        }
+      }
+    });
+  assert.equal(editResponse.status, 200);
+  const edited = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(edited.invoiceData.finishedInvoice.total, 100.005);
+  assert.equal(edited.invoiceData.finishedInvoice.balanceDue, 100);
+  assert.equal(edited.invoiceData.finishedInvoice.paymentLinkUrl, undefined);
+
+  const ensureResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(ensureResponse.status, 400);
+  assert.match(String(ensureResponse.body.error || ""), /not exact to the cent/i);
+
+  const refreshResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/payment-link`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ refresh: true });
+  assert.equal(refreshResponse.status, 400);
+  assert.match(String(refreshResponse.body.error || ""), /not exact to the cent/i);
+
+  // Nothing was minted or installed for the non-representable total.
+  assert.equal(mintCount, 1);
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(after.invoiceData.finishedInvoice.paymentLinkUrl, undefined);
+  assert.equal(
+    (after.invoiceData.finishedInvoice.paymentLinks ?? []).filter(
+      (link: { status: string }) => link.status === "active"
+    ).length,
+    0
+  );
+});
+
+test("repeated echo saves of an invoice without a total do not decay the record-derived balance", async () => {
+  const ownerId = "settlement-r11-echo-save-owner";
+
+  // An invoice with NO total field: balanceDue $100 with a $40 manual
+  // record stores a $60 record-derived balance (the G-dot round-10
+  // recheck case). The document the client gets back carries that
+  // reduced balance and still no total.
+  const createResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Settlement Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-SETTLE-R11-2",
+          issueDate: "2026-03-12",
+          customerName: "Settlement Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-echo-1",
+              type: "labor",
+              description: "Echo save job",
+              quantity: 1,
+              unitPrice: 100,
+              amount: 100
+            }
+          ],
+          subtotal: 100,
+          balanceDue: 100,
+          paymentRecords: [{ id: "echo-record-1", amount: 40, paidAt: "2026-03-12" }]
+        }
+      }
+    });
+  assert.equal(createResponse.status, 200);
+  const invoiceId = createResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+  assert.equal(createResponse.body.invoice.invoiceData.finishedInvoice.balanceDue, 60);
+
+  // Echoing the returned document back unchanged must be a monetary
+  // no-op no matter how often it repeats: before the fix, each save
+  // treated the already-reduced $60 balance as the original total and
+  // subtracted the $40 record again (60 -> 20 -> 0).
+  for (let echo = 1; echo <= 3; echo += 1) {
+    const current = await getSettlementInvoice(ownerId, invoiceId);
+    const echoResponse = await request(app)
+      .post("/api/invoices/save")
+      .set("x-invoice-user-id", ownerId)
+      .send({
+        confirmSave: true,
+        invoiceId,
+        sourceType: "text_input",
+        invoiceData: current.invoiceData
+      });
+    assert.equal(echoResponse.status, 200);
+    const after = await getSettlementInvoice(ownerId, invoiceId);
+    assert.equal(after.invoiceData.finishedInvoice.balanceDue, 60, `balance after echo save ${echo}`);
+    assert.equal(after.invoiceData.finishedInvoice.total, 100, `stable total after echo save ${echo}`);
+    assert.equal(after.invoiceData.finishedInvoice.monetaryRevision, 0, `revision after echo save ${echo}`);
+    assert.equal((after.invoiceData.finishedInvoice.paymentRecords ?? []).length, 1);
+  }
+});
+
 test("stripe webhook endpoint requires signature header", async () => {
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";

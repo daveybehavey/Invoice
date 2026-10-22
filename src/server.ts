@@ -102,6 +102,7 @@ import { getSavedInvoiceStoreSummary } from "./services/savedInvoiceStore.js";
 import {
   calculateInvoiceBalanceMinor,
   findReusablePaymentLink,
+  getExactCollectibleBalanceMinor,
   hasLegacyPaymentLink,
   invalidateLinksForBalanceChange,
   normalizeMoneyCurrency,
@@ -2028,7 +2029,9 @@ async function ensureSavedInvoicePaymentLink(input: {
   // through the legacy exact-amount binding.
   if (
     finishedInvoice.paymentLinkUrl?.trim() &&
-    (hasLegacyPaymentLink(finishedInvoice) || findReusablePaymentLink(finishedInvoice))
+    ((hasLegacyPaymentLink(finishedInvoice) &&
+      getExactCollectibleBalanceMinor(finishedInvoice) !== null) ||
+      findReusablePaymentLink(finishedInvoice))
   ) {
     return input.invoice;
   }
@@ -2092,11 +2095,26 @@ async function createAndPersistSavedInvoicePaymentLink(input: {
       }
       throw new HttpStatusError(400, "Invoice total must be greater than 0 before creating a payment link.");
     }
-    const amountMinor = toAmountMinorExact(total);
+    // The link may only be minted for an exactly collectible balance
+    // (fix round 11): the total and every payment record must have
+    // exact minor-unit forms and the record-derived balance must
+    // equal the stored balance — the same arithmetic settlement's
+    // exact paid test performs. Validating only the balance was not
+    // enough: a fractional-cent edit can leave an exact preserved
+    // balance under a non-representable total, and a link minted
+    // against that balance collects money settlement then rejects as
+    // non_representable_total.
+    const amountMinor = getExactCollectibleBalanceMinor(finishedInvoice);
     if (amountMinor === null) {
+      if (toAmountMinorExact(total) === null) {
+        throw new HttpStatusError(
+          400,
+          "Invoice balance includes fractions of a cent and cannot be collected exactly. Adjust the invoice total before creating a payment link."
+        );
+      }
       throw new HttpStatusError(
         400,
-        "Invoice balance includes fractions of a cent and cannot be collected exactly. Adjust the invoice total before creating a payment link."
+        "This invoice's total or existing payments are not exact to the cent, so a payment link cannot be created safely."
       );
     }
 
@@ -2137,9 +2155,13 @@ async function createAndPersistSavedInvoicePaymentLink(input: {
             // record and is captured as unmatched, never applied.
             return fresh;
           }
-          const freshAmountMinor = toAmountMinorExact(
-            Number(freshFinished.balanceDue ?? freshFinished.total ?? 0)
-          );
+          // The fresh state must still be exactly collectible for the
+          // amount minted (fix round 11): a concurrent edit that made
+          // the total or records non-representable — or moved the
+          // record-derived balance away from the stored balance —
+          // aborts the install exactly like a moved amount does, and
+          // the retry surfaces the precise refusal.
+          const freshAmountMinor = getExactCollectibleBalanceMinor(freshFinished);
           if (
             freshFinished.documentType === "estimate" ||
             freshAmountMinor !== amountMinor ||
