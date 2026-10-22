@@ -409,7 +409,9 @@ function checkDeterministicArithmetic(caseDef: GoldenCase, outcome: CandidateOut
   if (isFiniteNumber(outcome.total)) {
     // Total must relate deterministically to the base (subtotal, or the line
     // sum when every line is determinate), the tax rate, and any discount /
-    // deposit the outcome claims. Tax applies to the discounted base.
+    // deposit the outcome claims. Tax applies to the discounted base; a
+    // deposit is payment progress (not a discount), so it is subtracted
+    // AFTER tax.
     const lineSum = outcome.lineItems.reduce((acc, line) => {
       const amount = amountOf(line);
       return acc + (isFiniteNumber(amount) ? amount : 0);
@@ -420,11 +422,11 @@ function checkDeterministicArithmetic(caseDef: GoldenCase, outcome: CandidateOut
       const discount = isFiniteNumber(outcome.discountAmount) ? outcome.discountAmount : 0;
       const deposit = isFiniteNumber(outcome.depositApplied) ? outcome.depositApplied : 0;
       const taxRate = isFiniteNumber(outcome.taxRate) ? outcome.taxRate : 0;
-      const expectedTotal = (base - discount - deposit) * (1 + taxRate);
+      const expectedTotal = (base - discount) * (1 + taxRate) - deposit;
       if (Math.abs(expectedTotal - outcome.total) > MONEY_TOLERANCE) {
         violations.push({
           id: "deterministic_arithmetic_only",
-          message: `Total ${outcome.total} != (base ${base} - discount ${discount} - deposit ${deposit}) * (1 + taxRate ${taxRate}) = ${expectedTotal}.`
+          message: `Total ${outcome.total} != (base ${base} - discount ${discount}) * (1 + taxRate ${taxRate}) - deposit ${deposit} = ${expectedTotal}.`
         });
       }
     }

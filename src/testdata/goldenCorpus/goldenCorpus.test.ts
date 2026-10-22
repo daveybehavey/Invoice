@@ -142,6 +142,32 @@ test("later evidence is field/subject scoped (GC-005 and GC-040)", () => {
   }
 });
 
+test("deposit is subtracted after tax, not before it (GC-015 + 10% tax)", () => {
+  const golden = GOLDEN_CASES.find((c) => c.id === "GC-015");
+  assert.ok(golden);
+  const base = golden.candidates.find((c) => c.label === "deposit-applied");
+  assert.ok(base);
+  // GC-015 shape: subtotal $2,000, $500 deposit already paid. With a known
+  // 10% tax the deposit is payment progress, not a discount: tax is charged
+  // on the full $2,000 and the deposit comes off afterwards.
+  // Correct balance: 2000 * 1.10 - 500 = $1,700.
+  const correct = { ...base, taxRate: 0.1, total: 1700 };
+  const correctResult = evaluateMoneySafetyInvariants(golden, correct);
+  assert.equal(
+    correctResult.ok,
+    true,
+    `deposit-after-tax total 1700 must pass: ${JSON.stringify(correctResult.violations)}`
+  );
+  // Pre-tax deposit (the old formula) undercharges: (2000 - 500) * 1.10 = $1,650.
+  const undercharged = { ...base, taxRate: 0.1, total: 1650 };
+  const underchargedResult = evaluateMoneySafetyInvariants(golden, undercharged);
+  assert.equal(underchargedResult.ok, false, "deposit-before-tax total 1650 must fail");
+  assert.ok(
+    underchargedResult.violations.some((v) => v.id === "deterministic_arithmetic_only"),
+    `expected deterministic_arithmetic_only, got ${JSON.stringify(underchargedResult.violations)}`
+  );
+});
+
 test("coverage matrix helper: category counts are non-zero", () => {
   const counts = new Map<string, number>();
   for (const golden of GOLDEN_CASES) {
