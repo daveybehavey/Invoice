@@ -7,6 +7,7 @@
  */
 
 import type {
+  BillingField,
   CandidateLineItem,
   CandidateOutcome,
   ExpectedFact,
@@ -258,6 +259,19 @@ function checkNoInventedMoney(caseDef: GoldenCase, outcome: CandidateOutcome): I
       continue;
     }
     if (amount === 0) {
+      // Asserting $0 against positive known evidence invents an amount:
+      // zeroing money that evidence says is owed is fabrication, not caution.
+      const knownPositive = knownMoneySubjects.some(
+        (fact) => (fact.value as number) > 0 && subjectMatches(line.description, fact.subject)
+      );
+      const waivedLine = waivedSubjects.some((f) => subjectMatches(line.description, f.subject));
+      if (knownPositive && !waivedLine) {
+        violations.push({
+          id: "no_evidence_no_invented_money",
+          message: `$0 on "${line.description}" contradicts known positive evidence; zeroing known money invents an amount.`,
+          lineDescription: line.description
+        });
+      }
       continue;
     }
 
@@ -346,20 +360,20 @@ function checkFreeSubjectBound(caseDef: GoldenCase, outcome: CandidateOutcome): 
     if (matchedWaiver) {
       continue;
     }
-    // Shared noun with a waived subject but not the same identity => unauthorized $0 leak.
-    const sharesNounWithWaiver = waived.some((f) => {
-      const waiverTokens = tokens(f.subject).filter((t) => t.length >= 3);
-      const lineToks = new Set(tokens(line.description));
-      const overlap = waiverTokens.filter((t) => lineToks.has(t));
-      return overlap.length > 0 && !subjectsEquivalent(line.description, f.subject);
-    });
-    if (sharesNounWithWaiver) {
-      violations.push({
-        id: "free_is_subject_bound",
-        message: `Explicit free/no-charge must not authorize $0 on sibling line "${line.description}".`,
-        lineDescription: line.description
-      });
+    // A $0 justified by the line's own known-zero evidence is not a waiver leak.
+    const knownZero = caseDef.expectedFacts.some(
+      (f) => f.state === "known" && f.value === 0 && subjectsEquivalent(line.description, f.subject)
+    );
+    if (knownZero) {
+      continue;
     }
+    // Free is subject-bound: ANY $0 line that is not itself the waived subject
+    // is an unauthorized leak, whether or not it shares a noun with the waiver.
+    violations.push({
+      id: "free_is_subject_bound",
+      message: `Explicit free/no-charge is subject-bound: $0 on "${line.description}" is not the waived subject.`,
+      lineDescription: line.description
+    });
   }
   return violations;
 }
@@ -390,6 +404,29 @@ function checkDeterministicArithmetic(caseDef: GoldenCase, outcome: CandidateOut
         id: "deterministic_arithmetic_only",
         message: `Subtotal ${outcome.subtotal} != sum of line amounts ${sum}.`
       });
+    }
+  }
+  if (isFiniteNumber(outcome.total)) {
+    // Total must relate deterministically to the base (subtotal, or the line
+    // sum when every line is determinate), the tax rate, and any discount /
+    // deposit the outcome claims. Tax applies to the discounted base.
+    const lineSum = outcome.lineItems.reduce((acc, line) => {
+      const amount = amountOf(line);
+      return acc + (isFiniteNumber(amount) ? amount : 0);
+    }, 0);
+    const allDeterminate = outcome.lineItems.every((line) => isFiniteNumber(amountOf(line)));
+    const base = isFiniteNumber(outcome.subtotal) ? outcome.subtotal : allDeterminate ? lineSum : undefined;
+    if (isFiniteNumber(base)) {
+      const discount = isFiniteNumber(outcome.discountAmount) ? outcome.discountAmount : 0;
+      const deposit = isFiniteNumber(outcome.depositApplied) ? outcome.depositApplied : 0;
+      const taxRate = isFiniteNumber(outcome.taxRate) ? outcome.taxRate : 0;
+      const expectedTotal = (base - discount - deposit) * (1 + taxRate);
+      if (Math.abs(expectedTotal - outcome.total) > MONEY_TOLERANCE) {
+        violations.push({
+          id: "deterministic_arithmetic_only",
+          message: `Total ${outcome.total} != (base ${base} - discount ${discount} - deposit ${deposit}) * (1 + taxRate ${taxRate}) = ${expectedTotal}.`
+        });
+      }
     }
   }
   return violations;
@@ -478,6 +515,47 @@ function checkLaterEvidenceFieldScoped(caseDef: GoldenCase, outcome: CandidateOu
       }
     }
   }
+  // Cross-subject propagation: a field that remains unresolved for one subject
+  // must not be filled by copying a known value for the same field from a
+  // different subject (later evidence binds only its own subject).
+  const lineFieldValue = (line: CandidateLineItem, field: BillingField): number | undefined => {
+    if (field === "quantity" || field === "hours") {
+      return isFiniteNumber(line.quantity) ? line.quantity : undefined;
+    }
+    if (field === "price" || field === "cost" || field === "rate") {
+      return isFiniteNumber(line.unitPrice) ? line.unitPrice : undefined;
+    }
+    if (field === "amount") {
+      const amount = amountOf(line);
+      return isFiniteNumber(amount) ? amount : undefined;
+    }
+    return undefined;
+  };
+  for (const un of caseDef.expectedUnresolved) {
+    const lines = outcome.lineItems.filter((line) => subjectMatches(line.description, un.subject));
+    for (const line of lines) {
+      const value = lineFieldValue(line, un.field);
+      if (!isFiniteNumber(value)) {
+        continue;
+      }
+      const donor = caseDef.expectedFacts.find(
+        (fact) =>
+          fact.state === "known" &&
+          fact.field === un.field &&
+          typeof fact.value === "number" &&
+          Math.abs(fact.value - value) <= MONEY_TOLERANCE &&
+          !subjectsEquivalent(fact.subject, un.subject) &&
+          !subjectMatches(line.description, fact.subject)
+      );
+      if (donor) {
+        violations.push({
+          id: "later_evidence_field_scoped",
+          message: `${un.field}=${value} on "${line.description}" copies later evidence for "${donor.subject}"; evidence is subject-scoped and "${un.subject}" stays unresolved.`,
+          lineDescription: line.description
+        });
+      }
+    }
+  }
   return violations;
 }
 
@@ -526,20 +604,22 @@ export function evaluateMoneySafetyInvariants(
 /**
  * True when an adversarial (expected-unsafe) candidate violates money safety.
  * Used by negative tests: adversarial fixtures MUST trip the checker.
+ * When the candidate declares expectedViolationIds, EVERY declared id must
+ * fire (declared ⊆ fired) — tripping an unrelated invariant does not count.
  */
 export function adversarialViolatesMoneySafety(
   caseDef: GoldenCase,
   outcome: CandidateOutcome
 ): boolean {
   const result = evaluateMoneySafetyInvariants(caseDef, outcome);
-  if (!result.ok && outcome.expectedViolationIds && outcome.expectedViolationIds.length > 0) {
-    const fired = new Set(result.violations.map((v) => v.id));
-    // Prefer cases that hit at least one declared id; still count any violation as adversarial.
-    if (outcome.expectedViolationIds.some((id) => fired.has(id))) {
-      return true;
-    }
+  if (result.ok) {
+    return false;
   }
-  return !result.ok;
+  if (outcome.expectedViolationIds && outcome.expectedViolationIds.length > 0) {
+    const fired = new Set(result.violations.map((v) => v.id));
+    return outcome.expectedViolationIds.every((id) => fired.has(id));
+  }
+  return true;
 }
 
 export function listRequiredInvariantIds(): MoneySafetyInvariantId[] {
