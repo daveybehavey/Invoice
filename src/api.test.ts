@@ -8367,6 +8367,102 @@ test("repeated record/remove cycles on a total-less legacy invoice do not drift 
   }
 });
 
+test("duplicating a total-less legacy invoice with payments reconstructs the gross as the copy's total and balance", async () => {
+  const ownerId = "settlement-r13-duplicate-anchor-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 100, "INV-SETTLE-R13-1");
+
+  // Legacy state exactly as the pre-round-12 writers left it: a $100
+  // invoice that took a $40 payment before totals were persisted — no
+  // total field at all, the already-reduced $60 balance, one $40
+  // record. (Seeded directly, as the other legacy fixtures are: the
+  // current record writer would persist the total itself.)
+  await seedTotalLessLegacyInvoice(invoiceId, {
+    balanceDue: 60,
+    paymentRecords: [{ id: "legacy-record-40", amount: 40, paidAt: "2026-03-12" }]
+  });
+  const seeded = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(seeded.invoiceData.finishedInvoice.total, undefined);
+  assert.equal(seeded.invoiceData.finishedInvoice.balanceDue, 60);
+
+  // The copy has earned no payments, so its balance must be the full
+  // gross the source's content represents — the reconstructed $100
+  // (60 balance + 40 recorded) — persisted as its total. Before the
+  // fix, the duplicate sanitizer read `total ?? balanceDue`, cleared
+  // the records, and kept the reduced $60 as the balance with no
+  // total at all: the copy presented as a $60 invoice, and a $60
+  // payment (or a $60 link) settled it as paid.
+  const duplicateResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/duplicate`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(duplicateResponse.status, 200);
+  const duplicateId = duplicateResponse.body.invoice.invoiceId as string;
+  assert.ok(duplicateId);
+  assert.notEqual(duplicateId, invoiceId);
+
+  const duplicate = await getSettlementInvoice(ownerId, duplicateId);
+  assert.equal(duplicate.status, "draft");
+  const duplicateFinished = duplicate.invoiceData.finishedInvoice;
+  assert.equal(duplicateFinished.total, 100);
+  assert.equal(duplicateFinished.balanceDue, 100);
+  assert.equal((duplicateFinished.paymentRecords ?? []).length, 0);
+  assert.equal(duplicateFinished.monetaryRevision, 0);
+  assert.deepEqual(duplicateFinished.paymentLinks ?? [], []);
+
+  // The harm, closed: recording the old (wrong) $60 amount against
+  // the copy now leaves $40 still due — it no longer marks the copy
+  // paid.
+  const recordResponse = await request(app)
+    .post(`/api/invoices/${duplicateId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 60, paidAt: "2026-03-14" });
+  assert.equal(recordResponse.status, 200);
+  const afterRecord = await getSettlementInvoice(ownerId, duplicateId);
+  assert.equal(afterRecord.invoiceData.finishedInvoice.total, 100);
+  assert.equal(afterRecord.invoiceData.finishedInvoice.balanceDue, 40);
+  assert.equal(afterRecord.status, "sent");
+});
+
+test("duplicating a total-less legacy invoice with no payments keeps its full balance and gains the persisted total", async () => {
+  const ownerId = "settlement-r13-duplicate-plain-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 100, "INV-SETTLE-R13-2");
+  await seedTotalLessLegacyInvoice(invoiceId, { balanceDue: 100, paymentRecords: [] });
+
+  const duplicateResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/duplicate`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(duplicateResponse.status, 200);
+  const duplicateId = duplicateResponse.body.invoice.invoiceId as string;
+  assert.ok(duplicateId);
+
+  const duplicate = await getSettlementInvoice(ownerId, duplicateId);
+  const duplicateFinished = duplicate.invoiceData.finishedInvoice;
+  assert.equal(duplicateFinished.total, 100);
+  assert.equal(duplicateFinished.balanceDue, 100);
+  assert.equal((duplicateFinished.paymentRecords ?? []).length, 0);
+});
+
+test("duplicating a total-less legacy invoice whose gross cannot be reconstructed exactly is refused", async () => {
+  const ownerId = "settlement-r13-duplicate-failclosed-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 100, "INV-SETTLE-R13-3");
+
+  // A fractional-cent balance has no exact minor-unit form, so the
+  // gross (balance + records) cannot be reconstructed exactly. The
+  // duplicate must fail closed in the standing exactness family
+  // rather than invent a total from a rounded balance.
+  await seedTotalLessLegacyInvoice(invoiceId, { balanceDue: 60.005, paymentRecords: [] });
+
+  const duplicateResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/duplicate`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(duplicateResponse.status, 400);
+  assert.match(String(duplicateResponse.body.error || ""), /not exact to the cent/i);
+  assert.match(String(duplicateResponse.body.error || ""), /duplicat/i);
+  assert.equal(duplicateResponse.body.invoice, undefined);
+});
+
 test("stripe webhook endpoint requires signature header", async () => {
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";

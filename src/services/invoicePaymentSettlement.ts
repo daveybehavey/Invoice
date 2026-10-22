@@ -590,16 +590,46 @@ export function prepareCreatedInvoicePaymentState(
  * metadata names the ORIGINAL invoice, so paying the duplicate's link
  * would settle the original. Unlike creation, a duplicate does not
  * keep manual payment records either: its balance is its full total
- * with zero payments applied.
+ * with zero payments applied. A total-less (legacy) source's full
+ * total is the reconstructed gross — its stored balance plus the
+ * records being cleared — never the reduced balance alone (fix
+ * round 13).
  */
 export function sanitizeDuplicatedInvoicePaymentState(
   finishedInvoice: StoredFinishedInvoice
 ): StoredFinishedInvoice {
   const sanitized = sanitizeCreatedInvoicePaymentState(finishedInvoice);
+  if (finishedInvoice.total != null) {
+    return {
+      ...sanitized,
+      paymentRecords: [],
+      balanceDue: Number(sanitized.total ?? sanitized.balanceDue ?? 0)
+    };
+  }
+  // Total-less (legacy) source (fix round 13): the gross the copy is
+  // anchored to must be reconstructed from the source's fresh stored
+  // state BEFORE its payment records are cleared — stored balance
+  // plus every stored record, the same reconstruction the save path
+  // and the record/remove writers anchor to (rounds 11–12) — and
+  // persisted as the copy's total, with the full gross as its balance.
+  // Reading `total ?? balanceDue` with the records cleared instead
+  // kept the already-reduced balance as the copy's whole amount:
+  // duplicating a $100 invoice carrying a $40 record produced a $60
+  // copy that a $60 payment (or a $60 link) settled as paid, although
+  // the copied content is a $100 invoice. When the gross has no exact
+  // minor-unit form the duplicate fails closed, in the standing
+  // exactness family, rather than inventing a total.
+  const grossMinor = reconstructGrossTotalMinor(finishedInvoice);
+  if (grossMinor === null) {
+    throw new Error(
+      "This invoice's total or existing payments are not exact to the cent, so it cannot be duplicated safely."
+    );
+  }
   return {
     ...sanitized,
     paymentRecords: [],
-    balanceDue: Number(sanitized.total ?? sanitized.balanceDue ?? 0)
+    total: grossMinor / 100,
+    balanceDue: grossMinor / 100
   };
 }
 
