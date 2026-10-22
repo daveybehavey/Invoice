@@ -8239,7 +8239,7 @@ test("repeated echo saves of an invoice without a total do not decay the record-
 
 async function seedTotalLessLegacyInvoice(
   invoiceId: string,
-  seed: { balanceDue: number; paymentRecords: Array<Record<string, unknown>> }
+  seed: { balanceDue: number; paymentRecords: Array<Record<string, unknown>>; paymentLinkUrl?: string }
 ) {
   const storedRaw = JSON.parse(await fs.readFile(storeFilePath, "utf8")) as {
     invoices: Array<{
@@ -8249,6 +8249,7 @@ async function seedTotalLessLegacyInvoice(
           total?: number;
           balanceDue: number;
           paymentRecords: Array<Record<string, unknown>>;
+          paymentLinkUrl?: string;
         };
       };
     }>;
@@ -8259,6 +8260,9 @@ async function seedTotalLessLegacyInvoice(
   delete finished.total;
   finished.balanceDue = seed.balanceDue;
   finished.paymentRecords = seed.paymentRecords;
+  if (seed.paymentLinkUrl) {
+    finished.paymentLinkUrl = seed.paymentLinkUrl;
+  }
   await fs.writeFile(storeFilePath, `${JSON.stringify(storedRaw, null, 2)}\n`, "utf8");
 }
 
@@ -8461,6 +8465,131 @@ test("duplicating a total-less legacy invoice whose gross cannot be reconstructe
   assert.match(String(duplicateResponse.body.error || ""), /not exact to the cent/i);
   assert.match(String(duplicateResponse.body.error || ""), /duplicat/i);
   assert.equal(duplicateResponse.body.invoice, undefined);
+});
+
+test("legacy settlement on a total-less invoice with a manual record settles against the reconstructed gross", async () => {
+  const ownerId = "settlement-r14-legacy-settle-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 100, "INV-SETTLE-R14-1");
+
+  // The G-dot round-13 re-gate case, seeded exactly: a legacy
+  // total-less invoice (a $100 invoice that took a $40 manual payment
+  // before totals were persisted) — no total field at all, the
+  // already-reduced $60 balance, one $40 manual record, and an
+  // existing legacy payment link (a stored URL with zero link
+  // records). No current API path installs this state, so seed it
+  // directly in the store, as the other legacy fixtures do.
+  await seedTotalLessLegacyInvoice(invoiceId, {
+    balanceDue: 60,
+    paymentRecords: [{ id: "legacy-record-40", amount: 40, paidAt: "2026-03-12" }],
+    paymentLinkUrl: "https://pay.stripe.test/plink_legacy_r14"
+  });
+  const seeded = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(seeded.invoiceData.finishedInvoice.total, undefined);
+  assert.equal(seeded.invoiceData.finishedInvoice.balanceDue, 60);
+
+  // The Stripe payment of the $60 balance passes the legacy link
+  // binding (exact amount + currency + a proven legacy link). Before
+  // the fix, settlement's exact paid test read `total ?? balanceDue`
+  // — the already-reduced $60 — as the gross, computed
+  // 60 - 40 - 60 = -40, and captured the payment as an UNMATCHED
+  // overpayment: real money collected, the invoice never paid, and a
+  // replay could not repair it (the intent is deduplicated).
+  const webhookResponse = await deliverSettlementWebhook({
+    eventId: "evt_settle_r14_legacy",
+    paymentIntentId: "pi_settle_r14_legacy",
+    invoiceId,
+    ownerId,
+    amountReceived: 6000,
+    currency: "usd"
+  });
+  assert.equal(webhookResponse.status, 200);
+  assert.equal(webhookResponse.body.handled, true);
+
+  const settled = await getSettlementInvoice(ownerId, invoiceId);
+  const finished = settled.invoiceData.finishedInvoice;
+  assert.equal(settled.status, "paid");
+  // The stable gross is reconstructed (60 balance + 40 records) and
+  // persisted as the invoice's total by the settlement itself.
+  assert.equal(finished.total, 100);
+  assert.equal(finished.balanceDue, 0);
+  // The manual record survives and exactly ONE provider record is
+  // written for the Stripe payment; nothing lands unmatched.
+  assert.equal(finished.paymentRecords.length, 2);
+  const providerRecords = finished.paymentRecords.filter(
+    (record: { providerPaymentIntentId?: string }) => record.providerPaymentIntentId
+  );
+  assert.equal(providerRecords.length, 1);
+  assert.equal(providerRecords[0]?.providerPaymentIntentId, "pi_settle_r14_legacy");
+  assert.equal(providerRecords[0]?.amountMinor, 6000);
+  assert.equal((finished.unmatchedPayments ?? []).length, 0);
+
+  // Replaying the same event changes nothing...
+  const replayResponse = await deliverSettlementWebhook({
+    eventId: "evt_settle_r14_legacy",
+    paymentIntentId: "pi_settle_r14_legacy",
+    invoiceId,
+    ownerId,
+    amountReceived: 6000,
+    currency: "usd"
+  });
+  assert.equal(replayResponse.status, 200);
+  // ...and neither does the same intent under a new event id.
+  const rekeyedResponse = await deliverSettlementWebhook({
+    eventId: "evt_settle_r14_legacy_rekeyed",
+    paymentIntentId: "pi_settle_r14_legacy",
+    invoiceId,
+    ownerId,
+    amountReceived: 6000,
+    currency: "usd"
+  });
+  assert.equal(rekeyedResponse.status, 200);
+
+  const afterReplay = await getSettlementInvoice(ownerId, invoiceId);
+  const replayedFinished = afterReplay.invoiceData.finishedInvoice;
+  assert.equal(afterReplay.status, "paid");
+  assert.equal(replayedFinished.total, 100);
+  assert.equal(replayedFinished.balanceDue, 0);
+  assert.equal(replayedFinished.paymentRecords.length, 2);
+  assert.equal((replayedFinished.unmatchedPayments ?? []).length, 0);
+});
+
+test("legacy settlement on a total-less invoice whose gross is not exactly representable fails closed", async () => {
+  const ownerId = "settlement-r14-legacy-indeterminate-owner";
+  const invoiceId = await saveSettlementInvoice(ownerId, 100, "INV-SETTLE-R14-2");
+
+  // Same legacy shape, but the manual record is fractional-cent
+  // ($40.005): the gross (balance + records) has no exact minor-unit
+  // form, so settlement must fail closed — no paid status, no
+  // provider record, no persisted total, no balance movement. The
+  // payment is captured durably as unmatched for reconciliation (the
+  // settlement module's standing fail-closed outcome), never applied.
+  await seedTotalLessLegacyInvoice(invoiceId, {
+    balanceDue: 60,
+    paymentRecords: [{ id: "legacy-record-frac", amount: 40.005, paidAt: "2026-03-12" }],
+    paymentLinkUrl: "https://pay.stripe.test/plink_legacy_r14_frac"
+  });
+
+  const webhookResponse = await deliverSettlementWebhook({
+    eventId: "evt_settle_r14_frac",
+    paymentIntentId: "pi_settle_r14_frac",
+    invoiceId,
+    ownerId,
+    amountReceived: 6000,
+    currency: "usd"
+  });
+  assert.equal(webhookResponse.status, 200);
+  assert.equal(webhookResponse.body.handled, true);
+
+  const after = await getSettlementInvoice(ownerId, invoiceId);
+  const finished = after.invoiceData.finishedInvoice;
+  assert.notEqual(after.status, "paid");
+  assert.equal(finished.total, undefined);
+  assert.equal(finished.balanceDue, 60);
+  assert.equal(finished.paymentRecords.length, 1);
+  assert.equal(finished.paymentRecords[0]?.id, "legacy-record-frac");
+  const unmatched = finished.unmatchedPayments ?? [];
+  assert.equal(unmatched.length, 1);
+  assert.equal(unmatched[0]?.providerPaymentIntentId, "pi_settle_r14_frac");
 });
 
 test("stripe webhook endpoint requires signature header", async () => {

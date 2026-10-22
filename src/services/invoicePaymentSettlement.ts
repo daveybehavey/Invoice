@@ -112,7 +112,15 @@ type StoredFinishedInvoice = SavedInvoice["invoiceData"]["finishedInvoice"];
  *   $0/paid, and removing a record could not restore the balance.
  *   Those writers now reconstruct and persist the stable total from
  *   fresh stored state before recomputing, and fail closed when the
- *   reconstruction is not exactly representable.
+ *   reconstruction is not exactly representable. Settlement was the
+ *   last writer still on the raw fallback (fix round 14): its exact
+ *   paid test read the reduced balance as the gross, so a legacy
+ *   link's payment on a total-less invoice with records landed as an
+ *   unmatched overpayment and the invoice never reached paid.
+ *   Settlement now performs the same reconstruction inside its atomic
+ *   transform and persists the stable total on success; a gross with
+ *   no exact minor-unit form fails closed as an unmatched capture,
+ *   with no money state moved.
  *
  * Amounts cross the provider boundary in integer minor units. Conversion
  * uses the codebase's existing two-decimal convention; currency-exponent
@@ -1009,7 +1017,15 @@ export function invalidateLinksForBalanceChange(
  * under-collect against what the records say is still owed, so the
  * link must not exist. This is deliberately the exact complement of
  * the checks settleStripePaymentOnInvoice performs, so "collectible"
- * can never drift from "settlement would accept it".
+ * can never drift from "settlement would accept it". One stated
+ * asymmetry (fix round 14): settlement reconstructs the gross of a
+ * total-less invoice from its stored balance plus records, while
+ * this gate still derives against `total ?? balanceDue` — so a
+ * total-less invoice carrying records is not collectible for a NEW
+ * link even though its existing legacy link can settle. Minting
+ * stays conservative (a refusal loses nothing; the legacy link
+ * remains the collection route), and no link is ever minted for an
+ * amount settlement would reject.
  */
 export function getExactCollectibleBalanceMinor(
   finishedInvoice: StoredFinishedInvoice
@@ -1193,10 +1209,38 @@ export function settleStripePaymentOnInvoice(input: {
   // minor units, and the post-settlement balance must be exactly zero —
   // never a rounded or clamped approximation of zero. Anything else is
   // captured as unmatched with a reason instead of being applied.
-  const invoiceTotal = Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0);
-  const totalMinor = toAmountMinorExact(invoiceTotal);
-  if (totalMinor === null) {
-    return unmatched("non_representable_total", boundExpectedMinor);
+  //
+  // The total this test anchors to is the STABLE total (fix round 14).
+  // An invoice carrying a total anchors to it, exactly as before. A
+  // total-less (legacy) invoice anchors to the gross reconstructed
+  // from the stored state — stored balance plus every payment record,
+  // the reconstruction the save path and the record/remove/duplicate
+  // writers anchor to (rounds 11–13) — and a successful settlement
+  // persists that gross as the invoice's total. Before this round,
+  // settlement fell back to `total ?? balanceDue` and read the
+  // already-reduced balance as the gross: a total-less $100 invoice
+  // carrying a $40 manual record and a $60 balance failed this test
+  // as an "overpayment" (60 - 40 - 60 < 0) when its legacy link's $60
+  // payment arrived, so real money was captured unmatched, the
+  // invoice never reached paid, and a replay could not repair it
+  // (the intent is deduplicated). When the gross has no exact
+  // minor-unit form, settlement fails closed exactly as it does for a
+  // non-representable stored total: the payment is captured unmatched
+  // and no money state moves.
+  let totalMinor: number | null;
+  let reconstructedTotalMajor: number | undefined;
+  if (finishedInvoice.total != null) {
+    totalMinor = toAmountMinorExact(Number(finishedInvoice.total));
+    if (totalMinor === null) {
+      return unmatched("non_representable_total", boundExpectedMinor);
+    }
+  } else {
+    const grossMinor = reconstructGrossTotalMinor(finishedInvoice);
+    if (grossMinor === null) {
+      return unmatched("non_representable_total", boundExpectedMinor);
+    }
+    totalMinor = grossMinor;
+    reconstructedTotalMajor = grossMinor / 100;
   }
   const paidMinorBefore = sumPaymentRecordsMinor(finishedInvoice.paymentRecords ?? []);
   if (paidMinorBefore === null) {
@@ -1237,6 +1281,11 @@ export function settleStripePaymentOnInvoice(input: {
       ...invoice.invoiceData,
       finishedInvoice: {
         ...finishedInvoice,
+        // Persist the reconstructed gross as the stable total when
+        // this settlement anchored a total-less invoice to it (fix
+        // round 14), so no later writer can mistake the balance for
+        // the gross. Invoices that already carry a total keep it.
+        ...(reconstructedTotalMajor !== undefined ? { total: reconstructedTotalMajor } : {}),
         balanceDue: nextBalanceDue,
         paymentRecords: nextPaymentRecords,
         paymentLinks: nextLinks,
