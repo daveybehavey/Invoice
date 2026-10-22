@@ -11,10 +11,16 @@ import {
   getSavedInvoiceByPortalToken,
   listRecentClientContext,
   listSavedInvoiceMetadata,
+  mutateSavedInvoice,
   restoreSavedInvoice,
   saveInvoiceDocument,
+  settleStripeInvoicePayment,
   updateSavedInvoiceStatus
 } from "./savedInvoiceStore.js";
+import type {
+  StripeSettlementInput,
+  StripeSettlementResult
+} from "./invoicePaymentSettlement.js";
 import { PostgresSavedInvoiceRepository } from "./savedInvoicePostgresStore.js";
 
 export type SavedInvoiceBackend = "file" | "postgres";
@@ -56,6 +62,19 @@ export interface SavedInvoiceRepository {
   ): Promise<SavedInvoice>;
   restoreSavedInvoice(invoiceId: string, ownerId: string): Promise<SavedInvoice>;
   deleteSavedInvoice(invoiceId: string, ownerId: string): Promise<void>;
+  settleStripeInvoicePayment(input: StripeSettlementInput): Promise<StripeSettlementResult>;
+  /**
+   * Apply a transform to the freshly stored invoice inside the backend's
+   * serialization (file mutation lock / Postgres FOR UPDATE transaction).
+   * Writers that derive the next document from current state — manual
+   * payments, payment-link persistence — must go through here, never
+   * through a whole-document save of a previously read snapshot.
+   */
+  mutateSavedInvoice(input: {
+    invoiceId: string;
+    ownerId: string;
+    mutate: (invoice: SavedInvoice) => SavedInvoice;
+  }): Promise<SavedInvoice>;
 }
 
 class FileSavedInvoiceRepository implements SavedInvoiceRepository {
@@ -115,6 +134,18 @@ class FileSavedInvoiceRepository implements SavedInvoiceRepository {
 
   async deleteSavedInvoice(invoiceId: string, ownerId: string): Promise<void> {
     return deleteSavedInvoice(invoiceId, ownerId);
+  }
+
+  async settleStripeInvoicePayment(input: StripeSettlementInput): Promise<StripeSettlementResult> {
+    return settleStripeInvoicePayment(input);
+  }
+
+  async mutateSavedInvoice(input: {
+    invoiceId: string;
+    ownerId: string;
+    mutate: (invoice: SavedInvoice) => SavedInvoice;
+  }): Promise<SavedInvoice> {
+    return mutateSavedInvoice(input);
   }
 }
 

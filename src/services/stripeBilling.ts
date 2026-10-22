@@ -158,6 +158,13 @@ type InvoicePaymentLinkInput = {
   total: number;
   currency?: string;
   successPath?: string;
+  /** Local payment-link record id; echoed back through Stripe metadata so a
+   * settlement can be bound to the exact link that was paid. */
+  paymentLinkRecordId: string;
+  /** Amount the link collects, in minor units. Authoritative for the
+   * provider charge; settlement verifies Stripe's collected amount against
+   * the stored link record, not against this input. */
+  amountMinor: number;
 };
 
 type InvoicePaymentLinkResult = {
@@ -169,6 +176,12 @@ type InvoicePaymentWebhookEffect = {
   invoiceId: string;
   ownerId: string;
   paymentIntentId: string;
+  eventId: string;
+  /** Stripe's authoritative collected amount (PaymentIntent.amount_received). */
+  amountReceivedMinor: number | null;
+  /** Stripe's authoritative collected currency (PaymentIntent.currency). */
+  currency: string;
+  paymentLinkRecordId?: string;
 };
 
 const STRIPE_API_VERSION: Stripe.LatestApiVersion = "2026-02-25.clover";
@@ -336,22 +349,36 @@ export async function createStripeInvoicePaymentLink(
     throw new Error("Stripe billing is not configured.");
   }
 
-  const amountCents = Math.round(Number(input.total) * 100);
+  const amountCents = Math.round(Number(input.amountMinor));
   if (!Number.isFinite(amountCents) || amountCents <= 0) {
     throw new Error("Invoice total must be greater than 0 before creating a payment link.");
   }
 
   const invoiceNumber = normalizeText(input.invoiceNumber) || input.invoiceId;
   const customerName = normalizeText(input.customerName);
+  const currency = normalizeCurrency(input.currency);
   const successPath = normalizePathWithFallback(
     input.successPath,
     `/manual?payment=success&invoiceId=${encodeURIComponent(input.invoiceId)}`
   );
+  // Link identity + bound amount travel in both the link metadata and the
+  // payment-intent metadata Stripe copies onto the resulting PaymentIntent.
+  // Metadata is linkage only — settlement verifies against Stripe's
+  // authoritative amount_received/currency, never against these values.
+  const bindingMetadata = {
+    paymentKind: "saved_invoice_payment",
+    invoiceId: input.invoiceId,
+    ownerId: input.ownerId,
+    invoiceNumber,
+    paymentLinkRecordId: input.paymentLinkRecordId,
+    amountMinor: String(amountCents),
+    currency
+  };
   const paymentLink = await stripe.paymentLinks.create({
     line_items: [
       {
         price_data: {
-          currency: normalizeCurrency(input.currency),
+          currency,
           unit_amount: amountCents,
           product_data: {
             name: `Invoice ${invoiceNumber}`,
@@ -367,19 +394,9 @@ export async function createStripeInvoicePaymentLink(
         url: `${input.baseUrl}${successPath}`
       }
     },
-    metadata: {
-      paymentKind: "saved_invoice_payment",
-      invoiceId: input.invoiceId,
-      ownerId: input.ownerId,
-      invoiceNumber
-    },
+    metadata: bindingMetadata,
     payment_intent_data: {
-      metadata: {
-        paymentKind: "saved_invoice_payment",
-        invoiceId: input.invoiceId,
-        ownerId: input.ownerId,
-        invoiceNumber
-      }
+      metadata: bindingMetadata
     }
   });
 
@@ -615,7 +632,10 @@ export async function processStripeWebhookEvent(input: {
   }
 
   if (event.type === "payment_intent.succeeded") {
-    const invoicePayment = handlePaymentIntentSucceededEvent(event.data.object as Stripe.PaymentIntent);
+    const invoicePayment = handlePaymentIntentSucceededEvent(
+      event.data.object as Stripe.PaymentIntent,
+      event.id
+    );
     return {
       eventId: event.id,
       eventType: event.type,
@@ -680,7 +700,8 @@ async function handleSubscriptionEvent(subscription: Stripe.Subscription): Promi
 }
 
 function handlePaymentIntentSucceededEvent(
-  paymentIntent: Stripe.PaymentIntent
+  paymentIntent: Stripe.PaymentIntent,
+  eventId: string
 ): InvoicePaymentWebhookEffect | null {
   const metadata = paymentIntent.metadata ?? {};
   if (normalizeText(metadata.paymentKind) !== "saved_invoice_payment") {
@@ -691,10 +712,20 @@ function handlePaymentIntentSucceededEvent(
   if (!invoiceId || !ownerId) {
     return null;
   }
+  const paymentLinkRecordId = normalizeText(metadata.paymentLinkRecordId);
   return {
     invoiceId,
     ownerId,
-    paymentIntentId: paymentIntent.id
+    paymentIntentId: paymentIntent.id,
+    eventId,
+    // Stripe's own record of what was collected is the settlement proof;
+    // metadata values are never trusted for the amount.
+    amountReceivedMinor:
+      typeof paymentIntent.amount_received === "number" && Number.isFinite(paymentIntent.amount_received)
+        ? paymentIntent.amount_received
+        : null,
+    currency: normalizeText(paymentIntent.currency).toLowerCase(),
+    paymentLinkRecordId: paymentLinkRecordId || undefined
   };
 }
 

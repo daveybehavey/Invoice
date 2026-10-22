@@ -1926,6 +1926,16 @@ function ManualInvoiceCanvas() {
       }
       setSavedInvoiceStatus(payload?.invoice?.status ?? "draft");
       setPaymentRecords(payload?.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? paymentRecords);
+      if (savedInvoiceId) {
+        // An update can supersede the stored payment link (a monetary
+        // edit clears it server-side): sync the editor's URL with the
+        // server's, including clearing it, so the share pack can never
+        // hand out a superseded link. Creates skip this — the create
+        // response carries no URL by design, and a custom URL typed
+        // before the first save must survive until the next save
+        // persists it.
+        setPaymentLinkUrl(payload?.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl ?? "");
+      }
       setPortalAccessToken(payload?.invoice?.invoiceData?.finishedInvoice?.portalAccessToken ?? portalAccessToken);
       setClientMemoryList(
         rememberClientDetails(billToDetails, {
@@ -2073,6 +2083,10 @@ function ManualInvoiceCanvas() {
       }
       setPaymentRecords(payload?.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? []);
       setSavedInvoiceStatus(payload?.invoice?.status ?? savedInvoiceStatus);
+      // Recording a payment invalidates the outstanding payment link
+      // server-side: sync the editor's URL with the response (cleared
+      // when the server omits it) so a superseded link is never shared.
+      setPaymentLinkUrl(payload?.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl ?? "");
       setSaveStatus(
         payload?.invoice?.status === "paid"
           ? "Payment recorded. Invoice is now paid."
@@ -2108,6 +2122,9 @@ function ManualInvoiceCanvas() {
       }
       setPaymentRecords(payload?.invoice?.invoiceData?.finishedInvoice?.paymentRecords ?? []);
       setSavedInvoiceStatus(payload?.invoice?.status ?? savedInvoiceStatus);
+      // Removing a payment also invalidates the outstanding link
+      // server-side; keep the editor's URL in sync (see record-payment).
+      setPaymentLinkUrl(payload?.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl ?? "");
       setSaveStatus("Payment removed");
       window.setTimeout(() => setSaveStatus(""), 1500);
     } catch (error) {

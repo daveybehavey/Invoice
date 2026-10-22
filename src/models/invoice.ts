@@ -137,7 +137,48 @@ export const PaymentRecordSchema = z.object({
   id: z.string().min(1),
   amount: PositiveNumber,
   paidAt: OptionalString,
-  note: OptionalString
+  note: OptionalString,
+  // Provider evidence for payments applied through atomic settlement.
+  // Manual payments leave these unset. `amountMinor` is the authoritative
+  // integer amount Stripe collected; `amount` stays the major-unit view.
+  provider: OptionalString,
+  providerPaymentIntentId: OptionalString,
+  providerEventId: OptionalString,
+  currency: OptionalString,
+  amountMinor: z.number().int().nonnegative().optional()
+});
+
+export const PaymentLinkRecordSchema = z.object({
+  id: z.string().min(1),
+  provider: z.literal("stripe").default("stripe"),
+  providerPaymentLinkId: OptionalString,
+  // Amount the link collects, in minor units, captured at creation time.
+  // A settlement may only apply against a link whose amountMinor/currency
+  // match what the provider actually collected.
+  amountMinor: z.number().int().nonnegative(),
+  currency: CurrencyString,
+  // Monetary revision of the invoice when the link was minted. Any monetary
+  // edit bumps the revision and supersedes the link.
+  invoiceRevision: z.number().int().nonnegative().default(0),
+  status: z.enum(["active", "superseded", "paid"]),
+  createdAt: z.string().min(1),
+  deactivatedAt: OptionalString
+});
+
+export const UnmatchedPaymentRecordSchema = z.object({
+  id: z.string().min(1),
+  provider: z.literal("stripe").default("stripe"),
+  providerPaymentIntentId: z.string().min(1),
+  providerEventId: OptionalString,
+  paymentLinkRecordId: OptionalString,
+  // What the provider actually collected (minor units) versus what the
+  // invoice/link expected. Captured durably for reconciliation; an unmatched
+  // payment never changes balance or status.
+  amountMinor: z.number().int().nonnegative(),
+  currency: z.string().min(1),
+  expectedAmountMinor: z.number().int().nonnegative().optional(),
+  reason: z.string().min(1),
+  receivedAt: z.string().min(1)
 });
 
 export const PaymentMethodKindSchema = z.enum(["cheque", "etransfer", "bank_transfer", "cash", "custom"]);
@@ -169,7 +210,14 @@ export const FinishedInvoiceSchema = z.object({
   total: OptionalNumber,
   balanceDue: OptionalNumber,
   paymentRecords: z.array(PaymentRecordSchema).default([]),
-  paymentMethods: z.array(PaymentMethodSchema).default([])
+  paymentMethods: z.array(PaymentMethodSchema).default([]),
+  // Server-owned payment-link state. Bumped on every monetary edit; clients
+  // cannot mint a valid settlement by writing these fields (settlement still
+  // requires provider evidence), and the save route preserves the stored
+  // values rather than trusting the request body.
+  monetaryRevision: z.number().int().nonnegative().default(0),
+  paymentLinks: z.array(PaymentLinkRecordSchema).default([]),
+  unmatchedPayments: z.array(UnmatchedPaymentRecordSchema).default([])
 });
 
 export const RecordPaymentRequestSchema = z.object({
@@ -383,11 +431,28 @@ export type Material = z.infer<typeof MaterialSchema>;
 type FinishedInvoiceOutput = z.infer<typeof FinishedInvoiceSchema>;
 export type FinishedInvoice = Omit<
   FinishedInvoiceOutput,
-  "documentType" | "paymentRecords" | "paymentMethods"
+  | "documentType"
+  | "paymentRecords"
+  | "paymentMethods"
+  | "monetaryRevision"
+  | "paymentLinks"
+  | "unmatchedPayments"
 > &
-  Partial<Pick<FinishedInvoiceOutput, "documentType" | "paymentRecords" | "paymentMethods">>;
+  Partial<
+    Pick<
+      FinishedInvoiceOutput,
+      | "documentType"
+      | "paymentRecords"
+      | "paymentMethods"
+      | "monetaryRevision"
+      | "paymentLinks"
+      | "unmatchedPayments"
+    >
+  >;
 export type InvoiceLineItem = z.infer<typeof InvoiceLineItemSchema>;
 export type PaymentRecord = z.infer<typeof PaymentRecordSchema>;
+export type PaymentLinkRecord = z.infer<typeof PaymentLinkRecordSchema>;
+export type UnmatchedPaymentRecord = z.infer<typeof UnmatchedPaymentRecordSchema>;
 export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
 export type InvoiceDocumentType = z.infer<typeof InvoiceDocumentTypeSchema>;
 export type LaborPricingChoice = z.infer<typeof LaborPricingChoiceSchema>;

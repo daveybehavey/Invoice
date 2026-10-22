@@ -10,6 +10,21 @@ import {
   SavedInvoiceStatus
 } from "../models/invoice.js";
 import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
+import {
+  applyMonetaryEditInvalidation,
+  computeMonetaryFingerprint,
+  reconcilePaidStatusAfterSave,
+  prepareCreatedInvoicePaymentState,
+  sanitizeDuplicatedInvoicePaymentState,
+  settleStripePaymentOnInvoice,
+  type StripeSettlementInput,
+  type StripeSettlementResult
+} from "./invoicePaymentSettlement.js";
+
+/** A transform applied to the freshly stored invoice inside the store's
+ * serialization (a FOR UPDATE transaction). It must compute the next state
+ * from the invoice it is given — never from a snapshot read earlier. */
+export type SavedInvoiceMutation = (invoice: SavedInvoice) => SavedInvoice;
 
 type SavedInvoiceRow = {
   invoice_id: string;
@@ -44,42 +59,147 @@ export class PostgresSavedInvoiceRepository {
     const now = new Date().toISOString();
 
     if (input.invoiceId) {
-      const result = await this.query<SavedInvoiceRow>(
-        `
-          update saved_invoices
-          set source_type = $3,
-              invoice_data = $4::jsonb,
-              updated_at = $5,
-              deleted_at = null
-          where invoice_id = $1 and owner_id = $2
-          returning
-            invoice_id,
-            owner_id,
-            created_at,
-            updated_at,
-            status,
-            previous_status,
-            deleted_at,
-            source_type,
-            invoice_data
-        `,
-        [input.invoiceId, input.ownerId, input.sourceType, JSON.stringify(input.invoiceData), now]
-      );
-      const row = result.rows[0];
-      if (!row) {
-        throw new Error(`Invoice "${input.invoiceId}" was not found.`);
-      }
-      return parseSavedInvoiceRow(row);
+      // The update runs in one transaction with the row locked, and the
+      // server-owned payment state is merged against the freshly locked
+      // row — the same guarantee the file store's mutation lock gives —
+      // so a client save can never overwrite a settlement that landed
+      // after the client's snapshot was taken.
+      return this.withClient(async (client) => {
+        await client.query("begin");
+        try {
+          const existingResult = await client.query<SavedInvoiceRow>(
+            `
+              select
+                invoice_id,
+                owner_id,
+                created_at,
+                updated_at,
+                status,
+                previous_status,
+                deleted_at,
+                source_type,
+                invoice_data
+              from saved_invoices
+              where invoice_id = $1 and owner_id = $2
+              for update
+            `,
+            [input.invoiceId, input.ownerId]
+          );
+          const existingRow = existingResult.rows[0];
+          if (!existingRow) {
+            throw new Error(`Invoice "${input.invoiceId}" was not found.`);
+          }
+          const existing = parseSavedInvoiceRow(existingRow);
+          const mergedFinishedInvoice = applyMonetaryEditInvalidation({
+            existing: existing.invoiceData.finishedInvoice,
+            incoming: input.invoiceData.finishedInvoice,
+            nowIso: now,
+            existingStatus: existing.status
+          });
+          const mergedInvoiceData = {
+            ...input.invoiceData,
+            finishedInvoice: mergedFinishedInvoice
+          };
+          // The paid status is derived from the merged records here,
+          // inside the same FOR UPDATE transaction: a positive exact
+          // balance reopens a paid invoice, and records that exactly
+          // cover the total pay a draft/sent one. The fingerprint
+          // comparison is the same one that drives link supersession.
+          const mergedStatus = reconcilePaidStatusAfterSave(
+            existing.status,
+            mergedFinishedInvoice,
+            computeMonetaryFingerprint(existing.invoiceData.finishedInvoice) !==
+              computeMonetaryFingerprint(mergedFinishedInvoice)
+          );
+          // Validate the merged document BEFORE the update commits
+          // (fix round 10): this transaction previously wrote the
+          // merged document and committed first, parsing the returned
+          // row only afterwards — a schema-invalid merged document
+          // (the old unclamped balance derivation could produce a
+          // negative balanceDue) was then durably stored and only
+          // failed on the next read. The file store parses its merged
+          // document before writing; parsing here, inside the
+          // transaction, makes an invalid merge roll back instead.
+          // The parsed values are what the update below persists.
+          const validatedMerged = SavedInvoiceSchema.parse({
+            ...existing,
+            sourceType: input.sourceType,
+            status: mergedStatus,
+            invoiceData: mergedInvoiceData,
+            updatedAt: now
+          });
+          // deleted_at is preserved whenever the resulting status is
+          // still "deleted" — the file store keeps the stored invoice's
+          // deletedAt on a whole-document save (its update spreads the
+          // stored row), and only the explicit restore transition may
+          // clear it. Nulling it unconditionally here left rows whose
+          // status said deleted with no deletion timestamp (fix round
+          // 7 parity nit).
+          const result = await client.query<SavedInvoiceRow>(
+            `
+              update saved_invoices
+              set source_type = $3,
+                  invoice_data = $4::jsonb,
+                  updated_at = $5,
+                  status = $6,
+                  deleted_at = case
+                    when $6 = 'deleted' then deleted_at
+                    else null
+                  end
+              where invoice_id = $1 and owner_id = $2
+              returning
+                invoice_id,
+                owner_id,
+                created_at,
+                updated_at,
+                status,
+                previous_status,
+                deleted_at,
+                source_type,
+                invoice_data
+            `,
+            [
+              input.invoiceId,
+              input.ownerId,
+              validatedMerged.sourceType,
+              JSON.stringify(validatedMerged.invoiceData),
+              validatedMerged.updatedAt,
+              validatedMerged.status
+            ]
+          );
+          await client.query("commit");
+          return parseSavedInvoiceRow(result.rows[0]);
+        } catch (error) {
+          await client.query("rollback").catch(() => undefined);
+          throw error;
+        }
+      });
     }
 
+    const createdFinishedInvoice = prepareCreatedInvoicePaymentState(input.invoiceData.finishedInvoice);
     const invoice = SavedInvoiceSchema.parse({
       invoiceId: randomUUID(),
       ownerId: input.ownerId,
       createdAt: now,
       updatedAt: now,
-      status: "draft",
+      // The created status is derived from the prepared payment state,
+      // not hardcoded: a create whose records exactly cover a positive
+      // total is born paid; anything else starts as a draft. Estimates
+      // never derive a payment status (the reconciler excludes them).
+      status: reconcilePaidStatusAfterSave("draft", createdFinishedInvoice, false),
       sourceType: input.sourceType,
-      invoiceData: input.invoiceData
+      invoiceData: {
+        ...input.invoiceData,
+        // Server-owned payment state is server-owned at creation too:
+        // link state, unmatched payments, and the monetary revision start
+        // empty/initialized, and payload payment records are manual-only —
+        // and validated: at create every payload record is a changed
+        // record, so an over-total or fractional-cent record throws here,
+        // before the insert, and the create persists nothing. The prepared
+        // document's balanceDue is the record-derived value, never the
+        // payload's.
+        finishedInvoice: createdFinishedInvoice
+      }
     });
 
     const result = await this.query<SavedInvoiceRow>(
@@ -290,7 +410,15 @@ export class PostgresSavedInvoiceRepository {
       updatedAt: now,
       status: "draft",
       sourceType: existing.sourceType,
-      invoiceData: existing.invoiceData
+      invoiceData: {
+        ...existing.invoiceData,
+        // A duplicate has earned no payments and minted no links: its
+        // payment state starts sanitized, exactly as at creation, with
+        // the full total as its balance. Copying the source's payment
+        // state verbatim would also copy an active link whose Stripe
+        // metadata names the ORIGINAL invoice.
+        finishedInvoice: sanitizeDuplicatedInvoicePaymentState(existing.invoiceData.finishedInvoice)
+      }
     });
 
     const result = await this.query<SavedInvoiceRow>(
@@ -382,6 +510,171 @@ export class PostgresSavedInvoiceRepository {
       throw new Error(`Invoice "${invoiceId}" was not found.`);
     }
     return parseSavedInvoiceRow(row);
+  }
+
+  /**
+   * Atomically settle a provider payment: the invoice row is locked
+   * (SELECT ... FOR UPDATE) inside one transaction while the dedupe check,
+   * binding verification, payment record, balance, link state, and status
+   * are computed and committed together.
+   */
+  async settleStripeInvoicePayment(input: StripeSettlementInput): Promise<StripeSettlementResult> {
+    await this.ensureReady();
+    return this.withClient(async (client) => {
+      await client.query("begin");
+      try {
+        const result = await client.query<SavedInvoiceRow>(
+          `
+            select
+              invoice_id,
+              owner_id,
+              created_at,
+              updated_at,
+              status,
+              previous_status,
+              deleted_at,
+              source_type,
+              invoice_data
+            from saved_invoices
+            where invoice_id = $1 and owner_id = $2
+            for update
+          `,
+          [input.invoiceId, input.ownerId]
+        );
+        const row = result.rows[0];
+        if (!row) {
+          await client.query("commit");
+          return { outcome: "not_found" as const };
+        }
+
+        const existing = parseSavedInvoiceRow(row);
+        const settled = settleStripePaymentOnInvoice({ invoice: existing, settlement: input });
+        if (!settled.changed) {
+          await client.query("commit");
+          return { outcome: settled.outcome, reason: settled.reason, invoice: existing };
+        }
+
+        const now = new Date().toISOString();
+        const updated = await client.query<SavedInvoiceRow>(
+          `
+            update saved_invoices
+            set status = $3,
+                updated_at = $4,
+                invoice_data = $5::jsonb
+            where invoice_id = $1 and owner_id = $2
+            returning
+              invoice_id,
+              owner_id,
+              created_at,
+              updated_at,
+              status,
+              previous_status,
+              deleted_at,
+              source_type,
+              invoice_data
+          `,
+          [
+            input.invoiceId,
+            input.ownerId,
+            settled.invoice.status,
+            now,
+            JSON.stringify(settled.invoice.invoiceData)
+          ]
+        );
+        await client.query("commit");
+        return {
+          outcome: settled.outcome,
+          reason: settled.reason,
+          invoice: parseSavedInvoiceRow(updated.rows[0])
+        };
+      } catch (error) {
+        await client.query("rollback").catch(() => undefined);
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Apply a transform to a saved invoice inside one transaction with the
+   * row locked (SELECT ... FOR UPDATE): the transform reads the current
+   * stored invoice and its result is committed in the same transaction,
+   * so concurrent writers serialize instead of overwriting each other
+   * with stale snapshots.
+   */
+  async mutateSavedInvoice(input: {
+    invoiceId: string;
+    ownerId: string;
+    mutate: SavedInvoiceMutation;
+  }): Promise<SavedInvoice> {
+    await this.ensureReady();
+    return this.withClient(async (client) => {
+      await client.query("begin");
+      try {
+        const result = await client.query<SavedInvoiceRow>(
+          `
+            select
+              invoice_id,
+              owner_id,
+              created_at,
+              updated_at,
+              status,
+              previous_status,
+              deleted_at,
+              source_type,
+              invoice_data
+            from saved_invoices
+            where invoice_id = $1 and owner_id = $2
+            for update
+          `,
+          [input.invoiceId, input.ownerId]
+        );
+        const row = result.rows[0];
+        if (!row) {
+          throw new Error(`Invoice "${input.invoiceId}" was not found.`);
+        }
+
+        const existing = parseSavedInvoiceRow(row);
+        const mutated = SavedInvoiceSchema.parse({
+          ...input.mutate(existing),
+          updatedAt: new Date().toISOString()
+        });
+        const updated = await client.query<SavedInvoiceRow>(
+          `
+            update saved_invoices
+            set status = $3,
+                previous_status = $4,
+                deleted_at = $5,
+                updated_at = $6,
+                invoice_data = $7::jsonb
+            where invoice_id = $1 and owner_id = $2
+            returning
+              invoice_id,
+              owner_id,
+              created_at,
+              updated_at,
+              status,
+              previous_status,
+              deleted_at,
+              source_type,
+              invoice_data
+          `,
+          [
+            input.invoiceId,
+            input.ownerId,
+            mutated.status,
+            mutated.previousStatus ?? null,
+            mutated.deletedAt ?? null,
+            mutated.updatedAt,
+            JSON.stringify(mutated.invoiceData)
+          ]
+        );
+        await client.query("commit");
+        return parseSavedInvoiceRow(updated.rows[0]);
+      } catch (error) {
+        await client.query("rollback").catch(() => undefined);
+        throw error;
+      }
+    });
   }
 
   async restoreSavedInvoice(invoiceId: string, ownerId: string): Promise<SavedInvoice> {

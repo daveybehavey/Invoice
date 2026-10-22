@@ -12,6 +12,21 @@ import {
   SavedInvoiceStatus
 } from "../models/invoice.js";
 import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
+import {
+  applyMonetaryEditInvalidation,
+  computeMonetaryFingerprint,
+  reconcilePaidStatusAfterSave,
+  prepareCreatedInvoicePaymentState,
+  sanitizeDuplicatedInvoicePaymentState,
+  settleStripePaymentOnInvoice,
+  type StripeSettlementInput,
+  type StripeSettlementResult
+} from "./invoicePaymentSettlement.js";
+
+/** A transform applied to the freshly stored invoice inside the store's
+ * serialization. It must compute the next state from the invoice it is
+ * given — never from a snapshot read before the lock. */
+export type SavedInvoiceMutation = (invoice: SavedInvoice) => SavedInvoice;
 
 const configuredStorePath = process.env.INVOICE_STORE_FILE;
 const storeFilePath = configuredStorePath
@@ -70,10 +85,34 @@ export async function saveInvoiceDocument(input: {
       }
 
       const existing = collection.invoices[invoiceIndex];
+      // Server-owned payment state (link state, provider payment records,
+      // monetary revision) is merged against the freshly stored invoice
+      // here, inside the mutation lock — a client save can never overwrite
+      // a settlement that landed after the client's snapshot was taken.
+      const updatedFinishedInvoice = applyMonetaryEditInvalidation({
+        existing: existing.invoiceData.finishedInvoice,
+        incoming: input.invoiceData.finishedInvoice,
+        nowIso: now,
+        existingStatus: existing.status
+      });
       const updatedInvoice = SavedInvoiceSchema.parse({
         ...existing,
         sourceType: input.sourceType,
-        invoiceData: input.invoiceData,
+        // The paid status is derived from the merged records here,
+        // inside the same serialized mutation: a positive exact balance
+        // reopens a paid invoice, and records that exactly cover the
+        // total pay a draft/sent one. The fingerprint comparison is the
+        // same one that drives link supersession.
+        status: reconcilePaidStatusAfterSave(
+          existing.status,
+          updatedFinishedInvoice,
+          computeMonetaryFingerprint(existing.invoiceData.finishedInvoice) !==
+            computeMonetaryFingerprint(updatedFinishedInvoice)
+        ),
+        invoiceData: {
+          ...input.invoiceData,
+          finishedInvoice: updatedFinishedInvoice
+        },
         updatedAt: now
       });
 
@@ -82,19 +121,101 @@ export async function saveInvoiceDocument(input: {
       return updatedInvoice;
     }
 
+    const createdFinishedInvoice = prepareCreatedInvoicePaymentState(input.invoiceData.finishedInvoice);
     const newInvoice = SavedInvoiceSchema.parse({
       invoiceId: randomUUID(),
       ownerId: input.ownerId,
       createdAt: now,
       updatedAt: now,
-      status: "draft",
+      // The created status is derived from the prepared payment state,
+      // not hardcoded: a create whose records exactly cover a positive
+      // total is born paid; anything else starts as a draft. Estimates
+      // never derive a payment status (the reconciler excludes them).
+      status: reconcilePaidStatusAfterSave("draft", createdFinishedInvoice, false),
       sourceType: input.sourceType,
-      invoiceData: input.invoiceData
+      invoiceData: {
+        ...input.invoiceData,
+        // Server-owned payment state is server-owned at creation too:
+        // link state, unmatched payments, and the monetary revision start
+        // empty/initialized, and payload payment records are manual-only —
+        // and validated: at create every payload record is a changed
+        // record, so an over-total or fractional-cent record throws here,
+        // before the write, and the create persists nothing. The prepared
+        // document's balanceDue is the record-derived value, never the
+        // payload's.
+        finishedInvoice: createdFinishedInvoice
+      }
     });
 
     collection.invoices.push(newInvoice);
     await writeCollection(collection);
     return newInvoice;
+  });
+}
+
+/**
+ * Atomically settle a provider payment against a saved invoice. Runs inside
+ * the store's mutation lock, so the dedupe check, binding verification,
+ * payment record, balance, link state, and status are committed together —
+ * a replayed or racing webhook cannot double-apply.
+ */
+export async function settleStripeInvoicePayment(
+  input: StripeSettlementInput
+): Promise<StripeSettlementResult> {
+  return withMutationLock(async () => {
+    const collection = await readCollection();
+    const invoiceIndex = collection.invoices.findIndex(
+      (invoice) => invoice.invoiceId === input.invoiceId && invoice.ownerId === input.ownerId
+    );
+    if (invoiceIndex === -1) {
+      return { outcome: "not_found" as const };
+    }
+
+    const existing = collection.invoices[invoiceIndex];
+    const result = settleStripePaymentOnInvoice({ invoice: existing, settlement: input });
+    if (!result.changed) {
+      return { outcome: result.outcome, reason: result.reason, invoice: existing };
+    }
+
+    const updatedInvoice = SavedInvoiceSchema.parse({
+      ...result.invoice,
+      updatedAt: new Date().toISOString()
+    });
+    collection.invoices[invoiceIndex] = updatedInvoice;
+    await writeCollection(collection);
+    return { outcome: result.outcome, reason: result.reason, invoice: updatedInvoice };
+  });
+}
+
+/**
+ * Apply a transform to a saved invoice inside the store's mutation lock:
+ * the transform reads the current stored invoice and its result is written
+ * back in the same critical section, so concurrent writers (settlements,
+ * saves, manual payments, link creation) serialize instead of overwriting
+ * each other with stale snapshots.
+ */
+export async function mutateSavedInvoice(input: {
+  invoiceId: string;
+  ownerId: string;
+  mutate: SavedInvoiceMutation;
+}): Promise<SavedInvoice> {
+  return withMutationLock(async () => {
+    const collection = await readCollection();
+    const invoiceIndex = collection.invoices.findIndex(
+      (invoice) => invoice.invoiceId === input.invoiceId && invoice.ownerId === input.ownerId
+    );
+    if (invoiceIndex === -1) {
+      throw new Error(`Invoice "${input.invoiceId}" was not found.`);
+    }
+
+    const existing = collection.invoices[invoiceIndex];
+    const updatedInvoice = SavedInvoiceSchema.parse({
+      ...input.mutate(existing),
+      updatedAt: new Date().toISOString()
+    });
+    collection.invoices[invoiceIndex] = updatedInvoice;
+    await writeCollection(collection);
+    return updatedInvoice;
   });
 }
 
@@ -218,7 +339,15 @@ export async function duplicateSavedInvoice(
       updatedAt: now,
       status: "draft",
       sourceType: invoice.sourceType,
-      invoiceData: invoice.invoiceData
+      invoiceData: {
+        ...invoice.invoiceData,
+        // A duplicate has earned no payments and minted no links: its
+        // payment state starts sanitized, exactly as at creation, with
+        // the full total as its balance. Copying the source's payment
+        // state verbatim would also copy an active link whose Stripe
+        // metadata names the ORIGINAL invoice.
+        finishedInvoice: sanitizeDuplicatedInvoicePaymentState(invoice.invoiceData.finishedInvoice)
+      }
     });
 
     collection.invoices.push(duplicatedInvoice);
