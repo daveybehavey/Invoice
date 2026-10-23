@@ -2651,7 +2651,11 @@ test("status endpoint clears and restores balance when toggling paid state", asy
   assert.equal(sentAgainResponse.body.invoice.invoiceData.finishedInvoice.balanceDue, 150);
 });
 
-test("send endpoint records delivery and marks invoice as sent", async () => {
+// Slice 0 (T-NB2, invariant 8): a record_only send is an auditable
+// record, not a delivery — it must not mark the invoice sent, create a
+// sent timestamp/count, or present as sent. (Pre-Slice-0 this test
+// asserted the defective behaviour.)
+test("send endpoint records a record_only delivery without marking the invoice as sent", async () => {
   const ownerId = "delivery-owner";
   const saveResponse = await request(app)
     .post("/api/invoices/save")
@@ -2697,19 +2701,22 @@ test("send endpoint records delivery and marks invoice as sent", async () => {
   assert.equal(sendResponse.status, 200);
   assert.equal(sendResponse.body.mode, "record_only");
   assert.equal(sendResponse.body.provider, "none");
-  assert.equal(sendResponse.body.invoice.status, "sent");
+  assert.equal(sendResponse.body.invoice.status, "draft");
   assert.equal(sendResponse.body.delivery.recipientEmail, "client@example.com");
-  assert.equal(sendResponse.body.delivery.status, "sent");
+  assert.equal(sendResponse.body.delivery.status, "recorded");
   assert.equal(sendResponse.body.delivery.mode, "record_only");
   assert.equal(sendResponse.body.delivery.provider, "none");
-  assert.equal(sendResponse.body.delivery.sendCount, 1);
+  assert.equal(sendResponse.body.delivery.sendCount, 0);
+  assert.equal(sendResponse.body.delivery.recordOnlyCount, 1);
+  assert.equal(sendResponse.body.delivery.sentAt, null);
+  assert.equal(sendResponse.body.delivery.verified, false);
 
   const listResponse = await request(app).get("/api/invoices").set("x-invoice-user-id", ownerId);
   assert.equal(listResponse.status, 200);
   assert.equal(listResponse.body.invoices.length, 1);
-  assert.equal(listResponse.body.invoices[0].status, "sent");
+  assert.equal(listResponse.body.invoices[0].status, "draft");
   assert.equal(listResponse.body.invoices[0].delivery.recipientEmail, "client@example.com");
-  assert.equal(listResponse.body.invoices[0].delivery.status, "sent");
+  assert.equal(listResponse.body.invoices[0].delivery.status, "recorded");
 });
 
 test("payment-link endpoint creates and persists a Stripe payment link for a saved invoice", async () => {
@@ -3675,10 +3682,18 @@ test("send endpoint auto-creates a payment link before delivery when Stripe paym
     response.body.invoice?.invoiceData?.finishedInvoice?.paymentLinkUrl,
     "https://pay.stripe.test/plink_send_123"
   );
-  assert.equal(response.body.invoice?.status, "sent");
+  // Slice 0 (invariant 8): no email provider is configured in this
+  // test, so the send is record_only and must not mark the invoice
+  // sent — the payment link is still created and persisted.
+  assert.equal(response.body.mode, "record_only");
+  assert.equal(response.body.invoice?.status, "draft");
 });
 
-test("delivery opened endpoint updates tracked delivery status", async () => {
+// Slice 0 (invariant 7/8 + §D): an open that cannot be attributed to
+// a verified provider send is recorded as UNVERIFIED engagement — it
+// does not promote the summary to "opened" or count as a verified
+// open. (Pre-Slice-0 this test asserted the record_only open counted.)
+test("delivery opened endpoint classifies opens on unverified sends as unverified", async () => {
   const ownerId = "delivery-open-owner";
   const saveResponse = await request(app)
     .post("/api/invoices/save")
@@ -3727,16 +3742,18 @@ test("delivery opened endpoint updates tracked delivery status", async () => {
     .set("x-invoice-user-id", ownerId)
     .send({});
   assert.equal(openResponse.status, 200);
-  assert.equal(openResponse.body.delivery.status, "opened");
-  assert.equal(openResponse.body.delivery.openCount, 1);
-  assert.equal(typeof openResponse.body.delivery.openedAt, "string");
+  assert.equal(openResponse.body.delivery.status, "recorded");
+  assert.equal(openResponse.body.delivery.openCount, 0);
+  assert.equal(openResponse.body.delivery.unverifiedOpenCount, 1);
+  assert.equal(openResponse.body.delivery.openedAt, undefined);
 
   const getResponse = await request(app)
     .get(`/api/invoices/${invoiceId}`)
     .set("x-invoice-user-id", ownerId);
   assert.equal(getResponse.status, 200);
-  assert.equal(getResponse.body.invoice.delivery.status, "opened");
-  assert.equal(getResponse.body.invoice.delivery.openCount, 1);
+  assert.equal(getResponse.body.invoice.delivery.status, "recorded");
+  assert.equal(getResponse.body.invoice.delivery.openCount, 0);
+  assert.equal(getResponse.body.invoice.delivery.unverifiedOpenCount, 1);
 });
 
 test("send endpoint uses resend provider when configured", async () => {
@@ -3804,6 +3821,10 @@ test("send endpoint uses resend provider when configured", async () => {
   assert.equal(fetchCalls[0]?.url, "https://api.resend.com/emails");
   const fetchInit = fetchCalls[0]?.init as RequestInit | undefined;
   assert.equal(fetchInit?.method, "POST");
+  // Slice 0 (§C): the durable claim's derived idempotency key rides on
+  // the provider request.
+  const fetchHeaders = (fetchInit?.headers ?? {}) as Record<string, string>;
+  assert.match(fetchHeaders["Idempotency-Key"] ?? "", /^nb-send-[0-9a-f]{32}$/);
   const body = JSON.parse(String(fetchInit?.body ?? "{}"));
   assert.equal(body.from, "billing@notebill.app");
   assert.equal(Array.isArray(body.to), true);
@@ -3877,6 +3898,9 @@ test("send endpoint uses smtp2go provider when configured", async () => {
   const fetchInit = fetchCalls[0]?.init as RequestInit | undefined;
   assert.equal(fetchInit?.method, "POST");
   const body = JSON.parse(String(fetchInit?.body ?? "{}"));
+  // Slice 0 (§C): SMTP2GO carries the claim key as a custom header.
+  assert.equal(body.custom_headers?.[0]?.header, "X-NoteBill-Idempotency-Key");
+  assert.match(body.custom_headers?.[0]?.value ?? "", /^nb-send-[0-9a-f]{32}$/);
   assert.equal(body.sender, "NoteBill <invoices@notebill.app>");
   assert.equal(Array.isArray(body.to), true);
   assert.equal(body.to[0], "smtp2go@example.com");
@@ -3927,9 +3951,12 @@ test("delivery pixel endpoint marks matching token as opened", async () => {
     .send({ recipientEmail: "pixel@example.com" });
   assert.equal(sendResponse.status, 200);
 
+  // Slice 0: the delivery store is the v2 envelope (append-only events
+  // + claims); the tracking token lives on the send claim.
   const rawStore = await fs.readFile(invoiceDeliveryStoreFilePath, "utf8");
   const parsedStore = JSON.parse(rawStore);
-  const trackingToken = parsedStore?.entries?.[0]?.trackingToken;
+  assert.equal(parsedStore?.version, 2);
+  const trackingToken = parsedStore?.claims?.[0]?.trackingToken;
   assert.equal(typeof trackingToken, "string");
   assert.ok(trackingToken.length > 0);
 
@@ -3943,8 +3970,11 @@ test("delivery pixel endpoint marks matching token as opened", async () => {
     .get(`/api/invoices/${invoiceId}`)
     .set("x-invoice-user-id", ownerId);
   assert.equal(getResponse.status, 200);
-  assert.equal(getResponse.body.invoice.delivery.status, "opened");
-  assert.equal(getResponse.body.invoice.delivery.openCount, 1);
+  // The send in this test was record_only, so the pixel open is
+  // unverified engagement (§D): it does not promote the summary.
+  assert.equal(getResponse.body.invoice.delivery.status, "recorded");
+  assert.equal(getResponse.body.invoice.delivery.openCount, 0);
+  assert.equal(getResponse.body.invoice.delivery.unverifiedOpenCount, 1);
 });
 
 test("account plan endpoint reports free-tier usage and remaining saves", async () => {
@@ -4154,7 +4184,9 @@ test("delivery diagnostics endpoint reports provider readiness + send summary", 
 
   const afterSend = await request(app).get("/api/system/delivery");
   assert.equal(afterSend.status, 200);
-  assert.equal(afterSend.body.summary?.sentCount, 1);
+  // Slice 0 (invariant 8): sentCount counts verified provider sends
+  // only — a record_only send appears in recordOnlyCount, nowhere else.
+  assert.equal(afterSend.body.summary?.sentCount, 0);
   assert.equal(afterSend.body.summary?.recordOnlyCount, 1);
   assert.equal(afterSend.body.summary?.providerSendCount, 0);
   assert.equal(afterSend.body.reminders?.dueCount, 0);
@@ -4297,7 +4329,14 @@ test("delivery test endpoint sends a provider-backed launch verification email v
   assert.match(String(body.subject), /Invoice NOTEBILL-LAUNCH/);
 });
 
-test("send-reminder endpoint reuses tracked recipient and bumps delivery/send timestamps", async () => {
+// Slice 0 (T-NB2, invariants 8 + 9): a record_only send leaves the
+// invoice a draft, so it is not reminder-eligible until the owner marks
+// it sent through the lifecycle status endpoint. The reminder itself
+// (also record_only here) reuses the tracked recipient but fabricates
+// no send evidence: no send count, no sent timestamp, no invoice
+// timestamp bump. (Pre-Slice-0 this test asserted the reminder bumped
+// sendCount to 2 and moved both timestamps.)
+test("send-reminder endpoint reuses tracked recipient without fabricating send evidence", async () => {
   const ownerId = "delivery-reminder-owner";
   const saveResponse = await request(app)
     .post("/api/invoices/save")
@@ -4340,8 +4379,24 @@ test("send-reminder endpoint reuses tracked recipient and bumps delivery/send ti
     .set("x-invoice-user-id", ownerId)
     .send({ recipientEmail: "reminder@example.com" });
   assert.equal(sendResponse.status, 200);
-  const firstSentAt = sendResponse.body.delivery?.sentAt as string;
-  const firstUpdatedAt = sendResponse.body.invoice?.updatedAt as string;
+  assert.equal(sendResponse.body.invoice?.status, "draft");
+  assert.equal(sendResponse.body.delivery?.sentAt, null);
+
+  // A draft is not reminder-eligible: nothing verifiable was sent.
+  const earlyReminderResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send-reminder`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(earlyReminderResponse.status, 400);
+
+  // The owner marks the invoice sent through the lifecycle endpoint;
+  // only then may a reminder be attempted.
+  const markSentResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/status`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ status: "sent" });
+  assert.equal(markSentResponse.status, 200);
+  const updatedAtBeforeReminder = markSentResponse.body.invoice?.updatedAt as string;
 
   await new Promise((resolve) => setTimeout(resolve, 10));
 
@@ -4353,14 +4408,19 @@ test("send-reminder endpoint reuses tracked recipient and bumps delivery/send ti
   assert.equal(reminderResponse.body.mode, "record_only");
   assert.equal(reminderResponse.body.provider, "none");
   assert.equal(reminderResponse.body.reminder?.recipientEmail, "reminder@example.com");
-  assert.equal(reminderResponse.body.delivery?.sendCount, 2);
+  assert.equal(reminderResponse.body.delivery?.sendCount, 0);
+  assert.equal(reminderResponse.body.delivery?.recordOnlyCount, 2);
+  assert.equal(reminderResponse.body.delivery?.sentAt, null);
   assert.equal(reminderResponse.body.delivery?.recipientEmail, "reminder@example.com");
-  assert.ok(Date.parse(reminderResponse.body.delivery?.sentAt) >= Date.parse(firstSentAt));
-  assert.ok(Date.parse(reminderResponse.body.invoice?.updatedAt) > Date.parse(firstUpdatedAt));
+  // No unconditional status write: the invoice record is untouched.
+  assert.equal(reminderResponse.body.invoice?.updatedAt, updatedAtBeforeReminder);
 });
 
 
 test("send-reminder returns 400 when a non-waived line is $0", async () => {
+  // Slice 0: the invoice must be genuinely sent (verified provider
+  // send) before a reminder can reach the send gate at all.
+  useMockedResendProvider();
   const ownerId = "reminder-block-zero-owner";
   const saveResponse = await request(app)
     .post("/api/invoices/save")
@@ -4461,6 +4521,7 @@ test("send-reminder returns 400 when a non-waived line is $0", async () => {
 });
 
 test("send-reminder returns 400 while a billing decision is still open", async () => {
+  useMockedResendProvider();
   const ownerId = "reminder-block-open-owner";
   const saveResponse = await request(app)
     .post("/api/invoices/save")
@@ -4559,6 +4620,9 @@ test("send-reminder returns 400 while a billing decision is still open", async (
 });
 
 test("reminder run endpoint previews and sends due reminders with overrides", async () => {
+  // Slice 0: only a verified provider send creates reminder timing, so
+  // this run is seeded with a real (mocked) provider acceptance.
+  useMockedResendProvider();
   const ownerId = "delivery-reminder-run-owner";
   const saveResponse = await request(app)
     .post("/api/invoices/save")
@@ -4604,10 +4668,7 @@ test("reminder run endpoint previews and sends due reminders with overrides", as
     .send({ recipientEmail: "run-reminder@example.com" });
   assert.equal(sendResponse.status, 200);
 
-  await mutateDeliveryStoreEntry(invoiceId, (entry) => ({
-    ...entry,
-    sentAt: "2026-01-01T00:00:00.000Z"
-  }));
+  await backdateVerifiedDeliverySend(invoiceId, "2026-01-01T00:00:00.000Z");
 
   const dryRunResponse = await request(app)
     .post("/api/invoices/reminders/run")
@@ -4644,6 +4705,7 @@ test("reminder run endpoint previews and sends due reminders with overrides", as
 });
 
 test("reminder run endpoint skips invoices with no open balance", async () => {
+  useMockedResendProvider();
   const ownerId = "delivery-reminder-zero-balance-owner";
   const saveResponse = await request(app)
     .post("/api/invoices/save")
@@ -4703,10 +4765,7 @@ test("reminder run endpoint skips invoices with no open balance", async () => {
     .send({ amount: 120 });
   assert.equal(payResponse.status, 200);
 
-  await mutateDeliveryStoreEntry(invoiceId, (entry) => ({
-    ...entry,
-    sentAt: "2026-01-01T00:00:00.000Z"
-  }));
+  await backdateVerifiedDeliverySend(invoiceId, "2026-01-01T00:00:00.000Z");
 
   const dryRunResponse = await request(app)
     .post("/api/invoices/reminders/run")
@@ -4721,6 +4780,7 @@ test("reminder run endpoint skips invoices with no open balance", async () => {
 });
 
 test("delivery diagnostics endpoint scopes reminder preview by request owner", async () => {
+  useMockedResendProvider();
   const ownerId = "delivery-reminder-diagnostics-owner";
   const saveResponse = await request(app)
     .post("/api/invoices/save")
@@ -4764,10 +4824,7 @@ test("delivery diagnostics endpoint scopes reminder preview by request owner", a
     .send({ recipientEmail: "owner-reminder@example.com" });
   assert.equal(sendResponse.status, 200);
 
-  await mutateDeliveryStoreEntry(invoiceId, (entry) => ({
-    ...entry,
-    sentAt: "2026-01-01T00:00:00.000Z"
-  }));
+  await backdateVerifiedDeliverySend(invoiceId, "2026-01-01T00:00:00.000Z");
 
   const diagnosticsResponse = await request(app)
     .get("/api/system/delivery")
@@ -10218,19 +10275,47 @@ function useMockResponses(responses: unknown[]): void {
   });
 }
 
-async function mutateDeliveryStoreEntry(
-  invoiceId: string,
-  mutate: (entry: Record<string, unknown>) => Record<string, unknown>
-): Promise<void> {
+/**
+ * Slice 0: reminder timing derives from VERIFIED provider events, so
+ * tests that need an old send backdate the accepted claim (and its
+ * outcome event) in the v2 delivery store. Backdating a legacy
+ * aggregate would no longer — and must no longer — create eligibility
+ * (invariant 11).
+ */
+async function backdateVerifiedDeliverySend(invoiceId: string, isoTimestamp: string): Promise<void> {
   const raw = await fs.readFile(invoiceDeliveryStoreFilePath, "utf8");
-  const parsed = JSON.parse(raw) as { entries?: Array<Record<string, unknown>> };
-  parsed.entries = (parsed.entries ?? []).map((entry) => {
-    if (entry?.invoiceId !== invoiceId) {
-      return entry;
-    }
-    return mutate(entry);
-  });
+  const parsed = JSON.parse(raw) as {
+    claims?: Array<Record<string, unknown>>;
+    events?: Array<Record<string, unknown>>;
+  };
+  const claimIds = new Set(
+    (parsed.claims ?? [])
+      .filter((claim) => claim?.invoiceId === invoiceId)
+      .map((claim) => claim.claimId)
+  );
+  parsed.claims = (parsed.claims ?? []).map((claim) =>
+    claim?.invoiceId === invoiceId ? { ...claim, updatedAt: isoTimestamp } : claim
+  );
+  parsed.events = (parsed.events ?? []).map((event) =>
+    event?.invoiceId === invoiceId && claimIds.has(event?.claimId as string) && event?.kind === "outcome"
+      ? { ...event, occurredAt: isoTimestamp }
+      : event
+  );
   await fs.writeFile(invoiceDeliveryStoreFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+}
+
+/** Configure a mocked Resend provider so sends resolve as verified
+ * provider deliveries (Slice 0 ACCEPTED outcomes). */
+function useMockedResendProvider(): void {
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "resend-test-key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  (globalThis as { fetch: typeof fetch }).fetch = (async () =>
+    new Response(JSON.stringify({ id: "email_test_accepted" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    })) as typeof fetch;
 }
 
 function structuredWithoutLaborPricing() {
@@ -10432,7 +10517,12 @@ test("send allows an explicit free line at $0 and keeps known math", async () =>
     .set("x-invoice-user-id", ownerId)
     .send({ recipientEmail: "pool@example.com" });
   assert.equal(sendResponse.status, 200);
-  assert.equal(sendResponse.body.invoice.status, "sent");
+  // Slice 0 (invariant 8): with no email provider configured the send
+  // is record_only, so the invoice stays a draft — the gate outcome
+  // this test exists for (explicit-free line allowed, math kept) is
+  // unaffected.
+  assert.equal(sendResponse.body.mode, "record_only");
+  assert.equal(sendResponse.body.invoice.status, "draft");
   const lines = sendResponse.body.invoice.invoiceData.finishedInvoice.lineItems;
   const pool = lines.find((line: { description: string }) => /pool/i.test(line.description));
   const acid = lines.find((line: { description: string }) => /acid/i.test(line.description));

@@ -610,7 +610,7 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
     const { invoice, daysSinceUpdate, dueDateValue, isPastDue } = staleSent[0];
     const delivery = invoice?.delivery ?? null;
     const reminderRecipient = delivery?.recipientEmail ?? "";
-    const hasTrackedDelivery = Boolean(delivery?.recipientEmail) && Boolean(delivery?.sentAt);
+    const hasTrackedDelivery = Boolean(delivery?.recipientEmail) && Boolean(delivery?.lastActivityAt);
     const deliveryOpened = Boolean(delivery?.openedAt) || delivery?.status === "opened";
     const canSendReminder = reminderRecipient.trim().length > 0;
     const dueDateLabel = formatUpdatedLabel(dueDateValue);

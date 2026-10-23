@@ -4,8 +4,14 @@ import { SavedInvoiceRepository } from "./savedInvoiceRepository.js";
 import { sendInvoiceEmail } from "./invoiceEmailDelivery.js";
 import {
   DeliverySummary,
+  beginInvoiceDeliveryDispatch,
+  cancelInvoiceDeliveryClaim,
+  countInvoiceDeliveryClaims,
   getInvoiceDeliverySummariesByInvoiceIds,
-  recordInvoiceDeliverySend
+  getInvoiceReminderAnchorsByInvoiceIds,
+  getInvoiceReminderTimingByInvoiceIds,
+  recordInvoiceDeliveryClaimOutcome,
+  reserveInvoiceDeliveryClaim
 } from "./invoiceDeliveryStore.js";
 import { invoiceSendIsBlocked, SEND_BLOCKED_MESSAGE } from "./invoiceSendGate.js";
 
@@ -53,7 +59,7 @@ type ReminderContext = {
   now?: Date;
 };
 
-export type ReminderCandidateReason = "past_due" | "follow_up_window" | "cooldown";
+export type ReminderCandidateReason = "past_due" | "follow_up_window" | "cooldown" | "owner_confirmed";
 
 export type ReminderTiming = {
   dueDate?: string;
@@ -103,20 +109,57 @@ export async function listDueInvoiceReminderCandidates(
   const nowMs = (context.now ?? new Date()).getTime();
   const invoices = await context.repository.listSavedInvoiceMetadata(false, context.ownerId);
   const sentInvoices = invoices.filter((invoice) => invoice.status === "sent");
-  const deliveryByInvoice = await getInvoiceDeliverySummariesByInvoiceIds({
-    ownerId: context.ownerId,
-    invoiceIds: sentInvoices.map((invoice) => invoice.invoiceId)
-  });
+  const invoiceIds = sentInvoices.map((invoice) => invoice.invoiceId);
+  // Slice 0 (invariants 9 + 11): timing derives exclusively from
+  // verified provider events. Legacy aggregates and record_only
+  // activity are not timing evidence; an invoice whose history is
+  // only legacy/record_only becomes eligible solely through the §E
+  // owner-confirmation anchor. An unresolved (in-flight or UNKNOWN)
+  // send suppresses automatic reminders entirely.
+  const [timingByInvoice, anchorsByInvoice] = await Promise.all([
+    getInvoiceReminderTimingByInvoiceIds({ ownerId: context.ownerId, invoiceIds }),
+    getInvoiceReminderAnchorsByInvoiceIds({ ownerId: context.ownerId, invoiceIds })
+  ]);
   const due = sentInvoices
     .map((invoice) => {
       if (getInvoiceOpenBalance(invoice) <= 0) {
         return null;
       }
-      const delivery = deliveryByInvoice[invoice.invoiceId];
-      const recipientEmail = delivery?.recipientEmail;
-      const sendCount = delivery?.sendCount ?? 0;
-      const lastSentAt = delivery?.sentAt ?? invoice.updatedAt;
-      if (!recipientEmail || !lastSentAt) {
+      const timingProjection = timingByInvoice[invoice.invoiceId];
+      if (!timingProjection || timingProjection.hasUnresolvedSend) {
+        return null;
+      }
+      const recipientEmail = timingProjection.recipientEmail;
+      if (!recipientEmail) {
+        return null;
+      }
+      if (!timingProjection.hasVerifiedHistory) {
+        const anchor = anchorsByInvoice[invoice.invoiceId];
+        if (!anchor) {
+          return null;
+        }
+        const nextReminderAtMs = Date.parse(anchor.nextDueAt);
+        if (!Number.isFinite(nextReminderAtMs) || nowMs < nextReminderAtMs) {
+          return null;
+        }
+        const candidate: ReminderCandidate = {
+          invoiceId: invoice.invoiceId,
+          invoiceNumber: invoice.invoiceNumber ?? "Draft invoice",
+          recipientEmail,
+          lastSentAt: anchor.activatedAt,
+          sendCount: timingProjection.providerSendCount,
+          nextReminderAt: anchor.nextDueAt,
+          reason: "owner_confirmed"
+        };
+        const dueDate = normalizeInvoiceDueDate(invoice.dueDate);
+        if (dueDate) {
+          candidate.dueDate = dueDate;
+        }
+        return candidate;
+      }
+      const sendCount = timingProjection.providerSendCount;
+      const lastSentAt = timingProjection.lastProviderAcceptedAt;
+      if (!lastSentAt) {
         return null;
       }
       const timing = resolveInvoiceReminderTiming({
@@ -220,11 +263,14 @@ export async function runDueInvoiceReminders(context: ReminderContext): Promise<
         ...context,
         invoiceId: candidate.invoiceId
       });
+      // Slice 0 (invariant 8): only a verified provider outcome counts
+      // as a sent reminder. record_only attempts are reported with
+      // their real mode and never inflate sentCount.
       results.push({
         invoiceId: reminder.invoiceId,
         invoiceNumber: reminder.invoiceNumber,
         recipientEmail: reminder.recipientEmail,
-        sent: true,
+        sent: reminder.mode === "provider",
         invoiceUpdatedAt: reminder.invoice.updatedAt,
         delivery: reminder.delivery,
         mode: reminder.mode,
@@ -274,47 +320,147 @@ export async function sendInvoiceReminderById(
   ) {
     throw new Error(SEND_BLOCKED_MESSAGE);
   }
-  const deliveryByInvoice = await getInvoiceDeliverySummariesByInvoiceIds({
+  const timingByInvoice = await getInvoiceReminderTimingByInvoiceIds({
     ownerId: context.ownerId,
     invoiceIds: [context.invoiceId]
   });
-  const delivery = deliveryByInvoice[context.invoiceId];
-  if (!delivery?.recipientEmail) {
+  const timing = timingByInvoice[context.invoiceId];
+  const recipientEmail = timing?.recipientEmail;
+  if (!recipientEmail) {
     throw new Error("No recipient email found. Send the invoice first.");
   }
-  const trackingToken = randomUUID();
-  const openTrackingPixelUrl = `${context.baseUrl}/api/invoices/${context.invoiceId}/delivery/opened/pixel?token=${encodeURIComponent(trackingToken)}`;
-  const sendResult = await sendInvoiceEmail({
-    recipientEmail: delivery.recipientEmail,
-    invoice: saved.invoiceData.finishedInvoice,
-    invoiceId: context.invoiceId,
-    openTrackingPixelUrl,
-    messageType: "reminder"
-  });
-  await recordInvoiceDeliverySend({
+  if (timing.hasUnresolvedSend) {
+    throw new Error(
+      "This invoice has an unresolved delivery attempt. Reconcile or release it before sending reminders."
+    );
+  }
+
+  // Slice 0 (§C): the reminder is a durable claim reserved BEFORE
+  // dispatch, keyed by (invoice, recipient, reminder occurrence,
+  // authorized revision). Candidate-list eligibility is not dispatch
+  // authorization — fresh state is rechecked below.
+  const authorizedRevision = saved.invoiceData.finishedInvoice.monetaryRevision;
+  const priorReminderClaims = await countInvoiceDeliveryClaims({
     ownerId: context.ownerId,
     invoiceId: context.invoiceId,
-    recipientEmail: delivery.recipientEmail,
-    trackingToken,
+    basePurpose: "reminder"
+  });
+  const reservation = await reserveInvoiceDeliveryClaim({
+    ownerId: context.ownerId,
+    invoiceId: context.invoiceId,
+    recipientEmail,
+    basePurpose: "reminder",
+    purpose: `reminder_occurrence_${priorReminderClaims + 1}`,
+    authorizedRevision
+  });
+  if (reservation.outcome === "blocked") {
+    throw new Error(
+      reservation.reason === "unresolved_send"
+        ? "This invoice has an unresolved delivery attempt. Reconcile or release it before sending reminders."
+        : "A delivery for this invoice is already in progress."
+    );
+  }
+  const claim = reservation.claim;
+  if (reservation.outcome === "existing") {
+    // Idempotent replay of a reminder that already resolved: return its
+    // recorded outcome and fresh state instead of sending again.
+    if (claim.outcomeKind === "failed") {
+      throw new Error("The previous reminder attempt failed. Retry the reminder run.");
+    }
+    const invoice = await context.repository.getSavedInvoiceById(context.invoiceId, context.ownerId);
+    const delivery = await getInvoiceDeliverySummaryForInvoice({
+      ownerId: context.ownerId,
+      invoiceId: context.invoiceId
+    });
+    return {
+      invoiceId: context.invoiceId,
+      invoiceNumber: invoice.invoiceData.finishedInvoice.invoiceNumber ?? "Draft invoice",
+      invoice,
+      delivery,
+      recipientEmail,
+      mode: claim.mode ?? "record_only",
+      provider: claim.provider ?? "none",
+      warning: claim.outcomeKind === "recorded" ? "Email provider is not configured; delivery is tracked without sending." : undefined
+    };
+  }
+
+  // Fresh authorization immediately before dispatch (invariant 1): the
+  // invoice must still be sent, still addressed to the claimed
+  // recipient's content, and still at the authorized revision.
+  const fresh = await context.repository.getSavedInvoiceById(context.invoiceId, context.ownerId);
+  if (fresh.status !== "sent" || fresh.invoiceData.finishedInvoice.monetaryRevision !== authorizedRevision) {
+    await cancelInvoiceDeliveryClaim({
+      ownerId: context.ownerId,
+      claimId: claim.claimId,
+      generation: claim.generation,
+      reason: "stale_authorization"
+    }).catch(() => undefined);
+    throw new Error("Invoice changed before the reminder could be sent. Retry the reminder run.");
+  }
+
+  const trackingToken = randomUUID();
+  await beginInvoiceDeliveryDispatch({
+    ownerId: context.ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    trackingToken
+  });
+  const openTrackingPixelUrl = `${context.baseUrl}/api/invoices/${context.invoiceId}/delivery/opened/pixel?token=${encodeURIComponent(trackingToken)}`;
+  let sendResult;
+  try {
+    sendResult = await sendInvoiceEmail({
+      recipientEmail,
+      invoice: fresh.invoiceData.finishedInvoice,
+      invoiceId: context.invoiceId,
+      openTrackingPixelUrl,
+      messageType: "reminder",
+      idempotencyKey: claim.providerIdempotencyKey
+    });
+  } catch (error) {
+    // The provider call may or may not have been accepted; without
+    // evidence the outcome is UNKNOWN (§D) and the claim blocks
+    // further sends until reconciled or released — never blind-retry.
+    await recordInvoiceDeliveryClaimOutcome({
+      ownerId: context.ownerId,
+      claimId: claim.claimId,
+      generation: claim.generation,
+      outcome: "unknown",
+      mode: "provider",
+      provider: "none"
+    }).catch(() => undefined);
+    throw error;
+  }
+  const outcome = sendResult.mode === "provider" ? "accepted" : "recorded";
+  await recordInvoiceDeliveryClaimOutcome({
+    ownerId: context.ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome,
     mode: sendResult.mode,
     provider: sendResult.provider,
     providerMessageId: sendResult.providerMessageId
   });
-  const invoice = await context.repository.updateSavedInvoiceStatus(
-    context.invoiceId,
-    "sent",
-    context.ownerId
-  );
+  // Guarded completion only (no unconditional status write): an
+  // already-sent invoice is a policy no-op, and a payment that landed
+  // mid-flight is preserved exactly.
+  const { invoice } =
+    sendResult.mode === "provider"
+      ? await context.repository.completeInvoiceDelivery({
+          invoiceId: context.invoiceId,
+          ownerId: context.ownerId,
+          authorizedRevision
+        })
+      : { invoice: await context.repository.getSavedInvoiceById(context.invoiceId, context.ownerId) };
   const refreshedDelivery = await getInvoiceDeliverySummaryForInvoice({
     ownerId: context.ownerId,
     invoiceId: context.invoiceId
   });
   return {
     invoiceId: context.invoiceId,
-    invoiceNumber: saved.invoiceData.finishedInvoice.invoiceNumber ?? "Draft invoice",
+    invoiceNumber: invoice.invoiceData.finishedInvoice.invoiceNumber ?? "Draft invoice",
     invoice,
     delivery: refreshedDelivery,
-    recipientEmail: delivery.recipientEmail,
+    recipientEmail,
     mode: sendResult.mode,
     provider: sendResult.provider,
     warning: sendResult.warning

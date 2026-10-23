@@ -147,6 +147,12 @@ afterEach(() => {
   setImageOcrRunnerForTests(null);
   setCheckoutSessionCreatorForTests(null);
   clearCheckoutIntentSessionsForTests();
+  // Slice 0 safety net: no test may leak a configured email provider
+  // (or a stubbed fetch) into the next test — see useVerifiedProviderSend.
+  delete process.env.INVOICE_EMAIL_PROVIDER;
+  delete process.env.RESEND_API_KEY;
+  delete process.env.INVOICE_FROM_EMAIL;
+  (globalThis as { fetch?: typeof fetch }).fetch = nativeFetch;
 });
 
 after(async () => {
@@ -6917,6 +6923,11 @@ test("launcher follow-up card prefers focused reminder for overdue opened invoic
   });
   assert.equal(saveResponse.status(), 200);
   const savePayload = await saveResponse.json();
+  // Slice 0: the "opened" presentation requires a verified provider
+  // send for the open to attach to — seed one, then restore the
+  // unconfigured provider so the reminder click below stays
+  // record_only (matching the expected "Reminder recorded" copy).
+  const restoreProvider = useVerifiedProviderSend();
   const sendResponse = await context.request.post(
     `${baseUrl}/api/invoices/${savePayload?.invoice?.invoiceId}/send`,
     {
@@ -6940,6 +6951,7 @@ test("launcher follow-up card prefers focused reminder for overdue opened invoic
     }
   );
   assert.equal(openedResponse.status(), 200);
+  restoreProvider();
   await mutateStoredInvoice(openedInvoiceId, {
     status: "sent",
     updatedAt: "2026-04-01T12:00:00.000Z"
@@ -7743,6 +7755,11 @@ test("invoice library reminder presets update automation timing", async () => {
 });
 
 test("invoice library follow-up reminder can send oldest reminder without prompting", async () => {
+  // Slice 0: the asserted delivery sendCount only counts verified
+  // provider sends, so the initial send AND the quick reminder (sent
+  // from the browser during this test) must both run against the
+  // stubbed provider — the scope spans the whole test.
+  const restoreProvider = useVerifiedProviderSend();
   const ownerId = "ui-reminder-resend-owner";
   const context = await browser.newContext();
   await context.addInitScript((initOwnerId) => {
@@ -7834,6 +7851,7 @@ test("invoice library follow-up reminder can send oldest reminder without prompt
     assert.equal(sendCount > 1, true);
     assert.equal(dialogTriggered, false);
   } finally {
+    restoreProvider();
     await context.close();
   }
 });
@@ -7982,6 +8000,10 @@ test("invoice library can arm recurring auto-send when a client recipient is rem
 });
 
 test("invoice library can run recurring auto-send immediately", async () => {
+  // Slice 0: the auto-send (fired from the browser mid-test) only
+  // advances the schedule when the send verifiably lands, so the
+  // stubbed provider scope spans the whole test.
+  const restoreProvider = useVerifiedProviderSend();
   const ownerId = "ui-recurring-auto-send-run-owner";
   const context = await browser.newContext();
   await context.addInitScript((initOwnerId) => {
@@ -8136,6 +8158,7 @@ test("invoice library can run recurring auto-send immediately", async () => {
     await invoiceCard.getByText("Sent invoice", { exact: true }).waitFor({ state: "visible" });
     await invoiceCard.locator("span.nb-chip--info", { hasText: "Sent" }).waitFor({ state: "visible" });
   } finally {
+    restoreProvider();
     await context.close();
   }
 });
@@ -9065,6 +9088,17 @@ test("invoice library card distinguishes tracked but unopened delivery", async (
     }
   });
   assert.equal(sendResponse.status(), 200);
+  // Slice 0: with no provider configured that send is record_only and
+  // leaves the invoice a draft. The tracked-delivery card under test
+  // is for a sent invoice, so the owner attests the send through the
+  // lifecycle status endpoint.
+  const markSentResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/status`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: { status: "sent" }
+  });
+  assert.equal(markSentResponse.status(), 200);
 
   const page = await context.newPage();
   try {
@@ -10392,6 +10426,9 @@ test("invoice library card surfaces a best next action for sent invoices", async
   const seedPayload = await seedResponse.json();
   const invoiceId = seedPayload?.invoice?.invoiceId as string;
 
+  // Slice 0: seed a verified provider send so the invoice is genuinely
+  // sent and the open below is verified engagement.
+  const restoreProvider = useVerifiedProviderSend();
   const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
     headers: {
       "x-invoice-user-id": ownerId
@@ -10407,6 +10444,7 @@ test("invoice library card surfaces a best next action for sent invoices", async
     }
   });
   assert.equal(openedResponse.status(), 200);
+  restoreProvider();
 
   const page = await context.newPage();
   try {
@@ -13030,6 +13068,35 @@ function emptyAudit() {
     assumptions: [],
     decisions: [],
     unparsedLines: []
+  };
+}
+
+const nativeFetch = globalThis.fetch;
+
+/**
+ * Slice 0: verified delivery evidence is created only by provider
+ * ACCEPTED outcomes — a record_only send leaves the invoice a draft
+ * with a "recorded" delivery. UI scenarios that genuinely need a
+ * sent/opened invoice therefore run inside this scope: it points the
+ * in-process server's email provider at a stubbed Resend transport
+ * and returns a restore function. Callers restore as soon as the
+ * seeded state exists (the file-level afterEach also clears these as
+ * a safety net).
+ */
+function useVerifiedProviderSend(): () => void {
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "resend-test-key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  (globalThis as { fetch: typeof fetch }).fetch = (async () =>
+    new Response(JSON.stringify({ id: "email_ui_verified" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    })) as typeof fetch;
+  return () => {
+    (globalThis as { fetch: typeof fetch }).fetch = nativeFetch;
+    delete process.env.INVOICE_EMAIL_PROVIDER;
+    delete process.env.RESEND_API_KEY;
+    delete process.env.INVOICE_FROM_EMAIL;
   };
 }
 

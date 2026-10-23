@@ -43,6 +43,13 @@ type SendInvoiceEmailInput = {
   invoiceId: string;
   openTrackingPixelUrl: string;
   messageType?: "invoice" | "reminder";
+  /**
+   * Slice 0 (§C): the durable claim's derived provider idempotency key.
+   * When present it is sent to the provider (Resend `Idempotency-Key`
+   * header; SMTP2GO custom header) so a retried dispatch of the same
+   * logical send cannot produce a duplicate email.
+   */
+  idempotencyKey?: string;
 };
 
 type SendAuthSignInEmailInput = {
@@ -56,6 +63,7 @@ export type TransactionalEmailInput = {
   subject: string;
   textBody: string;
   htmlBody: string;
+  idempotencyKey?: string;
 };
 
 const RESEND_API_URL = "https://api.resend.com/emails";
@@ -129,7 +137,8 @@ export async function sendInvoiceEmail(input: SendInvoiceEmailInput): Promise<In
     recipientEmail: input.recipientEmail,
     subject: buildInvoiceEmailSubject(input),
     textBody: buildInvoiceEmailText(input),
-    htmlBody: buildInvoiceEmailHtml(input)
+    htmlBody: buildInvoiceEmailHtml(input),
+    idempotencyKey: input.idempotencyKey
   });
 }
 
@@ -280,7 +289,8 @@ async function sendViaResend(input: TransactionalEmailInput, fromEmail: string):
       signal: controller.signal,
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        ...(input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : {})
       },
       body: JSON.stringify(buildResendPayload(input, fromEmail))
     });
@@ -449,7 +459,13 @@ function buildSmtp2goPayload(
     to: [input.recipientEmail],
     subject: input.subject,
     text_body: input.textBody,
-    html_body: input.htmlBody
+    html_body: input.htmlBody,
+    // SMTP2GO has no provider-side idempotency contract; the claim key
+    // travels as a custom header so the logical send stays traceable
+    // end to end. Dedupe is enforced by the durable claim (§C).
+    ...(input.idempotencyKey
+      ? { custom_headers: [{ header: "X-NoteBill-Idempotency-Key", value: input.idempotencyKey }] }
+      : {})
   };
 }
 
@@ -463,13 +479,26 @@ function buildInvoiceEmailSubject(input: SendInvoiceEmailInput): string {
   return `${prefix} from NoteBill`;
 }
 
+/**
+ * Slice 0 (audit item 5 + brief item 3): the amount presented as due is
+ * the invoice's CURRENT balance due — after partial payments — never
+ * the original total. Falls back to the total only when no balance is
+ * recorded.
+ */
+function resolveAmountDue(invoice: FinishedInvoice): number {
+  if (typeof invoice.balanceDue === "number" && Number.isFinite(invoice.balanceDue)) {
+    return invoice.balanceDue;
+  }
+  return typeof invoice.total === "number" && Number.isFinite(invoice.total) ? invoice.total : 0;
+}
+
 function buildInvoiceEmailText(input: SendInvoiceEmailInput): string {
   const invoice = input.invoice;
   const invoiceNumber = toOptionalTrimmedString(invoice.invoiceNumber) ?? input.invoiceId;
   const issueDate = toOptionalTrimmedString(invoice.issueDate);
   const dueDate = toOptionalTrimmedString(invoice.dueDate);
   const customerName = toOptionalTrimmedString(invoice.customerName) ?? "there";
-  const total = formatCurrency(invoice.total, invoice.currency);
+  const total = formatCurrency(resolveAmountDue(invoice), invoice.currency);
   const paymentLine =
     typeof invoice.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0
       ? `Pay online: ${invoice.paymentLinkUrl.trim()}`
@@ -505,7 +534,7 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
   const issueDate = escapeHtml(toOptionalTrimmedString(invoice.issueDate) ?? "N/A");
   const dueDate = toOptionalTrimmedString(invoice.dueDate);
   const customerName = escapeHtml(toOptionalTrimmedString(invoice.customerName) ?? "Client");
-  const total = escapeHtml(formatCurrency(invoice.total, invoice.currency));
+  const total = escapeHtml(formatCurrency(resolveAmountDue(invoice), invoice.currency));
   const paymentLink =
     typeof invoice.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0
       ? invoice.paymentLinkUrl.trim()

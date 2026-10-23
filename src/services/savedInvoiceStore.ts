@@ -3,6 +3,10 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
+  decideInvoiceStatusTransition,
+  type InvoiceStatusTransitionPurpose
+} from "./invoiceDeliveryPolicy.js";
+import {
   InvoiceListItem,
   InvoiceListItemSchema,
   RecentClientContextItem,
@@ -359,7 +363,8 @@ export async function duplicateSavedInvoice(
 export async function updateSavedInvoiceStatus(
   invoiceId: string,
   status: SavedInvoiceStatus,
-  ownerId = "local-default"
+  ownerId = "local-default",
+  purpose: InvoiceStatusTransitionPurpose = "lifecycle"
 ): Promise<SavedInvoice> {
   return withMutationLock(async () => {
     const collection = await readCollection();
@@ -374,7 +379,7 @@ export async function updateSavedInvoiceStatus(
     const now = new Date().toISOString();
     const updatedInvoice = SavedInvoiceSchema.parse({
       ...existing,
-      invoiceData: applyStatusToInvoiceData(existing, status),
+      invoiceData: applyStatusToInvoiceData(existing, status, purpose),
       status,
       updatedAt: now,
       previousStatus:
@@ -392,14 +397,76 @@ export async function updateSavedInvoiceStatus(
   });
 }
 
+/**
+ * Slice 0 delivery completion (design invariants 1, 3, 4, 6): apply the
+ * guarded delivery transition to the FRESH record reread under the
+ * mutation lock — never to a caller-held snapshot. `draft → sent`
+ * only while the monetary revision still matches the revision the send
+ * claim authorized; `sent` is a no-op; `paid`/`deleted` return
+ * unchanged with money, payment records, links, and revision intact.
+ * `transitioned` reports whether this call performed the status write.
+ */
+export async function completeSavedInvoiceDelivery(input: {
+  invoiceId: string;
+  ownerId?: string;
+  authorizedRevision: number;
+}): Promise<{ invoice: SavedInvoice; transitioned: boolean }> {
+  const ownerId = input.ownerId ?? "local-default";
+  return withMutationLock(async () => {
+    const collection = await readCollection();
+    const invoiceIndex = collection.invoices.findIndex(
+      (item) => item.invoiceId === input.invoiceId && item.ownerId === ownerId
+    );
+    if (invoiceIndex === -1) {
+      throw new Error(`Invoice "${input.invoiceId}" was not found.`);
+    }
+
+    const existing = collection.invoices[invoiceIndex]!;
+    const decision = decideInvoiceStatusTransition({
+      currentStatus: existing.status,
+      requestedStatus: "sent",
+      purpose: "delivery"
+    });
+    if (
+      !decision.transition ||
+      existing.invoiceData.finishedInvoice.monetaryRevision !== input.authorizedRevision
+    ) {
+      return { invoice: existing, transitioned: false };
+    }
+
+    const now = new Date().toISOString();
+    const updatedInvoice = SavedInvoiceSchema.parse({
+      ...existing,
+      invoiceData: applyStatusToInvoiceData(existing, "sent", "delivery"),
+      status: "sent",
+      updatedAt: now
+    });
+    collection.invoices[invoiceIndex] = updatedInvoice;
+    await writeCollection(collection);
+    return { invoice: updatedInvoice, transitioned: true };
+  });
+}
+
 function applyStatusToInvoiceData(
   existing: SavedInvoice,
-  status: SavedInvoiceStatus
+  status: SavedInvoiceStatus,
+  purpose: InvoiceStatusTransitionPurpose = "lifecycle"
 ): SavedInvoice["invoiceData"] {
+  // Slice 0: money effects are decided by the shared transition policy
+  // (invoiceDeliveryPolicy.ts) so both stores behave identically.
+  // Delivery transitions never touch money; entering `deleted` never
+  // touches money (audit item 2: delete → restore can no longer
+  // resurrect a settled balance); the lifecycle mark-paid zeroing and
+  // the manual leaving-paid restore are otherwise preserved.
+  const decision = decideInvoiceStatusTransition({
+    currentStatus: existing.status,
+    requestedStatus: status,
+    purpose
+  });
   const finishedInvoice = { ...existing.invoiceData.finishedInvoice };
-  if (status === "paid") {
+  if (decision.zeroBalanceDue) {
     finishedInvoice.balanceDue = 0;
-  } else if (existing.status === "paid") {
+  } else if (decision.restoreTotalOnLeavePaid) {
     const balanceDue = Number(finishedInvoice.balanceDue);
     const total = Number(finishedInvoice.total);
     if (Number.isFinite(total) && (!Number.isFinite(balanceDue) || balanceDue <= 0)) {

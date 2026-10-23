@@ -69,12 +69,20 @@ import {
 } from "./services/savedInvoiceRepository.js";
 import { getOcrMetricsSnapshot, trackOcrConfidenceMetric } from "./services/ocrMetricsStore.js";
 import {
+  beginInvoiceDeliveryDispatch,
+  cancelInvoiceDeliveryClaim,
+  countInvoiceDeliveryClaims,
+  getInvoiceDeliveryClaimById,
   getInvoiceDeliveryStoreSummary,
   getInvoiceDeliverySummary,
   getInvoiceDeliverySummariesByInvoiceIds,
   markInvoiceDeliveryOpenedByTrackingToken,
   markInvoiceDeliveryOpened,
-  recordInvoiceDeliverySend
+  recordInvoiceDeliveryClaimOutcome,
+  releaseInvoiceDeliveryClaim,
+  reserveInvoiceDeliveryClaim,
+  setInvoiceReminderAnchor,
+  type DeliveryClaim
 } from "./services/invoiceDeliveryStore.js";
 import {
   getInvoiceEmailCapabilities,
@@ -91,6 +99,7 @@ import {
 } from "./services/invoiceSendGate.js";
 import {
   listDueInvoiceReminderCandidates,
+  resolveInvoiceReminderSettings,
   runDueInvoiceReminders,
   sendInvoiceReminderById
 } from "./services/invoiceReminderScheduler.js";
@@ -1440,6 +1449,11 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
     if (existingInvoice.status === "deleted") {
       throw new HttpStatusError(400, "Restore this invoice before sending.");
     }
+    // Slice 0 (design invariant 1): paid invoices are rejected from the
+    // ordinary send path — a send must never act on a settled invoice.
+    if (existingInvoice.status === "paid") {
+      throw new HttpStatusError(400, "This invoice is already paid.");
+    }
     if (
       invoiceSendIsBlocked({
         finishedInvoice: existingInvoice.invoiceData.finishedInvoice,
@@ -1454,33 +1468,158 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
       baseUrl: resolvePublicBaseUrl(req)
     });
 
-    const trackingToken = randomUUID();
-    const openTrackingPixelUrl = `${resolvePublicBaseUrl(req)}/api/invoices/${invoiceId}/delivery/opened/pixel?token=${encodeURIComponent(trackingToken)}`;
-    const sendResult = await sendInvoiceEmail({
-      recipientEmail: parsedRequest.recipientEmail,
-      invoice: invoiceWithPaymentLink.invoiceData.finishedInvoice,
-      invoiceId,
-      openTrackingPixelUrl
-    });
-
-    const delivery = await recordInvoiceDeliverySend({
+    // Slice 0 (§C): reserve the durable claim for this logical send
+    // BEFORE dispatch. The claim key binds invoice, recipient, purpose,
+    // and the monetary revision of the prepared content; the provider
+    // idempotency key derives from it deterministically.
+    const recipientEmail = parsedRequest.recipientEmail;
+    const authorizedRevision = invoiceWithPaymentLink.invoiceData.finishedInvoice.monetaryRevision;
+    let reservation = await reserveInvoiceDeliveryClaim({
       ownerId,
       invoiceId,
-      recipientEmail: parsedRequest.recipientEmail,
-      trackingToken,
+      recipientEmail,
+      basePurpose: "initial_send",
+      purpose: "initial_send",
+      authorizedRevision
+    });
+    if (
+      reservation.outcome === "existing" &&
+      (reservation.claim.status === "cancelled" || reservation.claim.status === "released" || reservation.claim.outcomeKind === "failed")
+    ) {
+      // The original logical send resolved without a delivery
+      // (failed / cancelled / owner-released): a fresh logical attempt
+      // needs its own claim identity.
+      const priorResends = await countInvoiceDeliveryClaims({ ownerId, invoiceId, basePurpose: "resend" });
+      reservation = await reserveInvoiceDeliveryClaim({
+        ownerId,
+        invoiceId,
+        recipientEmail,
+        basePurpose: "resend",
+        purpose: `resend_${priorResends + 1}`,
+        authorizedRevision
+      });
+    }
+    if (reservation.outcome === "blocked") {
+      throw new HttpStatusError(
+        409,
+        reservation.reason === "unresolved_send"
+          ? "This invoice has an unresolved delivery attempt. Reconcile or release it before sending again."
+          : "A send for this invoice is already in progress."
+      );
+    }
+    const claim: DeliveryClaim = reservation.claim;
+    if (reservation.outcome === "existing") {
+      // Idempotent replay: this logical send already resolved. Return
+      // its recorded outcome and fresh state — never dispatch twice.
+      const invoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
+      const delivery = await getInvoiceDeliverySummary({ ownerId, invoiceId });
+      if (!delivery) {
+        throw new HttpStatusError(500, "Delivery summary missing after send.");
+      }
+      res.json({
+        invoice,
+        delivery,
+        mode: claim.mode ?? "record_only",
+        provider: claim.provider ?? "none",
+        warning:
+          claim.mode === "record_only"
+            ? "Email provider is not configured; delivery is tracked without sending."
+            : null
+      });
+      return;
+    }
+
+    // Fresh authorization immediately before dispatch (invariant 1):
+    // reread under the repository's serialization and require the
+    // invoice to still be sendable at exactly the authorized revision.
+    // The dispatched content is the fresh record, so what is sent is
+    // what was authorized.
+    const freshInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
+    const freshEligible =
+      (freshInvoice.status === "draft" || freshInvoice.status === "sent") &&
+      freshInvoice.invoiceData.finishedInvoice.monetaryRevision === authorizedRevision;
+    if (!freshEligible) {
+      await cancelInvoiceDeliveryClaim({
+        ownerId,
+        claimId: claim.claimId,
+        generation: claim.generation,
+        reason: "stale_authorization"
+      }).catch(() => undefined);
+      throw new HttpStatusError(
+        409,
+        "This invoice changed before the email could be sent. Review the invoice and try again."
+      );
+    }
+
+    const trackingToken = randomUUID();
+    await beginInvoiceDeliveryDispatch({
+      ownerId,
+      claimId: claim.claimId,
+      generation: claim.generation,
+      trackingToken
+    });
+    const openTrackingPixelUrl = `${resolvePublicBaseUrl(req)}/api/invoices/${invoiceId}/delivery/opened/pixel?token=${encodeURIComponent(trackingToken)}`;
+    let sendResult;
+    try {
+      sendResult = await sendInvoiceEmail({
+        recipientEmail,
+        invoice: freshInvoice.invoiceData.finishedInvoice,
+        invoiceId,
+        openTrackingPixelUrl,
+        idempotencyKey: claim.providerIdempotencyKey
+      });
+    } catch (error) {
+      // Acceptance is unprovable after a provider throw: the outcome is
+      // UNKNOWN (§D). The claim now blocks further sends until it is
+      // reconciled or released by the owner — never a blind retry.
+      await recordInvoiceDeliveryClaimOutcome({
+        ownerId,
+        claimId: claim.claimId,
+        generation: claim.generation,
+        outcome: "unknown",
+        mode: "provider",
+        provider: "none"
+      }).catch(() => undefined);
+      throw error;
+    }
+
+    // The outcome event is appended BEFORE the guarded status
+    // transition, so delivery evidence never depends on the transition.
+    await recordInvoiceDeliveryClaimOutcome({
+      ownerId,
+      claimId: claim.claimId,
+      generation: claim.generation,
+      outcome: sendResult.mode === "provider" ? "accepted" : "recorded",
       mode: sendResult.mode,
       provider: sendResult.provider,
       providerMessageId: sendResult.providerMessageId
     });
+
+    // Guarded completion against fresh state (invariants 3, 4, 6):
+    // only ACCEPTED completes, and only draft → sent; a payment that
+    // landed mid-flight is preserved exactly. record_only completes
+    // nothing and returns the fresh record untouched.
     const invoice =
-      invoiceWithPaymentLink.status === "sent"
-        ? invoiceWithPaymentLink
-        : await savedInvoiceRepository.updateSavedInvoiceStatus(invoiceId, "sent", ownerId);
-    await trackRevenueSignalSafely({
-      event: "invoice_sent",
-      ownerId,
-      source: "invoice_send"
-    });
+      sendResult.mode === "provider"
+        ? (
+            await savedInvoiceRepository.completeInvoiceDelivery({
+              invoiceId,
+              ownerId,
+              authorizedRevision
+            })
+          ).invoice
+        : await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
+    const delivery = await getInvoiceDeliverySummary({ ownerId, invoiceId });
+    if (!delivery) {
+      throw new HttpStatusError(500, "Delivery summary missing after send.");
+    }
+    if (sendResult.mode === "provider") {
+      await trackRevenueSignalSafely({
+        event: "invoice_sent",
+        ownerId,
+        source: "invoice_send"
+      });
+    }
     res.json({
       invoice,
       delivery,
@@ -1572,11 +1711,15 @@ app.post("/api/invoices/:id/send-reminder", async (req: Request, res: Response, 
       repository: savedInvoiceRepository,
       baseUrl: resolvePublicBaseUrl(req)
     });
-    await trackRevenueSignalSafely({
-      event: "reminder_sent",
-      ownerId,
-      source: "send_reminder"
-    });
+    // Slice 0 (invariant 8): a record_only reminder is not a sent
+    // reminder and fires no revenue success signal.
+    if (reminder.mode === "provider") {
+      await trackRevenueSignalSafely({
+        event: "reminder_sent",
+        ownerId,
+        source: "send_reminder"
+      });
+    }
     res.json({
       reminder: {
         invoiceId: reminder.invoiceId,
@@ -1640,6 +1783,73 @@ app.post("/api/invoices/reminders/run", async (req: Request, res: Response, next
     next(error);
   }
 });
+
+app.post(
+  "/api/invoices/:id/reminders/confirm-schedule",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const invoiceId = z.string().uuid().parse(req.params.id);
+      const parsedRequest = z
+        .object({
+          nextDueAt: z.string().datetime().optional()
+        })
+        .default({})
+        .parse(req.body ?? {});
+      const ownerId = getRequestOwnerId(req);
+      // §E: explicit owner confirmation restarts reminder scheduling
+      // for THIS invoice only. It records eligibility, not a send: it
+      // creates no delivery event, no send count, and no timing claim.
+      const invoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
+      if (invoice.status === "deleted" || invoice.status === "paid") {
+        throw new HttpStatusError(400, "Reminders can only be scheduled for open invoices.");
+      }
+      const settings = resolveInvoiceReminderSettings();
+      const now = new Date();
+      const anchor = await setInvoiceReminderAnchor({
+        ownerId,
+        invoiceId,
+        activatedAt: now.toISOString(),
+        nextDueAt:
+          parsedRequest.nextDueAt ?? new Date(now.getTime() + settings.dueAfterDays * 24 * 60 * 60 * 1000).toISOString()
+      });
+      res.json({ anchor });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.post(
+  "/api/invoices/:id/delivery/claims/:claimId/release",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const invoiceId = z.string().uuid().parse(req.params.id);
+      const claimId = z.string().min(1).parse(req.params.claimId);
+      const parsedRequest = z
+        .object({
+          reason: z.string().trim().min(1).max(500)
+        })
+        .parse(req.body ?? {});
+      const ownerId = getRequestOwnerId(req);
+      // §C owner release of an unresolved (UNKNOWN) claim: recorded
+      // durably with actor/time/reason. It fabricates no acceptance —
+      // it only permits a future logical send under a fresh claim.
+      const existingClaim = await getInvoiceDeliveryClaimById({ ownerId, claimId });
+      if (!existingClaim || existingClaim.invoiceId !== invoiceId) {
+        throw new HttpStatusError(404, "Delivery claim was not found for this invoice.");
+      }
+      const claim = await releaseInvoiceDeliveryClaim({
+        ownerId,
+        claimId,
+        actor: ownerId,
+        reason: parsedRequest.reason
+      });
+      res.json({ claim });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
 
 app.post("/api/invoices/:id/delivery/opened", async (req: Request, res: Response, next: NextFunction) => {
   try {

@@ -5,6 +5,7 @@ import {
   SavedInvoiceStatus
 } from "../models/invoice.js";
 import {
+  completeSavedInvoiceDelivery,
   deleteSavedInvoice,
   duplicateSavedInvoice,
   getSavedInvoiceById,
@@ -17,6 +18,7 @@ import {
   settleStripeInvoicePayment,
   updateSavedInvoiceStatus
 } from "./savedInvoiceStore.js";
+import type { InvoiceStatusTransitionPurpose } from "./invoiceDeliveryPolicy.js";
 import type {
   StripeSettlementInput,
   StripeSettlementResult
@@ -58,8 +60,22 @@ export interface SavedInvoiceRepository {
   updateSavedInvoiceStatus(
     invoiceId: string,
     status: SavedInvoiceStatus,
-    ownerId: string
+    ownerId: string,
+    purpose?: InvoiceStatusTransitionPurpose
   ): Promise<SavedInvoice>;
+  /**
+   * Slice 0 guarded delivery completion: applies the shared
+   * delivery-purpose transition to fresh state inside the backend's
+   * serialization (draft → sent only, at the authorized monetary
+   * revision; paid/deleted/sent are no-ops) and returns the fresh
+   * invoice plus whether a transition occurred. Delivery callers must
+   * use this instead of updateSavedInvoiceStatus(..., "sent").
+   */
+  completeInvoiceDelivery(input: {
+    invoiceId: string;
+    ownerId: string;
+    authorizedRevision: number;
+  }): Promise<{ invoice: SavedInvoice; transitioned: boolean }>;
   restoreSavedInvoice(invoiceId: string, ownerId: string): Promise<SavedInvoice>;
   deleteSavedInvoice(invoiceId: string, ownerId: string): Promise<void>;
   settleStripeInvoicePayment(input: StripeSettlementInput): Promise<StripeSettlementResult>;
@@ -123,9 +139,18 @@ class FileSavedInvoiceRepository implements SavedInvoiceRepository {
   async updateSavedInvoiceStatus(
     invoiceId: string,
     status: SavedInvoiceStatus,
-    ownerId: string
+    ownerId: string,
+    purpose?: InvoiceStatusTransitionPurpose
   ): Promise<SavedInvoice> {
-    return updateSavedInvoiceStatus(invoiceId, status, ownerId);
+    return updateSavedInvoiceStatus(invoiceId, status, ownerId, purpose);
+  }
+
+  async completeInvoiceDelivery(input: {
+    invoiceId: string;
+    ownerId: string;
+    authorizedRevision: number;
+  }): Promise<{ invoice: SavedInvoice; transitioned: boolean }> {
+    return completeSavedInvoiceDelivery(input);
   }
 
   async restoreSavedInvoice(invoiceId: string, ownerId: string): Promise<SavedInvoice> {

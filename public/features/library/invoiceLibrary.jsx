@@ -1144,7 +1144,7 @@
           );
         } else if (status === "sent") {
           setDeliveryNotice(
-            Boolean(mergedInvoice?.delivery?.recipientEmail && mergedInvoice?.delivery?.sentAt)
+            Boolean(mergedInvoice?.delivery?.recipientEmail && mergedInvoice?.delivery?.lastActivityAt)
               ? `Marked ${updatedInvoice.invoiceNumber || "the invoice"} as sent. Next: watch delivery before following up.`
               : `Marked ${updatedInvoice.invoiceNumber || "the invoice"} as sent. Next: add a tracked recipient so delivery and reminders stay clearer.`
           );
@@ -1354,7 +1354,7 @@
     const recipientEmail = String(options?.recipientEmail ?? "").trim().toLowerCase();
     const isResend =
       Boolean(options?.intent === "resend") ||
-      Boolean(invoice?.delivery?.recipientEmail && invoice?.delivery?.sentAt);
+      Boolean(invoice?.delivery?.recipientEmail && invoice?.delivery?.lastActivityAt);
     if (!recipientEmail || !isValidEmail(recipientEmail)) {
       setError("Enter a valid recipient email.");
       return;
@@ -2000,7 +2000,7 @@
   const oldestSentRecipient = oldestSentReminder?.delivery?.recipientEmail ?? "";
   const oldestSentReminderOpened = oldestSentReminder?.delivery?.status === "opened";
   const oldestSentReminderHasTrackedDelivery = Boolean(
-    oldestSentReminder?.delivery?.recipientEmail && oldestSentReminder?.delivery?.sentAt
+    oldestSentReminder?.delivery?.recipientEmail && oldestSentReminder?.delivery?.lastActivityAt
   );
   const canQuickSendReminderOldest = Boolean(
     oldestSentReminder?.invoiceId && isValidEmail(oldestSentRecipient)
@@ -2162,7 +2162,7 @@
           return false;
         }
         const delivery = invoice?.delivery ?? null;
-        return !(delivery?.recipientEmail && delivery?.sentAt);
+        return !(delivery?.recipientEmail && delivery?.lastActivityAt);
       })
       .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
   const sentTrackedUnopenedInvoice =
@@ -2172,7 +2172,7 @@
           return false;
         }
         const delivery = invoice?.delivery ?? null;
-        return Boolean(delivery?.recipientEmail && delivery?.sentAt && delivery?.status !== "opened");
+        return Boolean(delivery?.recipientEmail && delivery?.lastActivityAt && delivery?.status !== "opened");
       })
       .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
   const paidRepeatCandidate =
@@ -2257,7 +2257,7 @@
     if (oldestSentReminder) {
       const oldestReminderOpened = oldestSentReminder?.delivery?.status === "opened";
       const oldestReminderHasTrackedDelivery = Boolean(
-        oldestSentReminder?.delivery?.recipientEmail && oldestSentReminder?.delivery?.sentAt
+        oldestSentReminder?.delivery?.recipientEmail && oldestSentReminder?.delivery?.lastActivityAt
       );
       return {
         toneClass: "border-blue-200 bg-blue-50 text-blue-950",
@@ -3692,8 +3692,8 @@
                   ? formatRecurringCadence(rememberedRecurringInterval)
                   : "";
                 const delivery = invoice?.delivery ?? null;
-                const hasDelivery = Boolean(delivery?.recipientEmail) && Boolean(delivery?.sentAt);
-                const deliverySentAt = hasDelivery ? formatDateTime(delivery.sentAt) : "";
+                const hasDelivery = Boolean(delivery?.recipientEmail) && Boolean(delivery?.lastActivityAt);
+                const deliverySentAt = hasDelivery ? formatDateTime(delivery.sentAt ?? delivery.lastActivityAt) : "";
                 const deliveryOpenedAt = delivery?.openedAt ? formatDateTime(delivery.openedAt) : "";
                 const deliveryOpened = delivery?.status === "opened";
                 const providerDelivery = delivery?.mode === "provider";
