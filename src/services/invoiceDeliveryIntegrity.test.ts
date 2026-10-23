@@ -621,6 +621,138 @@ test("a resolved claim never regresses, and a stuck dispatching claim can be own
   assert.equal(releasedStuck.status, "released");
 });
 
+test("an abandoned reservation blocks competing keys until the owner releases it", async () => {
+  const ownerId = "slice0-claim-abandoned-reservation";
+  const invoiceId = randomUUID();
+  // A worker reserves the initial send and dies before dispatch.
+  const abandoned = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "abandoned@example.com",
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: 0,
+    leaseMs: 1
+  });
+  if (abandoned.outcome !== "reserved") throw new Error("expected reservation");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  // The lease has expired, but the cross-key exclusion has no expiry:
+  // a competing claim (the next reminder occurrence — a different key
+  // every retry, so same-key reclaim can never recover it) is blocked
+  // by the dead reservation.
+  const competing = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "abandoned@example.com",
+    basePurpose: "reminder",
+    purpose: "reminder_occurrence_1",
+    authorizedRevision: 0
+  });
+  assert.equal(competing.outcome, "blocked");
+  // §C owner release is the recovery path: a claim still in
+  // `reserved` is proven never to have entered dispatch, so releasing
+  // it cannot strand or duplicate a provider send.
+  const released = await deliveryStore.releaseInvoiceDeliveryClaim({
+    ownerId,
+    claimId: abandoned.claim.claimId,
+    actor: ownerId,
+    reason: "Reservation abandoned before dispatch began; releasing."
+  });
+  assert.equal(released.status, "released");
+  const afterRelease = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "abandoned@example.com",
+    basePurpose: "reminder",
+    purpose: "reminder_occurrence_1",
+    authorizedRevision: 0
+  });
+  assert.equal(afterRelease.outcome, "reserved");
+  // A reservation whose lease is still live is a send in progress,
+  // not an abandoned one: it remains unreleasable.
+  const liveInvoiceId = randomUUID();
+  const live = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId: liveInvoiceId,
+    recipientEmail: "live@example.com",
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: 0,
+    leaseMs: 60_000
+  });
+  if (live.outcome !== "reserved") throw new Error("expected reservation");
+  await assert.rejects(
+    () =>
+      deliveryStore.releaseInvoiceDeliveryClaim({
+        ownerId,
+        claimId: live.claim.claimId,
+        actor: ownerId,
+        reason: "Too soon — this reservation is still owned."
+      }),
+    /Only an unresolved delivery claim can be released/
+  );
+});
+
+test("a DELIVERED fold strengthens the claim without moving its acceptance time", async () => {
+  const ownerId = "slice0-claim-delivered-fold";
+  const invoiceId = randomUUID();
+  const reservation = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "fold@example.com",
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: 0,
+    leaseMs: 60_000
+  });
+  if (reservation.outcome !== "reserved") throw new Error("expected reservation");
+  const claim = reservation.claim;
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    trackingToken: randomUUID()
+  });
+  const acceptedAt = "2026-10-01T12:00:00.000Z";
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_fold_1",
+    occurredAt: acceptedAt
+  });
+  // Delivery is confirmed two days later. §D: DELIVERED updates the
+  // same claim's projection and creates no second count — and it must
+  // not move the acceptance time the summary and reminder timing
+  // report as the send time.
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome: "delivered",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_fold_1",
+    providerEventId: "evt_fold_delivered",
+    occurredAt: "2026-10-03T12:00:00.000Z"
+  });
+  const after = await deliveryStore.getInvoiceDeliveryClaimById({ ownerId, claimId: claim.claimId });
+  assert.equal(after?.outcomeKind, "delivered");
+  assert.equal(after?.acceptedAt, acceptedAt);
+  const summary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(summary?.sendCount, 1);
+  assert.equal(summary?.sentAt, acceptedAt);
+  const timingById = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+    ownerId,
+    invoiceIds: [invoiceId]
+  });
+  assert.equal(timingById[invoiceId]?.providerSendCount, 1);
+  assert.equal(timingById[invoiceId]?.lastProviderAcceptedAt, acceptedAt);
+});
+
 // ---------------------------------------------------------------------------
 // Legacy migration honesty (invariant 10)
 // ---------------------------------------------------------------------------

@@ -143,6 +143,12 @@ const DeliveryClaimSchema = z.object({
   leaseExpiresAt: z.string().datetime(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  /** §D: the instant this claim's acceptance was established (the
+   * ACCEPTED event, or a DELIVERED that arrived first). Recorded once
+   * and never moved by later outcomes — projections read it as the
+   * send time, so a later DELIVERED fold cannot drift sentAt or
+   * reminder timing the way a mutable updatedAt did. */
+  acceptedAt: z.string().datetime().optional(),
   outcomeEventId: z.string().min(1).optional(),
   releaseActor: z.string().min(1).optional(),
   releaseReason: z.string().min(1).optional(),
@@ -482,6 +488,9 @@ export async function recordInvoiceDeliveryClaimOutcome(input: {
     if (alreadyResolved) {
       // A resolved claim never regresses: the only late fold allowed is
       // DELIVERED strengthening the same logical send's ACCEPTED.
+      // updatedAt tracks latest activity only — acceptedAt, the send
+      // time the projections read, was fixed at ACCEPTED and does not
+      // move with this fold (§D).
       if (existing.outcomeKind === "accepted" && input.outcome === "delivered") {
         existing.outcomeKind = "delivered";
         existing.updatedAt = occurredAt;
@@ -499,6 +508,17 @@ export async function recordInvoiceDeliveryClaimOutcome(input: {
         }
         if (input.outcome === "accepted" && existing.outcomeKind === "recorded") {
           existing.outcomeKind = "accepted";
+        }
+        // §D: acceptance time is a fact of the event that establishes
+        // it — the ACCEPTED outcome, or a DELIVERED that arrives first
+        // and establishes acceptance for the same claim. Record it
+        // once; later outcomes never move it.
+        if (
+          (input.outcome === "accepted" || input.outcome === "delivered") &&
+          (existing.outcomeKind === "accepted" || existing.outcomeKind === "delivered") &&
+          !existing.acceptedAt
+        ) {
+          existing.acceptedAt = occurredAt;
         }
       }
       existing.mode = input.mode;
@@ -557,13 +577,20 @@ export async function cancelInvoiceDeliveryClaim(input: {
 
 /**
  * Owner release of an unresolved claim (§C): recorded durably with
- * actor, time, and reason. Covers both claims whose recorded outcome
- * is UNKNOWN and claims stuck in DISPATCHING past their lease (the
+ * actor, time, and reason. Covers claims whose recorded outcome
+ * is UNKNOWN, claims stuck in DISPATCHING past their lease (the
  * dispatch worker is gone and no outcome will ever arrive — the same
  * unprovable-acceptance ambiguity, resolved by the owner's explicit
- * assertion). A release never fabricates acceptance or a timing
- * anchor — it only unblocks future logical sends, which still need
- * their own new claim identity.
+ * assertion), and RESERVED claims whose lease expired without
+ * dispatch ever beginning. That last case is proven, not ambiguous:
+ * beginDispatch is the only exit from `reserved`, under the same
+ * serialization, so an expired reservation's worker is gone and no
+ * provider send can exist — yet the reservation would otherwise
+ * block every competing claim key (the next reminder occurrence, a
+ * send at a changed revision) forever, since same-key reclaim only
+ * helps a retry of the identical key. A release never fabricates
+ * acceptance or a timing anchor — it only unblocks future logical
+ * sends, which still need their own new claim identity.
  */
 export async function releaseInvoiceDeliveryClaim(input: {
   ownerId: string;
@@ -576,7 +603,9 @@ export async function releaseInvoiceDeliveryClaim(input: {
     const existing = findClaim(store, input.ownerId, input.claimId);
     const stuckDispatching =
       existing.status === "dispatching" && Date.parse(existing.leaseExpiresAt) <= Date.now();
-    if (existing.status !== "blocked_unknown" && !stuckDispatching) {
+    const abandonedReservation =
+      existing.status === "reserved" && Date.parse(existing.leaseExpiresAt) <= Date.now();
+    if (existing.status !== "blocked_unknown" && !stuckDispatching && !abandonedReservation) {
       throw new Error("Only an unresolved delivery claim can be released.");
     }
     const nowIso = new Date().toISOString();
@@ -972,6 +1001,34 @@ export async function getInvoiceDeliveryStoreSummary(): Promise<{
 // Projections
 // ---------------------------------------------------------------------------
 
+/**
+ * The instant a claim's acceptance was established (§D): the stored
+ * acceptedAt when present; for claims written before that field
+ * existed, the earliest acceptance-establishing outcome event
+ * (ACCEPTED, or a DELIVERED that arrived first); finally the claim's
+ * updatedAt as the last-resort legacy value. Never the time of a
+ * later DELIVERED fold — acceptance does not move when delivery is
+ * confirmed afterwards.
+ */
+function claimAcceptanceAt(claim: DeliveryClaim, events: DeliveryEvent[]): string {
+  if (claim.acceptedAt) {
+    return claim.acceptedAt;
+  }
+  let earliest: string | null = null;
+  for (const event of events) {
+    if (
+      event.claimId === claim.claimId &&
+      event.kind === "outcome" &&
+      (event.outcome === "accepted" || event.outcome === "delivered")
+    ) {
+      if (!earliest || Date.parse(event.occurredAt) < Date.parse(earliest)) {
+        earliest = event.occurredAt;
+      }
+    }
+  }
+  return earliest ?? claim.updatedAt;
+}
+
 function projectSummary(store: DeliveryStore, ownerId: string, invoiceId: string): DeliverySummary | null {
   const legacy = store.legacyEntries.find(
     (entry) => entry.ownerId === ownerId && entry.invoiceId === invoiceId
@@ -989,8 +1046,9 @@ function projectSummary(store: DeliveryStore, ownerId: string, invoiceId: string
   const verifiedAttemptIds = new Set<string>(acceptedClaims.map((claim) => claim.attemptId));
   let lastProviderAcceptedAt: string | null = null;
   for (const claim of acceptedClaims) {
-    if (!lastProviderAcceptedAt || Date.parse(claim.updatedAt) > Date.parse(lastProviderAcceptedAt)) {
-      lastProviderAcceptedAt = claim.updatedAt;
+    const acceptedAt = claimAcceptanceAt(claim, events);
+    if (!lastProviderAcceptedAt || Date.parse(acceptedAt) > Date.parse(lastProviderAcceptedAt)) {
+      lastProviderAcceptedAt = acceptedAt;
     }
   }
   let providerRecordedCount = 0;
@@ -1105,7 +1163,10 @@ function projectReminderTiming(
   );
   let providerSendCount = acceptedClaims.length;
   let lastProviderAcceptedAt: string | null = acceptedClaims.reduce<string | null>(
-    (latest, claim) => (!latest || Date.parse(claim.updatedAt) > Date.parse(latest) ? claim.updatedAt : latest),
+    (latest, claim) => {
+      const acceptedAt = claimAcceptanceAt(claim, events);
+      return !latest || Date.parse(acceptedAt) > Date.parse(latest) ? acceptedAt : latest;
+    },
     null
   );
   let recordOnlyCount = 0;

@@ -1368,7 +1368,11 @@
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ recipientEmail })
+          // The server replays a bare repeat of the original send
+          // (idempotent retry); the explicit resend intent is what
+          // authorizes a NEW logical send under a fresh claim
+          // identity, so a resend click must say so.
+          body: JSON.stringify(isResend ? { recipientEmail, intent: "resend" } : { recipientEmail })
         },
         "Failed to send invoice."
       );

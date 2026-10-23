@@ -1441,7 +1441,12 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
         recipientEmail: z.preprocess(
           (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
           z.string().email()
-        )
+        ),
+        // §C: an explicit owner resend (the library's resend action)
+        // establishes a NEW logical send under a resend occurrence
+        // identity. A bare repeat of this request is a retry of the
+        // original operation and replays its recorded outcome instead.
+        intent: z.enum(["resend"]).optional()
       })
       .parse(req.body ?? {});
     const ownerId = getRequestOwnerId(req);
@@ -1482,22 +1487,40 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
       purpose: "initial_send",
       authorizedRevision
     });
-    if (
-      reservation.outcome === "existing" &&
-      (reservation.claim.status === "cancelled" || reservation.claim.status === "released" || reservation.claim.outcomeKind === "failed")
-    ) {
-      // The original logical send resolved without a delivery
-      // (failed / cancelled / owner-released): a fresh logical attempt
-      // needs its own claim identity.
-      const priorResends = await countInvoiceDeliveryClaims({ ownerId, invoiceId, basePurpose: "resend" });
-      reservation = await reserveInvoiceDeliveryClaim({
-        ownerId,
-        invoiceId,
-        recipientEmail,
-        basePurpose: "resend",
-        purpose: `resend_${priorResends + 1}`,
-        authorizedRevision
-      });
+    if (reservation.outcome === "existing") {
+      // The claim for this (recipient, revision) already resolved. A
+      // resolution counts as a send only when the provider accepted
+      // (§D): failed / cancelled / owner-released claims — and
+      // record_only recordings, which §D says create no send outcome
+      // at all — never block a fresh logical attempt. A counted
+      // acceptance is replayed idempotently for bare retries of the
+      // original operation; only an explicit owner resend
+      // (intent: "resend") establishes a new logical send. Either way
+      // the fresh attempt needs its own claim identity: the next
+      // resend occurrence (§C), walking past any resend identities
+      // that already resolved too.
+      const resolvedClaim = reservation.claim;
+      const countedAsSent =
+        resolvedClaim.outcomeKind === "accepted" || resolvedClaim.outcomeKind === "delivered";
+      if (!countedAsSent || parsedRequest.intent === "resend") {
+        let resendNumber =
+          (await countInvoiceDeliveryClaims({ ownerId, invoiceId, basePurpose: "resend" })) + 1;
+        for (;;) {
+          const attempt = await reserveInvoiceDeliveryClaim({
+            ownerId,
+            invoiceId,
+            recipientEmail,
+            basePurpose: "resend",
+            purpose: `resend_${resendNumber}`,
+            authorizedRevision
+          });
+          if (attempt.outcome !== "existing") {
+            reservation = attempt;
+            break;
+          }
+          resendNumber += 1;
+        }
+      }
     }
     if (reservation.outcome === "blocked") {
       throw new HttpStatusError(
@@ -1831,9 +1854,11 @@ app.post(
         })
         .parse(req.body ?? {});
       const ownerId = getRequestOwnerId(req);
-      // §C owner release of an unresolved (UNKNOWN) claim: recorded
-      // durably with actor/time/reason. It fabricates no acceptance —
-      // it only permits a future logical send under a fresh claim.
+      // §C owner release of an unresolved claim (UNKNOWN outcome,
+      // lease-expired dispatching, or an abandoned reservation whose
+      // lease expired before dispatch began): recorded durably with
+      // actor/time/reason. It fabricates no acceptance — it only
+      // permits a future logical send under a fresh claim.
       const existingClaim = await getInvoiceDeliveryClaimById({ ownerId, claimId });
       if (!existingClaim || existingClaim.invoiceId !== invoiceId) {
         throw new HttpStatusError(404, "Delivery claim was not found for this invoice.");

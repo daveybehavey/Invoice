@@ -3832,6 +3832,174 @@ test("send endpoint uses resend provider when configured", async () => {
   assert.match(String(body.html), /delivery\/opened\/pixel\?token=/);
 });
 
+test("send endpoint replays a bare retry but dispatches an explicit owner resend", async () => {
+  const ownerId = "delivery-resend-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "test-resend-key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: `email_resend_${fetchCalls.length}` }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Delivery Resend Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-RESEND-1",
+          issueDate: "2026-03-11",
+          customerName: "Delivery Resend Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-delivery-resend-1",
+              type: "labor",
+              description: "Delivery resend baseline",
+              quantity: 1,
+              unitPrice: 175,
+              amount: 175
+            }
+          ],
+          subtotal: 175,
+          total: 175,
+          balanceDue: 175
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const firstSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "resend@example.com" });
+  assert.equal(firstSend.status, 200);
+  assert.equal(firstSend.body.mode, "provider");
+  assert.equal(firstSend.body.delivery.sendCount, 1);
+  assert.equal(fetchCalls.length, 1);
+  const firstInit = fetchCalls[0]?.init as RequestInit | undefined;
+  const firstKey = (firstInit?.headers as Record<string, string>)?.["Idempotency-Key"];
+  assert.match(firstKey ?? "", /^nb-send-[0-9a-f]{32}$/);
+
+  // A bare repeat of the same request is a retry of the original
+  // operation (§C): it replays the recorded outcome and the provider
+  // is NOT contacted again.
+  const retrySend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "resend@example.com" });
+  assert.equal(retrySend.status, 200);
+  assert.equal(retrySend.body.mode, "provider");
+  assert.equal(retrySend.body.delivery.sendCount, 1);
+  assert.equal(fetchCalls.length, 1);
+
+  // The library's resend action is an explicit owner instruction to
+  // send again: it establishes a new logical send under a resend
+  // occurrence identity, with its own provider idempotency key, and
+  // the provider IS contacted.
+  const resend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "resend@example.com", intent: "resend" });
+  assert.equal(resend.status, 200);
+  assert.equal(resend.body.mode, "provider");
+  assert.equal(resend.body.delivery.sendCount, 2);
+  assert.equal(fetchCalls.length, 2);
+  const resendInit = fetchCalls[1]?.init as RequestInit | undefined;
+  const resendKey = (resendInit?.headers as Record<string, string>)?.["Idempotency-Key"];
+  assert.match(resendKey ?? "", /^nb-send-[0-9a-f]{32}$/);
+  assert.notEqual(resendKey, firstKey);
+});
+
+test("send endpoint dispatches a real send after an initial record_only recording", async () => {
+  const ownerId = "delivery-recordonly-then-provider-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Record Only Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-RECORDONLY-1",
+          issueDate: "2026-03-11",
+          customerName: "Record Only Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-delivery-recordonly-1",
+              type: "labor",
+              description: "Record only baseline",
+              quantity: 1,
+              unitPrice: 140,
+              amount: 140
+            }
+          ],
+          subtotal: 140,
+          total: 140,
+          balanceDue: 140
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  // No provider configured: the attempt is recorded as record_only.
+  // §D: that creates no send outcome at all, so it must not occupy
+  // the initial_send identity against a later real send.
+  const recorded = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "recordonly@example.com" });
+  assert.equal(recorded.status, 200);
+  assert.equal(recorded.body.mode, "record_only");
+  assert.equal(recorded.body.delivery.sendCount, 0);
+
+  // The owner configures a provider and sends again — same recipient,
+  // same monetary revision, no resend intent. The send must dispatch.
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "test-resend-key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: "email_after_recordonly" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const realSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "recordonly@example.com" });
+  assert.equal(realSend.status, 200);
+  assert.equal(realSend.body.mode, "provider");
+  assert.equal(realSend.body.delivery.sendCount, 1);
+  assert.equal(realSend.body.invoice.status, "sent");
+  assert.equal(fetchCalls.length, 1);
+});
+
 test("send endpoint uses smtp2go provider when configured", async () => {
   const ownerId = "delivery-smtp2go-owner";
   process.env.INVOICE_EMAIL_PROVIDER = "smtp2go";
@@ -10294,7 +10462,15 @@ async function backdateVerifiedDeliverySend(invoiceId: string, isoTimestamp: str
       .map((claim) => claim.claimId)
   );
   parsed.claims = (parsed.claims ?? []).map((claim) =>
-    claim?.invoiceId === invoiceId ? { ...claim, updatedAt: isoTimestamp } : claim
+    claim?.invoiceId === invoiceId
+      ? {
+          ...claim,
+          updatedAt: isoTimestamp,
+          // The acceptance instant lives on the claim (acceptedAt) as
+          // well as in the outcome events below; move all of them.
+          ...(typeof claim.acceptedAt === "string" ? { acceptedAt: isoTimestamp } : {})
+        }
+      : claim
   );
   parsed.events = (parsed.events ?? []).map((event) =>
     event?.invoiceId === invoiceId && claimIds.has(event?.claimId as string) && event?.kind === "outcome"
