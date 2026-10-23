@@ -4177,6 +4177,127 @@ process.env.RESEND_API_KEY = "re_test_key";
   assert.equal(fetchCalls, 1);
 });
 
+test("send endpoint exposes the blocking claim id in the 409 and the delivery summary so the owner can release it", async () => {
+  const ownerId = "delivery-blocking-claim-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  let providerAccepts = false;
+  let fetchCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    if (!providerAccepts) {
+      // Ambiguous: the request may or may not have reached Resend, so
+      // acceptance is unprovable and the outcome stays UNKNOWN (§D).
+      throw new TypeError("fetch failed");
+    }
+    return new Response(JSON.stringify({ id: "email_after_release" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Delivery Blocking Claim Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-BLOCKING-CLAIM-1",
+          issueDate: "2026-03-11",
+          customerName: "Delivery Blocking Claim Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-delivery-blocking-claim-1",
+              type: "labor",
+              description: "Delivery blocking claim baseline",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          subtotal: 120,
+          total: 120,
+          balanceDue: 120
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const failedSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "blocked-claim@example.com" });
+  // Provider throws surface through the app's error middleware as 400.
+  assert.equal(failedSend.status, 400);
+
+  const parsed = JSON.parse(await fs.readFile(invoiceDeliveryStoreFilePath, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const storedClaim = (parsed.claims ?? []).find((entry) => entry?.invoiceId === invoiceId);
+  assert.equal(storedClaim?.status, "blocked_unknown");
+  const claimId = storedClaim?.claimId as string;
+  assert.ok(claimId);
+
+  // The delivery summary the owner already sees names the blocking
+  // claim — discoverable without provoking another failed send first.
+  const detailResponse = await request(app).get(`/api/invoices/${invoiceId}`).set("x-invoice-user-id", ownerId);
+  assert.equal(detailResponse.status, 200);
+  assert.equal(detailResponse.body.invoice.delivery.blockingClaim?.claimId, claimId);
+  assert.equal(detailResponse.body.invoice.delivery.blockingClaim?.reason, "unresolved_send");
+
+  const listResponse = await request(app).get("/api/invoices").set("x-invoice-user-id", ownerId);
+  assert.equal(listResponse.status, 200);
+  const listed = (
+    listResponse.body.invoices as Array<{ invoiceId?: string; delivery?: { blockingClaim?: { claimId?: string } } }>
+  ).find((entry) => entry?.invoiceId === invoiceId);
+  assert.equal(listed?.delivery?.blockingClaim?.claimId, claimId);
+
+  // A blocked retry names the same claim in the 409 body, so the owner
+  // can address the release endpoint without reading the store.
+  const blockedRetry = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "blocked-claim@example.com" });
+  assert.equal(blockedRetry.status, 409);
+  assert.match(String(blockedRetry.body.error || ""), /unresolved delivery attempt/);
+  assert.equal(blockedRetry.body.blockingClaim?.claimId, claimId);
+  assert.equal(blockedRetry.body.blockingClaim?.reason, "unresolved_send");
+  assert.equal(fetchCalls, 1);
+
+  // The owner releases exactly the claim the surfaces named.
+  const releaseResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/delivery/claims/${claimId}/release`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ reason: "Provider confirmed the email never went out." });
+  assert.equal(releaseResponse.status, 200);
+  assert.equal(releaseResponse.body.claim.status, "released");
+
+  // With the provider healthy again, a fresh send dispatches and the
+  // summary no longer reports a blocking claim.
+  providerAccepts = true;
+  const sendAfterRelease = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "blocked-claim@example.com" });
+  assert.equal(sendAfterRelease.status, 200);
+  assert.equal(sendAfterRelease.body.mode, "provider");
+  assert.equal(sendAfterRelease.body.invoice.status, "sent");
+  assert.equal(sendAfterRelease.body.delivery.sendCount, 1);
+  assert.equal(sendAfterRelease.body.delivery.blockingClaim, null);
+  assert.equal(fetchCalls, 2);
+});
+
 test("send endpoint dispatches a real send after an initial record_only recording", async () => {
   const ownerId = "delivery-recordonly-then-provider-owner";
   const saveResponse = await request(app)

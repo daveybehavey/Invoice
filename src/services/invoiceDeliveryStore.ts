@@ -221,6 +221,22 @@ export const DeliverySummarySchema = z.object({
   recordOnlyCount: z.number().int().nonnegative().default(0),
   unverifiedOpenCount: z.number().int().nonnegative().default(0),
   verified: z.boolean().default(false),
+  /**
+   * The claim currently blocking new sends for this invoice, if any:
+   * an UNKNOWN outcome awaiting owner reconciliation or release
+   * (reason "unresolved_send"), or a send still in flight (reason
+   * "send_in_progress"). claimId is the identifier the owner release
+   * endpoint is addressed by; surfacing it here — and in the
+   * blocked-send 409 response — is what makes the release mechanism
+   * discoverable from owner-facing surfaces.
+   */
+  blockingClaim: z
+    .object({
+      claimId: z.string().min(1),
+      reason: z.enum(["unresolved_send", "send_in_progress"])
+    })
+    .nullable()
+    .default(null),
   legacy: z
     .object({
       sentAt: z.string().datetime(),
@@ -1029,6 +1045,35 @@ function claimAcceptanceAt(claim: DeliveryClaim, events: DeliveryEvent[]): strin
   return earliest ?? claim.updatedAt;
 }
 
+export type DeliveryBlockReason = "unresolved_send" | "send_in_progress";
+
+/**
+ * The claim currently blocking new sends for this invoice, mirroring
+ * reserveInvoiceDeliveryClaim's blocking decision (§C): a claim whose
+ * outcome is UNKNOWN (status blocked_unknown) blocks until the owner
+ * reconciles or releases it; a reserved/dispatching claim blocks
+ * while its send is in flight. Cross-key exclusion means at most one
+ * blocking claim exists in practice; if several ever did, the
+ * persistent unknown block wins over a transient in-flight one, then
+ * the most recently updated.
+ */
+function projectBlockingClaim(
+  claims: DeliveryClaim[]
+): { claimId: string; reason: DeliveryBlockReason } | null {
+  const byUpdatedDesc = [...claims].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  const unknown = byUpdatedDesc.find((claim) => claim.status === "blocked_unknown");
+  if (unknown) {
+    return { claimId: unknown.claimId, reason: "unresolved_send" };
+  }
+  const inFlight = byUpdatedDesc.find(
+    (claim) => claim.status === "reserved" || claim.status === "dispatching"
+  );
+  if (inFlight) {
+    return { claimId: inFlight.claimId, reason: "send_in_progress" };
+  }
+  return null;
+}
+
 function projectSummary(store: DeliveryStore, ownerId: string, invoiceId: string): DeliverySummary | null {
   const legacy = store.legacyEntries.find(
     (entry) => entry.ownerId === ownerId && entry.invoiceId === invoiceId
@@ -1136,6 +1181,7 @@ function projectSummary(store: DeliveryStore, ownerId: string, invoiceId: string
     recordOnlyCount,
     unverifiedOpenCount,
     verified: sendCount > 0,
+    blockingClaim: projectBlockingClaim(claims),
     legacy: legacy
       ? {
           sentAt: legacy.sentAt,

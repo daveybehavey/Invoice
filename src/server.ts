@@ -1524,12 +1524,23 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
       }
     }
     if (reservation.outcome === "blocked") {
-      throw new HttpStatusError(
-        409,
-        reservation.reason === "unresolved_send"
-          ? "This invoice has an unresolved delivery attempt. Reconcile or release it before sending again."
-          : "A send for this invoice is already in progress."
-      );
+      // Structured 409 rather than the bare error shape: the owner
+      // release endpoint is addressed by claim ID, so the response
+      // must name the blocking claim — otherwise the recovery the
+      // message asks for cannot be performed from any owner-facing
+      // surface. The delivery summary exposes the same claim as
+      // delivery.blockingClaim. The `error` message text is unchanged.
+      res.status(409).json({
+        error:
+          reservation.reason === "unresolved_send"
+            ? "This invoice has an unresolved delivery attempt. Reconcile or release it before sending again."
+            : "A send for this invoice is already in progress.",
+        blockingClaim: {
+          claimId: reservation.claim.claimId,
+          reason: reservation.reason
+        }
+      });
+      return;
     }
     const claim: DeliveryClaim = reservation.claim;
     if (reservation.outcome === "existing") {
