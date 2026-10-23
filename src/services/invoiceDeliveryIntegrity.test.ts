@@ -753,6 +753,158 @@ test("a DELIVERED fold strengthens the claim without moving its acceptance time"
   assert.equal(timingById[invoiceId]?.lastProviderAcceptedAt, acceptedAt);
 });
 
+test("an opened event never changes the reminder recipient", async () => {
+  const ownerId = "slice0-open-recipient";
+  const invoice = await createInvoice(ownerId, 120);
+  await repository.updateSavedInvoiceStatus(invoice.invoiceId, "sent", ownerId);
+  const invoiceId = invoice.invoiceId;
+
+  async function acceptedSend(
+    recipientEmail: string,
+    basePurpose: "initial_send" | "resend",
+    purpose: string
+  ): Promise<string> {
+    const reservation = await deliveryStore.reserveInvoiceDeliveryClaim({
+      ownerId,
+      invoiceId,
+      recipientEmail,
+      basePurpose,
+      purpose,
+      authorizedRevision: 0
+    });
+    if (reservation.outcome !== "reserved" && reservation.outcome !== "reclaimed") {
+      throw new Error("expected a reservation");
+    }
+    const trackingToken = randomUUID();
+    await deliveryStore.beginInvoiceDeliveryDispatch({
+      ownerId,
+      claimId: reservation.claim.claimId,
+      generation: reservation.claim.generation,
+      trackingToken
+    });
+    await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+      ownerId,
+      claimId: reservation.claim.claimId,
+      generation: reservation.claim.generation,
+      outcome: "accepted",
+      mode: "provider",
+      provider: "resend",
+      providerMessageId: `email_${purpose}`
+    });
+    return trackingToken;
+  }
+
+  const firstToken = await acceptedSend("first@example.com", "initial_send", "initial_send");
+  await acceptedSend("second@example.com", "resend", "resend_1");
+
+  const before = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+    ownerId,
+    invoiceIds: [invoiceId]
+  });
+  assert.equal(before[invoiceId]?.recipientEmail, "second@example.com");
+
+  // The FIRST recipient opens their older email. The open is engagement
+  // evidence about that attempt — it is not a send operation and must
+  // not re-select the reminder recipient back to the old address.
+  await deliveryStore.markInvoiceDeliveryOpenedByTrackingToken({ invoiceId, trackingToken: firstToken });
+
+  const after = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+    ownerId,
+    invoiceIds: [invoiceId]
+  });
+  assert.equal(after[invoiceId]?.recipientEmail, "second@example.com");
+  const summary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(summary?.recipientEmail, "second@example.com");
+  // The open itself still counts as engagement with the first send.
+  assert.equal(summary?.openCount, 1);
+
+  // A reminder dispatched now is addressed to the latest send's
+  // recipient (record_only here — no provider configured in this file).
+  const reminder = await scheduler.sendInvoiceReminderById({
+    ownerId,
+    repository,
+    baseUrl: BASE_URL,
+    invoiceId
+  });
+  assert.equal(reminder.recipientEmail, "second@example.com");
+});
+
+test("a definitive provider rejection records the reminder outcome as failed, not unknown", async () => {
+  const ownerId = "slice0-reminder-rejection";
+  const invoice = await createInvoice(ownerId, 90);
+  await repository.updateSavedInvoiceStatus(invoice.invoiceId, "sent", ownerId);
+  await deliveryStore.recordInvoiceDeliverySend({
+    ownerId,
+    invoiceId: invoice.invoiceId,
+    recipientEmail: "rejected@example.com",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_reject_seed"
+  });
+
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  const nativeFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      // Resend answers and refuses the submission (validation error):
+      // a definitive rejection, not an uncertain result (§D).
+      return new Response(
+        JSON.stringify({ name: "validation_error", message: "Recipient address is invalid." }),
+        { status: 422, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response(JSON.stringify({ id: "email_reject_retry" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+  try {
+    await assert.rejects(
+      scheduler.sendInvoiceReminderById({
+        ownerId,
+        repository,
+        baseUrl: BASE_URL,
+        invoiceId: invoice.invoiceId
+      }),
+      /Failed to send email via Resend/
+    );
+    const parsed = JSON.parse(await fs.readFile(deliveryStoreFile, "utf8")) as {
+      claims?: Array<Record<string, unknown>>;
+    };
+    const reminderClaim = (parsed.claims ?? []).find(
+      (claim) => claim?.invoiceId === invoice.invoiceId && claim?.basePurpose === "reminder"
+    );
+    assert.equal(reminderClaim?.outcomeKind, "failed");
+    assert.equal(reminderClaim?.status, "outcome_recorded");
+    // §D: FAILED releases the ambiguity block — nothing is unresolved,
+    // so an ordinary correction can be retried without owner release.
+    const timing = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+      ownerId,
+      invoiceIds: [invoice.invoiceId]
+    });
+    assert.equal(timing[invoice.invoiceId]?.hasUnresolvedSend, false);
+
+    const retry = await scheduler.sendInvoiceReminderById({
+      ownerId,
+      repository,
+      baseUrl: BASE_URL,
+      invoiceId: invoice.invoiceId
+    });
+    assert.equal(retry.mode, "provider");
+    assert.equal(retry.recipientEmail, "rejected@example.com");
+    assert.equal(fetchCalls, 2);
+  } finally {
+    (globalThis as { fetch: typeof fetch }).fetch = nativeFetch;
+    delete process.env.INVOICE_EMAIL_PROVIDER;
+    delete process.env.RESEND_API_KEY;
+    delete process.env.INVOICE_FROM_EMAIL;
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Legacy migration honesty (invariant 10)
 // ---------------------------------------------------------------------------

@@ -87,6 +87,7 @@ import {
 import {
   getInvoiceEmailCapabilities,
   getInvoiceEmailDiagnostics,
+  isDefinitiveProviderRejection,
   sendAuthSignInEmail,
   sendInvoiceEmail,
   sendLaunchTestEmail
@@ -1532,6 +1533,25 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
     }
     const claim: DeliveryClaim = reservation.claim;
     if (reservation.outcome === "existing") {
+      // Crash-window recovery (Slice 0 design: recovery retries the
+      // guarded completion from a persisted successful outcome). If
+      // the resolved claim is a provider acceptance whose guarded
+      // status completion never landed — the process stopped, or the
+      // invoice-store write failed, after the outcome was persisted —
+      // replay the completion now, from the claim's authorized
+      // revision. completeInvoiceDelivery is itself guarded (fresh
+      // draft → sent only, at that revision; paid/deleted preserved),
+      // and no email is dispatched.
+      if (
+        claim.mode === "provider" &&
+        (claim.outcomeKind === "accepted" || claim.outcomeKind === "delivered")
+      ) {
+        await savedInvoiceRepository.completeInvoiceDelivery({
+          invoiceId,
+          ownerId,
+          authorizedRevision: claim.authorizedRevision
+        });
+      }
       // Idempotent replay: this logical send already resolved. Return
       // its recorded outcome and fresh state — never dispatch twice.
       const invoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
@@ -1592,16 +1612,21 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
         idempotencyKey: claim.providerIdempotencyKey
       });
     } catch (error) {
-      // Acceptance is unprovable after a provider throw: the outcome is
-      // UNKNOWN (§D). The claim now blocks further sends until it is
-      // reconciled or released by the owner — never a blind retry.
+      // §D outcome taxonomy: a definitive provider rejection (the
+      // provider answered and refused the submission) is FAILED — it
+      // releases the ambiguity block so the owner can correct the
+      // problem and retry. Any other throw leaves acceptance
+      // unprovable: UNKNOWN, and the claim blocks further sends until
+      // it is reconciled or released by the owner — never a blind
+      // retry.
+      const rejection = isDefinitiveProviderRejection(error) ? error : null;
       await recordInvoiceDeliveryClaimOutcome({
         ownerId,
         claimId: claim.claimId,
         generation: claim.generation,
-        outcome: "unknown",
+        outcome: rejection ? "failed" : "unknown",
         mode: "provider",
-        provider: "none"
+        provider: rejection ? rejection.provider : "none"
       }).catch(() => undefined);
       throw error;
     }

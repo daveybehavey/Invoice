@@ -1197,12 +1197,22 @@ function projectReminderTiming(
   };
 }
 
+/**
+ * The recipient of the latest authorized send operation. Only send
+ * operations select a recipient: claims — ordered by createdAt, the
+ * instant the send was authorized (outcome folds move updatedAt and
+ * must not re-order sends) — and claim-free send_recorded events.
+ * Every other event kind is evidence ABOUT a send, never a recipient
+ * selection: an `opened` event in particular records engagement with
+ * an older attempt, and letting it re-select the recipient would
+ * redirect future reminders back to that stale address.
+ */
 function latestRecipient(store: DeliveryStore, ownerId: string, invoiceId: string): string | null {
   let recipient: string | null = null;
   let latestAt = -1;
   for (const claim of store.claims) {
-    if (claim.ownerId === ownerId && claim.invoiceId === invoiceId && Date.parse(claim.updatedAt) >= latestAt) {
-      latestAt = Date.parse(claim.updatedAt);
+    if (claim.ownerId === ownerId && claim.invoiceId === invoiceId && Date.parse(claim.createdAt) >= latestAt) {
+      latestAt = Date.parse(claim.createdAt);
       recipient = claim.recipientEmail;
     }
   }
@@ -1210,6 +1220,7 @@ function latestRecipient(store: DeliveryStore, ownerId: string, invoiceId: strin
     if (
       event.ownerId === ownerId &&
       event.invoiceId === invoiceId &&
+      event.kind === "send_recorded" &&
       event.recipientEmail &&
       Date.parse(event.occurredAt) >= latestAt
     ) {

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { SavedInvoice } from "../models/invoice.js";
 import { SavedInvoiceRepository } from "./savedInvoiceRepository.js";
-import { sendInvoiceEmail } from "./invoiceEmailDelivery.js";
+import { isDefinitiveProviderRejection, sendInvoiceEmail } from "./invoiceEmailDelivery.js";
 import {
   DeliverySummary,
   beginInvoiceDeliveryDispatch,
@@ -417,16 +417,19 @@ export async function sendInvoiceReminderById(
       idempotencyKey: claim.providerIdempotencyKey
     });
   } catch (error) {
-    // The provider call may or may not have been accepted; without
-    // evidence the outcome is UNKNOWN (§D) and the claim blocks
-    // further sends until reconciled or released — never blind-retry.
+    // §D outcome taxonomy: a definitive provider rejection (the
+    // provider answered and refused the submission) is FAILED and
+    // releases the ambiguity block; any other throw leaves acceptance
+    // unprovable — UNKNOWN, blocking further sends until reconciled
+    // or released, never a blind retry.
+    const rejection = isDefinitiveProviderRejection(error) ? error : null;
     await recordInvoiceDeliveryClaimOutcome({
       ownerId: context.ownerId,
       claimId: claim.claimId,
       generation: claim.generation,
-      outcome: "unknown",
+      outcome: rejection ? "failed" : "unknown",
       mode: "provider",
-      provider: "none"
+      provider: rejection ? rejection.provider : "none"
     }).catch(() => undefined);
     throw error;
   }

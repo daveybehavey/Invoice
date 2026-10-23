@@ -32,6 +32,36 @@ export type InvoiceEmailSendResult = {
   warning?: string;
 };
 
+/**
+ * The provider answered and refused the submission (an HTTP 4xx from
+ * the provider API — authentication, validation, or a similar
+ * definitive refusal). §D's outcome taxonomy treats that as FAILED:
+ * the submission was not accepted, full stop. It is distinguished
+ * from an uncertain result — no answer, a timeout, or a provider-side
+ * 5xx — where acceptance is unprovable and the outcome stays UNKNOWN.
+ */
+export class DefinitiveProviderRejectionError extends Error {
+  readonly provider: InvoiceEmailProvider;
+  readonly status: number;
+
+  constructor(provider: InvoiceEmailProvider, status: number, message: string) {
+    super(message);
+    this.name = "DefinitiveProviderRejectionError";
+    this.provider = provider;
+    this.status = status;
+  }
+}
+
+export function isDefinitiveProviderRejection(
+  error: unknown
+): error is DefinitiveProviderRejectionError {
+  return error instanceof DefinitiveProviderRejectionError;
+}
+
+function isDefinitiveRejectionStatus(status: number): boolean {
+  return status >= 400 && status < 500;
+}
+
 type SendLaunchTestEmailInput = {
   recipientEmail: string;
   appBaseUrl?: string;
@@ -214,7 +244,11 @@ async function sendViaSmtp2go(input: TransactionalEmailInput, fromEmail: string)
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(resolveSmtp2goErrorMessage(payload, response.status));
+      const message = resolveSmtp2goErrorMessage(payload, response.status);
+      if (isDefinitiveRejectionStatus(response.status)) {
+        throw new DefinitiveProviderRejectionError("smtp2go", response.status, message);
+      }
+      throw new Error(message);
     }
     const providerMessageId = resolveSmtp2goMessageId(payload);
     return {
@@ -223,7 +257,13 @@ async function sendViaSmtp2go(input: TransactionalEmailInput, fromEmail: string)
       providerMessageId
     };
   } catch (error) {
-    throw new Error(`Failed to send email via SMTP2GO: ${getErrorMessage(error)}`);
+    const message = `Failed to send email via SMTP2GO: ${getErrorMessage(error)}`;
+    if (isDefinitiveProviderRejection(error)) {
+      // Preserve the rejection's identity (callers record FAILED, §D)
+      // under the same wrapped message shape as any other failure.
+      throw new DefinitiveProviderRejectionError(error.provider, error.status, message);
+    }
+    throw new Error(message);
   } finally {
     clearTimeout(timeout);
   }
@@ -296,7 +336,11 @@ async function sendViaResend(input: TransactionalEmailInput, fromEmail: string):
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(resolveResendErrorMessage(payload, response.status));
+      const message = resolveResendErrorMessage(payload, response.status);
+      if (isDefinitiveRejectionStatus(response.status)) {
+        throw new DefinitiveProviderRejectionError("resend", response.status, message);
+      }
+      throw new Error(message);
     }
     const providerMessageId =
       typeof payload?.id === "string" && payload.id.trim().length > 0 ? payload.id.trim() : undefined;
@@ -306,7 +350,13 @@ async function sendViaResend(input: TransactionalEmailInput, fromEmail: string):
       providerMessageId
     };
   } catch (error) {
-    throw new Error(`Failed to send email via Resend: ${getErrorMessage(error)}`);
+    const message = `Failed to send email via Resend: ${getErrorMessage(error)}`;
+    if (isDefinitiveProviderRejection(error)) {
+      // Preserve the rejection's identity (callers record FAILED, §D)
+      // under the same wrapped message shape as any other failure.
+      throw new DefinitiveProviderRejectionError(error.provider, error.status, message);
+    }
+    throw new Error(message);
   } finally {
     clearTimeout(timeout);
   }

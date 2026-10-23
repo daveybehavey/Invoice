@@ -3925,6 +3925,258 @@ test("send endpoint replays a bare retry but dispatches an explicit owner resend
   assert.notEqual(resendKey, firstKey);
 });
 
+test("send endpoint replay recovers a missing guarded completion for an accepted send", async () => {
+  const ownerId = "delivery-replay-completion-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: "email_replay_completion" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Delivery Replay Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-REPLAY-1",
+          issueDate: "2026-03-11",
+          customerName: "Delivery Replay Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-delivery-replay-1",
+              type: "labor",
+              description: "Delivery replay baseline",
+              quantity: 1,
+              unitPrice: 150,
+              amount: 150
+            }
+          ],
+          subtotal: 150,
+          total: 150,
+          balanceDue: 150
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const firstSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "replay@example.com" });
+  assert.equal(firstSend.status, 200);
+  assert.equal(firstSend.body.invoice.status, "sent");
+  assert.equal(fetchCalls.length, 1);
+
+  // Simulate the crash window: the accepted outcome is persisted in
+  // the delivery store, but the process stopped (or the invoice-store
+  // write failed) before the guarded status completion landed, so the
+  // invoice is still a draft despite having been emailed.
+  const rawStore = JSON.parse(await fs.readFile(storeFilePath, "utf8")) as {
+    invoices: Array<Record<string, unknown>>;
+  };
+  const stored = rawStore.invoices.find((entry) => entry.invoiceId === invoiceId);
+  assert.ok(stored);
+  stored.status = "draft";
+  await fs.writeFile(storeFilePath, `${JSON.stringify(rawStore, null, 2)}\n`, "utf8");
+
+  // A bare retry reaches the replay branch. It must replay the guarded
+  // completion from the persisted acceptance — the invoice becomes
+  // sent, and the provider is NOT contacted again.
+  const retrySend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "replay@example.com" });
+  assert.equal(retrySend.status, 200);
+  assert.equal(retrySend.body.invoice.status, "sent");
+  assert.equal(retrySend.body.delivery.sendCount, 1);
+  assert.equal(fetchCalls.length, 1);
+
+  const getResponse = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(getResponse.status, 200);
+  assert.equal(getResponse.body.invoice.status, "sent");
+});
+
+test("send endpoint records a definitive Resend rejection as failed and a corrected retry dispatches", async () => {
+  const ownerId = "delivery-rejection-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  let fetchCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      // Resend answers and refuses the submission: a definitive
+      // rejection (§D FAILED), not an uncertain result.
+      return new Response(
+        JSON.stringify({ name: "validation_error", message: "Recipient address is invalid." }),
+        { status: 422, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response(JSON.stringify({ id: "email_after_correction" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Delivery Rejection Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-REJECTION-1",
+          issueDate: "2026-03-11",
+          customerName: "Delivery Rejection Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-delivery-rejection-1",
+              type: "labor",
+              description: "Delivery rejection baseline",
+              quantity: 1,
+              unitPrice: 130,
+              amount: 130
+            }
+          ],
+          subtotal: 130,
+          total: 130,
+          balanceDue: 130
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const failedSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "rejected@example.com" });
+  // Provider throws surface through the app's error middleware as 400.
+  assert.equal(failedSend.status, 400);
+
+  // The claim resolved as FAILED — it does not sit in blocked_unknown
+  // waiting for an owner release.
+  const parsed = JSON.parse(await fs.readFile(invoiceDeliveryStoreFilePath, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const claim = (parsed.claims ?? []).find((entry) => entry?.invoiceId === invoiceId);
+  assert.equal(claim?.outcomeKind, "failed");
+  assert.equal(claim?.status, "outcome_recorded");
+
+  // The owner corrects the problem and retries the same request: the
+  // send dispatches for real, with no manual claim release.
+  const retrySend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "rejected@example.com" });
+  assert.equal(retrySend.status, 200);
+  assert.equal(retrySend.body.mode, "provider");
+  assert.equal(retrySend.body.invoice.status, "sent");
+  assert.equal(retrySend.body.delivery.sendCount, 1);
+  assert.equal(fetchCalls, 2);
+});
+
+test("send endpoint records an ambiguous provider failure as unknown and blocks until release", async () => {
+  const ownerId = "delivery-unknown-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  let fetchCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    // The request may or may not have reached Resend: acceptance is
+    // unprovable, so the outcome stays UNKNOWN (§D).
+    throw new TypeError("fetch failed");
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Delivery Unknown Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-UNKNOWN-1",
+          issueDate: "2026-03-11",
+          customerName: "Delivery Unknown Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-delivery-unknown-1",
+              type: "labor",
+              description: "Delivery unknown baseline",
+              quantity: 1,
+              unitPrice: 110,
+              amount: 110
+            }
+          ],
+          subtotal: 110,
+          total: 110,
+          balanceDue: 110
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const failedSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "unknown@example.com" });
+  // Provider throws surface through the app's error middleware as 400.
+  assert.equal(failedSend.status, 400);
+
+  const parsed = JSON.parse(await fs.readFile(invoiceDeliveryStoreFilePath, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const claim = (parsed.claims ?? []).find((entry) => entry?.invoiceId === invoiceId);
+  assert.equal(claim?.outcomeKind, "unknown");
+  assert.equal(claim?.status, "blocked_unknown");
+
+  // No blind retry: the unresolved claim blocks further sends until it
+  // is reconciled or released by the owner.
+  const retrySend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "unknown@example.com" });
+  assert.equal(retrySend.status, 409);
+  assert.equal(fetchCalls, 1);
+});
+
 test("send endpoint dispatches a real send after an initial record_only recording", async () => {
   const ownerId = "delivery-recordonly-then-provider-owner";
   const saveResponse = await request(app)
