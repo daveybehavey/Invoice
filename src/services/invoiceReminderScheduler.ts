@@ -102,6 +102,24 @@ export function resolveInvoiceReminderSettings(
   };
 }
 
+/**
+ * §B policy gate REMINDER_HISTORY_RESTART_ENABLED: the server-owned
+ * control for restarting reminders on an invoice whose delivery
+ * history is ambiguous (unverified legacy evidence), via the §E
+ * owner-confirmation endpoint. David's reminder policy sign-off was
+ * recorded on 2026-10-23 ("reminders restart per-invoice only after a
+ * verified provider send or explicit owner confirmation" — YES), so
+ * the control ships in its APPROVED (enabled) state: it is enabled
+ * unless the REMINDER_HISTORY_RESTART_ENABLED environment variable is
+ * explicitly set to a disabling value ("0", "false", "no", "off") by
+ * the server operator. When disabled, the confirm-schedule endpoint
+ * refuses and creates no anchor and no send evidence.
+ */
+export function isReminderHistoryRestartEnabled(): boolean {
+  const normalized = (process.env.REMINDER_HISTORY_RESTART_ENABLED ?? "").trim().toLowerCase();
+  return !(normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off");
+}
+
 export async function listDueInvoiceReminderCandidates(
   context: Omit<ReminderContext, "baseUrl">
 ): Promise<{ settings: InvoiceReminderSettings; scannedCount: number; due: ReminderCandidate[] }> {

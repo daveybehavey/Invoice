@@ -4283,8 +4283,11 @@ test("send endpoint exposes the blocking claim id in the 409 and the delivery su
   assert.equal(releaseResponse.status, 200);
   assert.equal(releaseResponse.body.claim.status, "released");
 
-  // With the provider healthy again, a fresh send dispatches and the
-  // summary no longer reports a blocking claim.
+  // With the provider healthy again, a fresh send dispatches; the
+  // UNKNOWN block is gone. The summary's blockingClaim now names the
+  // NEW claim instead: the fresh send is ACCEPTED with no final
+  // resolution recorded yet, which under §D (conformance Q2) blocks
+  // automatic reminders — not sends — until resolution or release.
   providerAccepts = true;
   const sendAfterRelease = await request(app)
     .post(`/api/invoices/${invoiceId}/send`)
@@ -4294,8 +4297,423 @@ test("send endpoint exposes the blocking claim id in the 409 and the delivery su
   assert.equal(sendAfterRelease.body.mode, "provider");
   assert.equal(sendAfterRelease.body.invoice.status, "sent");
   assert.equal(sendAfterRelease.body.delivery.sendCount, 1);
-  assert.equal(sendAfterRelease.body.delivery.blockingClaim, null);
+  const afterRelease = JSON.parse(await fs.readFile(invoiceDeliveryStoreFilePath, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const freshClaim = (afterRelease.claims ?? []).find(
+    (entry) => entry?.invoiceId === invoiceId && entry?.outcomeKind === "accepted"
+  );
+  assert.ok(freshClaim?.claimId);
+  assert.equal(sendAfterRelease.body.delivery.blockingClaim?.claimId, freshClaim?.claimId);
+  assert.equal(sendAfterRelease.body.delivery.blockingClaim?.reason, "awaiting_resolution");
   assert.equal(fetchCalls, 2);
+});
+
+test("an ACCEPTED send blocks the reminder endpoint until the owner releases the claim (Q2)", async () => {
+  const ownerId = "delivery-q2-accepted-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  (globalThis as { fetch: typeof fetch }).fetch = (async () =>
+    new Response(JSON.stringify({ id: "email_q2_accepted" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    })) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "Q2 Accepted Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          invoiceNumber: "INV-Q2-ACCEPTED-1",
+          issueDate: "2026-03-11",
+          customerName: "Q2 Accepted Client",
+          currency: "USD",
+          lineItems: [
+            { id: "line-q2-1", type: "labor", description: "Q2 baseline", quantity: 1, unitPrice: 110, amount: 110 }
+          ],
+          subtotal: 110,
+          total: 110,
+          balanceDue: 110
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const sendResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q2@example.com" });
+  assert.equal(sendResponse.status, 200);
+  assert.equal(sendResponse.body.delivery.sendCount, 1);
+  // §D: the acceptance is recorded, but with no final delivery/failure
+  // resolution the summary names the claim as awaiting resolution.
+  const acceptedClaimId = sendResponse.body.delivery.blockingClaim?.claimId as string;
+  assert.ok(acceptedClaimId);
+  assert.equal(sendResponse.body.delivery.blockingClaim?.reason, "awaiting_resolution");
+  const acceptedSentAt = sendResponse.body.delivery.sentAt as string;
+  assert.ok(acceptedSentAt);
+
+  // The automatic-reminder endpoint is blocked by the unresolved
+  // acceptance even though the send itself succeeded.
+  const blockedReminder = await request(app)
+    .post(`/api/invoices/${invoiceId}/send-reminder`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(blockedReminder.status, 400);
+  assert.match(String(blockedReminder.body.error || ""), /unresolved delivery attempt/);
+
+  // The owner release (§C) substitutes for the missing resolution.
+  const releaseResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/delivery/claims/${acceptedClaimId}/release`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ reason: "Carrier tracking confirms delivery." });
+  assert.equal(releaseResponse.status, 200);
+  assert.equal(releaseResponse.body.claim.status, "released");
+  assert.equal(releaseResponse.body.claim.outcomeKind, "accepted");
+
+  // The release fabricated nothing: count and acceptance instant are
+  // exactly as recorded, and the block is gone.
+  const detailResponse = await request(app).get(`/api/invoices/${invoiceId}`).set("x-invoice-user-id", ownerId);
+  assert.equal(detailResponse.body.invoice.delivery.sendCount, 1);
+  assert.equal(detailResponse.body.invoice.delivery.sentAt, acceptedSentAt);
+  assert.equal(detailResponse.body.invoice.delivery.blockingClaim, null);
+
+  const reminderResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/send-reminder`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(reminderResponse.status, 200);
+  assert.equal(reminderResponse.body.mode, "provider");
+});
+
+test("a resend action identity replays its claim; a distinct action sends again (Q7)", async () => {
+  const ownerId = "delivery-q7-resend-action-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: `email_q7_${fetchCalls.length}` }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "Q7 Resend Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          invoiceNumber: "INV-Q7-RESEND-1",
+          issueDate: "2026-03-11",
+          customerName: "Q7 Resend Client",
+          currency: "USD",
+          lineItems: [
+            { id: "line-q7-1", type: "labor", description: "Q7 baseline", quantity: 1, unitPrice: 130, amount: 130 }
+          ],
+          subtotal: 130,
+          total: 130,
+          balanceDue: 130
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const firstSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7@example.com" });
+  assert.equal(firstSend.status, 200);
+  assert.equal(firstSend.body.delivery.sendCount, 1);
+  assert.equal(fetchCalls.length, 1);
+
+  // One deliberate resend action, carrying its durable identity.
+  const resend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7@example.com", intent: "resend", resendActionId: "ui-action-q7-1" });
+  assert.equal(resend.status, 200);
+  assert.equal(resend.body.delivery.sendCount, 2);
+  assert.equal(fetchCalls.length, 2);
+
+  // The action's acceptance persisted but its HTTP response was lost;
+  // the transport retry bears the SAME identity and must replay the
+  // recorded outcome — no third dispatch, no resend_2, no new count.
+  const resendRetry = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7@example.com", intent: "resend", resendActionId: "ui-action-q7-1" });
+  assert.equal(resendRetry.status, 200);
+  assert.equal(resendRetry.body.delivery.sendCount, 2);
+  assert.equal(fetchCalls.length, 2);
+
+  // A DISTINCT owner action (new identity) is a new logical send: it
+  // mints the next resend occurrence with its own provider key.
+  const secondResend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7@example.com", intent: "resend", resendActionId: "ui-action-q7-2" });
+  assert.equal(secondResend.status, 200);
+  assert.equal(secondResend.body.delivery.sendCount, 3);
+  assert.equal(fetchCalls.length, 3);
+  const secondKey = (fetchCalls[2]?.init as RequestInit | undefined)?.headers as Record<string, string> | undefined;
+  const firstResendKey = (fetchCalls[1]?.init as RequestInit | undefined)?.headers as
+    | Record<string, string>
+    | undefined;
+  assert.match(secondKey?.["Idempotency-Key"] ?? "", /^nb-send-[0-9a-f]{32}$/);
+  assert.notEqual(secondKey?.["Idempotency-Key"], firstResendKey?.["Idempotency-Key"]);
+
+  // The durable record: exactly one claim per action identity.
+  const parsed = JSON.parse(await fs.readFile(invoiceDeliveryStoreFilePath, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const actionClaims = (parsed.claims ?? []).filter(
+    (entry) => entry?.invoiceId === invoiceId && typeof entry?.resendActionId === "string"
+  );
+  assert.deepEqual(
+    actionClaims.map((entry) => entry.resendActionId).sort(),
+    ["ui-action-q7-1", "ui-action-q7-2"]
+  );
+});
+
+test("a Resend 409 idempotency conflict records the send outcome as unknown and keeps the block (Q12)", async () => {
+  const ownerId = "delivery-q12-conflict-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  let fetchCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    return new Response(
+      JSON.stringify({
+        name: "concurrent_idempotent_requests",
+        message: "Another request with the same idempotency key is in progress."
+      }),
+      { status: 409, headers: { "Content-Type": "application/json" } }
+    );
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "Q12 Conflict Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          invoiceNumber: "INV-Q12-CONFLICT-1",
+          issueDate: "2026-03-11",
+          customerName: "Q12 Conflict Client",
+          currency: "USD",
+          lineItems: [
+            { id: "line-q12-1", type: "labor", description: "Q12 baseline", quantity: 1, unitPrice: 100, amount: 100 }
+          ],
+          subtotal: 100,
+          total: 100,
+          balanceDue: 100
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const conflictedSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q12@example.com" });
+  assert.equal(conflictedSend.status, 400);
+
+  // The conflict is not proof of failure: the claim is UNKNOWN and
+  // blocked, the send count is zero, and the block is surfaced.
+  const parsed = JSON.parse(await fs.readFile(invoiceDeliveryStoreFilePath, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const storedClaim = (parsed.claims ?? []).find((entry) => entry?.invoiceId === invoiceId);
+  assert.equal(storedClaim?.outcomeKind, "unknown");
+  assert.equal(storedClaim?.status, "blocked_unknown");
+  const detailResponse = await request(app).get(`/api/invoices/${invoiceId}`).set("x-invoice-user-id", ownerId);
+  assert.equal(detailResponse.body.invoice.delivery.sendCount, 0);
+  assert.equal(detailResponse.body.invoice.delivery.blockingClaim?.reason, "unresolved_send");
+
+  // The block is retained: a further send is refused before dispatch.
+  const blockedRetry = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q12@example.com" });
+  assert.equal(blockedRetry.status, 409);
+  assert.equal(fetchCalls, 1);
+});
+
+test("an SMTP2GO validation rejection records failed and a corrected retry dispatches (Q12)", async () => {
+  const ownerId = "delivery-q12-smtp2go-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "smtp2go";
+  process.env.SMTP2GO_API_KEY = "api-Q12TESTKEY";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  let providerAccepts = false;
+  let fetchCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    if (!providerAccepts) {
+      return new Response(JSON.stringify({ data: { error: "Invalid sender email address." } }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+    return new Response(JSON.stringify({ data: { email_id: "smtp2go_q12_retry" } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  try {
+    const saveResponse = await request(app)
+      .post("/api/invoices/save")
+      .set("x-invoice-user-id", ownerId)
+      .send({
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: { customerName: "Q12 SMTP2GO Client", workSessions: [], materials: [] },
+          finishedInvoice: {
+            invoiceNumber: "INV-Q12-SMTP2GO-1",
+            issueDate: "2026-03-11",
+            customerName: "Q12 SMTP2GO Client",
+            currency: "USD",
+            lineItems: [
+              {
+                id: "line-q12-smtp-1",
+                type: "labor",
+                description: "Q12 SMTP2GO baseline",
+                quantity: 1,
+                unitPrice: 100,
+                amount: 100
+              }
+            ],
+            subtotal: 100,
+            total: 100,
+            balanceDue: 100
+          }
+        }
+      });
+    const invoiceId = saveResponse.body.invoice.invoiceId as string;
+    assert.ok(invoiceId);
+
+    const rejectedSend = await request(app)
+      .post(`/api/invoices/${invoiceId}/send`)
+      .set("x-invoice-user-id", ownerId)
+      .send({ recipientEmail: "q12-smtp@example.com" });
+    assert.equal(rejectedSend.status, 400);
+    const parsed = JSON.parse(await fs.readFile(invoiceDeliveryStoreFilePath, "utf8")) as {
+      claims?: Array<Record<string, unknown>>;
+    };
+    const storedClaim = (parsed.claims ?? []).find((entry) => entry?.invoiceId === invoiceId);
+    // A validation refusal is definitive (§D FAILED): it releases the
+    // ambiguity block, so a corrected retry dispatches without any
+    // owner release.
+    assert.equal(storedClaim?.outcomeKind, "failed");
+    assert.equal(storedClaim?.status, "outcome_recorded");
+
+    providerAccepts = true;
+    const retrySend = await request(app)
+      .post(`/api/invoices/${invoiceId}/send`)
+      .set("x-invoice-user-id", ownerId)
+      .send({ recipientEmail: "q12-smtp@example.com" });
+    assert.equal(retrySend.status, 200);
+    assert.equal(retrySend.body.mode, "provider");
+    assert.equal(retrySend.body.provider, "smtp2go");
+    assert.equal(retrySend.body.delivery.sendCount, 1);
+    assert.equal(fetchCalls, 2);
+  } finally {
+    delete process.env.SMTP2GO_API_KEY;
+  }
+});
+
+test("confirm-schedule is refused while REMINDER_HISTORY_RESTART_ENABLED is disabled, and records no anchor (F1)", async () => {
+  const ownerId = "delivery-f1-gate-owner";
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "F1 Gate Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          invoiceNumber: "INV-F1-GATE-1",
+          issueDate: "2026-03-11",
+          customerName: "F1 Gate Client",
+          currency: "USD",
+          lineItems: [
+            { id: "line-f1-1", type: "labor", description: "F1 baseline", quantity: 1, unitPrice: 100, amount: 100 }
+          ],
+          subtotal: 100,
+          total: 100,
+          balanceDue: 100
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  async function readAnchors(): Promise<Array<Record<string, unknown>>> {
+    // A missing store file is itself evidence: the disabled gate ran
+    // before any delivery activity existed and created nothing.
+    const raw = await fs.readFile(invoiceDeliveryStoreFilePath, "utf8").catch(() => null);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as {
+      reminderAnchors?: Array<Record<string, unknown>>;
+    };
+    return (parsed.reminderAnchors ?? []).filter((entry) => entry?.invoiceId === invoiceId);
+  }
+
+  process.env.REMINDER_HISTORY_RESTART_ENABLED = "false";
+  try {
+    const refused = await request(app)
+      .post(`/api/invoices/${invoiceId}/reminders/confirm-schedule`)
+      .set("x-invoice-user-id", ownerId)
+      .send({});
+    assert.equal(refused.status, 403);
+    assert.match(String(refused.body.error || ""), /REMINDER_HISTORY_RESTART_ENABLED/);
+    // The disabled gate creates nothing: no anchor, no send evidence.
+    assert.deepEqual(await readAnchors(), []);
+    const detailResponse = await request(app).get(`/api/invoices/${invoiceId}`).set("x-invoice-user-id", ownerId);
+    // No delivery summary exists at all (null), or it counts zero
+    // sends: either way the disabled gate produced no send evidence.
+    assert.equal(detailResponse.body.invoice.delivery?.sendCount ?? 0, 0);
+  } finally {
+    delete process.env.REMINDER_HISTORY_RESTART_ENABLED;
+  }
+
+  // The gate ships in its approved state (David's 2026-10-23 reminder
+  // policy sign-off): with no disabling value set, confirmation works.
+  const confirmed = await request(app)
+    .post(`/api/invoices/${invoiceId}/reminders/confirm-schedule`)
+    .set("x-invoice-user-id", ownerId)
+    .send({});
+  assert.equal(confirmed.status, 200);
+  assert.ok(confirmed.body.anchor?.nextDueAt);
+  const anchors = await readAnchors();
+  assert.equal(anchors.length, 1);
+  assert.equal(anchors[0]?.activatedBy, "owner_confirmation");
 });
 
 test("send endpoint dispatches a real send after an initial record_only recording", async () => {
@@ -10822,6 +11240,13 @@ function useMockResponses(responses: unknown[]): void {
  * outcome event) in the v2 delivery store. Backdating a legacy
  * aggregate would no longer — and must no longer — create eligibility
  * (invariant 11).
+ *
+ * Conformance Q2 (§D): an ACCEPTED claim with no final resolution
+ * blocks automatic reminders, however old the acceptance is. These
+ * callers model COMPLETED historical sends, so the fold is recorded
+ * too: the claim's outcomeKind becomes "delivered" — the resolution
+ * a real send from that date would long since have received. A test
+ * that wants an unresolved acceptance must not use this helper.
  */
 async function backdateVerifiedDeliverySend(invoiceId: string, isoTimestamp: string): Promise<void> {
   const raw = await fs.readFile(invoiceDeliveryStoreFilePath, "utf8");
@@ -10841,7 +11266,8 @@ async function backdateVerifiedDeliverySend(invoiceId: string, isoTimestamp: str
           updatedAt: isoTimestamp,
           // The acceptance instant lives on the claim (acceptedAt) as
           // well as in the outcome events below; move all of them.
-          ...(typeof claim.acceptedAt === "string" ? { acceptedAt: isoTimestamp } : {})
+          ...(typeof claim.acceptedAt === "string" ? { acceptedAt: isoTimestamp } : {}),
+          ...(claim.outcomeKind === "accepted" ? { outcomeKind: "delivered" } : {})
         }
       : claim
   );

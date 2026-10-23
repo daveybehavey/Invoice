@@ -39,6 +39,9 @@ export type InvoiceEmailSendResult = {
  * the submission was not accepted, full stop. It is distinguished
  * from an uncertain result — no answer, a timeout, or a provider-side
  * 5xx — where acceptance is unprovable and the outcome stays UNKNOWN.
+ * Classification is provider-specific (Q12): a provider's documented
+ * idempotency-conflict response is not a refusal at all and is
+ * classified separately (ProviderIdempotencyConflictError below).
  */
 export class DefinitiveProviderRejectionError extends Error {
   readonly provider: InvoiceEmailProvider;
@@ -60,6 +63,59 @@ export function isDefinitiveProviderRejection(
 
 function isDefinitiveRejectionStatus(status: number): boolean {
   return status >= 400 && status < 500;
+}
+
+/**
+ * The provider answered, but its answer is an idempotency conflict,
+ * not a verdict on the logical send: another request carrying the
+ * same provider idempotency key is still in progress, so the logical
+ * send may yet be accepted. Slice 0 (design v2 §D, conformance Q12):
+ * a conflict must NOT be classified as a definitive failure — that
+ * would fabricate "this send failed" and release the §D ambiguity
+ * block while the provider may still deliver. This error is
+ * deliberately not a DefinitiveProviderRejectionError, so callers
+ * record the outcome as UNKNOWN and the block is preserved until the
+ * claim is reconciled or released.
+ */
+export class ProviderIdempotencyConflictError extends Error {
+  readonly provider: InvoiceEmailProvider;
+  readonly status: number;
+
+  constructor(provider: InvoiceEmailProvider, status: number, message: string) {
+    super(message);
+    this.name = "ProviderIdempotencyConflictError";
+    this.provider = provider;
+    this.status = status;
+  }
+}
+
+export function isProviderIdempotencyConflict(
+  error: unknown
+): error is ProviderIdempotencyConflictError {
+  return error instanceof ProviderIdempotencyConflictError;
+}
+
+/**
+ * Resend's documented conflict signal (Q12): HTTP 409 with the error
+ * name "concurrent_idempotent_requests" — another request with the
+ * same idempotency key is still being processed. Matched on the
+ * documented error name when the payload carries one, and on the 409
+ * status itself otherwise: 409 is Resend's conflict status, never an
+ * authentication or validation verdict. SMTP2GO exposes no equivalent
+ * signal in this integration — it has no provider-side idempotency
+ * contract (the key travels as a custom header and dedupe is enforced
+ * by the durable claim) and no documented conflict response — so no
+ * SMTP2GO status is classified as a conflict here.
+ */
+function isResendIdempotencyConflict(status: number, payload: unknown): boolean {
+  if (status !== 409) {
+    return false;
+  }
+  const errorName =
+    typeof payload === "object" && payload && "name" in payload && typeof payload.name === "string"
+      ? payload.name.trim()
+      : "";
+  return errorName === "" || errorName === "concurrent_idempotent_requests";
 }
 
 type SendLaunchTestEmailInput = {
@@ -337,6 +393,9 @@ async function sendViaResend(input: TransactionalEmailInput, fromEmail: string):
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       const message = resolveResendErrorMessage(payload, response.status);
+      if (isResendIdempotencyConflict(response.status, payload)) {
+        throw new ProviderIdempotencyConflictError("resend", response.status, message);
+      }
       if (isDefinitiveRejectionStatus(response.status)) {
         throw new DefinitiveProviderRejectionError("resend", response.status, message);
       }
@@ -355,6 +414,11 @@ async function sendViaResend(input: TransactionalEmailInput, fromEmail: string):
       // Preserve the rejection's identity (callers record FAILED, §D)
       // under the same wrapped message shape as any other failure.
       throw new DefinitiveProviderRejectionError(error.provider, error.status, message);
+    }
+    if (isProviderIdempotencyConflict(error)) {
+      // Preserve the conflict's identity too (Q12): callers record
+      // UNKNOWN, never FAILED, for an idempotency conflict.
+      throw new ProviderIdempotencyConflictError(error.provider, error.status, message);
     }
     throw new Error(message);
   } finally {

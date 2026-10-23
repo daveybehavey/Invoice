@@ -73,6 +73,7 @@ import {
   cancelInvoiceDeliveryClaim,
   countInvoiceDeliveryClaims,
   getInvoiceDeliveryClaimById,
+  getInvoiceDeliveryClaimByResendAction,
   getInvoiceDeliveryStoreSummary,
   getInvoiceDeliverySummary,
   getInvoiceDeliverySummariesByInvoiceIds,
@@ -99,6 +100,7 @@ import {
   SEND_BLOCKED_MESSAGE
 } from "./services/invoiceSendGate.js";
 import {
+  isReminderHistoryRestartEnabled,
   listDueInvoiceReminderCandidates,
   resolveInvoiceReminderSettings,
   runDueInvoiceReminders,
@@ -1447,7 +1449,14 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
         // establishes a NEW logical send under a resend occurrence
         // identity. A bare repeat of this request is a retry of the
         // original operation and replays its recorded outcome instead.
-        intent: z.enum(["resend"]).optional()
+        intent: z.enum(["resend"]).optional(),
+        // §C (conformance Q7): the durable identity of the one
+        // deliberate resend action this request belongs to. Transport
+        // retries of the same action carry the same id and replay the
+        // claim that action established; only a new id establishes a
+        // new logical send. Optional for compatibility: a resend
+        // without an id keeps the occurrence-minting behaviour.
+        resendActionId: z.string().trim().min(1).max(128).optional()
       })
       .parse(req.body ?? {});
     const ownerId = getRequestOwnerId(req);
@@ -1480,15 +1489,53 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
     // idempotency key derives from it deterministically.
     const recipientEmail = parsedRequest.recipientEmail;
     const authorizedRevision = invoiceWithPaymentLink.invoiceData.finishedInvoice.monetaryRevision;
-    let reservation = await reserveInvoiceDeliveryClaim({
-      ownerId,
-      invoiceId,
-      recipientEmail,
-      basePurpose: "initial_send",
-      purpose: "initial_send",
-      authorizedRevision
-    });
-    if (reservation.outcome === "existing") {
+    // Q7: a resend request bearing an action identity first resolves
+    // the claim that action already established, if any. A retry of
+    // the same action (e.g. its acceptance persisted but the HTTP
+    // response was lost) replays that claim — it never mints the next
+    // resend occurrence. The identity binds the action's recipient
+    // and authorized revision: a request whose recipient or revision
+    // differs from the bound claim is not that action's retry and
+    // falls through to the ordinary flow.
+    let resendActionReplayed = false;
+    let reservation: Awaited<ReturnType<typeof reserveInvoiceDeliveryClaim>> | null = null;
+    if (parsedRequest.intent === "resend" && parsedRequest.resendActionId) {
+      const actionClaim = await getInvoiceDeliveryClaimByResendAction({
+        ownerId,
+        invoiceId,
+        resendActionId: parsedRequest.resendActionId
+      });
+      if (
+        actionClaim &&
+        actionClaim.recipientEmail === recipientEmail &&
+        actionClaim.authorizedRevision === authorizedRevision
+      ) {
+        resendActionReplayed = true;
+        if (actionClaim.status === "reserved" || actionClaim.status === "dispatching") {
+          reservation = { outcome: "blocked", reason: "send_in_progress", claim: actionClaim };
+        } else if (actionClaim.status === "blocked_unknown") {
+          reservation = { outcome: "blocked", reason: "unresolved_send", claim: actionClaim };
+        } else {
+          reservation = { outcome: "existing", claim: actionClaim };
+        }
+      }
+    }
+    if (!reservation) {
+      reservation = await reserveInvoiceDeliveryClaim({
+        ownerId,
+        invoiceId,
+        recipientEmail,
+        basePurpose: "initial_send",
+        purpose: "initial_send",
+        authorizedRevision,
+        // A resend action that establishes the initial claim (the
+        // invoice had no resolved send yet) binds its identity to
+        // that claim too, so its retries replay instead of minting.
+        resendActionId:
+          parsedRequest.intent === "resend" ? parsedRequest.resendActionId : undefined
+      });
+    }
+    if (reservation.outcome === "existing" && !resendActionReplayed) {
       // The claim for this (recipient, revision) already resolved. A
       // resolution counts as a send only when the provider accepted
       // (§D): failed / cancelled / owner-released claims — and
@@ -1499,7 +1546,9 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
       // (intent: "resend") establishes a new logical send. Either way
       // the fresh attempt needs its own claim identity: the next
       // resend occurrence (§C), walking past any resend identities
-      // that already resolved too.
+      // that already resolved too. When the fresh claim belongs to a
+      // resend action, the action's durable identity is stamped on it
+      // so the action's own retries replay it (Q7).
       const resolvedClaim = reservation.claim;
       const countedAsSent =
         resolvedClaim.outcomeKind === "accepted" || resolvedClaim.outcomeKind === "delivered";
@@ -1513,7 +1562,9 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
             recipientEmail,
             basePurpose: "resend",
             purpose: `resend_${resendNumber}`,
-            authorizedRevision
+            authorizedRevision,
+            resendActionId:
+              parsedRequest.intent === "resend" ? parsedRequest.resendActionId : undefined
           });
           if (attempt.outcome !== "existing") {
             reservation = attempt;
@@ -1855,6 +1906,16 @@ app.post(
         .default({})
         .parse(req.body ?? {});
       const ownerId = getRequestOwnerId(req);
+      // §B gate REMINDER_HISTORY_RESTART_ENABLED (F1): the restart
+      // control is server-owned and ships in its approved (enabled)
+      // state per David's 2026-10-23 sign-off. While disabled, the
+      // endpoint refuses outright — no anchor, no send evidence.
+      if (!isReminderHistoryRestartEnabled()) {
+        throw new HttpStatusError(
+          403,
+          "Reminder restart is disabled on this server (REMINDER_HISTORY_RESTART_ENABLED). No schedule was recorded."
+        );
+      }
       // §E: explicit owner confirmation restarts reminder scheduling
       // for THIS invoice only. It records eligibility, not a send: it
       // creates no delivery event, no send count, and no timing claim.
@@ -1891,10 +1952,12 @@ app.post(
         .parse(req.body ?? {});
       const ownerId = getRequestOwnerId(req);
       // §C owner release of an unresolved claim (UNKNOWN outcome,
-      // lease-expired dispatching, or an abandoned reservation whose
-      // lease expired before dispatch began): recorded durably with
-      // actor/time/reason. It fabricates no acceptance — it only
-      // permits a future logical send under a fresh claim.
+      // lease-expired dispatching, an abandoned reservation whose
+      // lease expired before dispatch began, or an ACCEPTED send
+      // whose final delivery/failure resolution has not been recorded
+      // — §D): recorded durably with actor/time/reason. It fabricates
+      // no acceptance — it only permits a future logical send under a
+      // fresh claim, and an accepted claim's count/timestamp stand.
       const existingClaim = await getInvoiceDeliveryClaimById({ ownerId, claimId });
       if (!existingClaim || existingClaim.invoiceId !== invoiceId) {
         throw new HttpStatusError(404, "Delivery claim was not found for this invoice.");

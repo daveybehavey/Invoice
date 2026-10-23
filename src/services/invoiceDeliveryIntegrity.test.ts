@@ -307,6 +307,300 @@ test("delivery_completion_commits_before_settlement: settlement still lands clea
 });
 
 // ---------------------------------------------------------------------------
+// Settlement vs completion under genuine contention (Q3, executable half)
+// ---------------------------------------------------------------------------
+//
+// The two ordering tests above run sequentially: each operation is
+// awaited before the other starts. The tests below invoke both
+// operations BEFORE awaiting either, so they genuinely contend for
+// the file store's mutation lock in the same tick. withMutationLock
+// chains critical sections in invocation order and each section spans
+// real async file I/O, so the second operation is queued at the lock
+// boundary while the first is still inside its section, and then
+// observes the first's COMMITTED state. The store exposes no hook
+// that could pause a section mid-flight from outside, so the
+// deterministic evidence is the resolution order plus the state each
+// operation observed — asserted exactly. (The barrier test after
+// these two covers the design's named scenario at the flow level:
+// dispatch suspended at a test-controlled barrier while settlement
+// commits.)
+
+test("settlement and completion invoked in the same tick serialize at the mutation lock (settlement first)", async () => {
+  const ownerId = "slice0-race-settle-first";
+  const { invoiceId, linkRecordId } = await createInvoiceWithActiveLink(ownerId, 240);
+  const draft = await repository.getSavedInvoiceById(invoiceId, ownerId);
+  const authorizedRevision = draft.invoiceData.finishedInvoice.monetaryRevision;
+
+  const resolutionOrder: string[] = [];
+  const [settled, completion] = await Promise.all([
+    settleInFull(ownerId, invoiceId, linkRecordId, 240).then((result) => {
+      resolutionOrder.push("settlement");
+      return result;
+    }),
+    repository.completeInvoiceDelivery({ invoiceId, ownerId, authorizedRevision }).then((result) => {
+      resolutionOrder.push("completion");
+      return result;
+    })
+  ]);
+  assert.deepEqual(resolutionOrder, ["settlement", "completion"]);
+  assert.equal(settled.outcome, "settled");
+  // The completion ran second, inside its own later critical section,
+  // and read the settled state: the guarded draft->sent transition
+  // refused and the settlement evidence survived untouched.
+  assert.equal(completion.transitioned, false);
+  assert.equal(completion.invoice.status, "paid");
+  assert.equal(completion.invoice.invoiceData.finishedInvoice.balanceDue, 0);
+  assert.equal(completion.invoice.invoiceData.finishedInvoice.paymentRecords?.length, 1);
+  assert.equal(completion.invoice.invoiceData.finishedInvoice.paymentLinks?.[0]?.id, linkRecordId);
+});
+
+test("settlement and completion invoked in the same tick serialize at the mutation lock (completion first)", async () => {
+  const ownerId = "slice0-race-complete-first";
+  const { invoiceId, linkRecordId } = await createInvoiceWithActiveLink(ownerId, 180);
+  const draft = await repository.getSavedInvoiceById(invoiceId, ownerId);
+  const authorizedRevision = draft.invoiceData.finishedInvoice.monetaryRevision;
+
+  const resolutionOrder: string[] = [];
+  const [completion, settled] = await Promise.all([
+    repository.completeInvoiceDelivery({ invoiceId, ownerId, authorizedRevision }).then((result) => {
+      resolutionOrder.push("completion");
+      return result;
+    }),
+    settleInFull(ownerId, invoiceId, linkRecordId, 180).then((result) => {
+      resolutionOrder.push("settlement");
+      return result;
+    })
+  ]);
+  assert.deepEqual(resolutionOrder, ["completion", "settlement"]);
+  // The completion won the lock and transitioned the draft; the
+  // settlement then ran against the committed "sent" invoice and
+  // settled it cleanly — neither overwrote the other's commit.
+  assert.equal(completion.transitioned, true);
+  assert.equal(completion.invoice.status, "sent");
+  assert.equal(settled.outcome, "settled");
+  const final = await repository.getSavedInvoiceById(invoiceId, ownerId);
+  assert.equal(final.status, "paid");
+  assert.equal(final.invoiceData.finishedInvoice.balanceDue, 0);
+  assert.equal(final.invoiceData.finishedInvoice.paymentRecords?.length, 1);
+  assert.equal(final.invoiceData.finishedInvoice.paymentLinks?.[0]?.id, linkRecordId);
+});
+
+test("settlement commits while a delivery dispatch is suspended at a barrier; the late completion is a guarded no-op", async () => {
+  const ownerId = "slice0-race-barrier";
+  const { invoiceId, linkRecordId } = await createInvoiceWithActiveLink(ownerId, 300);
+  const draft = await repository.getSavedInvoiceById(invoiceId, ownerId);
+  const authorizedRevision = draft.invoiceData.finishedInvoice.monetaryRevision;
+
+  // The design's named barrier scenario (§C/§D flow level): authorize
+  // the draft, reserve the claim, begin dispatch — then pause the
+  // provider completion at a test-controlled barrier, exactly where a
+  // real send waits on the provider round-trip.
+  const reservation = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "barrier@example.com",
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision
+  });
+  if (reservation.outcome !== "reserved") throw new Error("expected reservation");
+  const claim = reservation.claim;
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    trackingToken: randomUUID()
+  });
+
+  let releaseBarrier!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    releaseBarrier = resolve;
+  });
+  const completionFlow = (async () => {
+    await barrier;
+    await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+      ownerId,
+      claimId: claim.claimId,
+      generation: claim.generation,
+      outcome: "accepted",
+      mode: "provider",
+      provider: "resend",
+      providerMessageId: "email_barrier_1"
+    });
+    return repository.completeInvoiceDelivery({ invoiceId, ownerId, authorizedRevision });
+  })();
+
+  // While the send is suspended, the settlement contends for the same
+  // store and commits first.
+  const settled = await settleInFull(ownerId, invoiceId, linkRecordId, 300);
+  assert.equal(settled.outcome, "settled");
+
+  releaseBarrier();
+  const completion = await completionFlow;
+  // The acceptance is durable on the claim, but the guarded
+  // completion reads the settled invoice and refuses to move it: the
+  // paid state, zero balance, payment record, and link all survive.
+  assert.equal(completion.transitioned, false);
+  assert.equal(completion.invoice.status, "paid");
+  const final = await repository.getSavedInvoiceById(invoiceId, ownerId);
+  assert.equal(final.status, "paid");
+  assert.equal(final.invoiceData.finishedInvoice.balanceDue, 0);
+  assert.equal(final.invoiceData.finishedInvoice.paymentRecords?.length, 1);
+  assert.equal(final.invoiceData.finishedInvoice.paymentLinks?.[0]?.id, linkRecordId);
+  const summary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(summary?.sendCount, 1);
+});
+
+// ---------------------------------------------------------------------------
+// §D blocking for unresolved ACCEPTED sends (conformance Q2)
+// ---------------------------------------------------------------------------
+
+test("an ACCEPTED send with no final resolution blocks automatic reminders until DELIVERED or owner release", async () => {
+  const ownerId = "slice0-q2-accepted-blocks";
+
+  async function acceptedSend(invoiceTotal: number, recipient: string, messageId: string) {
+    const invoice = await createInvoice(ownerId, invoiceTotal);
+    const revision = invoice.invoiceData.finishedInvoice.monetaryRevision;
+    const reservation = await deliveryStore.reserveInvoiceDeliveryClaim({
+      ownerId,
+      invoiceId: invoice.invoiceId,
+      recipientEmail: recipient,
+      basePurpose: "initial_send",
+      purpose: "initial_send",
+      authorizedRevision: revision
+    });
+    if (reservation.outcome !== "reserved") throw new Error("expected reservation");
+    const claim = reservation.claim;
+    await deliveryStore.beginInvoiceDeliveryDispatch({
+      ownerId,
+      claimId: claim.claimId,
+      generation: claim.generation,
+      trackingToken: randomUUID()
+    });
+    await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+      ownerId,
+      claimId: claim.claimId,
+      generation: claim.generation,
+      outcome: "accepted",
+      mode: "provider",
+      provider: "resend",
+      providerMessageId: messageId
+    });
+    const completion = await repository.completeInvoiceDelivery({
+      invoiceId: invoice.invoiceId,
+      ownerId,
+      authorizedRevision: revision
+    });
+    assert.equal(completion.transitioned, true);
+    return { invoiceId: invoice.invoiceId, claim };
+  }
+
+  // --- DELIVERED control: the fold is the resolution. ---
+  const deliveredCase = await acceptedSend(140, "q2-delivered@example.com", "email_q2_delivered");
+  const blockedTiming = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+    ownerId,
+    invoiceIds: [deliveredCase.invoiceId]
+  });
+  // The acceptance establishes timing AND blocks (§D): both are true
+  // at once — the block is additional, not instead of timing.
+  assert.equal(blockedTiming[deliveredCase.invoiceId]?.hasVerifiedHistory, true);
+  assert.equal(blockedTiming[deliveredCase.invoiceId]?.providerSendCount, 1);
+  assert.equal(blockedTiming[deliveredCase.invoiceId]?.hasUnresolvedSend, true);
+  const blockedSummary = await deliveryStore.getInvoiceDeliverySummary({
+    ownerId,
+    invoiceId: deliveredCase.invoiceId
+  });
+  assert.equal(blockedSummary?.sendCount, 1);
+  assert.ok(blockedSummary?.sentAt);
+  assert.deepEqual(blockedSummary?.blockingClaim, {
+    claimId: deliveredCase.claim.claimId,
+    reason: "awaiting_resolution"
+  });
+  await assert.rejects(
+    scheduler.sendInvoiceReminderById({
+      ownerId,
+      repository,
+      baseUrl: BASE_URL,
+      invoiceId: deliveredCase.invoiceId
+    }),
+    /unresolved delivery attempt/
+  );
+
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: deliveredCase.claim.claimId,
+    generation: deliveredCase.claim.generation,
+    outcome: "delivered",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_q2_delivered"
+  });
+  const resolvedTiming = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+    ownerId,
+    invoiceIds: [deliveredCase.invoiceId]
+  });
+  assert.equal(resolvedTiming[deliveredCase.invoiceId]?.hasUnresolvedSend, false);
+  const resolvedSummary = await deliveryStore.getInvoiceDeliverySummary({
+    ownerId,
+    invoiceId: deliveredCase.invoiceId
+  });
+  assert.equal(resolvedSummary?.blockingClaim, null);
+  // Resolution changed neither the count nor the acceptance instant.
+  assert.equal(resolvedSummary?.sendCount, 1);
+  assert.equal(resolvedSummary?.sentAt, blockedSummary?.sentAt);
+
+  // --- Owner-release control: the §C release substitutes for the
+  // missing resolution without fabricating one. ---
+  const releasedCase = await acceptedSend(160, "q2-released@example.com", "email_q2_released");
+  const preReleaseSummary = await deliveryStore.getInvoiceDeliverySummary({
+    ownerId,
+    invoiceId: releasedCase.invoiceId
+  });
+  assert.deepEqual(preReleaseSummary?.blockingClaim, {
+    claimId: releasedCase.claim.claimId,
+    reason: "awaiting_resolution"
+  });
+  const released = await deliveryStore.releaseInvoiceDeliveryClaim({
+    ownerId,
+    claimId: releasedCase.claim.claimId,
+    actor: ownerId,
+    reason: "Provider console confirms delivery; ending the resolution wait."
+  });
+  assert.equal(released.status, "released");
+  // The release fabricates no outcome: the claim still records exactly
+  // the acceptance it had, now with the release recorded durably.
+  assert.equal(released.outcomeKind, "accepted");
+  assert.equal(released.releaseActor, ownerId);
+  assert.equal(released.releaseReason, "Provider console confirms delivery; ending the resolution wait.");
+  assert.ok(released.releasedAt);
+  const postReleaseTiming = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+    ownerId,
+    invoiceIds: [releasedCase.invoiceId]
+  });
+  assert.equal(postReleaseTiming[releasedCase.invoiceId]?.hasUnresolvedSend, false);
+  const postReleaseSummary = await deliveryStore.getInvoiceDeliverySummary({
+    ownerId,
+    invoiceId: releasedCase.invoiceId
+  });
+  assert.equal(postReleaseSummary?.blockingClaim, null);
+  assert.equal(postReleaseSummary?.sendCount, 1);
+  assert.equal(postReleaseSummary?.sentAt, preReleaseSummary?.sentAt);
+
+  // And a reminder can actually be dispatched again (record_only in
+  // this file — no provider configured).
+  delete process.env.INVOICE_EMAIL_PROVIDER;
+  delete process.env.RESEND_API_KEY;
+  const reminder = await scheduler.sendInvoiceReminderById({
+    ownerId,
+    repository,
+    baseUrl: BASE_URL,
+    invoiceId: releasedCase.invoiceId
+  });
+  assert.equal(reminder.mode, "record_only");
+  assert.equal(reminder.recipientEmail, "q2-released@example.com");
+});
+
+// ---------------------------------------------------------------------------
 // Audit item 2: delete -> restore must not resurrect a settled balance
 // ---------------------------------------------------------------------------
 
@@ -791,6 +1085,20 @@ test("an opened event never changes the reminder recipient", async () => {
       provider: "resend",
       providerMessageId: `email_${purpose}`
     });
+    // §D (conformance Q2): an ACCEPTED send blocks automatic reminders
+    // until its final delivery/failure resolution is recorded. These
+    // sends DID reach their recipients (the first is opened below), so
+    // record the DELIVERED fold that resolves each claim — without it
+    // the reminder at the end of this test is correctly blocked.
+    await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+      ownerId,
+      claimId: reservation.claim.claimId,
+      generation: reservation.claim.generation,
+      outcome: "delivered",
+      mode: "provider",
+      provider: "resend",
+      providerMessageId: `email_${purpose}`
+    });
     return trackingToken;
   }
 
@@ -897,6 +1205,81 @@ process.env.RESEND_API_KEY = "re_test_key";
     assert.equal(retry.mode, "provider");
     assert.equal(retry.recipientEmail, "rejected@example.com");
     assert.equal(fetchCalls, 2);
+  } finally {
+    (globalThis as { fetch: typeof fetch }).fetch = nativeFetch;
+    delete process.env.INVOICE_EMAIL_PROVIDER;
+    delete process.env.RESEND_API_KEY;
+    delete process.env.INVOICE_FROM_EMAIL;
+  }
+});
+
+test("a Resend idempotency conflict (409) records the reminder outcome as unknown, never failed (Q12)", async () => {
+  const ownerId = "slice0-reminder-conflict";
+  const invoice = await createInvoice(ownerId, 95);
+  await repository.updateSavedInvoiceStatus(invoice.invoiceId, "sent", ownerId);
+  await deliveryStore.recordInvoiceDeliverySend({
+    ownerId,
+    invoiceId: invoice.invoiceId,
+    recipientEmail: "conflict@example.com",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_conflict_seed"
+  });
+
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  const nativeFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    // Resend's documented conflict: another request with the same
+    // idempotency key is still in progress. That is NOT proof the
+    // logical send failed — the provider may still accept it — so
+    // the outcome must stay UNKNOWN with the §D block retained (Q12).
+    return new Response(
+      JSON.stringify({
+        name: "concurrent_idempotent_requests",
+        message: "Another request with the same idempotency key is in progress."
+      }),
+      { status: 409, headers: { "Content-Type": "application/json" } }
+    );
+  }) as typeof fetch;
+  try {
+    await assert.rejects(
+      scheduler.sendInvoiceReminderById({
+        ownerId,
+        repository,
+        baseUrl: BASE_URL,
+        invoiceId: invoice.invoiceId
+      }),
+      /Failed to send email via Resend/
+    );
+    const parsed = JSON.parse(await fs.readFile(deliveryStoreFile, "utf8")) as {
+      claims?: Array<Record<string, unknown>>;
+    };
+    const reminderClaim = (parsed.claims ?? []).find(
+      (claim) => claim?.invoiceId === invoice.invoiceId && claim?.basePurpose === "reminder"
+    );
+    assert.equal(reminderClaim?.outcomeKind, "unknown");
+    assert.equal(reminderClaim?.status, "blocked_unknown");
+    // The ambiguity block is retained: a further reminder attempt is
+    // refused before dispatch until the claim is reconciled/released.
+    const timing = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+      ownerId,
+      invoiceIds: [invoice.invoiceId]
+    });
+    assert.equal(timing[invoice.invoiceId]?.hasUnresolvedSend, true);
+    await assert.rejects(
+      scheduler.sendInvoiceReminderById({
+        ownerId,
+        repository,
+        baseUrl: BASE_URL,
+        invoiceId: invoice.invoiceId
+      }),
+      /unresolved delivery attempt/
+    );
+    assert.equal(fetchCalls, 1);
   } finally {
     (globalThis as { fetch: typeof fetch }).fetch = nativeFetch;
     delete process.env.INVOICE_EMAIL_PROVIDER;

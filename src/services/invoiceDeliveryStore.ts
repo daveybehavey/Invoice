@@ -36,6 +36,13 @@ import {
  *   count; FAILED establishes nothing; UNKNOWN establishes nothing and
  *   blocks; OPENED is engagement only; record_only results are auditable
  *   events that create no send evidence at all.
+ * - §D blocking: an ACCEPTED claim whose final delivery/failure
+ *   resolution has not been recorded (no DELIVERED fold yet) is
+ *   UNRESOLVED: it keeps blocking automatic reminders — while retaining
+ *   its acceptance count and timestamp — until that resolution arrives
+ *   or the owner releases it under §C. A synchronous provider response
+ *   establishes acceptance, not delivery resolution, and the absence of
+ *   an outcome webhook does not make the unresolved population empty.
  */
 
 const configuredStorePath = process.env.INVOICE_DELIVERY_STORE_FILE;
@@ -128,6 +135,13 @@ const DeliveryClaimSchema = z.object({
    * "reminder_occurrence_2", "resend_1". */
   purpose: z.string().min(1),
   basePurpose: DeliveryClaimBasePurposeSchema,
+  /** The durable identity of the one deliberate owner resend action
+   * that established this claim (§C: an explicitly owner-authorized
+   * resend occurrence with a durable unique identity). A transport
+   * retry of that same action carries the same id and replays this
+   * claim instead of minting the next resend occurrence; only a new
+   * action id establishes a new logical send. */
+  resendActionId: z.string().min(1).optional(),
   authorizedRevision: z.number().int().nonnegative(),
   claimKey: z.string().min(1),
   providerIdempotencyKey: z.string().min(1),
@@ -222,18 +236,21 @@ export const DeliverySummarySchema = z.object({
   unverifiedOpenCount: z.number().int().nonnegative().default(0),
   verified: z.boolean().default(false),
   /**
-   * The claim currently blocking new sends for this invoice, if any:
-   * an UNKNOWN outcome awaiting owner reconciliation or release
-   * (reason "unresolved_send"), or a send still in flight (reason
-   * "send_in_progress"). claimId is the identifier the owner release
-   * endpoint is addressed by; surfacing it here — and in the
-   * blocked-send 409 response — is what makes the release mechanism
-   * discoverable from owner-facing surfaces.
+   * The claim currently blocking sends/reminders for this invoice, if
+   * any: an UNKNOWN outcome awaiting owner reconciliation or release
+   * (reason "unresolved_send"), an ACCEPTED send whose final
+   * delivery/failure resolution has not been recorded (reason
+   * "awaiting_resolution" — it blocks AUTOMATIC reminders under §D
+   * until the resolution arrives or the owner releases it), or a send
+   * still in flight (reason "send_in_progress"). claimId is the
+   * identifier the owner release endpoint is addressed by; surfacing
+   * it here — and in the blocked-send 409 response — is what makes the
+   * release mechanism discoverable from owner-facing surfaces.
    */
   blockingClaim: z
     .object({
       claimId: z.string().min(1),
-      reason: z.enum(["unresolved_send", "send_in_progress"])
+      reason: z.enum(["unresolved_send", "awaiting_resolution", "send_in_progress"])
     })
     .nullable()
     .default(null),
@@ -322,6 +339,9 @@ export async function reserveInvoiceDeliveryClaim(input: {
   basePurpose: DeliveryClaimBasePurpose;
   purpose: string;
   authorizedRevision: number;
+  /** Durable identity of the deliberate owner resend action this
+   * claim belongs to, when the caller is establishing one (§C). */
+  resendActionId?: string;
   leaseMs?: number;
 }): Promise<ReserveDeliveryClaimResult> {
   const recipientEmail = normalizeRecipientEmail(input.recipientEmail);
@@ -388,6 +408,7 @@ export async function reserveInvoiceDeliveryClaim(input: {
       recipientEmail,
       purpose: input.purpose,
       basePurpose: input.basePurpose,
+      ...(input.resendActionId ? { resendActionId: input.resendActionId } : {}),
       authorizedRevision: input.authorizedRevision,
       claimKey,
       providerIdempotencyKey: `nb-send-${claimKey}`,
@@ -594,19 +615,25 @@ export async function cancelInvoiceDeliveryClaim(input: {
 /**
  * Owner release of an unresolved claim (§C): recorded durably with
  * actor, time, and reason. Covers claims whose recorded outcome
- * is UNKNOWN, claims stuck in DISPATCHING past their lease (the
- * dispatch worker is gone and no outcome will ever arrive — the same
- * unprovable-acceptance ambiguity, resolved by the owner's explicit
- * assertion), and RESERVED claims whose lease expired without
- * dispatch ever beginning. That last case is proven, not ambiguous:
+ * is UNKNOWN, claims still in DISPATCHING past their lease (dispatch
+ * may or may not have reached the provider — lease expiry proves
+ * neither that the worker stopped nor that acceptance never
+ * happened — so the unprovable-acceptance ambiguity stands, resolved
+ * by the owner's explicit assertion), RESERVED claims whose lease
+ * expired without dispatch ever beginning, and ACCEPTED claims whose
+ * final delivery/failure resolution has not been recorded (§D: the
+ * release substitutes for that missing resolution so automatic
+ * reminders may resume). The RESERVED case is proven, not ambiguous:
  * beginDispatch is the only exit from `reserved`, under the same
- * serialization, so an expired reservation's worker is gone and no
- * provider send can exist — yet the reservation would otherwise
- * block every competing claim key (the next reminder occurrence, a
- * send at a changed revision) forever, since same-key reclaim only
- * helps a retry of the identical key. A release never fabricates
- * acceptance or a timing anchor — it only unblocks future logical
- * sends, which still need their own new claim identity.
+ * serialization, so a claim still in `reserved` never entered
+ * dispatch and no provider send can exist for it — yet the
+ * reservation would otherwise block every competing claim key (the
+ * next reminder occurrence, a send at a changed revision) forever,
+ * since same-key reclaim only helps a retry of the identical key. A
+ * release never fabricates acceptance or a timing anchor — it only
+ * unblocks future logical sends, which still need their own new
+ * claim identity; an ACCEPTED claim's count and acceptance timestamp
+ * stand exactly as recorded.
  */
 export async function releaseInvoiceDeliveryClaim(input: {
   ownerId: string;
@@ -621,7 +648,14 @@ export async function releaseInvoiceDeliveryClaim(input: {
       existing.status === "dispatching" && Date.parse(existing.leaseExpiresAt) <= Date.now();
     const abandonedReservation =
       existing.status === "reserved" && Date.parse(existing.leaseExpiresAt) <= Date.now();
-    if (existing.status !== "blocked_unknown" && !stuckDispatching && !abandonedReservation) {
+    const unresolvedAccepted =
+      existing.status === "outcome_recorded" && existing.outcomeKind === "accepted";
+    if (
+      existing.status !== "blocked_unknown" &&
+      !stuckDispatching &&
+      !abandonedReservation &&
+      !unresolvedAccepted
+    ) {
       throw new Error("Only an unresolved delivery claim can be released.");
     }
     const nowIso = new Date().toISOString();
@@ -670,6 +704,28 @@ export async function getInvoiceDeliveryClaimById(input: {
   const store = await readStore();
   const claim = store.claims.find(
     (candidate) => candidate.ownerId === input.ownerId && candidate.claimId === input.claimId
+  );
+  return claim ? { ...claim } : null;
+}
+
+/**
+ * The claim established by one deliberate owner resend action (§C),
+ * looked up by the action's durable identity. A transport retry of
+ * that action carries the same id and resolves to this claim — in
+ * whatever state it now stands — instead of minting the next resend
+ * occurrence.
+ */
+export async function getInvoiceDeliveryClaimByResendAction(input: {
+  ownerId: string;
+  invoiceId: string;
+  resendActionId: string;
+}): Promise<DeliveryClaim | null> {
+  const store = await readStore();
+  const claim = store.claims.find(
+    (candidate) =>
+      candidate.ownerId === input.ownerId &&
+      candidate.invoiceId === input.invoiceId &&
+      candidate.resendActionId === input.resendActionId
   );
   return claim ? { ...claim } : null;
 }
@@ -902,8 +958,9 @@ export type InvoiceReminderTimingProjection = {
   /** True when at least one verified provider event exists. Legacy
    * aggregates never make this true (invariant: honest migration). */
   hasVerifiedHistory: boolean;
-  /** A claim is reserved/dispatching, or an UNKNOWN outcome is
-   * unresolved: automatic reminders must not fire. */
+  /** A claim is reserved/dispatching, an UNKNOWN outcome is
+   * unresolved, or a send is ACCEPTED with no final delivery/failure
+   * resolution recorded (§D): automatic reminders must not fire. */
   hasUnresolvedSend: boolean;
 };
 
@@ -1045,17 +1102,32 @@ function claimAcceptanceAt(claim: DeliveryClaim, events: DeliveryEvent[]): strin
   return earliest ?? claim.updatedAt;
 }
 
-export type DeliveryBlockReason = "unresolved_send" | "send_in_progress";
+export type DeliveryBlockReason = "unresolved_send" | "awaiting_resolution" | "send_in_progress";
 
 /**
- * The claim currently blocking new sends for this invoice, mirroring
- * reserveInvoiceDeliveryClaim's blocking decision (§C): a claim whose
- * outcome is UNKNOWN (status blocked_unknown) blocks until the owner
- * reconciles or releases it; a reserved/dispatching claim blocks
- * while its send is in flight. Cross-key exclusion means at most one
- * blocking claim exists in practice; if several ever did, the
- * persistent unknown block wins over a transient in-flight one, then
- * the most recently updated.
+ * §D unresolved acceptance: the claim's outcome is recorded as
+ * ACCEPTED and no final delivery/failure resolution has been recorded
+ * for it — a DELIVERED fold is what resolves it (the claim's
+ * outcomeKind moves to "delivered"), and an owner release also ends
+ * the block (the claim's status leaves "outcome_recorded"). FAILED
+ * and record_only resolutions never carry acceptance, so they are
+ * never in this state.
+ */
+function isUnresolvedAcceptedClaim(claim: DeliveryClaim): boolean {
+  return claim.status === "outcome_recorded" && claim.outcomeKind === "accepted";
+}
+
+/**
+ * The claim currently blocking sends/reminders for this invoice,
+ * mirroring the blocking decisions in reserveInvoiceDeliveryClaim
+ * (§C) and the reminder projection (§D): a claim whose outcome is
+ * UNKNOWN (status blocked_unknown) blocks until the owner reconciles
+ * or releases it; an ACCEPTED claim with no recorded final resolution
+ * blocks automatic reminders until the resolution arrives or the
+ * owner releases it; a reserved/dispatching claim blocks while its
+ * send is in flight. Persistent blocks win over a transient in-flight
+ * one (the unknown block first, as the least recoverable), then the
+ * most recently updated.
  */
 function projectBlockingClaim(
   claims: DeliveryClaim[]
@@ -1064,6 +1136,10 @@ function projectBlockingClaim(
   const unknown = byUpdatedDesc.find((claim) => claim.status === "blocked_unknown");
   if (unknown) {
     return { claimId: unknown.claimId, reason: "unresolved_send" };
+  }
+  const awaitingResolution = byUpdatedDesc.find(isUnresolvedAcceptedClaim);
+  if (awaitingResolution) {
+    return { claimId: awaitingResolution.claimId, reason: "awaiting_resolution" };
   }
   const inFlight = byUpdatedDesc.find(
     (claim) => claim.status === "reserved" || claim.status === "dispatching"
@@ -1230,8 +1306,16 @@ function projectReminderTiming(
       recordOnlyCount += 1;
     }
   }
+  // §D: automatic reminders are blocked while any send is unresolved —
+  // in flight, UNKNOWN, or ACCEPTED with no final delivery/failure
+  // resolution recorded. The acceptance still establishes timing (see
+  // lastAcceptedClaimAt above); blocking is additional, not instead.
   const hasUnresolvedSend = claims.some(
-    (claim) => claim.status === "reserved" || claim.status === "dispatching" || claim.status === "blocked_unknown"
+    (claim) =>
+      claim.status === "reserved" ||
+      claim.status === "dispatching" ||
+      claim.status === "blocked_unknown" ||
+      isUnresolvedAcceptedClaim(claim)
   );
   return {
     recipientEmail: latestRecipient(store, ownerId, invoiceId),
