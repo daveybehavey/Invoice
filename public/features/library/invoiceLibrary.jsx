@@ -437,6 +437,18 @@
   const [handoffNotice, setHandoffNotice] = useState("");
   const openInvoiceTargetRef = useRef("");
   const undoTimeoutRef = useRef(null);
+  // Slice 0 (§C, conformance Q7): the durable identity of the current
+  // deliberate resend action. Minted when a resend action starts and
+  // reused by every transport retry of THAT action (e.g. the send
+  // succeeded server-side but the response never arrived), so a retry
+  // replays the established claim instead of minting the next resend
+  // occurrence. Cleared when the action reaches a terminal recorded
+  // outcome — the next click is then a distinct owner action with a
+  // fresh identity — and preserved across nonterminal responses
+  // (transport failures, 5xx, in-progress 409s), whose retry must
+  // still replay this action; see the send call site for the exact
+  // classification.
+  const pendingResendActionRef = useRef(null);
   const requiresSignIn = (authRequiredByPolicy || authRequiredError) && !authSession?.userId;
   const emailLinkProvider = Array.isArray(authProviders)
     ? authProviders.find((provider) => provider?.id === "email_link")
@@ -451,6 +463,11 @@
     if (!response.ok) {
       const requestError = new Error(payload?.error || fallbackMessage);
       requestError.status = response.status;
+      // The parsed body rides along so callers can tell a structured
+      // refusal (e.g. the send endpoint's 409 blockingClaim, whose
+      // reason separates "still in progress" from a terminal block)
+      // from a bare status.
+      requestError.payload = payload;
       throw requestError;
     }
     return payload;
@@ -1144,7 +1161,7 @@
           );
         } else if (status === "sent") {
           setDeliveryNotice(
-            Boolean(mergedInvoice?.delivery?.recipientEmail && mergedInvoice?.delivery?.sentAt)
+            Boolean(mergedInvoice?.delivery?.recipientEmail && mergedInvoice?.delivery?.lastActivityAt)
               ? `Marked ${updatedInvoice.invoiceNumber || "the invoice"} as sent. Next: watch delivery before following up.`
               : `Marked ${updatedInvoice.invoiceNumber || "the invoice"} as sent. Next: add a tracked recipient so delivery and reminders stay clearer.`
           );
@@ -1354,10 +1371,35 @@
     const recipientEmail = String(options?.recipientEmail ?? "").trim().toLowerCase();
     const isResend =
       Boolean(options?.intent === "resend") ||
-      Boolean(invoice?.delivery?.recipientEmail && invoice?.delivery?.sentAt);
+      Boolean(invoice?.delivery?.recipientEmail && invoice?.delivery?.lastActivityAt);
     if (!recipientEmail || !isValidEmail(recipientEmail)) {
       setError("Enter a valid recipient email.");
       return;
+    }
+    // Q7: one deliberate resend action carries ONE durable identity.
+    // Reuse the pending action's id when this attempt is a retry of
+    // the same action (same invoice + recipient, previous attempt
+    // never answered); otherwise mint a fresh identity.
+    let resendActionId = null;
+    if (isResend) {
+      const pendingAction = pendingResendActionRef.current;
+      if (
+        pendingAction &&
+        pendingAction.invoiceId === invoice.invoiceId &&
+        pendingAction.recipientEmail === recipientEmail
+      ) {
+        resendActionId = pendingAction.actionId;
+      } else {
+        resendActionId =
+          typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `resend-action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        pendingResendActionRef.current = {
+          invoiceId: invoice.invoiceId,
+          recipientEmail,
+          actionId: resendActionId
+        };
+      }
     }
     setActionId(invoice.invoiceId);
     setError("");
@@ -1368,10 +1410,28 @@
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ recipientEmail })
+          // The server replays a bare repeat of the original send
+          // (idempotent retry); the explicit resend intent is what
+          // authorizes a NEW logical send under a fresh claim
+          // identity, so a resend click must say so. The action id
+          // binds the retries of THIS click to the claim it
+          // establishes, so a lost response cannot mint a duplicate.
+          body: JSON.stringify(
+            isResend
+              ? { recipientEmail, intent: "resend", resendActionId }
+              : { recipientEmail }
+          )
         },
         "Failed to send invoice."
       );
+      // The server answered: this action is complete. The next resend
+      // click is a distinct owner action with a fresh identity. Only
+      // the action THIS request carried may be cleared — a response
+      // for a different send must not rotate another action's
+      // identity out from under its own retry.
+      if (resendActionId && pendingResendActionRef.current?.actionId === resendActionId) {
+        pendingResendActionRef.current = null;
+      }
       setAuthRequiredError(false);
       setInvoices((prev) =>
         prev.map((candidate) =>
@@ -1409,6 +1469,41 @@
       );
       return payload;
     } catch (sendError) {
+      // Q7 identity lifecycle: the pending action identity rotates
+      // ONLY when this response records a TERMINAL outcome for the
+      // action —
+      // - HTTP 400: the send was definitively refused (a validation
+      //   refusal before any claim existed, or the recorded failure
+      //   of the action's own claim, replayed verbatim). The action
+      //   is complete; the next click is a new owner action.
+      // - HTTP 409 WITHOUT a send_in_progress block: the refusal is
+      //   terminal for this action (the stale-authorization refusal
+      //   cancelled its claim before dispatch, or an unresolved-send
+      //   block — that block is lifted by reconciling or releasing
+      //   the claim, after which a retry must be free to establish
+      //   the fresh send the release permits).
+      // Every other response is NONTERMINAL and preserves the
+      // identity, so the owner's retry replays the same action
+      // instead of minting a duplicate send:
+      // - no status: transport failure; the outcome is unknown.
+      // - 5xx: the server may have persisted provider acceptance and
+      //   failed afterwards (e.g. the guarded status completion) —
+      //   the retry must replay the accepted claim and recover the
+      //   completion, not dispatch a second email.
+      // - 409 with reason "send_in_progress": the original action is
+      //   still in flight; clearing its identity before it finishes
+      //   would let a retry mint a competing action.
+      const errorStatus = typeof sendError?.status === "number" ? sendError.status : null;
+      const blockingReason = sendError?.payload?.blockingClaim?.reason ?? null;
+      const terminalOutcome =
+        errorStatus === 400 || (errorStatus === 409 && blockingReason !== "send_in_progress");
+      if (
+        terminalOutcome &&
+        resendActionId &&
+        pendingResendActionRef.current?.actionId === resendActionId
+      ) {
+        pendingResendActionRef.current = null;
+      }
       handleLibraryError(sendError, "Failed to send invoice.");
       return null;
     } finally {
@@ -2000,7 +2095,7 @@
   const oldestSentRecipient = oldestSentReminder?.delivery?.recipientEmail ?? "";
   const oldestSentReminderOpened = oldestSentReminder?.delivery?.status === "opened";
   const oldestSentReminderHasTrackedDelivery = Boolean(
-    oldestSentReminder?.delivery?.recipientEmail && oldestSentReminder?.delivery?.sentAt
+    oldestSentReminder?.delivery?.recipientEmail && oldestSentReminder?.delivery?.lastActivityAt
   );
   const canQuickSendReminderOldest = Boolean(
     oldestSentReminder?.invoiceId && isValidEmail(oldestSentRecipient)
@@ -2093,6 +2188,16 @@
       "Billie from NoteBill"
     ].join("\n");
   })();
+  // P2 (recheck 5): the recipient the oldest sent invoice's
+  // VERIFIED evidence belongs to. Null when that acceptance carries
+  // no recipient on record — unknown, never inherited from the
+  // latest activity's recipient (oldestSentRecipient, which remains
+  // the addressing recipient for prepared/reminder wording).
+  const oldestEvidenceRecipient =
+    typeof oldestSentReminder?.delivery?.sentToEmail === "string" &&
+    oldestSentReminder.delivery.sentToEmail
+      ? oldestSentReminder.delivery.sentToEmail
+      : null;
   const followUpPlan = oldestSentReminder
     ? {
         urgencyValue: oldestSentReminder.isPastDue
@@ -2102,10 +2207,28 @@
           : `${Math.max(0, oldestSentReminder.daysSinceUpdate)} day${
               oldestSentReminder.daysSinceUpdate === 1 ? "" : "s"
             } since last update`,
+        // Q5: "Sent to" is a successful-send label — it requires
+        // VERIFIED acceptance evidence, not just a recorded
+        // recipient. Unverified activity (record_only recordings,
+        // legacy-only provider history) is labelled as prepared.
+        // Codex P2 (recheck 4): the name in the label is the
+        // recipient the verified evidence belongs to (sentToEmail),
+        // never the latest activity's recipient on someone else's
+        // proof. P2 (recheck 5): when the evidence recipient is
+        // unknown (the acceptance named no one), both the Sent and
+        // the Opened wording render recipient-neutrally — an
+        // unknown recipient is never replaced by the latest
+        // activity's address.
         deliveryValue: oldestSentRecipient
           ? oldestSentReminder?.delivery?.openedAt
-            ? `Opened by ${oldestSentRecipient}`
-            : `Sent to ${oldestSentRecipient}`
+            ? oldestEvidenceRecipient
+              ? `Opened by ${oldestEvidenceRecipient}`
+              : "Opened (verified, recipient not recorded)"
+            : oldestSentReminder?.delivery?.verified === true
+              ? oldestEvidenceRecipient
+                ? `Sent to ${oldestEvidenceRecipient}`
+                : "Sent (verified, recipient not recorded)"
+              : `Prepared for ${oldestSentRecipient} (tracking only)`
           : "No tracked recipient yet",
         nextStepValue: canQuickSendReminderOldest
           ? oldestSentReminder.isPastDue
@@ -2162,7 +2285,7 @@
           return false;
         }
         const delivery = invoice?.delivery ?? null;
-        return !(delivery?.recipientEmail && delivery?.sentAt);
+        return !(delivery?.recipientEmail && delivery?.lastActivityAt);
       })
       .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
   const sentTrackedUnopenedInvoice =
@@ -2172,7 +2295,7 @@
           return false;
         }
         const delivery = invoice?.delivery ?? null;
-        return Boolean(delivery?.recipientEmail && delivery?.sentAt && delivery?.status !== "opened");
+        return Boolean(delivery?.recipientEmail && delivery?.lastActivityAt && delivery?.status !== "opened");
       })
       .sort((left, right) => Date.parse(right.updatedAt ?? "") - Date.parse(left.updatedAt ?? ""))[0] ?? null;
   const paidRepeatCandidate =
@@ -2257,7 +2380,7 @@
     if (oldestSentReminder) {
       const oldestReminderOpened = oldestSentReminder?.delivery?.status === "opened";
       const oldestReminderHasTrackedDelivery = Boolean(
-        oldestSentReminder?.delivery?.recipientEmail && oldestSentReminder?.delivery?.sentAt
+        oldestSentReminder?.delivery?.recipientEmail && oldestSentReminder?.delivery?.lastActivityAt
       );
       return {
         toneClass: "border-blue-200 bg-blue-50 text-blue-950",
@@ -3692,12 +3815,42 @@
                   ? formatRecurringCadence(rememberedRecurringInterval)
                   : "";
                 const delivery = invoice?.delivery ?? null;
-                const hasDelivery = Boolean(delivery?.recipientEmail) && Boolean(delivery?.sentAt);
-                const deliverySentAt = hasDelivery ? formatDateTime(delivery.sentAt) : "";
+                const hasDelivery = Boolean(delivery?.recipientEmail) && Boolean(delivery?.lastActivityAt);
+                // Slice 0 (design v2 §D, conformance Q5): only VERIFIED
+                // acceptance evidence may be presented as a successful
+                // send. The summary's verified/sentAt derive solely
+                // from provider ACCEPTED claims (or claim-free verified
+                // provider events); legacy-only provider-mode entries
+                // carry verified:false and sentAt:null, so keying the
+                // "Sent" presentation off mode === "provider" — or
+                // falling back to lastActivityAt for the send date —
+                // promotes unverified activity into a send claim.
+                // Unverified timestamps are labelled as recorded
+                // activity instead.
+                const deliveryVerified = delivery?.verified === true && Boolean(delivery?.sentAt);
+                const deliverySentAt = deliveryVerified ? formatDateTime(delivery.sentAt) : "";
+                const deliveryActivityAt = hasDelivery ? formatDateTime(delivery.lastActivityAt) : "";
                 const deliveryOpenedAt = delivery?.openedAt ? formatDateTime(delivery.openedAt) : "";
                 const deliveryOpened = delivery?.status === "opened";
-                const providerDelivery = delivery?.mode === "provider";
+                const providerDelivery = deliveryVerified;
                 const deliveryRecipient = typeof delivery?.recipientEmail === "string" ? delivery.recipientEmail : "";
+                // Codex P2 (recheck 4, ruled fix-before-merge): the
+                // verified evidence (verified/sentAt) belongs to the
+                // recipient of the accepted operation — sentToEmail —
+                // which diverges from recipientEmail (the LATEST
+                // activity's recipient) whenever later recorded
+                // activity names someone else. Successful-send wording
+                // names the evidence's recipient; recipientEmail stays
+                // what addressing (resend) follows.
+                // P2 (recheck 5): sentToEmail is null when the
+                // acceptance carries no recipient on record — the
+                // evidence recipient is UNKNOWN then, and the wording
+                // renders recipient-neutrally below instead of falling
+                // back to the latest activity's recipient.
+                const deliverySentRecipient =
+                  typeof delivery?.sentToEmail === "string" && delivery.sentToEmail
+                    ? delivery.sentToEmail
+                    : null;
                 const canInstantResend = Boolean(hasDelivery && isValidEmail(deliveryRecipient));
                 const paymentLinkReady =
                   typeof invoice?.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0;
@@ -4031,11 +4184,17 @@
                           {hasDelivery ? (
                           <p className="mt-1 text-xs text-slate-600">
                               {providerDelivery
-                                ? `Sent to ${delivery.recipientEmail}`
-                                : `Prepared for ${delivery.recipientEmail} (tracking only)`}
+                                ? deliverySentRecipient
+                                  ? `Sent to ${deliverySentRecipient}`
+                                  : "Sent (verified, recipient not recorded)"
+                                : delivery?.mode === "provider"
+                                  ? `Delivery recorded for ${delivery.recipientEmail} (unverified)`
+                                  : `Prepared for ${delivery.recipientEmail} (tracking only)`}
                               {deliveryOpened
                                 ? ` - Opened ${deliveryOpenedAt || "recently"}`
-                                : ` - Sent ${deliverySentAt || "recently"}`}
+                                : providerDelivery
+                                  ? ` - Sent ${deliverySentAt || "recently"}`
+                                  : ` - Activity recorded ${deliveryActivityAt || "recently"}`}
                             </p>
                           ) : null}
                           <p className="mt-2 text-xs leading-5 text-slate-500">

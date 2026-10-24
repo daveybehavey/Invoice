@@ -147,6 +147,12 @@ afterEach(() => {
   setImageOcrRunnerForTests(null);
   setCheckoutSessionCreatorForTests(null);
   clearCheckoutIntentSessionsForTests();
+  // Slice 0 safety net: no test may leak a configured email provider
+  // (or a stubbed fetch) into the next test — see useVerifiedProviderSend.
+  delete process.env.INVOICE_EMAIL_PROVIDER;
+  delete process.env.RESEND_API_KEY;
+  delete process.env.INVOICE_FROM_EMAIL;
+  (globalThis as { fetch?: typeof fetch }).fetch = nativeFetch;
 });
 
 after(async () => {
@@ -6173,7 +6179,10 @@ test("launcher shows invoice command center for drafts and follow-ups", async ()
     await queue.getByText("Resume latest draft").waitFor({ state: "visible" });
     await queue.getByText("Follow up on sent invoice").waitFor({ state: "visible" });
     await queue.getByText("Open balance: $210.00.").waitFor({ state: "visible" });
-    await queue.getByText("Last sent to ops-reminder@example.com.").waitFor({ state: "visible" });
+    // Q5: this send was record_only (no provider in this fixture), so
+    // the follow-up must NOT claim "Last sent" — recorded/prepared
+    // wording is gated on verified acceptance.
+    await queue.getByText("Prepared for ops-reminder@example.com (tracking only).").waitFor({ state: "visible" });
     await queue.getByRole("button", { name: "Mark INV-OPS-SENT paid" }).waitFor({ state: "visible" });
     await queue.getByRole("button", { name: "Send reminder for INV-OPS-SENT" }).click();
     await page.getByText(/Reminder recorded for ops-reminder@example.com\./i).waitFor({ state: "visible" });
@@ -6917,6 +6926,11 @@ test("launcher follow-up card prefers focused reminder for overdue opened invoic
   });
   assert.equal(saveResponse.status(), 200);
   const savePayload = await saveResponse.json();
+  // Slice 0: the "opened" presentation requires a verified provider
+  // send for the open to attach to — seed one, then restore the
+  // unconfigured provider so the reminder click below stays
+  // record_only (matching the expected "Reminder recorded" copy).
+  const restoreProvider = useVerifiedProviderSend();
   const sendResponse = await context.request.post(
     `${baseUrl}/api/invoices/${savePayload?.invoice?.invoiceId}/send`,
     {
@@ -6940,6 +6954,12 @@ test("launcher follow-up card prefers focused reminder for overdue opened invoic
     }
   );
   assert.equal(openedResponse.status(), 200);
+  restoreProvider();
+  // Q2 (§D): the seed send is ACCEPTED with no final resolution on
+  // record, which now correctly blocks the reminder click below. The
+  // client demonstrably received this send (they opened it), so the
+  // fixture records the DELIVERED resolution the claim is missing.
+  await foldStoredDeliveryClaimDelivered(openedInvoiceId);
   await mutateStoredInvoice(openedInvoiceId, {
     status: "sent",
     updatedAt: "2026-04-01T12:00:00.000Z"
@@ -7569,7 +7589,13 @@ test("invoice library follow-up plan can mark the oldest reminder paid", async (
     const followUpQueue = page.locator("div.nb-accent-panel").filter({ hasText: "Follow-up queue" });
     await followUpQueue.waitFor({ state: "visible" });
     await followUpQueue.getByText("Past due since").waitFor({ state: "visible" });
-    await followUpQueue.getByText("Sent to reminder.paid@example.com").waitFor({ state: "visible" });
+    // Conformance Q5: this send was record_only (no provider in this
+    // test), so its delivery evidence is UNVERIFIED — the follow-up
+    // plan must not present it as "Sent to …". It is labelled as
+    // prepared/tracking-only, like the library card.
+    await followUpQueue
+      .getByText("Prepared for reminder.paid@example.com (tracking only)")
+      .waitFor({ state: "visible" });
     await followUpQueue.getByRole("button", { name: "Mark paid" }).click();
     await page
       .getByText("Marked INV-REM-PAID-1 as paid. Next: use Invoice again when similar work comes back.")
@@ -7743,6 +7769,11 @@ test("invoice library reminder presets update automation timing", async () => {
 });
 
 test("invoice library follow-up reminder can send oldest reminder without prompting", async () => {
+  // Slice 0: the asserted delivery sendCount only counts verified
+  // provider sends, so the initial send AND the quick reminder (sent
+  // from the browser during this test) must both run against the
+  // stubbed provider — the scope spans the whole test.
+  const restoreProvider = useVerifiedProviderSend();
   const ownerId = "ui-reminder-resend-owner";
   const context = await browser.newContext();
   await context.addInitScript((initOwnerId) => {
@@ -7799,6 +7830,11 @@ test("invoice library follow-up reminder can send oldest reminder without prompt
     }
   });
   assert.equal(sendResponse.status(), 200);
+  // Q2 (§D): the seed send (backdated to January below) is ACCEPTED
+  // with no final resolution on record, which now correctly blocks
+  // the reminder. A real send that old would long since have its
+  // resolution, so the fixture records the DELIVERED fold.
+  await foldStoredDeliveryClaimDelivered(invoiceId);
   await mutateStoredInvoice(invoiceId, {
     status: "sent",
     updatedAt: "2026-01-15T00:00:00.000Z"
@@ -7834,6 +7870,7 @@ test("invoice library follow-up reminder can send oldest reminder without prompt
     assert.equal(sendCount > 1, true);
     assert.equal(dialogTriggered, false);
   } finally {
+    restoreProvider();
     await context.close();
   }
 });
@@ -7982,6 +8019,10 @@ test("invoice library can arm recurring auto-send when a client recipient is rem
 });
 
 test("invoice library can run recurring auto-send immediately", async () => {
+  // Slice 0: the auto-send (fired from the browser mid-test) only
+  // advances the schedule when the send verifiably lands, so the
+  // stubbed provider scope spans the whole test.
+  const restoreProvider = useVerifiedProviderSend();
   const ownerId = "ui-recurring-auto-send-run-owner";
   const context = await browser.newContext();
   await context.addInitScript((initOwnerId) => {
@@ -8136,6 +8177,7 @@ test("invoice library can run recurring auto-send immediately", async () => {
     await invoiceCard.getByText("Sent invoice", { exact: true }).waitFor({ state: "visible" });
     await invoiceCard.locator("span.nb-chip--info", { hasText: "Sent" }).waitFor({ state: "visible" });
   } finally {
+    restoreProvider();
     await context.close();
   }
 });
@@ -9008,6 +9050,859 @@ test("invoice library send action records delivery and supports mark opened", as
   }
 });
 
+test("invoice library card never presents unverified delivery activity as a send (Q5)", async () => {
+  const ownerId = "ui-q5-library-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  // The UI server uses the default file delivery store (no
+  // INVOICE_DELIVERY_STORE_FILE in this suite); legacy fixtures are
+  // appended to it directly and removed again afterwards.
+  const deliveryStoreFilePath = path.resolve(process.cwd(), "data/invoice-delivery.json");
+  async function appendLegacyEntry(entry: Record<string, unknown>): Promise<void> {
+    const raw = await fs.readFile(deliveryStoreFilePath, "utf8").catch(() => "");
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+    parsed.entries = [...entries, entry];
+    await fs.writeFile(deliveryStoreFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+  }
+  async function removeLegacyEntry(invoiceId: string): Promise<void> {
+    const raw = await fs.readFile(deliveryStoreFilePath, "utf8").catch(() => "");
+    if (!raw) {
+      return;
+    }
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+    parsed.entries = entries.filter(
+      (entry) => (entry as { invoiceId?: string })?.invoiceId !== invoiceId
+    );
+    await fs.writeFile(deliveryStoreFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+  }
+
+  async function saveQ5Invoice(invoiceNumber: string, customerName: string): Promise<string> {
+    const response = await context.request.post(`${baseUrl}/api/invoices/save`, {
+      headers: { "x-invoice-user-id": ownerId },
+      data: {
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: { customerName, workSessions: [], materials: [] },
+          finishedInvoice: {
+            invoiceNumber,
+            issueDate: "2026-03-10",
+            dueDate: futureDueDateIso(60),
+            customerName,
+            currency: "USD",
+            lineItems: [
+              {
+                id: `line-${invoiceNumber}`,
+                type: "labor",
+                description: "Q5 baseline",
+                quantity: 1,
+                unitPrice: 100,
+                amount: 100
+              }
+            ],
+            subtotal: 100,
+            total: 100,
+            balanceDue: 100
+          }
+        }
+      }
+    });
+    assert.equal(response.status(), 200);
+    const payload = await response.json();
+    return payload?.invoice?.invoiceId as string;
+  }
+
+  // record_only fixture: a send recorded with no provider configured
+  // (unverified activity, verified:false / sentAt:null).
+  const recordOnlyInvoiceId = await saveQ5Invoice("INV-Q5-RECORDONLY", "Q5 Record Only Client");
+  const recordOnlySend = await context.request.post(`${baseUrl}/api/invoices/${recordOnlyInvoiceId}/send`, {
+    headers: { "x-invoice-user-id": ownerId },
+    data: { recipientEmail: "recordonly.q5@example.com" }
+  });
+  assert.equal(recordOnlySend.status(), 200);
+  await mutateStoredInvoice(recordOnlyInvoiceId, { status: "sent" });
+
+  // Legacy provider fixture: a pre-Slice-0 aggregate whose latest
+  // mode says "provider" — the exact shape Q5 is about. Its history
+  // is unverified (verified:false / sentAt:null) despite the mode.
+  const legacyInvoiceId = await saveQ5Invoice("INV-Q5-LEGACY", "Q5 Legacy Client");
+  await appendLegacyEntry({
+    invoiceId: legacyInvoiceId,
+    ownerId,
+    recipientEmail: "legacy.q5@example.com",
+    sentAt: "2026-01-05T00:00:00.000Z",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_q5_legacy",
+    sendCount: 3,
+    openCount: 0
+  });
+  await mutateStoredInvoice(legacyInvoiceId, { status: "sent" });
+
+  // Verified control: a real provider-accepted send in this build.
+  const restoreProvider = useVerifiedProviderSend();
+  const verifiedInvoiceId = await saveQ5Invoice("INV-Q5-VERIFIED", "Q5 Verified Client");
+  const verifiedSend = await context.request.post(`${baseUrl}/api/invoices/${verifiedInvoiceId}/send`, {
+    headers: { "x-invoice-user-id": ownerId },
+    data: { recipientEmail: "verified.q5@example.com" }
+  });
+  assert.equal(verifiedSend.status(), 200);
+  restoreProvider();
+  await mutateStoredInvoice(verifiedInvoiceId, { status: "sent" });
+
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+
+    const legacyCard = getLibraryInvoiceCard(page, "INV-Q5-LEGACY");
+    await legacyCard
+      .getByText("Delivery recorded for legacy.q5@example.com (unverified)")
+      .waitFor({ state: "visible" });
+    const legacyText = await legacyCard.innerText();
+    assert.match(legacyText, /Activity recorded/);
+    assert.ok(!legacyText.includes("Sent to legacy.q5@example.com"));
+    assert.ok(!legacyText.includes("Tracking active"));
+
+    const recordOnlyCard = getLibraryInvoiceCard(page, "INV-Q5-RECORDONLY");
+    await recordOnlyCard
+      .getByText("Prepared for recordonly.q5@example.com (tracking only)")
+      .waitFor({ state: "visible" });
+    const recordOnlyText = await recordOnlyCard.innerText();
+    assert.match(recordOnlyText, /Activity recorded/);
+    assert.ok(!/ - Sent /.test(recordOnlyText));
+
+    // The control still presents as sent: the gate is on evidence,
+    // not on the label itself.
+    const verifiedCard = getLibraryInvoiceCard(page, "INV-Q5-VERIFIED");
+    await verifiedCard.getByText("Sent to verified.q5@example.com").waitFor({ state: "visible" });
+    const verifiedText = await verifiedCard.innerText();
+    assert.match(verifiedText, / - Sent /);
+    assert.ok(verifiedText.includes("Tracking active"));
+  } finally {
+    await context.close();
+    await removeLegacyEntry(legacyInvoiceId);
+  }
+});
+
+test("launcher follow-up does not present unverified delivery activity as a send (Q5)", async () => {
+  const ownerId = "ui-q5-launcher-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+
+  const deliveryStoreFilePath = path.resolve(process.cwd(), "data/invoice-delivery.json");
+  async function saveQ5Invoice(invoiceNumber: string, customerName: string): Promise<string> {
+    const response = await context.request.post(`${baseUrl}/api/invoices/save`, {
+      headers: { "x-invoice-user-id": ownerId },
+      data: {
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: { customerName, workSessions: [], materials: [] },
+          finishedInvoice: {
+            invoiceNumber,
+            issueDate: "2026-03-12",
+            dueDate: "2026-03-20",
+            customerName,
+            currency: "USD",
+            lineItems: [
+              {
+                id: `line-${invoiceNumber}`,
+                type: "labor",
+                description: "Q5 launcher baseline",
+                quantity: 1,
+                unitPrice: 100,
+                amount: 100
+              }
+            ],
+            subtotal: 100,
+            total: 100,
+            balanceDue: 100
+          }
+        }
+      }
+    });
+    assert.equal(response.status(), 200);
+    const payload = await response.json();
+    return payload?.invoice?.invoiceId as string;
+  }
+
+  // Legacy provider fixture (unverified history, mode "provider").
+  const legacyInvoiceId = await saveQ5Invoice("INV-Q5-LAUNCH-LEGACY", "Q5 Launcher Legacy Client");
+  const rawBefore = await fs.readFile(deliveryStoreFilePath, "utf8").catch(() => "");
+  const parsedBefore = rawBefore ? (JSON.parse(rawBefore) as Record<string, unknown>) : {};
+  const entriesBefore = Array.isArray(parsedBefore.entries) ? parsedBefore.entries : [];
+  parsedBefore.entries = [
+    ...entriesBefore,
+    {
+      invoiceId: legacyInvoiceId,
+      ownerId,
+      recipientEmail: "legacy.launcher.q5@example.com",
+      sentAt: "2026-01-05T00:00:00.000Z",
+      mode: "provider",
+      provider: "resend",
+      providerMessageId: "email_q5_launcher_legacy",
+      sendCount: 2,
+      openCount: 0
+    }
+  ];
+  await fs.writeFile(deliveryStoreFilePath, `${JSON.stringify(parsedBefore, null, 2)}\n`, "utf8");
+  await mutateStoredInvoice(legacyInvoiceId, {
+    status: "sent",
+    updatedAt: "2026-04-01T12:00:00.000Z"
+  });
+
+  // record_only fixture (unverified recorded activity).
+  const recordOnlyInvoiceId = await saveQ5Invoice("INV-Q5-LAUNCH-RECORDONLY", "Q5 Launcher Record Client");
+  const recordOnlySend = await context.request.post(
+    `${baseUrl}/api/invoices/${recordOnlyInvoiceId}/send`,
+    {
+      headers: { "x-invoice-user-id": ownerId },
+      data: { recipientEmail: "recordonly.launcher.q5@example.com" }
+    }
+  );
+  assert.equal(recordOnlySend.status(), 200);
+  await mutateStoredInvoice(recordOnlyInvoiceId, {
+    status: "sent",
+    updatedAt: "2026-04-01T12:00:00.000Z"
+  });
+
+  await prepareReturningGuest(context);
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+    const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+    // The follow-up surface DID consume the unverified activity: both
+    // invoices are tracked-but-unopened, so the delivery-review path
+    // is what renders. What it must never do is call either a send.
+    await queue.getByText("Re-send or confirm delivery").waitFor({ state: "visible" });
+    const queueText = await queue.innerText();
+    assert.ok(!queueText.includes("Sent to legacy.launcher.q5@example.com"));
+    assert.ok(!queueText.includes("Sent to recordonly.launcher.q5@example.com"));
+    assert.ok(!/Sent to /.test(queueText));
+  } finally {
+    await context.close();
+    const rawAfter = await fs.readFile(deliveryStoreFilePath, "utf8").catch(() => "");
+    if (rawAfter) {
+      const parsedAfter = JSON.parse(rawAfter) as Record<string, unknown>;
+      const entriesAfter = Array.isArray(parsedAfter.entries) ? parsedAfter.entries : [];
+      parsedAfter.entries = entriesAfter.filter(
+        (entry) => (entry as { invoiceId?: string })?.invoiceId !== legacyInvoiceId
+      );
+      await fs.writeFile(deliveryStoreFilePath, `${JSON.stringify(parsedAfter, null, 2)}\n`, "utf8");
+    }
+  }
+});
+
+test("launcher 'Last sent' wording is gated on verified acceptance in the non-overdue stale branch (Q5)", async () => {
+  // Recheck-3 Q5: the existing Q5 launcher fixture exercises the
+  // OVERDUE branch only. The non-overdue stale-update branch ended
+  // in an unconditional "Last sent to …" for any tracked recipient —
+  // including unverified shapes. Both unverified shapes are fixtured
+  // here in that branch, plus a verified control that keeps the
+  // "Last sent" wording.
+  const deliveryStoreFilePath = path.resolve(process.cwd(), "data/invoice-delivery.json");
+  const staleUpdatedAt = new Date(Date.now() - 30 * 86400000).toISOString();
+
+  async function runScenario(input: {
+    ownerId: string;
+    invoiceNumber: string;
+    recipient: string;
+    prepare: (context: BrowserContext, invoiceId: string) => Promise<void>;
+    expectedLabel: string;
+    expectLastSent: boolean;
+  }): Promise<void> {
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, input.ownerId);
+    try {
+      const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+        headers: { "x-invoice-user-id": input.ownerId },
+        data: {
+          confirmSave: true,
+          sourceType: "text_input",
+          invoiceData: {
+            structuredInvoice: {
+              customerName: "Q5 Launcher Gate Client",
+              workSessions: [],
+              materials: []
+            },
+            finishedInvoice: {
+              invoiceNumber: input.invoiceNumber,
+              issueDate: "2026-03-12",
+              dueDate: futureDueDateIso(60),
+              customerName: "Q5 Launcher Gate Client",
+              currency: "USD",
+              lineItems: [
+                {
+                  id: `line-${input.invoiceNumber}`,
+                  type: "labor",
+                  description: "Q5 launcher gate baseline",
+                  quantity: 1,
+                  unitPrice: 100,
+                  amount: 100
+                }
+              ],
+              subtotal: 100,
+              total: 100,
+              balanceDue: 100
+            }
+          }
+        }
+      });
+      assert.equal(saveResponse.status(), 200);
+      const invoiceId = String((await saveResponse.json()).invoice?.invoiceId ?? "");
+      assert.ok(invoiceId);
+      await input.prepare(context, invoiceId);
+      // Non-overdue (future due date) but stale (30 days untouched):
+      // exactly the branch whose wording Q5 gates.
+      await mutateStoredInvoice(invoiceId, { status: "sent", updatedAt: staleUpdatedAt });
+
+      await prepareReturningGuest(context);
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+      const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+      await queue.getByText(input.expectedLabel).waitFor({ state: "visible" });
+      const queueText = await queue.innerText();
+      if (input.expectLastSent) {
+        assert.ok(queueText.includes(`Last sent to ${input.recipient}.`));
+      } else {
+        assert.ok(
+          !queueText.includes("Last sent to"),
+          `unverified shape must not be presented as sent: ${queueText}`
+        );
+      }
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Legacy aggregate shape: mode says "provider", history unverified.
+  let legacyInvoiceId = "";
+  await runScenario({
+    ownerId: "ui-q5-launcher2-legacy-owner",
+    invoiceNumber: "INV-Q5-LAUNCH2-LEGACY",
+    recipient: "legacy.launcher2.q5@example.com",
+    expectedLabel: "Delivery recorded for legacy.launcher2.q5@example.com (unverified).",
+    expectLastSent: false,
+    prepare: async (_context, invoiceId) => {
+      legacyInvoiceId = invoiceId;
+      const raw = await fs.readFile(deliveryStoreFilePath, "utf8").catch(() => "");
+      const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+      parsed.entries = [
+        ...entries,
+        {
+          invoiceId,
+          ownerId: "ui-q5-launcher2-legacy-owner",
+          recipientEmail: "legacy.launcher2.q5@example.com",
+          sentAt: "2026-01-05T00:00:00.000Z",
+          mode: "provider",
+          provider: "resend",
+          providerMessageId: "email_q5_launcher2_legacy",
+          sendCount: 2,
+          openCount: 0
+        }
+      ];
+      await fs.writeFile(deliveryStoreFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+    }
+  });
+  if (legacyInvoiceId) {
+    const raw = await fs.readFile(deliveryStoreFilePath, "utf8").catch(() => "");
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+      parsed.entries = entries.filter(
+        (entry) => (entry as { invoiceId?: string })?.invoiceId !== legacyInvoiceId
+      );
+      await fs.writeFile(deliveryStoreFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+    }
+  }
+
+  // record_only shape: a tracked send with no provider behind it.
+  await runScenario({
+    ownerId: "ui-q5-launcher2-record-owner",
+    invoiceNumber: "INV-Q5-LAUNCH2-RECORDONLY",
+    recipient: "recordonly.launcher2.q5@example.com",
+    expectedLabel: "Prepared for recordonly.launcher2.q5@example.com (tracking only).",
+    expectLastSent: false,
+    prepare: async (context, invoiceId) => {
+      const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+        headers: { "x-invoice-user-id": "ui-q5-launcher2-record-owner" },
+        data: { recipientEmail: "recordonly.launcher2.q5@example.com" }
+      });
+      assert.equal(sendResponse.status(), 200);
+    }
+  });
+
+  // Verified control: a provider-accepted send keeps "Last sent".
+  await runScenario({
+    ownerId: "ui-q5-launcher2-verified-owner",
+    invoiceNumber: "INV-Q5-LAUNCH2-VERIFIED",
+    recipient: "verified.launcher2.q5@example.com",
+    expectedLabel: "Last sent to verified.launcher2.q5@example.com.",
+    expectLastSent: true,
+    prepare: async (context, invoiceId) => {
+      const restoreProvider = useVerifiedProviderSend();
+      try {
+        const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+          headers: { "x-invoice-user-id": "ui-q5-launcher2-verified-owner" },
+          data: { recipientEmail: "verified.launcher2.q5@example.com" }
+        });
+        assert.equal(sendResponse.status(), 200);
+      } finally {
+        restoreProvider();
+      }
+    }
+  });
+});
+
+test("verified send labels stay bound to the accepted recipient when later activity names another (Codex P2)", async () => {
+  // Recheck 4, disclosed Codex P2 ruled fix-before-merge: the
+  // summary's verified/sentAt are invoice-global while recipientEmail
+  // is the LATEST activity's. A verified send to A followed by
+  // recorded activity addressed to B must not present "Sent to B" on
+  // A's proof — on the library card, in the follow-up plan, or in
+  // the launcher. The accepted-recipient control (existing Q5 tests)
+  // still displays; here both recipients are on one invoice.
+  const acceptedRecipient = "alice.p2@example.com";
+  const recordedRecipient = "bob.p2@example.com";
+  const staleUpdatedAt = new Date(Date.now() - 30 * 86400000).toISOString();
+
+  async function saveP2Invoice(
+    context: BrowserContext,
+    ownerId: string,
+    invoiceNumber: string
+  ): Promise<string> {
+    const response = await context.request.post(`${baseUrl}/api/invoices/save`, {
+      headers: { "x-invoice-user-id": ownerId },
+      data: {
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: { customerName: "P2 Binding Client", workSessions: [], materials: [] },
+          finishedInvoice: {
+            invoiceNumber,
+            issueDate: "2026-03-10",
+            dueDate: futureDueDateIso(60),
+            customerName: "P2 Binding Client",
+            currency: "USD",
+            lineItems: [
+              {
+                id: `line-${invoiceNumber}`,
+                type: "labor",
+                description: "P2 binding baseline",
+                quantity: 1,
+                unitPrice: 100,
+                amount: 100
+              }
+            ],
+            subtotal: 100,
+            total: 100,
+            balanceDue: 100
+          }
+        }
+      }
+    });
+    assert.equal(response.status(), 200);
+    return String((await response.json()).invoice?.invoiceId ?? "");
+  }
+
+  async function prepareDivergentDelivery(
+    context: BrowserContext,
+    ownerId: string,
+    invoiceId: string
+  ): Promise<void> {
+    // Verified provider send to A.
+    const restoreProvider = useVerifiedProviderSend();
+    try {
+      const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+        headers: { "x-invoice-user-id": ownerId },
+        data: { recipientEmail: acceptedRecipient }
+      });
+      assert.equal(sendResponse.status(), 200);
+    } finally {
+      restoreProvider();
+    }
+    // Model the completed historical send (the DELIVERED fold a real
+    // send of that age would carry), then record later activity
+    // addressed to B with no provider configured: a record_only
+    // resend, which makes B the summary's latest recipient while A's
+    // acceptance remains the only verified evidence.
+    await foldStoredDeliveryClaimDelivered(invoiceId);
+    const resendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+      headers: { "x-invoice-user-id": ownerId },
+      data: {
+        recipientEmail: recordedRecipient,
+        intent: "resend",
+        resendActionId: randomUUID()
+      }
+    });
+    assert.equal(resendResponse.status(), 200);
+    await mutateStoredInvoice(invoiceId, { status: "sent", updatedAt: staleUpdatedAt });
+  }
+
+  // Library surfaces: the card and the follow-up plan.
+  {
+    const ownerId = "ui-p2-library-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveP2Invoice(context, ownerId, "INV-P2-CARD");
+      assert.ok(invoiceId);
+      await prepareDivergentDelivery(context, ownerId, invoiceId);
+
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+
+      const card = getLibraryInvoiceCard(page, "INV-P2-CARD");
+      await card.getByText(`Sent to ${acceptedRecipient}`).waitFor({ state: "visible" });
+      const cardText = await card.innerText();
+      assert.ok(!cardText.includes(`Sent to ${recordedRecipient}`));
+      assert.match(cardText, / - Sent /);
+
+      const plan = page.getByTestId("library-follow-up-plan");
+      await plan.waitFor({ state: "visible" });
+      const planText = await plan.innerText();
+      assert.ok(planText.includes(`Sent to ${acceptedRecipient}`));
+      assert.ok(!planText.includes(`Sent to ${recordedRecipient}`));
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Launcher surface: the non-overdue stale branch's "Last sent".
+  {
+    const ownerId = "ui-p2-launcher-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveP2Invoice(context, ownerId, "INV-P2-LAUNCH");
+      assert.ok(invoiceId);
+      await prepareDivergentDelivery(context, ownerId, invoiceId);
+
+      await prepareReturningGuest(context);
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+      const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+      await queue.getByText(`Last sent to ${acceptedRecipient}.`).waitFor({ state: "visible" });
+      const queueText = await queue.innerText();
+      assert.ok(!queueText.includes(`Last sent to ${recordedRecipient}.`));
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Follow-up plan, opened variant (P2 residual): A's verified send
+  // was OPENED, then record-only activity addressed to B. Open
+  // evidence belongs to the verified accepted send, so the plan's
+  // "Opened by" must name A — the same misattribution class the
+  // send wording had, on the adjacent openedAt branch.
+  {
+    const ownerId = "ui-p2-opened-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveP2Invoice(context, ownerId, "INV-P2-OPENED");
+      assert.ok(invoiceId);
+
+      // Verified provider send to A, then the open attaches to it.
+      const restoreProvider = useVerifiedProviderSend();
+      try {
+        const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+          headers: { "x-invoice-user-id": ownerId },
+          data: { recipientEmail: acceptedRecipient }
+        });
+        assert.equal(sendResponse.status(), 200);
+        const openedResponse = await context.request.post(
+          `${baseUrl}/api/invoices/${invoiceId}/delivery/opened`,
+          {
+            headers: { "x-invoice-user-id": ownerId }
+          }
+        );
+        assert.equal(openedResponse.status(), 200);
+      } finally {
+        restoreProvider();
+      }
+      // Model the completed historical send (the DELIVERED fold),
+      // then record later activity addressed to B: a record_only
+      // resend, which makes B the summary's latest recipient while
+      // A's acceptance — and A's open — remain the only verified
+      // evidence.
+      await foldStoredDeliveryClaimDelivered(invoiceId);
+      const resendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+        headers: { "x-invoice-user-id": ownerId },
+        data: {
+          recipientEmail: recordedRecipient,
+          intent: "resend",
+          resendActionId: randomUUID()
+        }
+      });
+      assert.equal(resendResponse.status(), 200);
+      await mutateStoredInvoice(invoiceId, { status: "sent", updatedAt: staleUpdatedAt });
+
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+
+      const plan = page.getByTestId("library-follow-up-plan");
+      await plan.waitFor({ state: "visible" });
+      const planText = await plan.innerText();
+      assert.ok(planText.includes(`Opened by ${acceptedRecipient}`));
+      assert.ok(!planText.includes(`Opened by ${recordedRecipient}`));
+    } finally {
+      await context.close();
+    }
+  }
+});
+
+test("verified send labels stay recipient-neutral when the acceptance names no recipient (P2 recheck 5)", async () => {
+  // Recheck 5: a provider/accepted send_recorded event may
+  // legitimately carry no recipientEmail — the send is verified,
+  // its recipient is UNKNOWN (summary sentToEmail is null). Every
+  // evidence-naming path must render recipient-neutral verified
+  // wording then, never fall back to the latest activity's
+  // recipient — and a newer recipientless acceptance must not be
+  // presented paired with an earlier operation's recipient either.
+  const acceptedRecipient = "alice.p2@example.com";
+  const recordedRecipient = "bob.p2@example.com";
+  const neutralSent = "Sent (verified, recipient not recorded)";
+  const neutralOpened = "Opened (verified, recipient not recorded)";
+  const neutralLastSent = "Last sent (verified, recipient not recorded).";
+  const staleUpdatedAt = new Date(Date.now() - 30 * 86400000).toISOString();
+
+  async function saveUnknownInvoice(
+    context: BrowserContext,
+    ownerId: string,
+    invoiceNumber: string
+  ): Promise<string> {
+    const response = await context.request.post(`${baseUrl}/api/invoices/save`, {
+      headers: { "x-invoice-user-id": ownerId },
+      data: {
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: { customerName: "P2 Unknown Client", workSessions: [], materials: [] },
+          finishedInvoice: {
+            invoiceNumber,
+            issueDate: "2026-03-10",
+            dueDate: futureDueDateIso(60),
+            customerName: "P2 Unknown Client",
+            currency: "USD",
+            lineItems: [
+              {
+                id: `line-${invoiceNumber}`,
+                type: "labor",
+                description: "P2 unknown-recipient baseline",
+                quantity: 1,
+                unitPrice: 100,
+                amount: 100
+              }
+            ],
+            subtotal: 100,
+            total: 100,
+            balanceDue: 100
+          }
+        }
+      }
+    });
+    assert.equal(response.status(), 200);
+    return String((await response.json()).invoice?.invoiceId ?? "");
+  }
+
+  async function injectDeliveryEvent(event: Record<string, unknown>): Promise<void> {
+    const deliveryStoreFilePath = path.resolve(process.cwd(), "data/invoice-delivery.json");
+    const raw = await fs.readFile(deliveryStoreFilePath, "utf8").catch(() => "");
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const events = Array.isArray(parsed.events) ? parsed.events : [];
+    parsed.events = [...events, event];
+    await fs.writeFile(deliveryStoreFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+  }
+
+  // A claim-free verified acceptance with NO recipient on record,
+  // followed by record_only activity addressed to B (which makes B
+  // the summary's latest/addressing recipient only).
+  async function prepareRecipientlessDelivery(ownerId: string, invoiceId: string): Promise<void> {
+    await injectDeliveryEvent({
+      eventId: `evt-ui-p2-recipientless-${invoiceId}`,
+      ownerId,
+      invoiceId,
+      attemptId: `attempt-ui-p2-recipientless-${invoiceId}`,
+      kind: "send_recorded",
+      mode: "provider",
+      provider: "resend",
+      outcome: "accepted",
+      providerMessageId: "email_ui_p2_recipientless",
+      occurredAt: new Date(Date.now() - 2 * 86400000).toISOString()
+    });
+    await injectDeliveryEvent({
+      eventId: `evt-ui-p2-recorded-${invoiceId}`,
+      ownerId,
+      invoiceId,
+      attemptId: `attempt-ui-p2-recorded-${invoiceId}`,
+      kind: "send_recorded",
+      mode: "record_only",
+      provider: "none",
+      outcome: "recorded",
+      recipientEmail: recordedRecipient,
+      occurredAt: new Date(Date.now() - 1 * 86400000).toISOString()
+    });
+    await mutateStoredInvoice(invoiceId, { status: "sent", updatedAt: staleUpdatedAt });
+  }
+
+  // Library surfaces: the card and the follow-up plan (Sent branch).
+  {
+    const ownerId = "ui-p2-unknown-library-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveUnknownInvoice(context, ownerId, "INV-P2-UNKNOWN");
+      assert.ok(invoiceId);
+      await prepareRecipientlessDelivery(ownerId, invoiceId);
+
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+
+      const card = getLibraryInvoiceCard(page, "INV-P2-UNKNOWN");
+      await card.getByText(neutralSent).waitFor({ state: "visible" });
+      const cardText = await card.innerText();
+      assert.ok(!cardText.includes(`Sent to ${recordedRecipient}`));
+      assert.ok(!cardText.includes(`Sent to ${acceptedRecipient}`));
+
+      const plan = page.getByTestId("library-follow-up-plan");
+      await plan.waitFor({ state: "visible" });
+      const planText = await plan.innerText();
+      assert.ok(planText.includes(neutralSent));
+      assert.ok(!planText.includes(`Sent to ${recordedRecipient}`));
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Follow-up plan, opened branch: the verified recipientless send
+  // was opened; the open evidence is verified but names no one.
+  {
+    const ownerId = "ui-p2-unknown-opened-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveUnknownInvoice(context, ownerId, "INV-P2-UNKNOWN-OPENED");
+      assert.ok(invoiceId);
+      await prepareRecipientlessDelivery(ownerId, invoiceId);
+      await injectDeliveryEvent({
+        eventId: `evt-ui-p2-opened-${invoiceId}`,
+        ownerId,
+        invoiceId,
+        attemptId: `attempt-ui-p2-recipientless-${invoiceId}`,
+        kind: "opened",
+        mode: "record_only",
+        provider: "none",
+        outcome: "opened",
+        occurredAt: new Date(Date.now() - 12 * 3600000).toISOString()
+      });
+
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+
+      const plan = page.getByTestId("library-follow-up-plan");
+      await plan.waitFor({ state: "visible" });
+      const planText = await plan.innerText();
+      assert.ok(planText.includes(neutralOpened));
+      assert.ok(!planText.includes(`Opened by ${recordedRecipient}`));
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Launcher surface: "Last sent" with an unknown evidence recipient.
+  {
+    const ownerId = "ui-p2-unknown-launcher-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveUnknownInvoice(context, ownerId, "INV-P2-UNKNOWN-LAUNCH");
+      assert.ok(invoiceId);
+      await prepareRecipientlessDelivery(ownerId, invoiceId);
+
+      await prepareReturningGuest(context);
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+      const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+      await queue.getByText(neutralLastSent).waitFor({ state: "visible" });
+      const queueText = await queue.innerText();
+      assert.ok(!queueText.includes(`Last sent to ${recordedRecipient}.`));
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Newer recipientless acceptance after a named one: the evidence
+  // pair moved (newer sentAt, unknown recipient), so neither the
+  // card nor the launcher may present the newer send as A's.
+  {
+    const ownerId = "ui-p2-pair-library-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveUnknownInvoice(context, ownerId, "INV-P2-PAIR");
+      assert.ok(invoiceId);
+      const restoreProvider = useVerifiedProviderSend();
+      try {
+        const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+          headers: { "x-invoice-user-id": ownerId },
+          data: { recipientEmail: acceptedRecipient }
+        });
+        assert.equal(sendResponse.status(), 200);
+      } finally {
+        restoreProvider();
+      }
+      await foldStoredDeliveryClaimDelivered(invoiceId);
+      await injectDeliveryEvent({
+        eventId: `evt-ui-p2-pair-recipientless-${invoiceId}`,
+        ownerId,
+        invoiceId,
+        attemptId: `attempt-ui-p2-pair-recipientless-${invoiceId}`,
+        kind: "send_recorded",
+        mode: "provider",
+        provider: "resend",
+        outcome: "accepted",
+        providerMessageId: "email_ui_p2_pair_recipientless",
+        occurredAt: new Date(Date.now() + 2 * 3600000).toISOString()
+      });
+      await mutateStoredInvoice(invoiceId, { status: "sent", updatedAt: staleUpdatedAt });
+
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+      const card = getLibraryInvoiceCard(page, "INV-P2-PAIR");
+      await card.getByText(neutralSent).waitFor({ state: "visible" });
+      const cardText = await card.innerText();
+      assert.ok(!cardText.includes(`Sent to ${acceptedRecipient}`));
+    } finally {
+      await context.close();
+    }
+  }
+});
+
 test("invoice library card distinguishes tracked but unopened delivery", async () => {
   const ownerId = "ui-send-unopened-owner";
   const context = await browser.newContext();
@@ -9065,6 +9960,17 @@ test("invoice library card distinguishes tracked but unopened delivery", async (
     }
   });
   assert.equal(sendResponse.status(), 200);
+  // Slice 0: with no provider configured that send is record_only and
+  // leaves the invoice a draft. The tracked-delivery card under test
+  // is for a sent invoice, so the owner attests the send through the
+  // lifecycle status endpoint.
+  const markSentResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/status`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: { status: "sent" }
+  });
+  assert.equal(markSentResponse.status(), 200);
 
   const page = await context.newPage();
   try {
@@ -10392,6 +11298,9 @@ test("invoice library card surfaces a best next action for sent invoices", async
   const seedPayload = await seedResponse.json();
   const invoiceId = seedPayload?.invoice?.invoiceId as string;
 
+  // Slice 0: seed a verified provider send so the invoice is genuinely
+  // sent and the open below is verified engagement.
+  const restoreProvider = useVerifiedProviderSend();
   const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
     headers: {
       "x-invoice-user-id": ownerId
@@ -10407,6 +11316,7 @@ test("invoice library card surfaces a best next action for sent invoices", async
     }
   });
   assert.equal(openedResponse.status(), 200);
+  restoreProvider();
 
   const page = await context.newPage();
   try {
@@ -10554,6 +11464,213 @@ test("invoice library resend flow reports a re-send notice for tracked delivery 
     await page.getByText("Next: add the hosted payment link so the resent invoice is easier to pay.").waitFor({
       state: "visible"
     });
+  } finally {
+    await context.close();
+  }
+});
+
+async function seedLibraryResendInvoice(
+  context: BrowserContext,
+  ownerId: string,
+  invoiceNumber: string,
+  recipientEmail: string
+): Promise<string> {
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Identity Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber,
+          issueDate: "2026-05-05",
+          dueDate: "2026-05-20",
+          customerName: "Identity Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-identity-1",
+              type: "labor",
+              description: "Identity baseline service",
+              quantity: 1,
+              unitPrice: 180,
+              amount: 180
+            }
+          ],
+          subtotal: 180,
+          total: 180,
+          balanceDue: 180
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const invoiceId = seedPayload?.invoice?.invoiceId as string;
+  assert.ok(invoiceId);
+  const firstSendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      recipientEmail
+    }
+  });
+  assert.equal(firstSendResponse.status(), 200);
+  return invoiceId;
+}
+
+test("invoice library preserves the resend action identity across a 5xx and replays the accepted send", async () => {
+  const ownerId = "ui-library-resend-5xx-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const invoiceId = await seedLibraryResendInvoice(context, ownerId, "INV-RESEND-5XX-1", "resend5xx@example.com");
+
+  const page = await context.newPage();
+  const sendBodies: Array<{ intent?: string; resendActionId?: string }> = [];
+  let upstreamStatus: number | null = null;
+  try {
+    await page.route(`**/api/invoices/${invoiceId}/send`, async (route) => {
+      const body = route.request().postDataJSON() as { intent?: string; resendActionId?: string };
+      sendBodies.push(body);
+      if (sendBodies.length === 1) {
+        // The resend reaches the server and its outcome is recorded —
+        // but the response the library sees is a 500, the shape of a
+        // failure AFTER the outcome was persisted (provider accepted,
+        // then the guarded status completion threw). That response is
+        // nonterminal for the action: its identity must survive.
+        const upstream = await route.fetch();
+        upstreamStatus = upstream.status();
+        await route.fulfill({
+          response: upstream,
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Simulated post-acceptance failure." })
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page.locator("div").filter({ hasText: "INV-RESEND-5XX-1" }).first();
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page.getByText("Simulated post-acceptance failure.").waitFor({ state: "visible" });
+    assert.equal(upstreamStatus, 200);
+
+    // The owner's retry must carry the SAME action identity, so the
+    // server replays the recorded send instead of dispatching a
+    // second email under a fresh action.
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page
+      .getByText(/Invoice re-sent to resend5xx@example\.com|Re-send recorded for resend5xx@example\.com/)
+      .waitFor({ state: "visible" });
+    assert.equal(sendBodies.length, 2);
+    assert.equal(sendBodies[0]?.intent, "resend");
+    assert.ok(sendBodies[0]?.resendActionId);
+    assert.equal(sendBodies[1]?.resendActionId, sendBodies[0]?.resendActionId);
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library preserves the resend action identity across an in-progress 409", async () => {
+  const ownerId = "ui-library-resend-409-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const invoiceId = await seedLibraryResendInvoice(context, ownerId, "INV-RESEND-409-1", "resend409@example.com");
+
+  const page = await context.newPage();
+  const sendBodies: Array<{ intent?: string; resendActionId?: string }> = [];
+  try {
+    await page.route(`**/api/invoices/${invoiceId}/send`, async (route) => {
+      const body = route.request().postDataJSON() as { intent?: string; resendActionId?: string };
+      sendBodies.push(body);
+      if (sendBodies.length === 1) {
+        // The structured in-progress refusal: the same action is
+        // still in flight on the server. Nonterminal — the identity
+        // must survive until the original action resolves.
+        await route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: "A send for this invoice is already in progress.",
+            blockingClaim: { claimId: "in-flight-claim", reason: "send_in_progress" }
+          })
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page.locator("div").filter({ hasText: "INV-RESEND-409-1" }).first();
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page.getByText(/already in progress/).waitFor({ state: "visible" });
+
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page
+      .getByText(/Invoice re-sent to resend409@example\.com|Re-send recorded for resend409@example\.com/)
+      .waitFor({ state: "visible" });
+    assert.equal(sendBodies.length, 2);
+    assert.ok(sendBodies[0]?.resendActionId);
+    assert.equal(sendBodies[1]?.resendActionId, sendBodies[0]?.resendActionId);
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library rotates the resend action identity after a terminal 400", async () => {
+  const ownerId = "ui-library-resend-400-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const invoiceId = await seedLibraryResendInvoice(context, ownerId, "INV-RESEND-400-1", "resend400@example.com");
+
+  const page = await context.newPage();
+  const sendBodies: Array<{ intent?: string; resendActionId?: string }> = [];
+  try {
+    await page.route(`**/api/invoices/${invoiceId}/send`, async (route) => {
+      const body = route.request().postDataJSON() as { intent?: string; resendActionId?: string };
+      sendBodies.push(body);
+      if (sendBodies.length === 1) {
+        // A definitive refusal is a terminal recorded outcome for
+        // the action: the next click is a new owner action and must
+        // carry a fresh identity.
+        await route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: "The email provider rejected this send, so no email was delivered. Fix the problem and try sending again."
+          })
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page.locator("div").filter({ hasText: "INV-RESEND-400-1" }).first();
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page.getByText(/provider rejected this send/).waitFor({ state: "visible" });
+
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page
+      .getByText(/Invoice re-sent to resend400@example\.com|Re-send recorded for resend400@example\.com/)
+      .waitFor({ state: "visible" });
+    assert.equal(sendBodies.length, 2);
+    assert.ok(sendBodies[0]?.resendActionId);
+    assert.ok(sendBodies[1]?.resendActionId);
+    assert.notEqual(sendBodies[1]?.resendActionId, sendBodies[0]?.resendActionId);
   } finally {
     await context.close();
   }
@@ -13031,6 +14148,58 @@ function emptyAudit() {
     decisions: [],
     unparsedLines: []
   };
+}
+
+const nativeFetch = globalThis.fetch;
+
+/**
+ * Slice 0: verified delivery evidence is created only by provider
+ * ACCEPTED outcomes — a record_only send leaves the invoice a draft
+ * with a "recorded" delivery. UI scenarios that genuinely need a
+ * sent/opened invoice therefore run inside this scope: it points the
+ * in-process server's email provider at a stubbed Resend transport
+ * and returns a restore function. Callers restore as soon as the
+ * seeded state exists (the file-level afterEach also clears these as
+ * a safety net).
+ */
+function useVerifiedProviderSend(): () => void {
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "resend-test-key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  (globalThis as { fetch: typeof fetch }).fetch = (async () =>
+    new Response(JSON.stringify({ id: "email_ui_verified" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    })) as typeof fetch;
+  return () => {
+    (globalThis as { fetch: typeof fetch }).fetch = nativeFetch;
+    delete process.env.INVOICE_EMAIL_PROVIDER;
+    delete process.env.RESEND_API_KEY;
+    delete process.env.INVOICE_FROM_EMAIL;
+  };
+}
+
+/**
+ * Slice 0 (conformance Q2): an ACCEPTED claim with no final
+ * delivery/failure resolution blocks reminders under §D. Fixtures
+ * that model a COMPLETED historical send must record the DELIVERED
+ * fold on the stored claim — the resolution a real send from that
+ * date would have received — instead of leaving the claim in the
+ * unresolved state this round correctly blocks reminders on.
+ */
+async function foldStoredDeliveryClaimDelivered(invoiceId: string): Promise<void> {
+  const deliveryStoreFilePath = path.resolve(process.cwd(), "data/invoice-delivery.json");
+  const raw = await fs.readFile(deliveryStoreFilePath, "utf8").catch(() => "");
+  if (!raw) {
+    return;
+  }
+  const parsed = JSON.parse(raw) as { claims?: Array<Record<string, unknown>> };
+  parsed.claims = (parsed.claims ?? []).map((claim) =>
+    claim?.invoiceId === invoiceId && claim?.outcomeKind === "accepted"
+      ? { ...claim, outcomeKind: "delivered" }
+      : claim
+  );
+  await fs.writeFile(deliveryStoreFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
 }
 
 async function mutateStoredInvoice(

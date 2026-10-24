@@ -32,6 +32,92 @@ export type InvoiceEmailSendResult = {
   warning?: string;
 };
 
+/**
+ * The provider answered and refused the submission (an HTTP 4xx from
+ * the provider API — authentication, validation, or a similar
+ * definitive refusal). §D's outcome taxonomy treats that as FAILED:
+ * the submission was not accepted, full stop. It is distinguished
+ * from an uncertain result — no answer, a timeout, or a provider-side
+ * 5xx — where acceptance is unprovable and the outcome stays UNKNOWN.
+ * Classification is provider-specific (Q12): a provider's documented
+ * idempotency-conflict response is not a refusal at all and is
+ * classified separately (ProviderIdempotencyConflictError below).
+ */
+export class DefinitiveProviderRejectionError extends Error {
+  readonly provider: InvoiceEmailProvider;
+  readonly status: number;
+
+  constructor(provider: InvoiceEmailProvider, status: number, message: string) {
+    super(message);
+    this.name = "DefinitiveProviderRejectionError";
+    this.provider = provider;
+    this.status = status;
+  }
+}
+
+export function isDefinitiveProviderRejection(
+  error: unknown
+): error is DefinitiveProviderRejectionError {
+  return error instanceof DefinitiveProviderRejectionError;
+}
+
+function isDefinitiveRejectionStatus(status: number): boolean {
+  return status >= 400 && status < 500;
+}
+
+/**
+ * The provider answered, but its answer is an idempotency conflict,
+ * not a verdict on the logical send: another request carrying the
+ * same provider idempotency key is still in progress, so the logical
+ * send may yet be accepted. Slice 0 (design v2 §D, conformance Q12):
+ * a conflict must NOT be classified as a definitive failure — that
+ * would fabricate "this send failed" and release the §D ambiguity
+ * block while the provider may still deliver. This error is
+ * deliberately not a DefinitiveProviderRejectionError, so callers
+ * record the outcome as UNKNOWN and the block is preserved until the
+ * claim is reconciled or released.
+ */
+export class ProviderIdempotencyConflictError extends Error {
+  readonly provider: InvoiceEmailProvider;
+  readonly status: number;
+
+  constructor(provider: InvoiceEmailProvider, status: number, message: string) {
+    super(message);
+    this.name = "ProviderIdempotencyConflictError";
+    this.provider = provider;
+    this.status = status;
+  }
+}
+
+export function isProviderIdempotencyConflict(
+  error: unknown
+): error is ProviderIdempotencyConflictError {
+  return error instanceof ProviderIdempotencyConflictError;
+}
+
+/**
+ * Resend's conflict signal (Q12): HTTP 409. Resend documents TWO
+ * conflict names — "concurrent_idempotent_requests" (another request
+ * with the same idempotency key is still being processed) and
+ * "invalid_idempotent_request" (the idempotency key was reused with
+ * a different payload; the ORIGINAL operation is the one whose
+ * outcome governs, which a bare retry of this submission cannot
+ * verdict). Neither is an authentication or validation refusal, and
+ * neither proves the logical send failed: the original operation
+ * may have been accepted, so the outcome stays UNKNOWN until the
+ * claim is reconciled or released. The classifier therefore keys on
+ * the 409 status itself and treats ANY 409 — both documented names
+ * and any unrecognized conflict response — conservatively as a
+ * conflict, never as FAILED. SMTP2GO exposes no equivalent signal
+ * in this integration — it has no provider-side idempotency
+ * contract (the key travels as a custom header and dedupe is
+ * enforced by the durable claim) and no documented conflict
+ * response — so no SMTP2GO status is classified as a conflict here.
+ */
+function isResendIdempotencyConflict(status: number, _payload: unknown): boolean {
+  return status === 409;
+}
+
 type SendLaunchTestEmailInput = {
   recipientEmail: string;
   appBaseUrl?: string;
@@ -43,6 +129,13 @@ type SendInvoiceEmailInput = {
   invoiceId: string;
   openTrackingPixelUrl: string;
   messageType?: "invoice" | "reminder";
+  /**
+   * Slice 0 (§C): the durable claim's derived provider idempotency key.
+   * When present it is sent to the provider (Resend `Idempotency-Key`
+   * header; SMTP2GO custom header) so a retried dispatch of the same
+   * logical send cannot produce a duplicate email.
+   */
+  idempotencyKey?: string;
 };
 
 type SendAuthSignInEmailInput = {
@@ -56,6 +149,7 @@ export type TransactionalEmailInput = {
   subject: string;
   textBody: string;
   htmlBody: string;
+  idempotencyKey?: string;
 };
 
 const RESEND_API_URL = "https://api.resend.com/emails";
@@ -129,7 +223,8 @@ export async function sendInvoiceEmail(input: SendInvoiceEmailInput): Promise<In
     recipientEmail: input.recipientEmail,
     subject: buildInvoiceEmailSubject(input),
     textBody: buildInvoiceEmailText(input),
-    htmlBody: buildInvoiceEmailHtml(input)
+    htmlBody: buildInvoiceEmailHtml(input),
+    idempotencyKey: input.idempotencyKey
   });
 }
 
@@ -205,7 +300,11 @@ async function sendViaSmtp2go(input: TransactionalEmailInput, fromEmail: string)
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(resolveSmtp2goErrorMessage(payload, response.status));
+      const message = resolveSmtp2goErrorMessage(payload, response.status);
+      if (isDefinitiveRejectionStatus(response.status)) {
+        throw new DefinitiveProviderRejectionError("smtp2go", response.status, message);
+      }
+      throw new Error(message);
     }
     const providerMessageId = resolveSmtp2goMessageId(payload);
     return {
@@ -214,7 +313,13 @@ async function sendViaSmtp2go(input: TransactionalEmailInput, fromEmail: string)
       providerMessageId
     };
   } catch (error) {
-    throw new Error(`Failed to send email via SMTP2GO: ${getErrorMessage(error)}`);
+    const message = `Failed to send email via SMTP2GO: ${getErrorMessage(error)}`;
+    if (isDefinitiveProviderRejection(error)) {
+      // Preserve the rejection's identity (callers record FAILED, §D)
+      // under the same wrapped message shape as any other failure.
+      throw new DefinitiveProviderRejectionError(error.provider, error.status, message);
+    }
+    throw new Error(message);
   } finally {
     clearTimeout(timeout);
   }
@@ -280,13 +385,21 @@ async function sendViaResend(input: TransactionalEmailInput, fromEmail: string):
       signal: controller.signal,
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        ...(input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : {})
       },
       body: JSON.stringify(buildResendPayload(input, fromEmail))
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(resolveResendErrorMessage(payload, response.status));
+      const message = resolveResendErrorMessage(payload, response.status);
+      if (isResendIdempotencyConflict(response.status, payload)) {
+        throw new ProviderIdempotencyConflictError("resend", response.status, message);
+      }
+      if (isDefinitiveRejectionStatus(response.status)) {
+        throw new DefinitiveProviderRejectionError("resend", response.status, message);
+      }
+      throw new Error(message);
     }
     const providerMessageId =
       typeof payload?.id === "string" && payload.id.trim().length > 0 ? payload.id.trim() : undefined;
@@ -296,7 +409,18 @@ async function sendViaResend(input: TransactionalEmailInput, fromEmail: string):
       providerMessageId
     };
   } catch (error) {
-    throw new Error(`Failed to send email via Resend: ${getErrorMessage(error)}`);
+    const message = `Failed to send email via Resend: ${getErrorMessage(error)}`;
+    if (isDefinitiveProviderRejection(error)) {
+      // Preserve the rejection's identity (callers record FAILED, §D)
+      // under the same wrapped message shape as any other failure.
+      throw new DefinitiveProviderRejectionError(error.provider, error.status, message);
+    }
+    if (isProviderIdempotencyConflict(error)) {
+      // Preserve the conflict's identity too (Q12): callers record
+      // UNKNOWN, never FAILED, for an idempotency conflict.
+      throw new ProviderIdempotencyConflictError(error.provider, error.status, message);
+    }
+    throw new Error(message);
   } finally {
     clearTimeout(timeout);
   }
@@ -449,7 +573,13 @@ function buildSmtp2goPayload(
     to: [input.recipientEmail],
     subject: input.subject,
     text_body: input.textBody,
-    html_body: input.htmlBody
+    html_body: input.htmlBody,
+    // SMTP2GO has no provider-side idempotency contract; the claim key
+    // travels as a custom header so the logical send stays traceable
+    // end to end. Dedupe is enforced by the durable claim (§C).
+    ...(input.idempotencyKey
+      ? { custom_headers: [{ header: "X-NoteBill-Idempotency-Key", value: input.idempotencyKey }] }
+      : {})
   };
 }
 
@@ -463,13 +593,26 @@ function buildInvoiceEmailSubject(input: SendInvoiceEmailInput): string {
   return `${prefix} from NoteBill`;
 }
 
+/**
+ * Slice 0 (audit item 5 + brief item 3): the amount presented as due is
+ * the invoice's CURRENT balance due — after partial payments — never
+ * the original total. Falls back to the total only when no balance is
+ * recorded.
+ */
+function resolveAmountDue(invoice: FinishedInvoice): number {
+  if (typeof invoice.balanceDue === "number" && Number.isFinite(invoice.balanceDue)) {
+    return invoice.balanceDue;
+  }
+  return typeof invoice.total === "number" && Number.isFinite(invoice.total) ? invoice.total : 0;
+}
+
 function buildInvoiceEmailText(input: SendInvoiceEmailInput): string {
   const invoice = input.invoice;
   const invoiceNumber = toOptionalTrimmedString(invoice.invoiceNumber) ?? input.invoiceId;
   const issueDate = toOptionalTrimmedString(invoice.issueDate);
   const dueDate = toOptionalTrimmedString(invoice.dueDate);
   const customerName = toOptionalTrimmedString(invoice.customerName) ?? "there";
-  const total = formatCurrency(invoice.total, invoice.currency);
+  const total = formatCurrency(resolveAmountDue(invoice), invoice.currency);
   const paymentLine =
     typeof invoice.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0
       ? `Pay online: ${invoice.paymentLinkUrl.trim()}`
@@ -505,7 +648,7 @@ function buildInvoiceEmailHtml(input: SendInvoiceEmailInput): string {
   const issueDate = escapeHtml(toOptionalTrimmedString(invoice.issueDate) ?? "N/A");
   const dueDate = toOptionalTrimmedString(invoice.dueDate);
   const customerName = escapeHtml(toOptionalTrimmedString(invoice.customerName) ?? "Client");
-  const total = escapeHtml(formatCurrency(invoice.total, invoice.currency));
+  const total = escapeHtml(formatCurrency(resolveAmountDue(invoice), invoice.currency));
   const paymentLink =
     typeof invoice.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0
       ? invoice.paymentLinkUrl.trim()
