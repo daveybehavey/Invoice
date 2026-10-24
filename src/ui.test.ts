@@ -6179,7 +6179,10 @@ test("launcher shows invoice command center for drafts and follow-ups", async ()
     await queue.getByText("Resume latest draft").waitFor({ state: "visible" });
     await queue.getByText("Follow up on sent invoice").waitFor({ state: "visible" });
     await queue.getByText("Open balance: $210.00.").waitFor({ state: "visible" });
-    await queue.getByText("Last sent to ops-reminder@example.com.").waitFor({ state: "visible" });
+    // Q5: this send was record_only (no provider in this fixture), so
+    // the follow-up must NOT claim "Last sent" — recorded/prepared
+    // wording is gated on verified acceptance.
+    await queue.getByText("Prepared for ops-reminder@example.com (tracking only).").waitFor({ state: "visible" });
     await queue.getByRole("button", { name: "Mark INV-OPS-SENT paid" }).waitFor({ state: "visible" });
     await queue.getByRole("button", { name: "Send reminder for INV-OPS-SENT" }).click();
     await page.getByText(/Reminder recorded for ops-reminder@example.com\./i).waitFor({ state: "visible" });
@@ -9295,6 +9298,170 @@ test("launcher follow-up does not present unverified delivery activity as a send
       await fs.writeFile(deliveryStoreFilePath, `${JSON.stringify(parsedAfter, null, 2)}\n`, "utf8");
     }
   }
+});
+
+test("launcher 'Last sent' wording is gated on verified acceptance in the non-overdue stale branch (Q5)", async () => {
+  // Recheck-3 Q5: the existing Q5 launcher fixture exercises the
+  // OVERDUE branch only. The non-overdue stale-update branch ended
+  // in an unconditional "Last sent to …" for any tracked recipient —
+  // including unverified shapes. Both unverified shapes are fixtured
+  // here in that branch, plus a verified control that keeps the
+  // "Last sent" wording.
+  const deliveryStoreFilePath = path.resolve(process.cwd(), "data/invoice-delivery.json");
+  const staleUpdatedAt = new Date(Date.now() - 30 * 86400000).toISOString();
+
+  async function runScenario(input: {
+    ownerId: string;
+    invoiceNumber: string;
+    recipient: string;
+    prepare: (context: BrowserContext, invoiceId: string) => Promise<void>;
+    expectedLabel: string;
+    expectLastSent: boolean;
+  }): Promise<void> {
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, input.ownerId);
+    try {
+      const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+        headers: { "x-invoice-user-id": input.ownerId },
+        data: {
+          confirmSave: true,
+          sourceType: "text_input",
+          invoiceData: {
+            structuredInvoice: {
+              customerName: "Q5 Launcher Gate Client",
+              workSessions: [],
+              materials: []
+            },
+            finishedInvoice: {
+              invoiceNumber: input.invoiceNumber,
+              issueDate: "2026-03-12",
+              dueDate: futureDueDateIso(60),
+              customerName: "Q5 Launcher Gate Client",
+              currency: "USD",
+              lineItems: [
+                {
+                  id: `line-${input.invoiceNumber}`,
+                  type: "labor",
+                  description: "Q5 launcher gate baseline",
+                  quantity: 1,
+                  unitPrice: 100,
+                  amount: 100
+                }
+              ],
+              subtotal: 100,
+              total: 100,
+              balanceDue: 100
+            }
+          }
+        }
+      });
+      assert.equal(saveResponse.status(), 200);
+      const invoiceId = String((await saveResponse.json()).invoice?.invoiceId ?? "");
+      assert.ok(invoiceId);
+      await input.prepare(context, invoiceId);
+      // Non-overdue (future due date) but stale (30 days untouched):
+      // exactly the branch whose wording Q5 gates.
+      await mutateStoredInvoice(invoiceId, { status: "sent", updatedAt: staleUpdatedAt });
+
+      await prepareReturningGuest(context);
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+      const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+      await queue.getByText(input.expectedLabel).waitFor({ state: "visible" });
+      const queueText = await queue.innerText();
+      if (input.expectLastSent) {
+        assert.ok(queueText.includes(`Last sent to ${input.recipient}.`));
+      } else {
+        assert.ok(
+          !queueText.includes("Last sent to"),
+          `unverified shape must not be presented as sent: ${queueText}`
+        );
+      }
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Legacy aggregate shape: mode says "provider", history unverified.
+  let legacyInvoiceId = "";
+  await runScenario({
+    ownerId: "ui-q5-launcher2-legacy-owner",
+    invoiceNumber: "INV-Q5-LAUNCH2-LEGACY",
+    recipient: "legacy.launcher2.q5@example.com",
+    expectedLabel: "Delivery recorded for legacy.launcher2.q5@example.com (unverified).",
+    expectLastSent: false,
+    prepare: async (_context, invoiceId) => {
+      legacyInvoiceId = invoiceId;
+      const raw = await fs.readFile(deliveryStoreFilePath, "utf8").catch(() => "");
+      const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+      parsed.entries = [
+        ...entries,
+        {
+          invoiceId,
+          ownerId: "ui-q5-launcher2-legacy-owner",
+          recipientEmail: "legacy.launcher2.q5@example.com",
+          sentAt: "2026-01-05T00:00:00.000Z",
+          mode: "provider",
+          provider: "resend",
+          providerMessageId: "email_q5_launcher2_legacy",
+          sendCount: 2,
+          openCount: 0
+        }
+      ];
+      await fs.writeFile(deliveryStoreFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+    }
+  });
+  if (legacyInvoiceId) {
+    const raw = await fs.readFile(deliveryStoreFilePath, "utf8").catch(() => "");
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+      parsed.entries = entries.filter(
+        (entry) => (entry as { invoiceId?: string })?.invoiceId !== legacyInvoiceId
+      );
+      await fs.writeFile(deliveryStoreFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+    }
+  }
+
+  // record_only shape: a tracked send with no provider behind it.
+  await runScenario({
+    ownerId: "ui-q5-launcher2-record-owner",
+    invoiceNumber: "INV-Q5-LAUNCH2-RECORDONLY",
+    recipient: "recordonly.launcher2.q5@example.com",
+    expectedLabel: "Prepared for recordonly.launcher2.q5@example.com (tracking only).",
+    expectLastSent: false,
+    prepare: async (context, invoiceId) => {
+      const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+        headers: { "x-invoice-user-id": "ui-q5-launcher2-record-owner" },
+        data: { recipientEmail: "recordonly.launcher2.q5@example.com" }
+      });
+      assert.equal(sendResponse.status(), 200);
+    }
+  });
+
+  // Verified control: a provider-accepted send keeps "Last sent".
+  await runScenario({
+    ownerId: "ui-q5-launcher2-verified-owner",
+    invoiceNumber: "INV-Q5-LAUNCH2-VERIFIED",
+    recipient: "verified.launcher2.q5@example.com",
+    expectedLabel: "Last sent to verified.launcher2.q5@example.com.",
+    expectLastSent: true,
+    prepare: async (context, invoiceId) => {
+      const restoreProvider = useVerifiedProviderSend();
+      try {
+        const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+          headers: { "x-invoice-user-id": "ui-q5-launcher2-verified-owner" },
+          data: { recipientEmail: "verified.launcher2.q5@example.com" }
+        });
+        assert.equal(sendResponse.status(), 200);
+      } finally {
+        restoreProvider();
+      }
+    }
+  });
 });
 
 test("invoice library card distinguishes tracked but unopened delivery", async () => {

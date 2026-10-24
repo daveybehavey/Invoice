@@ -651,7 +651,18 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
         ? `Send reminder for ${invoice.invoiceNumber || "sent invoice"}`
         : undefined;
     } else if (canSendReminder) {
-      followUpDetail = `${overdueLabel} Open balance: ${openBalanceLabel}. Last sent to ${reminderRecipient}.`;
+      // Q5: "Last sent" is gated on VERIFIED acceptance — the same
+      // gate the library card applies. Unverified activity (a legacy
+      // aggregate whose history cannot be verified, or a record_only
+      // tracking entry) is reported as recorded/prepared, never as a
+      // send: lastActivityAt is activity, not send evidence.
+      const deliveryVerified = delivery?.verified === true && Boolean(delivery?.sentAt);
+      const lastActivityLabel = deliveryVerified
+        ? `Last sent to ${reminderRecipient}.`
+        : delivery?.mode === "provider"
+          ? `Delivery recorded for ${reminderRecipient} (unverified).`
+          : `Prepared for ${reminderRecipient} (tracking only).`;
+      followUpDetail = `${overdueLabel} Open balance: ${openBalanceLabel}. ${lastActivityLabel}`;
     }
     actions.push({
       id: `follow-up:${invoice.invoiceId}`,
