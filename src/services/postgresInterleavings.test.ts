@@ -320,7 +320,7 @@ pgTest(
 );
 
 pgTest(
-  "Q3: a competing save built from a stale snapshot cannot resurrect pre-settlement state",
+  "Q3: a competing save built from a stale snapshot, overlapped with settlement, waits and cannot resurrect pre-settlement state",
   async () => {
     const repo = new PostgresSavedInvoiceRepository(pgUrl);
     const ownerId = `pg-q3-stale-save-${randomUUID()}`;
@@ -330,28 +330,63 @@ pgTest(
     // the pre-settlement snapshot (no payment record, full balance).
     const stale = await repo.getSavedInvoiceById(invoiceId, ownerId);
 
-    const settled = await repo.settleStripeInvoicePayment({
-      invoiceId,
-      ownerId,
-      eventId: `evt_pg_${randomUUID()}`,
-      paymentIntentId: `pi_pg_${randomUUID()}`,
-      paymentLinkRecordId: linkRecordId,
-      amountReceivedMinor: 18000,
-      currency: "usd",
-      receivedAt: "2026-03-12T12:00:00.000Z"
-    });
-    assert.equal(settled.outcome, "settled");
+    // Recheck 4 (Q3, narrowed): the overlap is controlled, not
+    // sequential. A barrier connection computes settlement with the
+    // production settlement function and holds its committed shape
+    // UNCOMMITTED under the row lock; the production save is then
+    // started against that in-flight settlement. The save must WAIT
+    // on the lock (its update path opens with SELECT … FOR UPDATE),
+    // and once the barrier commits, the save's merge runs against
+    // settlement's committed state — so the stale payload cannot
+    // resurrect the pre-settlement money state it was built from.
+    const barrier = await connectRaw();
+    try {
+      const locked = await lockInvoiceRow(barrier, invoiceId);
+      const settledInvoice = settleStripePaymentOnInvoice({
+        invoice: locked,
+        settlement: {
+          invoiceId,
+          ownerId,
+          eventId: `evt_pg_${randomUUID()}`,
+          paymentIntentId: `pi_pg_${randomUUID()}`,
+          paymentLinkRecordId: linkRecordId,
+          amountReceivedMinor: 18000,
+          currency: "usd",
+          receivedAt: "2026-03-12T12:00:00.000Z"
+        }
+      }).invoice;
+      await barrier.query(
+        "update saved_invoices set status = $2, invoice_data = $3::jsonb where invoice_id = $1",
+        [invoiceId, settledInvoice.status, JSON.stringify(settledInvoice.invoiceData)]
+      );
 
-    await repo.saveInvoiceDocument({
-      ownerId,
-      invoiceId,
-      sourceType: "text_input",
-      invoiceData: stale.invoiceData
-    });
+      const savePromise = repo.saveInvoiceDocument({
+        ownerId,
+        invoiceId,
+        sourceType: "text_input",
+        invoiceData: stale.invoiceData
+      });
+      assert.equal(
+        await outcomeWithin(savePromise, 300),
+        "pending",
+        "the production save must wait on the row lock held by the in-flight settlement"
+      );
 
-    const final = await repo.getSavedInvoiceById(invoiceId, ownerId);
-    assert.equal(final.status, "paid");
-    assert.equal(final.invoiceData.finishedInvoice.balanceDue, 0);
-    assert.equal(final.invoiceData.finishedInvoice.paymentRecords?.length, 1);
+      await barrier.query("commit");
+      const saved = await savePromise;
+      // The save landed (it is the returned, merged document) AND
+      // settlement's committed evidence survived it: paid status,
+      // zero balance, the payment record intact.
+      assert.equal(saved.status, "paid");
+      assert.equal(saved.invoiceData.finishedInvoice.balanceDue, 0);
+      assert.equal(saved.invoiceData.finishedInvoice.paymentRecords?.length, 1);
+
+      const final = await repo.getSavedInvoiceById(invoiceId, ownerId);
+      assert.equal(final.status, "paid");
+      assert.equal(final.invoiceData.finishedInvoice.balanceDue, 0);
+      assert.equal(final.invoiceData.finishedInvoice.paymentRecords?.length, 1);
+    } finally {
+      await barrier.end().catch(() => {});
+    }
   }
 );
