@@ -4490,6 +4490,356 @@ test("a resend action identity replays its claim; a distinct action sends again 
   );
 });
 
+test("a resend action whose send was definitively rejected replays the failure, not a success (Q7)", async () => {
+  const ownerId = "delivery-q7-failed-replay-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  let fetchCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 2) {
+      // The resend action's dispatch is definitively rejected (§D
+      // FAILED): the provider answered and refused the submission.
+      return new Response(
+        JSON.stringify({ name: "validation_error", message: "Recipient address is invalid." }),
+        { status: 422, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response(JSON.stringify({ id: `email_q7fail_${fetchCalls}` }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "Q7 Failed Replay Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          invoiceNumber: "INV-Q7-FAILED-REPLAY-1",
+          issueDate: "2026-03-11",
+          customerName: "Q7 Failed Replay Client",
+          currency: "USD",
+          lineItems: [
+            { id: "line-q7fail-1", type: "labor", description: "Q7 failed replay baseline", quantity: 1, unitPrice: 140, amount: 140 }
+          ],
+          subtotal: 140,
+          total: 140,
+          balanceDue: 140
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const firstSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7fail@example.com" });
+  assert.equal(firstSend.status, 200);
+  assert.equal(firstSend.body.delivery.sendCount, 1);
+  assert.equal(fetchCalls, 1);
+
+  // One deliberate resend action; its dispatch is rejected. The
+  // endpoint answers with the HTTP error, as it did for the original
+  // caller — but suppose that error response is what gets lost.
+  const rejectedResend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7fail@example.com", intent: "resend", resendActionId: "ui-action-q7-fail-1" });
+  assert.equal(rejectedResend.status, 400);
+  assert.equal(fetchCalls, 2);
+
+  // The transport retry bears the SAME action identity. It resolves
+  // to the action's failed claim and must replay the recorded
+  // outcome — the failure — not pass the claim through the success
+  // response as mode "provider" (which the library reads as
+  // "Invoice re-sent" even though no email was accepted).
+  const failedRetry = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7fail@example.com", intent: "resend", resendActionId: "ui-action-q7-fail-1" });
+  assert.equal(failedRetry.status, 400);
+  assert.match(String(failedRetry.body.error || ""), /rejected this send/);
+  assert.equal(fetchCalls, 2);
+
+  const detailAfterFailure = await request(app)
+    .get(`/api/invoices/${invoiceId}`)
+    .set("x-invoice-user-id", ownerId);
+  assert.equal(detailAfterFailure.body.invoice.delivery.sendCount, 1);
+
+  // A DISTINCT owner action (new identity) is a new logical send and
+  // dispatches again once the problem is corrected.
+  const correctedResend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7fail@example.com", intent: "resend", resendActionId: "ui-action-q7-fail-2" });
+  assert.equal(correctedResend.status, 200);
+  assert.equal(correctedResend.body.delivery.sendCount, 2);
+  assert.equal(fetchCalls, 3);
+});
+
+test("a bare send retry replays a successful recovery resend instead of minting another occurrence (Q7)", async () => {
+  const ownerId = "delivery-q7-bare-recovery-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  let fetchCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      return new Response(
+        JSON.stringify({ name: "validation_error", message: "Recipient address is invalid." }),
+        { status: 422, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    return new Response(JSON.stringify({ id: `email_q7bare_${fetchCalls}` }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "Q7 Bare Recovery Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          invoiceNumber: "INV-Q7-BARE-RECOVERY-1",
+          issueDate: "2026-03-11",
+          customerName: "Q7 Bare Recovery Client",
+          currency: "USD",
+          lineItems: [
+            { id: "line-q7bare-1", type: "labor", description: "Q7 bare recovery baseline", quantity: 1, unitPrice: 160, amount: 160 }
+          ],
+          subtotal: 160,
+          total: 160,
+          balanceDue: 160
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  // The initial send is definitively rejected: FAILED, no count.
+  const failedSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7bare@example.com" });
+  assert.equal(failedSend.status, 400);
+  assert.equal(fetchCalls, 1);
+
+  // A bare retry is the recovery attempt: it mints resend_1 and the
+  // provider accepts. Suppose this success response is the one lost.
+  const recoverySend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7bare@example.com" });
+  assert.equal(recoverySend.status, 200);
+  assert.equal(recoverySend.body.delivery.sendCount, 1);
+  assert.equal(fetchCalls, 2);
+
+  // The identical bare retry must replay the recovery claim's
+  // recorded success — resolving only the failed initial claim here
+  // would mint resend_2 and dispatch a duplicate email.
+  const bareRetry = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7bare@example.com" });
+  assert.equal(bareRetry.status, 200);
+  assert.equal(bareRetry.body.delivery.sendCount, 1);
+  assert.equal(fetchCalls, 2);
+
+  // The durable record: exactly one resend occurrence exists.
+  const parsed = JSON.parse(await fs.readFile(invoiceDeliveryStoreFilePath, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const resendClaims = (parsed.claims ?? []).filter(
+    (entry) => entry?.invoiceId === invoiceId && entry?.basePurpose === "resend"
+  );
+  assert.equal(resendClaims.length, 1);
+  assert.equal(resendClaims[0]?.purpose, "resend_1");
+});
+
+test("a bare send retry replays a recovery that followed a record_only initial attempt (Q7)", async () => {
+  const ownerId = "delivery-q7-bare-record-owner";
+  delete process.env.INVOICE_EMAIL_PROVIDER;
+  delete process.env.RESEND_API_KEY;
+  delete process.env.SMTP2GO_API_KEY;
+  let fetchCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    return new Response(JSON.stringify({ id: `email_q7rec_${fetchCalls}` }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "Q7 Record Recovery Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          invoiceNumber: "INV-Q7-RECORD-RECOVERY-1",
+          issueDate: "2026-03-11",
+          customerName: "Q7 Record Recovery Client",
+          currency: "USD",
+          lineItems: [
+            { id: "line-q7rec-1", type: "labor", description: "Q7 record recovery baseline", quantity: 1, unitPrice: 170, amount: 170 }
+          ],
+          subtotal: 170,
+          total: 170,
+          balanceDue: 170
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  // No provider configured: the initial attempt is recorded only and
+  // creates no send outcome at all (§D).
+  const recordedSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7rec@example.com" });
+  assert.equal(recordedSend.status, 200);
+  assert.equal(recordedSend.body.mode, "record_only");
+  assert.equal(recordedSend.body.delivery.sendCount, 0);
+  assert.equal(fetchCalls, 0);
+
+  // The provider is configured; a bare retry performs the real send
+  // as resend_1. Suppose this success response is the one lost.
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  const recoverySend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7rec@example.com" });
+  assert.equal(recoverySend.status, 200);
+  assert.equal(recoverySend.body.delivery.sendCount, 1);
+  assert.equal(fetchCalls, 1);
+
+  // The identical bare retry replays the recovery's recorded
+  // success instead of minting resend_2 and sending a duplicate.
+  const bareRetry = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7rec@example.com" });
+  assert.equal(bareRetry.status, 200);
+  assert.equal(bareRetry.body.delivery.sendCount, 1);
+  assert.equal(fetchCalls, 1);
+});
+
+test("overlapping identical resend-action requests dispatch at most once (Q7)", async () => {
+  const ownerId = "delivery-q7-concurrent-action-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  let fetchCalls = 0;
+  let releaseResendDispatch!: () => void;
+  const resendDispatchBarrier = new Promise<void>((resolve) => {
+    releaseResendDispatch = resolve;
+  });
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 2) {
+      // Hold the resend dispatch at a test-controlled barrier: one
+      // request is inside its provider round-trip while the
+      // overlapping identical request runs its own resolution.
+      await resendDispatchBarrier;
+    }
+    return new Response(JSON.stringify({ id: `email_q7conc_${fetchCalls}` }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "Q7 Concurrent Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          invoiceNumber: "INV-Q7-CONCURRENT-1",
+          issueDate: "2026-03-11",
+          customerName: "Q7 Concurrent Client",
+          currency: "USD",
+          lineItems: [
+            { id: "line-q7conc-1", type: "labor", description: "Q7 concurrent baseline", quantity: 1, unitPrice: 180, amount: 180 }
+          ],
+          subtotal: 180,
+          total: 180,
+          balanceDue: 180
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const firstSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7conc@example.com" });
+  assert.equal(firstSend.status, 200);
+  assert.equal(fetchCalls, 1);
+
+  // Two overlapping transport attempts of ONE deliberate resend
+  // action (same durable identity). Whichever interleaving the two
+  // resolutions take, the action owns exactly one claim and one
+  // provider dispatch: the loser either replays the recorded outcome
+  // or is told a send is already in progress — it never establishes
+  // a second claim for the action.
+  const attemptA = request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7conc@example.com", intent: "resend", resendActionId: "ui-action-q7-conc-1" });
+  const attemptB = request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7conc@example.com", intent: "resend", resendActionId: "ui-action-q7-conc-1" });
+  // Let the losing attempt settle against the in-flight claim before
+  // releasing the winner's dispatch.
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  releaseResendDispatch();
+  const [responseA, responseB] = await Promise.all([attemptA, attemptB]);
+
+  const statuses = [responseA.status, responseB.status].sort((a, b) => a - b);
+  assert.equal(statuses[0], 200);
+  assert.ok(statuses[1] === 200 || statuses[1] === 409, `unexpected loser status ${statuses[1]}`);
+  assert.equal(fetchCalls, 2);
+
+  const detail = await request(app).get(`/api/invoices/${invoiceId}`).set("x-invoice-user-id", ownerId);
+  assert.equal(detail.body.invoice.delivery.sendCount, 2);
+
+  const parsed = JSON.parse(await fs.readFile(invoiceDeliveryStoreFilePath, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const actionClaims = (parsed.claims ?? []).filter(
+    (entry) => entry?.invoiceId === invoiceId && entry?.resendActionId === "ui-action-q7-conc-1"
+  );
+  assert.equal(actionClaims.length, 1);
+});
+
 test("a Resend 409 idempotency conflict records the send outcome as unknown and keeps the block (Q12)", async () => {
   const ownerId = "delivery-q12-conflict-owner";
   process.env.INVOICE_EMAIL_PROVIDER = "resend";

@@ -452,6 +452,143 @@ test("settlement commits while a delivery dispatch is suspended at a barrier; th
 });
 
 // ---------------------------------------------------------------------------
+// Resend action identity vs reservation (conformance Q7, race half)
+// ---------------------------------------------------------------------------
+//
+// The send endpoint resolves a resend action in two steps: a read
+// (getInvoiceDeliveryClaimByResendAction) and, when the read finds
+// nothing, a reservation that establishes the action's claim. Two
+// overlapping requests carrying the SAME action id can both complete
+// the read before either reserves. This test reproduces that exact
+// interleave deterministically: request A's read returns and A is
+// suspended at a test-controlled barrier while the identical request
+// B runs the full establishment (reserve resend_1 under the action
+// id, dispatch, acceptance). A then resumes and performs the
+// endpoint's next step — reserving the next occurrence under the
+// same action id. The reservation mutation itself must resolve A to
+// B's claim: one deliberate action owns exactly one claim, so A gets
+// B's claim back as "existing" and no resend_2 claim is created.
+
+test("a resend action identity resolves atomically inside reservation, across a barrier-suspended lookup", async () => {
+  const ownerId = "slice0-q7-action-race";
+  const invoice = await createInvoice(ownerId, 220);
+  const invoiceId = invoice.invoiceId;
+  const revision = invoice.invoiceData.finishedInvoice.monetaryRevision;
+  const recipientEmail = "action-race@example.com";
+  const resendActionId = "ui-action-race-1";
+
+  // The invoice's initial send is already resolved (accepted), so a
+  // resend action establishes the resend_1 occurrence.
+  const initial = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: revision
+  });
+  if (initial.outcome !== "reserved") throw new Error("expected initial reservation");
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: initial.claim.claimId,
+    generation: initial.claim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: initial.claim.claimId,
+    generation: initial.claim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_action_race_initial"
+  });
+
+  // Request A performs the endpoint's action lookup and observes no
+  // claim — then suspends at the barrier, exactly where a real
+  // request waits on store I/O before reserving.
+  const lookupA = await deliveryStore.getInvoiceDeliveryClaimByResendAction({
+    ownerId,
+    invoiceId,
+    resendActionId
+  });
+  assert.equal(lookupA, null);
+  let releaseBarrier!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    releaseBarrier = resolve;
+  });
+  const requestA = (async () => {
+    await barrier;
+    // A's next step in the endpoint flow: the initial claim already
+    // resolved, so A walks to the next resend occurrence — carrying
+    // the same action id.
+    return deliveryStore.reserveInvoiceDeliveryClaim({
+      ownerId,
+      invoiceId,
+      recipientEmail,
+      basePurpose: "resend",
+      purpose: "resend_2",
+      authorizedRevision: revision,
+      resendActionId
+    });
+  })();
+
+  // Request B — the identical action — runs to completion while A
+  // is suspended: its lookup also finds nothing, it establishes
+  // resend_1 under the action id, and the provider accepts.
+  const lookupB = await deliveryStore.getInvoiceDeliveryClaimByResendAction({
+    ownerId,
+    invoiceId,
+    resendActionId
+  });
+  assert.equal(lookupB, null);
+  const established = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "resend",
+    purpose: "resend_1",
+    authorizedRevision: revision,
+    resendActionId
+  });
+  if (established.outcome !== "reserved") throw new Error("expected resend reservation");
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: established.claim.claimId,
+    generation: established.claim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: established.claim.claimId,
+    generation: established.claim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_action_race_resend"
+  });
+
+  releaseBarrier();
+  const resumed = await requestA;
+  // A resolves to the claim its action already established — the
+  // reservation did not create a second claim for the action, so no
+  // second dispatch can follow from A's request.
+  assert.equal(resumed.outcome, "existing");
+  assert.equal(resumed.claim.claimId, established.claim.claimId);
+
+  const parsed = JSON.parse(await fs.readFile(deliveryStoreFile, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const actionClaims = (parsed.claims ?? []).filter(
+    (entry) => entry?.invoiceId === invoiceId && entry?.resendActionId === resendActionId
+  );
+  assert.equal(actionClaims.length, 1);
+  assert.equal(actionClaims[0]?.purpose, "resend_1");
+  const summary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(summary?.sendCount, 2);
+});
+
+// ---------------------------------------------------------------------------
 // §D blocking for unresolved ACCEPTED sends (conformance Q2)
 // ---------------------------------------------------------------------------
 

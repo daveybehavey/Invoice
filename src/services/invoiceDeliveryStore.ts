@@ -324,7 +324,11 @@ const DEFAULT_CLAIM_LEASE_MS = 5 * 60 * 1000;
 
 /**
  * Reserve the durable claim for one logical send BEFORE provider
- * dispatch. Exactly one concurrent reservation for a claimKey wins.
+ * dispatch. Exactly one concurrent reservation for a claimKey wins,
+ * and a resend action id resolves to at most one claim: when the
+ * caller carries one, an already-established claim for that action
+ * (same recipient and authorized revision) is returned from inside
+ * this mutation instead of a second claim being created.
  * While any claim for the invoice is reserved/dispatching, every other
  * claim for that invoice is blocked (v2.2 cross-key exclusion); a claim
  * whose outcome is UNKNOWN blocks until it is reconciled or released.
@@ -355,6 +359,41 @@ export async function reserveInvoiceDeliveryClaim(input: {
   await mutateStore((store) => {
     const now = new Date();
     const nowIso = now.toISOString();
+    if (input.resendActionId) {
+      // §C (conformance Q7): the action identity is resolved INSIDE
+      // the reservation mutation, not by a read taken before it. Two
+      // overlapping requests carrying the same action id can both
+      // observe "no claim yet" from a prior read; without this check
+      // the slower one would walk to the next resend occurrence and
+      // stamp the same action id onto a second claim — a second
+      // dispatch for one deliberate action. A claim the action already
+      // established (bound to the same recipient and authorized
+      // revision) is the only claim this action may ever resolve to:
+      // return it, in whatever state it stands, instead of creating
+      // another. A match on the requested claim key itself falls
+      // through to the ordinary same-key handling below.
+      const actionClaim = store.claims.find(
+        (claim) =>
+          claim.ownerId === input.ownerId &&
+          claim.invoiceId === input.invoiceId &&
+          claim.resendActionId === input.resendActionId &&
+          claim.recipientEmail === recipientEmail &&
+          claim.authorizedRevision === input.authorizedRevision &&
+          claim.claimKey !== claimKey
+      );
+      if (actionClaim) {
+        if (actionClaim.status === "reserved" || actionClaim.status === "dispatching") {
+          result = { outcome: "blocked", reason: "send_in_progress", claim: { ...actionClaim } };
+          return;
+        }
+        if (actionClaim.status === "blocked_unknown") {
+          result = { outcome: "blocked", reason: "unresolved_send", claim: { ...actionClaim } };
+          return;
+        }
+        result = { outcome: "existing", claim: { ...actionClaim } };
+        return;
+      }
+    }
     const sameKey = store.claims.find(
       (claim) =>
         claim.ownerId === input.ownerId && claim.invoiceId === input.invoiceId && claim.claimKey === claimKey
@@ -728,6 +767,53 @@ export async function getInvoiceDeliveryClaimByResendAction(input: {
       candidate.resendActionId === input.resendActionId
   );
   return claim ? { ...claim } : null;
+}
+
+/**
+ * The latest resend-occurrence claim for one (recipient, authorized
+ * revision) that counted as a send — its outcome is a verified
+ * provider acceptance (ACCEPTED, or DELIVERED strengthening it). A
+ * bare retry of the invoice's send resolves against the whole send
+ * chain, not only the initial claim: when the initial claim failed
+ * (or was recorded without a provider) and a later resend occurrence
+ * already recovered the send, the bare retry replays THAT claim's
+ * recorded outcome instead of minting the next occurrence and
+ * dispatching a duplicate. Returns null when no resend occurrence
+ * for this recipient and revision has counted yet.
+ */
+export async function getLatestCountedInvoiceDeliveryResendClaim(input: {
+  ownerId: string;
+  invoiceId: string;
+  recipientEmail: string;
+  authorizedRevision: number;
+}): Promise<DeliveryClaim | null> {
+  const store = await readStore();
+  const recipientEmail = normalizeRecipientEmail(input.recipientEmail);
+  let latest: DeliveryClaim | null = null;
+  let latestNumber = -1;
+  for (const claim of store.claims) {
+    if (
+      claim.ownerId !== input.ownerId ||
+      claim.invoiceId !== input.invoiceId ||
+      claim.basePurpose !== "resend" ||
+      claim.recipientEmail !== recipientEmail ||
+      claim.authorizedRevision !== input.authorizedRevision ||
+      (claim.outcomeKind !== "accepted" && claim.outcomeKind !== "delivered")
+    ) {
+      continue;
+    }
+    const match = /^resend_(\d+)$/.exec(claim.purpose);
+    const number = match ? Number(match[1]) : 0;
+    if (
+      !latest ||
+      number > latestNumber ||
+      (number === latestNumber && claim.createdAt > latest.createdAt)
+    ) {
+      latest = claim;
+      latestNumber = number;
+    }
+  }
+  return latest ? { ...latest } : null;
 }
 
 // ---------------------------------------------------------------------------

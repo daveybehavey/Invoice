@@ -75,6 +75,7 @@ import {
   getInvoiceDeliveryClaimById,
   getInvoiceDeliveryClaimByResendAction,
   getInvoiceDeliveryStoreSummary,
+  getLatestCountedInvoiceDeliveryResendClaim,
   getInvoiceDeliverySummary,
   getInvoiceDeliverySummariesByInvoiceIds,
   markInvoiceDeliveryOpenedByTrackingToken,
@@ -1534,6 +1535,20 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
         resendActionId:
           parsedRequest.intent === "resend" ? parsedRequest.resendActionId : undefined
       });
+      // Q7: the reservation resolves the action identity atomically,
+      // inside the store's mutation boundary. When it returns the
+      // claim this request's action already established — the
+      // pre-reservation lookup above raced a concurrent identical
+      // request and observed nothing — this request is that action's
+      // replay, exactly as if the lookup had found the claim.
+      if (
+        reservation.outcome === "existing" &&
+        parsedRequest.intent === "resend" &&
+        parsedRequest.resendActionId &&
+        reservation.claim.resendActionId === parsedRequest.resendActionId
+      ) {
+        resendActionReplayed = true;
+      }
     }
     if (reservation.outcome === "existing" && !resendActionReplayed) {
       // The claim for this (recipient, revision) already resolved. A
@@ -1552,7 +1567,31 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
       const resolvedClaim = reservation.claim;
       const countedAsSent =
         resolvedClaim.outcomeKind === "accepted" || resolvedClaim.outcomeKind === "delivered";
-      if (!countedAsSent || parsedRequest.intent === "resend") {
+      // A bare retry (no resend intent) replays the send chain's
+      // recorded success, wherever in the chain it landed: the
+      // initial claim counted, or — when it failed or was recorded
+      // without a provider — the latest resend occurrence that
+      // recovered the send and counted. Resolving only the initial
+      // claim here made a bare retry whose recovery response was
+      // lost mint the next occurrence and dispatch a duplicate.
+      let replayResolved = false;
+      if (parsedRequest.intent !== "resend") {
+        if (countedAsSent) {
+          replayResolved = true;
+        } else {
+          const recoveredClaim = await getLatestCountedInvoiceDeliveryResendClaim({
+            ownerId,
+            invoiceId,
+            recipientEmail,
+            authorizedRevision
+          });
+          if (recoveredClaim) {
+            reservation = { outcome: "existing", claim: recoveredClaim };
+            replayResolved = true;
+          }
+        }
+      }
+      if (!replayResolved) {
         let resendNumber =
           (await countInvoiceDeliveryClaims({ ownerId, invoiceId, basePurpose: "resend" })) + 1;
         for (;;) {
@@ -1568,6 +1607,21 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
           });
           if (attempt.outcome !== "existing") {
             reservation = attempt;
+            break;
+          }
+          // Q7: the reservation resolved this request's action
+          // identity atomically and returned the claim the action
+          // already established (a concurrent identical request won
+          // the race while this one walked occurrences). This
+          // request is that action's replay — it must not walk on
+          // to the next occurrence and dispatch again.
+          if (
+            parsedRequest.intent === "resend" &&
+            parsedRequest.resendActionId &&
+            attempt.claim.resendActionId === parsedRequest.resendActionId
+          ) {
+            reservation = attempt;
+            resendActionReplayed = true;
             break;
           }
           resendNumber += 1;
@@ -1595,6 +1649,21 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
     }
     const claim: DeliveryClaim = reservation.claim;
     if (reservation.outcome === "existing") {
+      // Replay the RECORDED outcome — including failure. A claim the
+      // provider definitively rejected resolves this request as the
+      // failure it was: the original attempt answered with an HTTP
+      // error, and a transport retry of that action (the library
+      // retains the action identity precisely because no answer
+      // arrived) must not be told the send succeeded. Falling through
+      // to the success shape below made it report "Invoice re-sent"
+      // for an email that was never accepted.
+      if (claim.outcomeKind === "failed") {
+        res.status(400).json({
+          error:
+            "The email provider rejected this send, so no email was delivered. Fix the problem and try sending again."
+        });
+        return;
+      }
       // Crash-window recovery (Slice 0 design: recovery retries the
       // guarded completion from a persisted successful outcome). If
       // the resolved claim is a provider acceptance whose guarded
