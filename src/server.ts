@@ -1454,11 +1454,25 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
         // deliberate resend action this request belongs to. Transport
         // retries of the same action carry the same id and replay the
         // claim that action established; only a new id establishes a
-        // new logical send. Optional for compatibility: a resend
-        // without an id keeps the occurrence-minting behaviour.
+        // new logical send. REQUIRED for resend intent — enforced
+        // immediately below (Q7.1): without an identity, a repeated
+        // "resend" is indistinguishable from a duplicate of an
+        // earlier resend, and occurrence-minting each repeat
+        // dispatched a fresh provider send.
         resendActionId: z.string().trim().min(1).max(128).optional()
       })
       .parse(req.body ?? {});
+    // Q7.1: the identity check runs before any claim is reserved or
+    // anything is dispatched. The shipped library client always
+    // mints and sends an action id, so this refuses only requests
+    // that could never be replayed safely. Initial sends and bare
+    // retries carry no resend intent and are untouched.
+    if (parsedRequest.intent === "resend" && !parsedRequest.resendActionId) {
+      throw new HttpStatusError(
+        400,
+        "This resend is missing its action identity, so it cannot be sent safely. Reload the invoice and try the resend again."
+      );
+    }
     const ownerId = getRequestOwnerId(req);
     const existingInvoice = await savedInvoiceRepository.getSavedInvoiceById(invoiceId, ownerId);
     if (existingInvoice.status === "deleted") {
@@ -1644,6 +1658,26 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
         res.status(400).json({
           error:
             "The email provider rejected this send, so no email was delivered. Fix the problem and try sending again."
+        });
+        return;
+      }
+      // Q7.2: a claim the owner RELEASED without acceptance (the
+      // UNKNOWN case) replays with its recorded disposition —
+      // released, not accepted — never with the success shape below,
+      // which made the library present "Invoice re-sent" for an
+      // action that dispatched nothing and was never accepted. The
+      // 409 tells the client this action is closed; a genuinely new
+      // resend carries a new action identity and dispatches through
+      // the ordinary flow, never reaching this branch.
+      if (
+        claim.status === "released" &&
+        claim.outcomeKind !== "accepted" &&
+        claim.outcomeKind !== "delivered"
+      ) {
+        res.status(409).json({
+          error:
+            "This resend was released without a verified acceptance, so it counts as not sent. Start a new resend to send the invoice again.",
+          claimId: claim.claimId
         });
         return;
       }

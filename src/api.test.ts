@@ -3907,14 +3907,32 @@ test("send endpoint replays a bare retry but dispatches an explicit owner resend
   assert.equal(retrySend.body.delivery.sendCount, 1);
   assert.equal(fetchCalls.length, 1);
 
-  // The library's resend action is an explicit owner instruction to
-  // send again: it establishes a new logical send under a resend
-  // occurrence identity, with its own provider idempotency key, and
-  // the provider IS contacted.
-  const resend = await request(app)
+  // Q7.1: an explicit resend WITHOUT its action identity is refused
+  // before anything is reserved or dispatched. Without an identity
+  // the request cannot be told apart from a duplicate of an earlier
+  // resend, and the pre-fix occurrence walk minted a fresh provider
+  // dispatch for every repeat (the identity-less duplicate trace).
+  const identityLessResend = await request(app)
     .post(`/api/invoices/${invoiceId}/send`)
     .set("x-invoice-user-id", ownerId)
     .send({ recipientEmail: "resend@example.com", intent: "resend" });
+  assert.equal(identityLessResend.status, 400);
+  assert.match(String(identityLessResend.body.error || ""), /action identity/);
+  assert.equal(fetchCalls.length, 1);
+
+  // The library's resend action is an explicit owner instruction to
+  // send again, carrying the action's durable identity: it
+  // establishes a new logical send under a resend occurrence
+  // identity, with its own provider idempotency key, and the
+  // provider IS contacted.
+  const resend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      recipientEmail: "resend@example.com",
+      intent: "resend",
+      resendActionId: "ui-action-resend-1"
+    });
   assert.equal(resend.status, 200);
   assert.equal(resend.body.mode, "provider");
   assert.equal(resend.body.delivery.sendCount, 2);
@@ -3923,6 +3941,100 @@ test("send endpoint replays a bare retry but dispatches an explicit owner resend
   const resendKey = (resendInit?.headers as Record<string, string>)?.["Idempotency-Key"];
   assert.match(resendKey ?? "", /^nb-send-[0-9a-f]{32}$/);
   assert.notEqual(resendKey, firstKey);
+});
+
+test("repeated identity-less resends never dispatch: the Q7.1 duplicate trace", async () => {
+  const ownerId = "delivery-q71-trace-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "test-resend-key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
+  (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
+    fetchCalls.push({ url: input, init });
+    return new Response(JSON.stringify({ id: `email_q71_${fetchCalls.length}` }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "Q71 Trace Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-Q71-1",
+          issueDate: "2026-03-11",
+          customerName: "Q71 Trace Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-q71-1",
+              type: "labor",
+              description: "Q71 trace baseline",
+              quantity: 1,
+              unitPrice: 175,
+              amount: 175
+            }
+          ],
+          subtotal: 175,
+          total: 175,
+          balanceDue: 175
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const firstSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q71@example.com" });
+  assert.equal(firstSend.status, 200);
+  assert.equal(firstSend.body.delivery.sendCount, 1);
+
+  // One legitimate, identified resend dispatches (the control).
+  const identifiedResend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      recipientEmail: "q71@example.com",
+      intent: "resend",
+      resendActionId: "ui-action-q71-a"
+    });
+  assert.equal(identifiedResend.status, 200);
+  assert.equal(identifiedResend.body.delivery.sendCount, 2);
+  assert.equal(fetchCalls.length, 2);
+
+  // The trace itself: the SAME identity-less resend request repeated.
+  // Pre-fix, each repeat walked to the next resend occurrence and
+  // dispatched a fresh provider send under a new idempotency key —
+  // the customer received the invoice again and again. Now every
+  // repeat is refused before reservation, and nothing dispatches.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const duplicate = await request(app)
+      .post(`/api/invoices/${invoiceId}/send`)
+      .set("x-invoice-user-id", ownerId)
+      .send({ recipientEmail: "q71@example.com", intent: "resend" });
+    assert.equal(duplicate.status, 400);
+    assert.match(String(duplicate.body.error || ""), /action identity/);
+  }
+  assert.equal(fetchCalls.length, 2);
+  const parsed = JSON.parse(await fs.readFile(invoiceDeliveryStoreFilePath, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const invoiceClaims = (parsed.claims ?? []).filter((claim) => claim?.invoiceId === invoiceId);
+  assert.equal(
+    invoiceClaims.filter((claim) => claim?.basePurpose === "resend").length,
+    1,
+    "no resend occurrence may be minted by an identity-less request"
+  );
+  const detail = await request(app).get(`/api/invoices/${invoiceId}`).set("x-invoice-user-id", ownerId);
+  assert.equal(detail.body.invoice.delivery.sendCount, 2);
 });
 
 test("send endpoint replay recovers a missing guarded completion for an accepted send", async () => {
@@ -4306,6 +4418,139 @@ test("send endpoint exposes the blocking claim id in the 409 and the delivery su
   assert.ok(freshClaim?.claimId);
   assert.equal(sendAfterRelease.body.delivery.blockingClaim?.claimId, freshClaim?.claimId);
   assert.equal(sendAfterRelease.body.delivery.blockingClaim?.reason, "awaiting_resolution");
+  assert.equal(fetchCalls, 2);
+});
+
+test("a released UNKNOWN resend replays as released/not-accepted, never as a successful send (Q7.2)", async () => {
+  const ownerId = "delivery-q72-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  let providerAccepts = false;
+  let fetchCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    if (!providerAccepts) {
+      throw new TypeError("fetch failed");
+    }
+    return new Response(JSON.stringify({ id: "email_q72_new_action" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "Q72 Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          invoiceNumber: "INV-DELIVERY-Q72-1",
+          issueDate: "2026-03-11",
+          customerName: "Q72 Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-q72-1",
+              type: "labor",
+              description: "Q72 baseline",
+              quantity: 1,
+              unitPrice: 120,
+              amount: 120
+            }
+          ],
+          subtotal: 120,
+          total: 120,
+          balanceDue: 120
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  // The resend action dispatches; the provider answer never arrives,
+  // so the action's claim is UNKNOWN and blocks (§D).
+  const firstAttempt = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      recipientEmail: "q72@example.com",
+      intent: "resend",
+      resendActionId: "ui-action-q72"
+    });
+  assert.equal(firstAttempt.status, 400);
+  assert.equal(fetchCalls, 1);
+  const parsed = JSON.parse(await fs.readFile(invoiceDeliveryStoreFilePath, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const actionClaim = (parsed.claims ?? []).find((entry) => entry?.invoiceId === invoiceId);
+  assert.equal(actionClaim?.status, "blocked_unknown");
+  assert.equal(actionClaim?.outcomeKind, "unknown");
+  assert.equal(actionClaim?.resendActionId, "ui-action-q72");
+  const claimId = actionClaim?.claimId as string;
+  assert.ok(claimId);
+
+  // A retry of the same action while unresolved is the 409 block.
+  const blockedRetry = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      recipientEmail: "q72@example.com",
+      intent: "resend",
+      resendActionId: "ui-action-q72"
+    });
+  assert.equal(blockedRetry.status, 409);
+  assert.equal(blockedRetry.body.blockingClaim?.claimId, claimId);
+  assert.equal(blockedRetry.body.blockingClaim?.reason, "unresolved_send");
+  assert.equal(fetchCalls, 1);
+
+  // The owner reconciles: the provider confirms it never sent, and
+  // the claim is released with that recorded disposition.
+  const releaseResponse = await request(app)
+    .post(`/api/invoices/${invoiceId}/delivery/claims/${claimId}/release`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ reason: "Provider confirmed the email never went out." });
+  assert.equal(releaseResponse.status, 200);
+  assert.equal(releaseResponse.body.claim.status, "released");
+
+  // THE Q7.2 REPLAY: the same action id retried after release.
+  // Pre-fix it fell through to the 200 success shape (mode
+  // "provider") and the library announced "Invoice re-sent" — for
+  // an action that was never accepted and dispatched nothing. The
+  // replay must present the recorded disposition: released,
+  // non-accepted, not sent.
+  const replay = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      recipientEmail: "q72@example.com",
+      intent: "resend",
+      resendActionId: "ui-action-q72"
+    });
+  assert.equal(replay.status, 409);
+  assert.match(String(replay.body.error || ""), /released without a verified acceptance/);
+  assert.equal(replay.body.mode, undefined);
+  assert.equal(replay.body.claimId, claimId);
+  assert.equal(fetchCalls, 1);
+
+  // Control: a genuinely NEW action (new identity) is not the
+  // released action's replay — it dispatches for real.
+  providerAccepts = true;
+  const newAction = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      recipientEmail: "q72@example.com",
+      intent: "resend",
+      resendActionId: "ui-action-q72-b"
+    });
+  assert.equal(newAction.status, 200);
+  assert.equal(newAction.body.mode, "provider");
+  assert.equal(newAction.body.delivery.sendCount, 1);
   assert.equal(fetchCalls, 2);
 });
 
