@@ -96,26 +96,26 @@ export function isProviderIdempotencyConflict(
 }
 
 /**
- * Resend's documented conflict signal (Q12): HTTP 409 with the error
- * name "concurrent_idempotent_requests" — another request with the
- * same idempotency key is still being processed. Matched on the
- * documented error name when the payload carries one, and on the 409
- * status itself otherwise: 409 is Resend's conflict status, never an
- * authentication or validation verdict. SMTP2GO exposes no equivalent
- * signal in this integration — it has no provider-side idempotency
- * contract (the key travels as a custom header and dedupe is enforced
- * by the durable claim) and no documented conflict response — so no
- * SMTP2GO status is classified as a conflict here.
+ * Resend's conflict signal (Q12): HTTP 409. Resend documents TWO
+ * conflict names — "concurrent_idempotent_requests" (another request
+ * with the same idempotency key is still being processed) and
+ * "invalid_idempotent_request" (the idempotency key was reused with
+ * a different payload; the ORIGINAL operation is the one whose
+ * outcome governs, which a bare retry of this submission cannot
+ * verdict). Neither is an authentication or validation refusal, and
+ * neither proves the logical send failed: the original operation
+ * may have been accepted, so the outcome stays UNKNOWN until the
+ * claim is reconciled or released. The classifier therefore keys on
+ * the 409 status itself and treats ANY 409 — both documented names
+ * and any unrecognized conflict response — conservatively as a
+ * conflict, never as FAILED. SMTP2GO exposes no equivalent signal
+ * in this integration — it has no provider-side idempotency
+ * contract (the key travels as a custom header and dedupe is
+ * enforced by the durable claim) and no documented conflict
+ * response — so no SMTP2GO status is classified as a conflict here.
  */
-function isResendIdempotencyConflict(status: number, payload: unknown): boolean {
-  if (status !== 409) {
-    return false;
-  }
-  const errorName =
-    typeof payload === "object" && payload && "name" in payload && typeof payload.name === "string"
-      ? payload.name.trim()
-      : "";
-  return errorName === "" || errorName === "concurrent_idempotent_requests";
+function isResendIdempotencyConflict(status: number, _payload: unknown): boolean {
+  return status === 409;
 }
 
 type SendLaunchTestEmailInput = {

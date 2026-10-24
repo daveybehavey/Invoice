@@ -163,6 +163,14 @@ const DeliveryClaimSchema = z.object({
    * send time, so a later DELIVERED fold cannot drift sentAt or
    * reminder timing the way a mutable updatedAt did. */
   acceptedAt: z.string().datetime().optional(),
+  /** Q2 fold: the instant a final FAILED outcome (e.g. a hard bounce)
+   * resolved this claim AFTER acceptance. Acceptance evidence
+   * (outcomeKind, acceptedAt, the send count) is preserved — the send
+   * did happen — but the claim is finally resolved: it is no longer
+   * an unresolved-accepted block on reminders or reservations. The
+   * fold itself authorizes no immediate retry; a later deliberate
+   * owner action decides what happens next. */
+  finalFailureAt: z.string().datetime().optional(),
   outcomeEventId: z.string().min(1).optional(),
   releaseActor: z.string().min(1).optional(),
   releaseReason: z.string().min(1).optional(),
@@ -713,6 +721,23 @@ export async function recordInvoiceDeliveryClaimOutcome(input: {
         existing.outcomeKind = "delivered";
         existing.updatedAt = occurredAt;
       }
+      // Q2: a final FAILED outcome for the same logical send (a hard
+      // bounce after acceptance) finally resolves an ACCEPTED claim.
+      // The outcome event was appended above as evidence; here the
+      // claim records the resolution WITHOUT erasing acceptance —
+      // outcomeKind and acceptedAt stay, so the send count and send
+      // time the projections read are preserved — while
+      // isUnresolvedAcceptedClaim stops treating the claim as an open
+      // ambiguity, releasing the reminder/reservation block. No new
+      // dispatch is authorized by this fold.
+      if (
+        existing.outcomeKind === "accepted" &&
+        input.outcome === "failed" &&
+        !existing.finalFailureAt
+      ) {
+        existing.finalFailureAt = occurredAt;
+        existing.updatedAt = occurredAt;
+      }
     } else if (existing.generation === input.generation && existing.status !== "released") {
       if (input.outcome === "unknown") {
         existing.status = "blocked_unknown";
@@ -830,7 +855,9 @@ export async function releaseInvoiceDeliveryClaim(input: {
     const abandonedReservation =
       existing.status === "reserved" && Date.parse(existing.leaseExpiresAt) <= Date.now();
     const unresolvedAccepted =
-      existing.status === "outcome_recorded" && existing.outcomeKind === "accepted";
+      existing.status === "outcome_recorded" &&
+      existing.outcomeKind === "accepted" &&
+      !existing.finalFailureAt;
     if (
       existing.status !== "blocked_unknown" &&
       !stuckDispatching &&
@@ -1361,7 +1388,11 @@ export type DeliveryBlockReason = "unresolved_send" | "awaiting_resolution" | "s
  * never in this state.
  */
 function isUnresolvedAcceptedClaim(claim: DeliveryClaim): boolean {
-  return claim.status === "outcome_recorded" && claim.outcomeKind === "accepted";
+  return (
+    claim.status === "outcome_recorded" &&
+    claim.outcomeKind === "accepted" &&
+    !claim.finalFailureAt
+  );
 }
 
 /**

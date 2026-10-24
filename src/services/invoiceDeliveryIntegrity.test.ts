@@ -952,6 +952,114 @@ test("an ACCEPTED send with no final resolution blocks automatic reminders until
 });
 
 // ---------------------------------------------------------------------------
+// §D ACCEPTED -> FAILED fold (conformance recheck 3, Q2)
+// ---------------------------------------------------------------------------
+
+test("a final FAILED outcome resolves an ACCEPTED claim: block released, acceptance evidence preserved", async () => {
+  const ownerId = "slice0-q2-accepted-failed";
+  const invoice = await createInvoice(ownerId, 175);
+  const invoiceId = invoice.invoiceId;
+  const revision = invoice.invoiceData.finishedInvoice.monetaryRevision;
+  const reservation = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "q2-failed@example.com",
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: revision
+  });
+  if (reservation.outcome !== "reserved") throw new Error("expected reservation");
+  const claim = reservation.claim;
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    trackingToken: randomUUID()
+  });
+  const acceptedAt = "2026-03-12T12:00:00.000Z";
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_q2_failed",
+    occurredAt: acceptedAt
+  });
+  await repository.completeInvoiceDelivery({ invoiceId, ownerId, authorizedRevision: revision });
+
+  // Starting state (the Q2 defect): unresolved ACCEPTED blocks.
+  const blockedSummary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.deepEqual(blockedSummary?.blockingClaim, {
+    claimId: claim.claimId,
+    reason: "awaiting_resolution"
+  });
+  assert.equal(blockedSummary?.sendCount, 1);
+  assert.equal(blockedSummary?.sentAt, acceptedAt);
+  await assert.rejects(
+    scheduler.sendInvoiceReminderById({ ownerId, repository, baseUrl: BASE_URL, invoiceId }),
+    /unresolved delivery attempt/
+  );
+
+  // The provider's final word for the same logical send: a hard
+  // bounce, recorded as a FAILED outcome event on the same claim.
+  const failedAt = "2026-03-14T09:30:00.000Z";
+  const folded = await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome: "failed",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_q2_failed",
+    providerEventId: "evt_q2_hard_bounce",
+    occurredAt: failedAt
+  });
+  // Acceptance evidence preserved; final failure recorded.
+  assert.equal(folded.claim.outcomeKind, "accepted");
+  assert.equal(folded.claim.acceptedAt, acceptedAt);
+  assert.equal(folded.claim.finalFailureAt, failedAt);
+  assert.equal(folded.claim.status, "outcome_recorded");
+
+  const summary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(summary?.blockingClaim, null);
+  assert.equal(summary?.sendCount, 1);
+  assert.equal(summary?.sentAt, acceptedAt);
+  const timing = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+    ownerId,
+    invoiceIds: [invoiceId]
+  });
+  assert.equal(timing[invoiceId]?.hasUnresolvedSend, false);
+  assert.equal(timing[invoiceId]?.providerSendCount, 1);
+
+  // Finally resolved means no longer releasable as unresolved.
+  await assert.rejects(
+    deliveryStore.releaseInvoiceDeliveryClaim({
+      ownerId,
+      claimId: claim.claimId,
+      actor: ownerId,
+      reason: "Too late — already resolved."
+    }),
+    /Only an unresolved delivery claim can be released/
+  );
+
+  // The block is released for a later deliberate action: a reminder
+  // can be reserved and sent (record_only here). The fold itself
+  // dispatched nothing — this send is the scheduler's, after it.
+  delete process.env.INVOICE_EMAIL_PROVIDER;
+  delete process.env.RESEND_API_KEY;
+  const reminder = await scheduler.sendInvoiceReminderById({
+    ownerId,
+    repository,
+    baseUrl: BASE_URL,
+    invoiceId
+  });
+  assert.equal(reminder.mode, "record_only");
+  assert.equal(reminder.recipientEmail, "q2-failed@example.com");
+});
+
+// ---------------------------------------------------------------------------
 // §D eligibility revalidated inside the reservation mutation
 // (re-gate round 3: the scheduler's timing read is not authorization)
 // ---------------------------------------------------------------------------
@@ -1877,6 +1985,77 @@ test("a Resend idempotency conflict (409) records the reminder outcome as unknow
       /unresolved delivery attempt/
     );
     assert.equal(fetchCalls, 1);
+  } finally {
+    (globalThis as { fetch: typeof fetch }).fetch = nativeFetch;
+    delete process.env.INVOICE_EMAIL_PROVIDER;
+    delete process.env.RESEND_API_KEY;
+    delete process.env.INVOICE_FROM_EMAIL;
+  }
+});
+
+test("Resend 409s named invalid_idempotent_request or anything unrecognized also stay unknown, never failed (Q12)", async () => {
+  // Q12 residual: the pre-fix classifier matched only an unnamed 409
+  // or "concurrent_idempotent_requests", so Resend's second documented
+  // conflict name — "invalid_idempotent_request" (the key was reused
+  // with a different payload; the ORIGINAL operation governs) — fell
+  // through to a definitive rejection and recorded FAILED, releasing
+  // the ambiguity block on a send the provider may have accepted.
+  // The same conservative handling covers any unrecognized 409 name:
+  // a conflict response is never an auth/validation verdict.
+  const cases = [
+    { name: "invalid_idempotent_request", ownerId: "slice0-reminder-conflict-invalid" },
+    { name: "some_future_conflict_name", ownerId: "slice0-reminder-conflict-unrecognized" }
+  ];
+  const nativeFetch = globalThis.fetch;
+  try {
+    for (const testCase of cases) {
+      const ownerId = testCase.ownerId;
+      const invoice = await createInvoice(ownerId, 95);
+      await repository.updateSavedInvoiceStatus(invoice.invoiceId, "sent", ownerId);
+      await deliveryStore.recordInvoiceDeliverySend({
+        ownerId,
+        invoiceId: invoice.invoiceId,
+        recipientEmail: "conflict2@example.com",
+        mode: "provider",
+        provider: "resend",
+        providerMessageId: `email_conflict_seed_${testCase.name}`
+      });
+
+      process.env.INVOICE_EMAIL_PROVIDER = "resend";
+      process.env.RESEND_API_KEY = "re_test_key";
+      process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+      (globalThis as { fetch: typeof fetch }).fetch = (async () =>
+        new Response(
+          JSON.stringify({
+            name: testCase.name,
+            message: "Idempotency conflict."
+          }),
+          { status: 409, headers: { "Content-Type": "application/json" } }
+        )) as typeof fetch;
+
+      await assert.rejects(
+        scheduler.sendInvoiceReminderById({
+          ownerId,
+          repository,
+          baseUrl: BASE_URL,
+          invoiceId: invoice.invoiceId
+        }),
+        /Failed to send email via Resend/
+      );
+      const parsed = JSON.parse(await fs.readFile(deliveryStoreFile, "utf8")) as {
+        claims?: Array<Record<string, unknown>>;
+      };
+      const reminderClaim = (parsed.claims ?? []).find(
+        (claim) => claim?.invoiceId === invoice.invoiceId && claim?.basePurpose === "reminder"
+      );
+      assert.equal(reminderClaim?.outcomeKind, "unknown", `409 ${testCase.name} must stay unknown`);
+      assert.equal(reminderClaim?.status, "blocked_unknown");
+      const timing = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+        ownerId,
+        invoiceIds: [invoice.invoiceId]
+      });
+      assert.equal(timing[invoice.invoiceId]?.hasUnresolvedSend, true);
+    }
   } finally {
     (globalThis as { fetch: typeof fetch }).fetch = nativeFetch;
     delete process.env.INVOICE_EMAIL_PROVIDER;
