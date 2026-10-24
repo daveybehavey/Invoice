@@ -9603,6 +9603,69 @@ test("verified send labels stay bound to the accepted recipient when later activ
       await context.close();
     }
   }
+
+  // Follow-up plan, opened variant (P2 residual): A's verified send
+  // was OPENED, then record-only activity addressed to B. Open
+  // evidence belongs to the verified accepted send, so the plan's
+  // "Opened by" must name A — the same misattribution class the
+  // send wording had, on the adjacent openedAt branch.
+  {
+    const ownerId = "ui-p2-opened-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveP2Invoice(context, ownerId, "INV-P2-OPENED");
+      assert.ok(invoiceId);
+
+      // Verified provider send to A, then the open attaches to it.
+      const restoreProvider = useVerifiedProviderSend();
+      try {
+        const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+          headers: { "x-invoice-user-id": ownerId },
+          data: { recipientEmail: acceptedRecipient }
+        });
+        assert.equal(sendResponse.status(), 200);
+        const openedResponse = await context.request.post(
+          `${baseUrl}/api/invoices/${invoiceId}/delivery/opened`,
+          {
+            headers: { "x-invoice-user-id": ownerId }
+          }
+        );
+        assert.equal(openedResponse.status(), 200);
+      } finally {
+        restoreProvider();
+      }
+      // Model the completed historical send (the DELIVERED fold),
+      // then record later activity addressed to B: a record_only
+      // resend, which makes B the summary's latest recipient while
+      // A's acceptance — and A's open — remain the only verified
+      // evidence.
+      await foldStoredDeliveryClaimDelivered(invoiceId);
+      const resendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+        headers: { "x-invoice-user-id": ownerId },
+        data: {
+          recipientEmail: recordedRecipient,
+          intent: "resend",
+          resendActionId: randomUUID()
+        }
+      });
+      assert.equal(resendResponse.status(), 200);
+      await mutateStoredInvoice(invoiceId, { status: "sent", updatedAt: staleUpdatedAt });
+
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+
+      const plan = page.getByTestId("library-follow-up-plan");
+      await plan.waitFor({ state: "visible" });
+      const planText = await plan.innerText();
+      assert.ok(planText.includes(`Opened by ${acceptedRecipient}`));
+      assert.ok(!planText.includes(`Opened by ${recordedRecipient}`));
+    } finally {
+      await context.close();
+    }
+  }
 });
 
 test("invoice library card distinguishes tracked but unopened delivery", async () => {

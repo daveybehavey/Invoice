@@ -2207,7 +2207,7 @@
         // proof.
         deliveryValue: oldestSentRecipient
           ? oldestSentReminder?.delivery?.openedAt
-            ? `Opened by ${oldestSentRecipient}`
+            ? `Opened by ${oldestSentReminder?.delivery?.sentToEmail ?? oldestSentRecipient}`
             : oldestSentReminder?.delivery?.verified === true
               ? `Sent to ${oldestSentReminder?.delivery?.sentToEmail ?? oldestSentRecipient}`
               : `Prepared for ${oldestSentRecipient} (tracking only)`
