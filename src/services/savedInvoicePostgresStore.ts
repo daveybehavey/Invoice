@@ -11,6 +11,10 @@ import {
 } from "../models/invoice.js";
 import { invoiceSharePackIsBlocked } from "./invoiceSendGate.js";
 import {
+  decideInvoiceStatusTransition,
+  type InvoiceStatusTransitionPurpose
+} from "./invoiceDeliveryPolicy.js";
+import {
   applyMonetaryEditInvalidation,
   computeMonetaryFingerprint,
   reconcilePaidStatusAfterSave,
@@ -462,36 +466,156 @@ export class PostgresSavedInvoiceRepository {
     return parseSavedInvoiceRow(result.rows[0]);
   }
 
+  /**
+   * Slice 0 (audit item 1 + design invariant 5): the status write runs
+   * in ONE transaction that locks the owner-scoped row
+   * (SELECT … FOR UPDATE), evaluates the shared transition policy
+   * against that locked fresh state, and writes only the status
+   * columns — plus invoice_data solely when the policy's money rules
+   * require it (lifecycle mark-paid / leaving-paid restore), computed
+   * from the locked row. The pre-Slice-0 shape (separate read, then a
+   * whole-record UPDATE built from the stale snapshot) let a send
+   * completion overwrite a concurrently landed settlement.
+   */
   async updateSavedInvoiceStatus(
     invoiceId: string,
     status: SavedInvoiceStatus,
-    ownerId: string
+    ownerId: string,
+    purpose: InvoiceStatusTransitionPurpose = "lifecycle"
   ): Promise<SavedInvoice> {
     await this.ensureReady();
-    const now = new Date().toISOString();
-    const existing = await this.getSavedInvoiceById(invoiceId, ownerId);
-    const invoiceData = applyStatusToInvoiceData(existing, status);
+    return this.withClient(async (client) => {
+      await client.query("begin");
+      try {
+        const existing = await this.selectInvoiceForUpdate(client, invoiceId, ownerId);
+        const decision = decideInvoiceStatusTransition({
+          currentStatus: existing.status,
+          requestedStatus: status,
+          purpose
+        });
+        const moneyChanges = decision.zeroBalanceDue || decision.restoreTotalOnLeavePaid;
+        if (!decision.transition && !moneyChanges) {
+          await client.query("commit");
+          return existing;
+        }
 
-    const result = await this.query<SavedInvoiceRow>(
+        const now = new Date().toISOString();
+        const invoiceData = moneyChanges ? applyStatusToInvoiceData(existing, status, purpose) : existing.invoiceData;
+        const updated = await client.query<SavedInvoiceRow>(
+          `
+            update saved_invoices
+            set status = $3,
+                updated_at = $4,
+                invoice_data = $5::jsonb,
+                previous_status = $6,
+                deleted_at = $7
+            where invoice_id = $1 and owner_id = $2
+            returning
+              invoice_id,
+              owner_id,
+              created_at,
+              updated_at,
+              status,
+              previous_status,
+              deleted_at,
+              source_type,
+              invoice_data
+          `,
+          [
+            invoiceId,
+            ownerId,
+            decision.nextStatus,
+            now,
+            JSON.stringify(invoiceData),
+            decision.nextStatus === "deleted"
+              ? existing.status === "deleted"
+                ? (existing.previousStatus ?? null)
+                : existing.status
+              : null,
+            decision.nextStatus === "deleted"
+              ? existing.status === "deleted"
+                ? (existing.deletedAt ?? now)
+                : now
+              : null
+          ]
+        );
+        await client.query("commit");
+        return parseSavedInvoiceRow(updated.rows[0]);
+      } catch (error) {
+        await client.query("rollback").catch(() => undefined);
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * Slice 0 guarded delivery completion (design invariants 1, 3, 4, 6):
+   * inside one FOR UPDATE transaction, apply the delivery-purpose
+   * transition to the locked fresh row — `draft → sent` only, at the
+   * authorized monetary revision, touching only the status column.
+   * A settlement that landed after dispatch authorization is preserved
+   * exactly; the completion returns the fresh state either way.
+   */
+  async completeInvoiceDelivery(input: {
+    invoiceId: string;
+    ownerId: string;
+    authorizedRevision: number;
+  }): Promise<{ invoice: SavedInvoice; transitioned: boolean }> {
+    await this.ensureReady();
+    return this.withClient(async (client) => {
+      await client.query("begin");
+      try {
+        const existing = await this.selectInvoiceForUpdate(client, input.invoiceId, input.ownerId);
+        const decision = decideInvoiceStatusTransition({
+          currentStatus: existing.status,
+          requestedStatus: "sent",
+          purpose: "delivery"
+        });
+        if (
+          !decision.transition ||
+          existing.invoiceData.finishedInvoice.monetaryRevision !== input.authorizedRevision
+        ) {
+          await client.query("commit");
+          return { invoice: existing, transitioned: false };
+        }
+
+        const now = new Date().toISOString();
+        const updated = await client.query<SavedInvoiceRow>(
+          `
+            update saved_invoices
+            set status = 'sent',
+                updated_at = $3
+            where invoice_id = $1 and owner_id = $2
+            returning
+              invoice_id,
+              owner_id,
+              created_at,
+              updated_at,
+              status,
+              previous_status,
+              deleted_at,
+              source_type,
+              invoice_data
+          `,
+          [input.invoiceId, input.ownerId, now]
+        );
+        await client.query("commit");
+        return { invoice: parseSavedInvoiceRow(updated.rows[0]), transitioned: true };
+      } catch (error) {
+        await client.query("rollback").catch(() => undefined);
+        throw error;
+      }
+    });
+  }
+
+  private async selectInvoiceForUpdate(
+    client: Client,
+    invoiceId: string,
+    ownerId: string
+  ): Promise<SavedInvoice> {
+    const result = await client.query<SavedInvoiceRow>(
       `
-        update saved_invoices
-        set status = $3,
-            updated_at = $4,
-            invoice_data = $5,
-            previous_status = case
-              when $3 = 'deleted' then
-                case
-                  when status = 'deleted' then previous_status
-                  else status
-                end
-              else null
-            end,
-            deleted_at = case
-              when $3 = 'deleted' then $4
-              else null
-            end
-        where invoice_id = $1 and owner_id = $2
-        returning
+        select
           invoice_id,
           owner_id,
           created_at,
@@ -501,10 +625,12 @@ export class PostgresSavedInvoiceRepository {
           deleted_at,
           source_type,
           invoice_data
+        from saved_invoices
+        where invoice_id = $1 and owner_id = $2
+        for update
       `,
-      [invoiceId, ownerId, status, now, invoiceData]
+      [invoiceId, ownerId]
     );
-
     const row = result.rows[0];
     if (!row) {
       throw new Error(`Invoice "${invoiceId}" was not found.`);
@@ -804,12 +930,22 @@ function parseSavedInvoiceRow(row: SavedInvoiceRow): SavedInvoice {
 
 function applyStatusToInvoiceData(
   existing: SavedInvoice,
-  status: SavedInvoiceStatus
+  status: SavedInvoiceStatus,
+  purpose: InvoiceStatusTransitionPurpose = "lifecycle"
 ): SavedInvoice["invoiceData"] {
+  // Same shared-policy money rules as the file store
+  // (invoiceDeliveryPolicy.ts): delivery never touches money; entering
+  // `deleted` never touches money (audit item 2); lifecycle mark-paid
+  // zeroing and the manual leaving-paid restore are preserved.
+  const decision = decideInvoiceStatusTransition({
+    currentStatus: existing.status,
+    requestedStatus: status,
+    purpose
+  });
   const finishedInvoice = { ...existing.invoiceData.finishedInvoice };
-  if (status === "paid") {
+  if (decision.zeroBalanceDue) {
     finishedInvoice.balanceDue = 0;
-  } else if (existing.status === "paid") {
+  } else if (decision.restoreTotalOnLeavePaid) {
     const balanceDue = Number(finishedInvoice.balanceDue);
     const total = Number(finishedInvoice.total);
     if (Number.isFinite(total) && (!Number.isFinite(balanceDue) || balanceDue <= 0)) {

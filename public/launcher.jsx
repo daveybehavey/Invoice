@@ -610,7 +610,7 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
     const { invoice, daysSinceUpdate, dueDateValue, isPastDue } = staleSent[0];
     const delivery = invoice?.delivery ?? null;
     const reminderRecipient = delivery?.recipientEmail ?? "";
-    const hasTrackedDelivery = Boolean(delivery?.recipientEmail) && Boolean(delivery?.sentAt);
+    const hasTrackedDelivery = Boolean(delivery?.recipientEmail) && Boolean(delivery?.lastActivityAt);
     const deliveryOpened = Boolean(delivery?.openedAt) || delivery?.status === "opened";
     const canSendReminder = reminderRecipient.trim().length > 0;
     const dueDateLabel = formatUpdatedLabel(dueDateValue);
@@ -651,7 +651,29 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
         ? `Send reminder for ${invoice.invoiceNumber || "sent invoice"}`
         : undefined;
     } else if (canSendReminder) {
-      followUpDetail = `${overdueLabel} Open balance: ${openBalanceLabel}. Last sent to ${reminderRecipient}.`;
+      // Q5: "Last sent" is gated on VERIFIED acceptance — the same
+      // gate the library card applies. Unverified activity (a legacy
+      // aggregate whose history cannot be verified, or a record_only
+      // tracking entry) is reported as recorded/prepared, never as a
+      // send: lastActivityAt is activity, not send evidence.
+      const deliveryVerified = delivery?.verified === true && Boolean(delivery?.sentAt);
+      // Codex P2 (recheck 4): "Last sent" names the recipient the
+      // verified evidence belongs to (sentToEmail) — the latest
+      // activity's recipient (reminderRecipient, kept for reminder
+      // addressing) may be a different person with only recorded
+      // activity, and must not be presented as the verified send.
+      // P2 (recheck 5): when the evidence recipient is unknown
+      // (the acceptance named no one), the wording is
+      // recipient-neutral — never a fallback to the addressing
+      // recipient.
+      const lastActivityLabel = deliveryVerified
+        ? delivery?.sentToEmail
+          ? `Last sent to ${delivery.sentToEmail}.`
+          : "Last sent (verified, recipient not recorded)."
+        : delivery?.mode === "provider"
+          ? `Delivery recorded for ${reminderRecipient} (unverified).`
+          : `Prepared for ${reminderRecipient} (tracking only).`;
+      followUpDetail = `${overdueLabel} Open balance: ${openBalanceLabel}. ${lastActivityLabel}`;
     }
     actions.push({
       id: `follow-up:${invoice.invoiceId}`,

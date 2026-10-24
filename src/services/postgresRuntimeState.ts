@@ -78,6 +78,17 @@ export async function mutateRuntimeSnapshot<TSchema extends z.ZodTypeAny>(
   await client.connect();
   try {
     await client.query("begin");
+    // Serialization is established BEFORE the snapshot is read
+    // (conformance F2): SELECT … FOR UPDATE locks nothing when the
+    // snapshot row does not exist yet, so two first writers could
+    // both read the absent row, compute independent snapshots from
+    // the fallback, and the second upsert would erase the first
+    // writer's committed state — including a claim that had already
+    // dispatched. A transaction-scoped advisory lock keyed by the
+    // store key exists whether or not the row does, so first use is
+    // serialized exactly like later use; the row lock below then
+    // remains the boundary other readers/writers observe.
+    await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [storeKey]);
     const current = await readRuntimeSnapshotForUpdate(client, storeKey, schema, fallback);
     const next = schema.parse(await mutator(current));
     await client.query(
