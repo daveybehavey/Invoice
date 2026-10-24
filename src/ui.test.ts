@@ -11676,6 +11676,185 @@ test("invoice library rotates the resend action identity after a terminal 400", 
   }
 });
 
+test("invoice library keeps a pending resend identity per invoice when another invoice's send completes (Codex P2)", async () => {
+  const ownerId = "ui-library-resend-cross-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const invoiceA = await seedLibraryResendInvoice(context, ownerId, "INV-RESEND-XINV-A", "xinv-a@example.com");
+  const invoiceB = await seedLibraryResendInvoice(context, ownerId, "INV-RESEND-XINV-B", "xinv-b@example.com");
+
+  const page = await context.newPage();
+  const bodiesA: Array<{ intent?: string; resendActionId?: string }> = [];
+  const bodiesB: Array<{ intent?: string; resendActionId?: string }> = [];
+  try {
+    await page.route(`**/api/invoices/${invoiceA}/send`, async (route) => {
+      const body = route.request().postDataJSON() as { intent?: string; resendActionId?: string };
+      bodiesA.push(body);
+      if (bodiesA.length === 1) {
+        // A's resend is accepted server-side, but the library sees
+        // a 500 (the post-acceptance failure shape): A's action
+        // identity is NONTERMINAL and must survive until A retries.
+        const upstream = await route.fetch();
+        await route.fulfill({
+          response: upstream,
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Simulated post-acceptance failure." })
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.route(`**/api/invoices/${invoiceB}/send`, async (route) => {
+      const body = route.request().postDataJSON() as { intent?: string; resendActionId?: string };
+      bodiesB.push(body);
+      await route.continue();
+    });
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const cardA = getLibraryInvoiceCard(page, "INV-RESEND-XINV-A");
+    const cardB = getLibraryInvoiceCard(page, "INV-RESEND-XINV-B");
+
+    await cardA.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page.getByText("Simulated post-acceptance failure.").waitFor({ state: "visible" });
+
+    // B's resend runs to completion in between. Pending identities
+    // were kept in a SINGLE slot: minting B's identity overwrote
+    // A's, and B's success then cleared the slot — so A's retry
+    // minted a fresh action id and the server would dispatch a
+    // duplicate email instead of replaying A's accepted claim.
+    await cardB.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page
+      .getByText(/Invoice re-sent to xinv-b@example\.com|Re-send recorded for xinv-b@example\.com/)
+      .waitFor({ state: "visible" });
+
+    // A's retry must still carry A's ORIGINAL action identity.
+    await cardA.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page
+      .getByText(/Invoice re-sent to xinv-a@example\.com|Re-send recorded for xinv-a@example\.com/)
+      .waitFor({ state: "visible" });
+
+    assert.equal(bodiesB.length, 1);
+    assert.equal(bodiesA.length, 2);
+    assert.ok(bodiesA[0]?.resendActionId);
+    assert.equal(bodiesA[1]?.resendActionId, bodiesA[0]?.resendActionId);
+  } finally {
+    await context.close();
+  }
+});
+
+test("opened-by label stays bound to the opened attempt when a later resend is accepted (P2 recheck 6)", async () => {
+  // Recheck 6: the follow-up plan's "Opened by" label named
+  // sentToEmail — the LATEST acceptance's recipient — while
+  // openedAt derives independently from any verified attempt's
+  // open. Sequence: A is sent and opened; A's send completes; a
+  // distinct resend to B is ACCEPTED, but B has no recorded open.
+  // The send evidence moves to B; the opened evidence still
+  // belongs to A's operation, and the label must keep naming A.
+  // (The recheck-4 control covered A opened -> B record_only, where
+  // the acceptance never moved and the misbinding could not show.)
+  const acceptedRecipient = "alice.openedlate@example.com";
+  const resentRecipient = "bob.openedlate@example.com";
+  const staleUpdatedAt = new Date(Date.now() - 30 * 86400000).toISOString();
+  const ownerId = "ui-p2-opened-late-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  try {
+    const saveResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+      headers: { "x-invoice-user-id": ownerId },
+      data: {
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: { customerName: "P2 Opened Late Client", workSessions: [], materials: [] },
+          finishedInvoice: {
+            invoiceNumber: "INV-P2-OPENED-LATE",
+            issueDate: "2026-03-10",
+            dueDate: futureDueDateIso(60),
+            customerName: "P2 Opened Late Client",
+            currency: "USD",
+            lineItems: [
+              {
+                id: "line-INV-P2-OPENED-LATE",
+                type: "labor",
+                description: "P2 opened-late baseline",
+                quantity: 1,
+                unitPrice: 100,
+                amount: 100
+              }
+            ],
+            subtotal: 100,
+            total: 100,
+            balanceDue: 100
+          }
+        }
+      }
+    });
+    assert.equal(saveResponse.status(), 200);
+    const invoiceId = String((await saveResponse.json()).invoice?.invoiceId ?? "");
+    assert.ok(invoiceId);
+
+    // Verified provider send to A, then the open attaches to A's
+    // attempt.
+    const restoreProvider = useVerifiedProviderSend();
+    try {
+      const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+        headers: { "x-invoice-user-id": ownerId },
+        data: { recipientEmail: acceptedRecipient }
+      });
+      assert.equal(sendResponse.status(), 200);
+      const openedResponse = await context.request.post(
+        `${baseUrl}/api/invoices/${invoiceId}/delivery/opened`,
+        {
+          headers: { "x-invoice-user-id": ownerId }
+        }
+      );
+      assert.equal(openedResponse.status(), 200);
+    } finally {
+      restoreProvider();
+    }
+    // Model A's completed send (the DELIVERED fold), then a
+    // distinct provider-ACCEPTED resend to B with no open for B.
+    await foldStoredDeliveryClaimDelivered(invoiceId);
+    const restoreProviderB = useVerifiedProviderSend();
+    try {
+      const resendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+        headers: { "x-invoice-user-id": ownerId },
+        data: {
+          recipientEmail: resentRecipient,
+          intent: "resend",
+          resendActionId: randomUUID()
+        }
+      });
+      assert.equal(resendResponse.status(), 200);
+    } finally {
+      restoreProviderB();
+    }
+    await foldStoredDeliveryClaimDelivered(invoiceId);
+    await mutateStoredInvoice(invoiceId, { status: "sent", updatedAt: staleUpdatedAt });
+
+    const page = await context.newPage();
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+
+    const plan = page.getByTestId("library-follow-up-plan");
+    await plan.waitFor({ state: "visible" });
+    const planText = await plan.innerText();
+    assert.ok(planText.includes(`Opened by ${acceptedRecipient}`));
+    assert.ok(!planText.includes(`Opened by ${resentRecipient}`));
+
+    // Addressing and the verified-send evidence behave as before:
+    // both follow the latest acceptance, which is B's resend.
+    const card = getLibraryInvoiceCard(page, "INV-P2-OPENED-LATE");
+    const cardText = await card.innerText();
+    assert.ok(cardText.includes(`Sent to ${resentRecipient}`));
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library filters cards by lifecycle status", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

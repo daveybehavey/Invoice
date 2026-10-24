@@ -447,8 +447,15 @@
   // fresh identity — and preserved across nonterminal responses
   // (transport failures, 5xx, in-progress 409s), whose retry must
   // still replay this action; see the send call site for the exact
-  // classification.
-  const pendingResendActionRef = useRef(null);
+  // classification. Codex P2 (recheck 6): identities are kept PER
+  // (invoice, recipient) action, never in a single slot — with one
+  // slot, invoice B's send overwrote invoice A's unanswered action
+  // identity (and B's terminal outcome then cleared the slot), so
+  // A's retry minted a fresh identity and the server dispatched a
+  // duplicate email instead of replaying A's accepted claim. An
+  // action's identity is created, reused, and cleared only under
+  // its own key.
+  const pendingResendActionRef = useRef(new Map());
   const requiresSignIn = (authRequiredByPolicy || authRequiredError) && !authSession?.userId;
   const emailLinkProvider = Array.isArray(authProviders)
     ? authProviders.find((provider) => provider?.id === "email_link")
@@ -1379,26 +1386,27 @@
     // Q7: one deliberate resend action carries ONE durable identity.
     // Reuse the pending action's id when this attempt is a retry of
     // the same action (same invoice + recipient, previous attempt
-    // never answered); otherwise mint a fresh identity.
+    // never answered); otherwise mint a fresh identity. The pending
+    // identity is stored under THIS action's (invoice, recipient)
+    // key — another invoice's send, in any outcome, must never
+    // rotate it (Codex P2, recheck 6).
     let resendActionId = null;
+    let pendingResendKey = null;
     if (isResend) {
-      const pendingAction = pendingResendActionRef.current;
-      if (
-        pendingAction &&
-        pendingAction.invoiceId === invoice.invoiceId &&
-        pendingAction.recipientEmail === recipientEmail
-      ) {
+      pendingResendKey = `${invoice.invoiceId}::${recipientEmail}`;
+      const pendingAction = pendingResendActionRef.current.get(pendingResendKey);
+      if (pendingAction) {
         resendActionId = pendingAction.actionId;
       } else {
         resendActionId =
           typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
             ? crypto.randomUUID()
             : `resend-action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        pendingResendActionRef.current = {
+        pendingResendActionRef.current.set(pendingResendKey, {
           invoiceId: invoice.invoiceId,
           recipientEmail,
           actionId: resendActionId
-        };
+        });
       }
     }
     setActionId(invoice.invoiceId);
@@ -1426,11 +1434,15 @@
       );
       // The server answered: this action is complete. The next resend
       // click is a distinct owner action with a fresh identity. Only
-      // the action THIS request carried may be cleared — a response
-      // for a different send must not rotate another action's
-      // identity out from under its own retry.
-      if (resendActionId && pendingResendActionRef.current?.actionId === resendActionId) {
-        pendingResendActionRef.current = null;
+      // the action THIS request carried may be cleared, under its
+      // own key — a response for a different send must not rotate
+      // another action's identity out from under its own retry.
+      if (
+        resendActionId &&
+        pendingResendKey &&
+        pendingResendActionRef.current.get(pendingResendKey)?.actionId === resendActionId
+      ) {
+        pendingResendActionRef.current.delete(pendingResendKey);
       }
       setAuthRequiredError(false);
       setInvoices((prev) =>
@@ -1500,9 +1512,10 @@
       if (
         terminalOutcome &&
         resendActionId &&
-        pendingResendActionRef.current?.actionId === resendActionId
+        pendingResendKey &&
+        pendingResendActionRef.current.get(pendingResendKey)?.actionId === resendActionId
       ) {
-        pendingResendActionRef.current = null;
+        pendingResendActionRef.current.delete(pendingResendKey);
       }
       handleLibraryError(sendError, "Failed to send invoice.");
       return null;
@@ -2198,6 +2211,18 @@
     oldestSentReminder.delivery.sentToEmail
       ? oldestSentReminder.delivery.sentToEmail
       : null;
+  // P2 (recheck 6): the recipient of the operation whose verified
+  // open supplies openedAt — the open evidence's owner. Distinct
+  // from oldestEvidenceRecipient (the LATEST acceptance): when a
+  // later send to someone else was accepted after the open, the
+  // open still belongs to the earlier operation. Null when that
+  // operation named no recipient — unknown, never inherited from
+  // the latest acceptance either.
+  const oldestOpenedRecipient =
+    typeof oldestSentReminder?.delivery?.openedByEmail === "string" &&
+    oldestSentReminder.delivery.openedByEmail
+      ? oldestSentReminder.delivery.openedByEmail
+      : null;
   const followUpPlan = oldestSentReminder
     ? {
         urgencyValue: oldestSentReminder.isPastDue
@@ -2218,11 +2243,15 @@
         // unknown (the acceptance named no one), both the Sent and
         // the Opened wording render recipient-neutrally — an
         // unknown recipient is never replaced by the latest
-        // activity's address.
+        // activity's address. P2 (recheck 6): the Opened branch
+        // names the recipient of the operation that supplied the
+        // verified open (openedByEmail) — NOT sentToEmail: a later
+        // acceptance to someone else moves the send evidence, but
+        // the open stays the earlier operation's.
         deliveryValue: oldestSentRecipient
           ? oldestSentReminder?.delivery?.openedAt
-            ? oldestEvidenceRecipient
-              ? `Opened by ${oldestEvidenceRecipient}`
+            ? oldestOpenedRecipient
+              ? `Opened by ${oldestOpenedRecipient}`
               : "Opened (verified, recipient not recorded)"
             : oldestSentReminder?.delivery?.verified === true
               ? oldestEvidenceRecipient
