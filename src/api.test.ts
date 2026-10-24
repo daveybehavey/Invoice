@@ -4746,6 +4746,129 @@ test("a bare send retry replays a recovery that followed a record_only initial a
   assert.equal(fetchCalls, 1);
 });
 
+test("overlapping bare retries after a failed initial send dispatch exactly one recovery (Q7)", async () => {
+  const ownerId = "delivery-q7-bare-concurrent-owner";
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_key";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  let fetchCalls = 0;
+  let markRecoveryDispatchStarted!: () => void;
+  const recoveryDispatchStarted = new Promise<void>((resolve) => {
+    markRecoveryDispatchStarted = resolve;
+  });
+  let releaseRecoveryDispatch!: () => void;
+  const recoveryDispatchBarrier = new Promise<void>((resolve) => {
+    releaseRecoveryDispatch = resolve;
+  });
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    fetchCalls += 1;
+    if (fetchCalls === 1) {
+      // The initial send is definitively rejected (§D FAILED).
+      return new Response(
+        JSON.stringify({ name: "validation_error", message: "Recipient address is invalid." }),
+        { status: 422, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (fetchCalls === 2) {
+      // Hold the recovery dispatch at a test-controlled barrier: one
+      // bare retry is inside its provider round-trip while the
+      // overlapping identical retry runs its own resolution.
+      markRecoveryDispatchStarted();
+      await recoveryDispatchBarrier;
+    }
+    return new Response(JSON.stringify({ id: `email_q7bareconc_${fetchCalls}` }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const saveResponse = await request(app)
+    .post("/api/invoices/save")
+    .set("x-invoice-user-id", ownerId)
+    .send({
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: { customerName: "Q7 Bare Concurrent Client", workSessions: [], materials: [] },
+        finishedInvoice: {
+          invoiceNumber: "INV-Q7-BARE-CONCURRENT-1",
+          issueDate: "2026-03-11",
+          customerName: "Q7 Bare Concurrent Client",
+          currency: "USD",
+          lineItems: [
+            { id: "line-q7bareconc-1", type: "labor", description: "Q7 bare concurrent baseline", quantity: 1, unitPrice: 190, amount: 190 }
+          ],
+          subtotal: 190,
+          total: 190,
+          balanceDue: 190
+        }
+      }
+    });
+  const invoiceId = saveResponse.body.invoice.invoiceId as string;
+  assert.ok(invoiceId);
+
+  const failedSend = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7bareconc@example.com" });
+  assert.equal(failedSend.status, 400);
+  assert.equal(fetchCalls, 1);
+
+  // Bare retry A establishes the recovery and is held inside its
+  // provider dispatch. (Started through an async IIFE so the request
+  // is actually in flight before the test awaits the barrier signal;
+  // a bare supertest object does not execute until awaited.)
+  const retryAResponsePromise = (async () =>
+    request(app)
+      .post(`/api/invoices/${invoiceId}/send`)
+      .set("x-invoice-user-id", ownerId)
+      .send({ recipientEmail: "q7bareconc@example.com" }))();
+  await Promise.race([
+    recoveryDispatchStarted,
+    new Promise<never>((_resolve, reject) =>
+      setTimeout(() => reject(new Error("recovery dispatch never started")), 15000)
+    )
+  ]);
+
+  // Bare retry B — the identical request — resolves while A's
+  // recovery is in flight. Nothing has counted yet and a mint would
+  // duplicate the recovery, so B is told a send is in progress: it
+  // neither replays a phantom success nor dispatches.
+  const retryB = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7bareconc@example.com" });
+  assert.equal(retryB.status, 409);
+  assert.equal(retryB.body.blockingClaim?.reason, "send_in_progress");
+  assert.equal(fetchCalls, 2);
+
+  releaseRecoveryDispatch();
+  const responseA = await retryAResponsePromise;
+  assert.equal(responseA.status, 200);
+  assert.equal(responseA.body.delivery.sendCount, 1);
+  assert.equal(fetchCalls, 2);
+
+  // A later bare retry replays the recovery's recorded outcome.
+  const retryC = await request(app)
+    .post(`/api/invoices/${invoiceId}/send`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ recipientEmail: "q7bareconc@example.com" });
+  assert.equal(retryC.status, 200);
+  assert.equal(retryC.body.delivery.sendCount, 1);
+  assert.equal(fetchCalls, 2);
+
+  // The durable record: exactly one recovery claim exists.
+  const parsed = JSON.parse(await fs.readFile(invoiceDeliveryStoreFilePath, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const resendClaims = (parsed.claims ?? []).filter(
+    (entry) => entry?.invoiceId === invoiceId && entry?.basePurpose === "resend"
+  );
+  assert.equal(resendClaims.length, 1);
+  assert.equal(resendClaims[0]?.purpose, "resend_1");
+});
+
 test("overlapping identical resend-action requests dispatch at most once (Q7)", async () => {
   const ownerId = "delivery-q7-concurrent-action-owner";
   process.env.INVOICE_EMAIL_PROVIDER = "resend";

@@ -10863,6 +10863,213 @@ test("invoice library resend flow reports a re-send notice for tracked delivery 
   }
 });
 
+async function seedLibraryResendInvoice(
+  context: BrowserContext,
+  ownerId: string,
+  invoiceNumber: string,
+  recipientEmail: string
+): Promise<string> {
+  const seedResponse = await context.request.post(`${baseUrl}/api/invoices/save`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      confirmSave: true,
+      sourceType: "text_input",
+      invoiceData: {
+        structuredInvoice: {
+          customerName: "Identity Client",
+          workSessions: [],
+          materials: []
+        },
+        finishedInvoice: {
+          invoiceNumber,
+          issueDate: "2026-05-05",
+          dueDate: "2026-05-20",
+          customerName: "Identity Client",
+          currency: "USD",
+          lineItems: [
+            {
+              id: "line-identity-1",
+              type: "labor",
+              description: "Identity baseline service",
+              quantity: 1,
+              unitPrice: 180,
+              amount: 180
+            }
+          ],
+          subtotal: 180,
+          total: 180,
+          balanceDue: 180
+        }
+      }
+    }
+  });
+  assert.equal(seedResponse.status(), 200);
+  const seedPayload = await seedResponse.json();
+  const invoiceId = seedPayload?.invoice?.invoiceId as string;
+  assert.ok(invoiceId);
+  const firstSendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+    headers: {
+      "x-invoice-user-id": ownerId
+    },
+    data: {
+      recipientEmail
+    }
+  });
+  assert.equal(firstSendResponse.status(), 200);
+  return invoiceId;
+}
+
+test("invoice library preserves the resend action identity across a 5xx and replays the accepted send", async () => {
+  const ownerId = "ui-library-resend-5xx-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const invoiceId = await seedLibraryResendInvoice(context, ownerId, "INV-RESEND-5XX-1", "resend5xx@example.com");
+
+  const page = await context.newPage();
+  const sendBodies: Array<{ intent?: string; resendActionId?: string }> = [];
+  let upstreamStatus: number | null = null;
+  try {
+    await page.route(`**/api/invoices/${invoiceId}/send`, async (route) => {
+      const body = route.request().postDataJSON() as { intent?: string; resendActionId?: string };
+      sendBodies.push(body);
+      if (sendBodies.length === 1) {
+        // The resend reaches the server and its outcome is recorded —
+        // but the response the library sees is a 500, the shape of a
+        // failure AFTER the outcome was persisted (provider accepted,
+        // then the guarded status completion threw). That response is
+        // nonterminal for the action: its identity must survive.
+        const upstream = await route.fetch();
+        upstreamStatus = upstream.status();
+        await route.fulfill({
+          response: upstream,
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Simulated post-acceptance failure." })
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page.locator("div").filter({ hasText: "INV-RESEND-5XX-1" }).first();
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page.getByText("Simulated post-acceptance failure.").waitFor({ state: "visible" });
+    assert.equal(upstreamStatus, 200);
+
+    // The owner's retry must carry the SAME action identity, so the
+    // server replays the recorded send instead of dispatching a
+    // second email under a fresh action.
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page
+      .getByText(/Invoice re-sent to resend5xx@example\.com|Re-send recorded for resend5xx@example\.com/)
+      .waitFor({ state: "visible" });
+    assert.equal(sendBodies.length, 2);
+    assert.equal(sendBodies[0]?.intent, "resend");
+    assert.ok(sendBodies[0]?.resendActionId);
+    assert.equal(sendBodies[1]?.resendActionId, sendBodies[0]?.resendActionId);
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library preserves the resend action identity across an in-progress 409", async () => {
+  const ownerId = "ui-library-resend-409-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const invoiceId = await seedLibraryResendInvoice(context, ownerId, "INV-RESEND-409-1", "resend409@example.com");
+
+  const page = await context.newPage();
+  const sendBodies: Array<{ intent?: string; resendActionId?: string }> = [];
+  try {
+    await page.route(`**/api/invoices/${invoiceId}/send`, async (route) => {
+      const body = route.request().postDataJSON() as { intent?: string; resendActionId?: string };
+      sendBodies.push(body);
+      if (sendBodies.length === 1) {
+        // The structured in-progress refusal: the same action is
+        // still in flight on the server. Nonterminal — the identity
+        // must survive until the original action resolves.
+        await route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: "A send for this invoice is already in progress.",
+            blockingClaim: { claimId: "in-flight-claim", reason: "send_in_progress" }
+          })
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page.locator("div").filter({ hasText: "INV-RESEND-409-1" }).first();
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page.getByText(/already in progress/).waitFor({ state: "visible" });
+
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page
+      .getByText(/Invoice re-sent to resend409@example\.com|Re-send recorded for resend409@example\.com/)
+      .waitFor({ state: "visible" });
+    assert.equal(sendBodies.length, 2);
+    assert.ok(sendBodies[0]?.resendActionId);
+    assert.equal(sendBodies[1]?.resendActionId, sendBodies[0]?.resendActionId);
+  } finally {
+    await context.close();
+  }
+});
+
+test("invoice library rotates the resend action identity after a terminal 400", async () => {
+  const ownerId = "ui-library-resend-400-owner";
+  const context = await browser.newContext();
+  await context.addInitScript((initOwnerId) => {
+    window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+  }, ownerId);
+  const invoiceId = await seedLibraryResendInvoice(context, ownerId, "INV-RESEND-400-1", "resend400@example.com");
+
+  const page = await context.newPage();
+  const sendBodies: Array<{ intent?: string; resendActionId?: string }> = [];
+  try {
+    await page.route(`**/api/invoices/${invoiceId}/send`, async (route) => {
+      const body = route.request().postDataJSON() as { intent?: string; resendActionId?: string };
+      sendBodies.push(body);
+      if (sendBodies.length === 1) {
+        // A definitive refusal is a terminal recorded outcome for
+        // the action: the next click is a new owner action and must
+        // carry a fresh identity.
+        await route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: "The email provider rejected this send, so no email was delivered. Fix the problem and try sending again."
+          })
+        });
+        return;
+      }
+      await route.continue();
+    });
+    await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+    const card = page.locator("div").filter({ hasText: "INV-RESEND-400-1" }).first();
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page.getByText(/provider rejected this send/).waitFor({ state: "visible" });
+
+    await card.getByRole("button", { name: /Resend invoice|Re-send invoice/ }).click();
+    await page
+      .getByText(/Invoice re-sent to resend400@example\.com|Re-send recorded for resend400@example\.com/)
+      .waitFor({ state: "visible" });
+    assert.equal(sendBodies.length, 2);
+    assert.ok(sendBodies[0]?.resendActionId);
+    assert.ok(sendBodies[1]?.resendActionId);
+    assert.notEqual(sendBodies[1]?.resendActionId, sendBodies[0]?.resendActionId);
+  } finally {
+    await context.close();
+  }
+});
+
 test("invoice library filters cards by lifecycle status", async () => {
   const context = await browser.newContext();
   await context.addInitScript(() => {

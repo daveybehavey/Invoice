@@ -442,8 +442,12 @@
   // reused by every transport retry of THAT action (e.g. the send
   // succeeded server-side but the response never arrived), so a retry
   // replays the established claim instead of minting the next resend
-  // occurrence. Cleared as soon as the server answers — the next click
-  // is then a distinct owner action with a fresh identity.
+  // occurrence. Cleared when the action reaches a terminal recorded
+  // outcome — the next click is then a distinct owner action with a
+  // fresh identity — and preserved across nonterminal responses
+  // (transport failures, 5xx, in-progress 409s), whose retry must
+  // still replay this action; see the send call site for the exact
+  // classification.
   const pendingResendActionRef = useRef(null);
   const requiresSignIn = (authRequiredByPolicy || authRequiredError) && !authSession?.userId;
   const emailLinkProvider = Array.isArray(authProviders)
@@ -459,6 +463,11 @@
     if (!response.ok) {
       const requestError = new Error(payload?.error || fallbackMessage);
       requestError.status = response.status;
+      // The parsed body rides along so callers can tell a structured
+      // refusal (e.g. the send endpoint's 409 blockingClaim, whose
+      // reason separates "still in progress" from a terminal block)
+      // from a bare status.
+      requestError.payload = payload;
       throw requestError;
     }
     return payload;
@@ -1416,8 +1425,11 @@
         "Failed to send invoice."
       );
       // The server answered: this action is complete. The next resend
-      // click is a distinct owner action with a fresh identity.
-      if (pendingResendActionRef.current?.invoiceId === invoice.invoiceId) {
+      // click is a distinct owner action with a fresh identity. Only
+      // the action THIS request carried may be cleared — a response
+      // for a different send must not rotate another action's
+      // identity out from under its own retry.
+      if (resendActionId && pendingResendActionRef.current?.actionId === resendActionId) {
         pendingResendActionRef.current = null;
       }
       setAuthRequiredError(false);
@@ -1457,13 +1469,38 @@
       );
       return payload;
     } catch (sendError) {
-      // An HTTP error means the server answered, so the action is
-      // complete and its identity rotates. A transport failure (no
-      // status) leaves the outcome unknown — keep the identity so
-      // the owner's retry replays the same action (Q7).
+      // Q7 identity lifecycle: the pending action identity rotates
+      // ONLY when this response records a TERMINAL outcome for the
+      // action —
+      // - HTTP 400: the send was definitively refused (a validation
+      //   refusal before any claim existed, or the recorded failure
+      //   of the action's own claim, replayed verbatim). The action
+      //   is complete; the next click is a new owner action.
+      // - HTTP 409 WITHOUT a send_in_progress block: the refusal is
+      //   terminal for this action (the stale-authorization refusal
+      //   cancelled its claim before dispatch, or an unresolved-send
+      //   block — that block is lifted by reconciling or releasing
+      //   the claim, after which a retry must be free to establish
+      //   the fresh send the release permits).
+      // Every other response is NONTERMINAL and preserves the
+      // identity, so the owner's retry replays the same action
+      // instead of minting a duplicate send:
+      // - no status: transport failure; the outcome is unknown.
+      // - 5xx: the server may have persisted provider acceptance and
+      //   failed afterwards (e.g. the guarded status completion) —
+      //   the retry must replay the accepted claim and recover the
+      //   completion, not dispatch a second email.
+      // - 409 with reason "send_in_progress": the original action is
+      //   still in flight; clearing its identity before it finishes
+      //   would let a retry mint a competing action.
+      const errorStatus = typeof sendError?.status === "number" ? sendError.status : null;
+      const blockingReason = sendError?.payload?.blockingClaim?.reason ?? null;
+      const terminalOutcome =
+        errorStatus === 400 || (errorStatus === 409 && blockingReason !== "send_in_progress");
       if (
-        typeof sendError?.status === "number" &&
-        pendingResendActionRef.current?.invoiceId === invoice.invoiceId
+        terminalOutcome &&
+        resendActionId &&
+        pendingResendActionRef.current?.actionId === resendActionId
       ) {
         pendingResendActionRef.current = null;
       }

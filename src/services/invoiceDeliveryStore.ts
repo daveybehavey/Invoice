@@ -335,6 +335,16 @@ const DEFAULT_CLAIM_LEASE_MS = 5 * 60 * 1000;
  * An expired reservation whose dispatch never began may be reclaimed
  * with a new fencing generation — lease expiry alone never authorizes
  * a resend of a claim that may have dispatched.
+ *
+ * A bare retry of the original send (input.bareRetry) resolves its
+ * replay-vs-mint decision inside this same mutation: when the initial
+ * claim already resolved without counting, the mutation itself looks
+ * for the latest counted resend recovery for the same (recipient,
+ * authorized revision) and returns it for replay; only when no
+ * recovery has counted does it mint the next resend occurrence,
+ * under the same cross-key exclusion as any other creation. Deciding
+ * from a read taken before the mutation let two overlapping bare
+ * retries both observe "no counted recovery" and mint a duplicate.
  */
 export async function reserveInvoiceDeliveryClaim(input: {
   ownerId: string;
@@ -346,6 +356,11 @@ export async function reserveInvoiceDeliveryClaim(input: {
   /** Durable identity of the deliberate owner resend action this
    * claim belongs to, when the caller is establishing one (§C). */
   resendActionId?: string;
+  /** True when the caller is a bare retry of the invoice's original
+   * send (no resend intent): the reservation then resolves a resolved
+   * but uncounted initial claim to the send chain's counted recovery
+   * (replay) or the next resend occurrence (mint), atomically. */
+  bareRetry?: boolean;
   leaseMs?: number;
 }): Promise<ReserveDeliveryClaimResult> {
   const recipientEmail = normalizeRecipientEmail(input.recipientEmail);
@@ -359,6 +374,40 @@ export async function reserveInvoiceDeliveryClaim(input: {
   await mutateStore((store) => {
     const now = new Date();
     const nowIso = now.toISOString();
+    const createClaim = (
+      purpose: string,
+      basePurpose: DeliveryClaimBasePurpose,
+      resendActionId?: string
+    ): DeliveryClaim => {
+      const key = buildDeliveryClaimKey({
+        invoiceId: input.invoiceId,
+        recipientEmail,
+        purpose,
+        authorizedRevision: input.authorizedRevision
+      });
+      return DeliveryClaimSchema.parse({
+        claimId: randomUUID(),
+        ownerId: input.ownerId,
+        invoiceId: input.invoiceId,
+        recipientEmail,
+        purpose,
+        basePurpose,
+        ...(resendActionId ? { resendActionId } : {}),
+        authorizedRevision: input.authorizedRevision,
+        claimKey: key,
+        providerIdempotencyKey: `nb-send-${key}`,
+        attemptId: randomUUID(),
+        status: "reserved",
+        outcomeKind: null,
+        mode: null,
+        provider: null,
+        generation: 1,
+        leaseOwner: randomUUID(),
+        leaseExpiresAt: new Date(now.getTime() + (input.leaseMs ?? DEFAULT_CLAIM_LEASE_MS)).toISOString(),
+        createdAt: nowIso,
+        updatedAt: nowIso
+      });
+    };
     if (input.resendActionId) {
       // §C (conformance Q7): the action identity is resolved INSIDE
       // the reservation mutation, not by a read taken before it. Two
@@ -419,6 +468,83 @@ export async function reserveInvoiceDeliveryClaim(input: {
         result = { outcome: "blocked", reason: "unresolved_send", claim: { ...sameKey } };
         return;
       }
+      if (
+        input.bareRetry &&
+        sameKey.basePurpose === "initial_send" &&
+        sameKey.outcomeKind !== "accepted" &&
+        sameKey.outcomeKind !== "delivered"
+      ) {
+        // A bare retry of the original send (§C/§D): the initial
+        // claim resolved without counting (definitive failure, or a
+        // record_only recording, which creates no send outcome). The
+        // retry replays the send chain's recorded success wherever it
+        // landed — the latest counted resend recovery for this
+        // (recipient, authorized revision) — and mints the next
+        // resend occurrence only when no recovery has counted yet.
+        // Both the lookup and the mint happen HERE, from this
+        // mutation's own snapshot: deciding from a read taken before
+        // the mutation let two overlapping bare retries both observe
+        // "no counted recovery", and the delayed one then minted the
+        // next occurrence and dispatched a duplicate after the first
+        // one's recovery had already counted.
+        const recovered = findLatestCountedResendClaim(store, {
+          ownerId: input.ownerId,
+          invoiceId: input.invoiceId,
+          recipientEmail,
+          authorizedRevision: input.authorizedRevision
+        });
+        if (recovered) {
+          result = { outcome: "existing", claim: { ...recovered } };
+          return;
+        }
+        const activeRecovery = store.claims.find(
+          (claim) =>
+            claim.ownerId === input.ownerId &&
+            claim.invoiceId === input.invoiceId &&
+            (claim.status === "reserved" || claim.status === "dispatching")
+        );
+        if (activeRecovery) {
+          result = { outcome: "blocked", reason: "send_in_progress", claim: activeRecovery };
+          return;
+        }
+        const unresolvedRecovery = store.claims.find(
+          (claim) =>
+            claim.ownerId === input.ownerId &&
+            claim.invoiceId === input.invoiceId &&
+            claim.status === "blocked_unknown"
+        );
+        if (unresolvedRecovery) {
+          result = { outcome: "blocked", reason: "unresolved_send", claim: unresolvedRecovery };
+          return;
+        }
+        let resendNumber =
+          store.claims.filter(
+            (claim) =>
+              claim.ownerId === input.ownerId &&
+              claim.invoiceId === input.invoiceId &&
+              claim.basePurpose === "resend"
+          ).length + 1;
+        while (
+          store.claims.some(
+            (claim) =>
+              claim.ownerId === input.ownerId &&
+              claim.invoiceId === input.invoiceId &&
+              claim.claimKey ===
+                buildDeliveryClaimKey({
+                  invoiceId: input.invoiceId,
+                  recipientEmail,
+                  purpose: `resend_${resendNumber}`,
+                  authorizedRevision: input.authorizedRevision
+                })
+          )
+        ) {
+          resendNumber += 1;
+        }
+        const recoveryClaim = createClaim(`resend_${resendNumber}`, "resend");
+        store.claims.push(recoveryClaim);
+        result = { outcome: "reserved", claim: recoveryClaim };
+        return;
+      }
       result = { outcome: "existing", claim: { ...sameKey } };
       return;
     }
@@ -440,28 +566,7 @@ export async function reserveInvoiceDeliveryClaim(input: {
       result = { outcome: "blocked", reason: "unresolved_send", claim: unresolved };
       return;
     }
-    const claim = DeliveryClaimSchema.parse({
-      claimId: randomUUID(),
-      ownerId: input.ownerId,
-      invoiceId: input.invoiceId,
-      recipientEmail,
-      purpose: input.purpose,
-      basePurpose: input.basePurpose,
-      ...(input.resendActionId ? { resendActionId: input.resendActionId } : {}),
-      authorizedRevision: input.authorizedRevision,
-      claimKey,
-      providerIdempotencyKey: `nb-send-${claimKey}`,
-      attemptId: randomUUID(),
-      status: "reserved",
-      outcomeKind: null,
-      mode: null,
-      provider: null,
-      generation: 1,
-      leaseOwner: randomUUID(),
-      leaseExpiresAt: new Date(now.getTime() + (input.leaseMs ?? DEFAULT_CLAIM_LEASE_MS)).toISOString(),
-      createdAt: nowIso,
-      updatedAt: nowIso
-    });
+    const claim = createClaim(input.purpose, input.basePurpose, input.resendActionId);
     store.claims.push(claim);
     result = { outcome: "reserved", claim };
   });
@@ -788,6 +893,25 @@ export async function getLatestCountedInvoiceDeliveryResendClaim(input: {
   authorizedRevision: number;
 }): Promise<DeliveryClaim | null> {
   const store = await readStore();
+  const latest = findLatestCountedResendClaim(store, input);
+  return latest ? { ...latest } : null;
+}
+
+/**
+ * The counted-recovery search over one store snapshot, shared by the
+ * read-only getter above and — decisively — by the bare-retry branch
+ * of reserveInvoiceDeliveryClaim, which must evaluate it inside the
+ * reservation mutation rather than from a prior read.
+ */
+function findLatestCountedResendClaim(
+  store: DeliveryStore,
+  input: {
+    ownerId: string;
+    invoiceId: string;
+    recipientEmail: string;
+    authorizedRevision: number;
+  }
+): DeliveryClaim | null {
   const recipientEmail = normalizeRecipientEmail(input.recipientEmail);
   let latest: DeliveryClaim | null = null;
   let latestNumber = -1;
@@ -813,7 +937,7 @@ export async function getLatestCountedInvoiceDeliveryResendClaim(input: {
       latestNumber = number;
     }
   }
-  return latest ? { ...latest } : null;
+  return latest;
 }
 
 // ---------------------------------------------------------------------------

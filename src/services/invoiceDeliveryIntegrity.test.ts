@@ -589,6 +589,220 @@ test("a resend action identity resolves atomically inside reservation, across a 
 });
 
 // ---------------------------------------------------------------------------
+// Bare-retry recovery resolves atomically inside reservation (Q7
+// re-gate): the counted-recovery lookup and the recovery mint are a
+// single mutation decision, so a bare retry whose pre-mutation read
+// went stale cannot mint a duplicate recovery.
+// ---------------------------------------------------------------------------
+
+test("a bare retry resolves its recovery atomically inside reservation, across a barrier-suspended lookup", async () => {
+  const ownerId = "slice0-q7-bare-race";
+  const invoice = await createInvoice(ownerId, 240);
+  const invoiceId = invoice.invoiceId;
+  const revision = invoice.invoiceData.finishedInvoice.monetaryRevision;
+  const recipientEmail = "bare-race@example.com";
+
+  // The initial send was definitively rejected: resolved, uncounted.
+  const initial = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: revision
+  });
+  if (initial.outcome !== "reserved") throw new Error("expected initial reservation");
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: initial.claim.claimId,
+    generation: initial.claim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: initial.claim.claimId,
+    generation: initial.claim.generation,
+    outcome: "failed",
+    mode: "provider",
+    provider: "resend"
+  });
+
+  // Request A performs the standalone recovery lookup a caller could
+  // read before reserving — it observes no counted recovery — and
+  // then suspends at the barrier, exactly where a real request waits
+  // on store I/O while its identical twin completes.
+  const staleLookup = await deliveryStore.getLatestCountedInvoiceDeliveryResendClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    authorizedRevision: revision
+  });
+  assert.equal(staleLookup, null);
+  let releaseBarrier!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    releaseBarrier = resolve;
+  });
+  const requestA = (async () => {
+    await barrier;
+    // A's next step is the endpoint's reservation for a bare retry.
+    // Deciding from A's stale read would mint resend_2 here; the
+    // reservation itself must resolve A to B's recovery claim.
+    return deliveryStore.reserveInvoiceDeliveryClaim({
+      ownerId,
+      invoiceId,
+      recipientEmail,
+      basePurpose: "initial_send",
+      purpose: "initial_send",
+      authorizedRevision: revision,
+      bareRetry: true
+    });
+  })();
+
+  // Request B — the identical bare retry — runs to completion while
+  // A is suspended: its reservation mints the recovery occurrence
+  // and the provider accepts it.
+  const recoveryB = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: revision,
+    bareRetry: true
+  });
+  if (recoveryB.outcome !== "reserved") throw new Error("expected recovery reservation");
+  assert.equal(recoveryB.claim.purpose, "resend_1");
+  assert.equal(recoveryB.claim.basePurpose, "resend");
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: recoveryB.claim.claimId,
+    generation: recoveryB.claim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: recoveryB.claim.claimId,
+    generation: recoveryB.claim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_bare_race_recovery"
+  });
+
+  releaseBarrier();
+  const resumed = await requestA;
+  // A replays the recovery B established — no second recovery claim
+  // was minted from A's stale read, so no duplicate dispatch can
+  // follow from A's request.
+  assert.equal(resumed.outcome, "existing");
+  assert.equal(resumed.claim.claimId, recoveryB.claim.claimId);
+
+  const parsed = JSON.parse(await fs.readFile(deliveryStoreFile, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const resendClaims = (parsed.claims ?? []).filter(
+    (entry) => entry?.invoiceId === invoiceId && entry?.basePurpose === "resend"
+  );
+  assert.equal(resendClaims.length, 1);
+  assert.equal(resendClaims[0]?.purpose, "resend_1");
+  const summary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(summary?.sendCount, 1);
+});
+
+test("a bare retry mints no recovery while another send is in flight, then replays the counted recovery", async () => {
+  const ownerId = "slice0-q7-bare-blocked";
+  const invoice = await createInvoice(ownerId, 260);
+  const invoiceId = invoice.invoiceId;
+  const revision = invoice.invoiceData.finishedInvoice.monetaryRevision;
+  const recipientEmail = "bare-blocked@example.com";
+
+  const initial = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: revision
+  });
+  if (initial.outcome !== "reserved") throw new Error("expected initial reservation");
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: initial.claim.claimId,
+    generation: initial.claim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: initial.claim.claimId,
+    generation: initial.claim.generation,
+    outcome: "failed",
+    mode: "provider",
+    provider: "resend"
+  });
+
+  // A recovery attempt is already in flight under resend_1.
+  const inFlight = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: revision,
+    bareRetry: true
+  });
+  if (inFlight.outcome !== "reserved") throw new Error("expected recovery reservation");
+  assert.equal(inFlight.claim.purpose, "resend_1");
+
+  // A second bare retry must not mint resend_2 over the in-flight
+  // recovery: the reservation resolves it to the cross-key block.
+  const blocked = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: revision,
+    bareRetry: true
+  });
+  assert.equal(blocked.outcome, "blocked");
+  if (blocked.outcome === "blocked") {
+    assert.equal(blocked.reason, "send_in_progress");
+    assert.equal(blocked.claim.claimId, inFlight.claim.claimId);
+  }
+
+  // Once the in-flight recovery counts, the next bare retry replays
+  // it instead of minting.
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: inFlight.claim.claimId,
+    generation: inFlight.claim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: inFlight.claim.claimId,
+    generation: inFlight.claim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_bare_blocked_recovery"
+  });
+  const replay = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: revision,
+    bareRetry: true
+  });
+  assert.equal(replay.outcome, "existing");
+  assert.equal(replay.claim.claimId, inFlight.claim.claimId);
+  const summary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(summary?.sendCount, 1);
+});
+
+// ---------------------------------------------------------------------------
 // §D blocking for unresolved ACCEPTED sends (conformance Q2)
 // ---------------------------------------------------------------------------
 

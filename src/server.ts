@@ -75,7 +75,6 @@ import {
   getInvoiceDeliveryClaimById,
   getInvoiceDeliveryClaimByResendAction,
   getInvoiceDeliveryStoreSummary,
-  getLatestCountedInvoiceDeliveryResendClaim,
   getInvoiceDeliverySummary,
   getInvoiceDeliverySummariesByInvoiceIds,
   markInvoiceDeliveryOpenedByTrackingToken,
@@ -1533,7 +1532,14 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
         // invoice had no resolved send yet) binds its identity to
         // that claim too, so its retries replay instead of minting.
         resendActionId:
-          parsedRequest.intent === "resend" ? parsedRequest.resendActionId : undefined
+          parsedRequest.intent === "resend" ? parsedRequest.resendActionId : undefined,
+        // A bare retry's replay-vs-mint decision is made inside the
+        // reservation mutation (§C/§D): when the initial claim
+        // resolved without counting, the mutation itself resolves the
+        // counted recovery to replay or mints the recovery occurrence
+        // — never from a read taken before it, which two overlapping
+        // bare retries could both observe as "no recovery yet".
+        bareRetry: parsedRequest.intent !== "resend"
       });
       // Q7: the reservation resolves the action identity atomically,
       // inside the store's mutation boundary. When it returns the
@@ -1550,82 +1556,59 @@ app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: Nex
         resendActionReplayed = true;
       }
     }
-    if (reservation.outcome === "existing" && !resendActionReplayed) {
+    if (reservation.outcome === "existing" && !resendActionReplayed && parsedRequest.intent === "resend") {
       // The claim for this (recipient, revision) already resolved. A
       // resolution counts as a send only when the provider accepted
       // (§D): failed / cancelled / owner-released claims — and
       // record_only recordings, which §D says create no send outcome
-      // at all — never block a fresh logical attempt. A counted
-      // acceptance is replayed idempotently for bare retries of the
-      // original operation; only an explicit owner resend
-      // (intent: "resend") establishes a new logical send. Either way
-      // the fresh attempt needs its own claim identity: the next
-      // resend occurrence (§C), walking past any resend identities
-      // that already resolved too. When the fresh claim belongs to a
-      // resend action, the action's durable identity is stamped on it
-      // so the action's own retries replay it (Q7).
-      const resolvedClaim = reservation.claim;
-      const countedAsSent =
-        resolvedClaim.outcomeKind === "accepted" || resolvedClaim.outcomeKind === "delivered";
-      // A bare retry (no resend intent) replays the send chain's
-      // recorded success, wherever in the chain it landed: the
-      // initial claim counted, or — when it failed or was recorded
-      // without a provider — the latest resend occurrence that
-      // recovered the send and counted. Resolving only the initial
-      // claim here made a bare retry whose recovery response was
-      // lost mint the next occurrence and dispatch a duplicate.
-      let replayResolved = false;
-      if (parsedRequest.intent !== "resend") {
-        if (countedAsSent) {
-          replayResolved = true;
-        } else {
-          const recoveredClaim = await getLatestCountedInvoiceDeliveryResendClaim({
-            ownerId,
-            invoiceId,
-            recipientEmail,
-            authorizedRevision
-          });
-          if (recoveredClaim) {
-            reservation = { outcome: "existing", claim: recoveredClaim };
-            replayResolved = true;
-          }
+      // at all — never block a fresh logical attempt. Only an
+      // explicit owner resend (intent: "resend") establishes a new
+      // logical send, so this walk runs for resend intent only: the
+      // fresh attempt takes the next resend occurrence (§C), walking
+      // past any resend identities that already resolved too. When
+      // the fresh claim belongs to a resend action, the action's
+      // durable identity is stamped on it so the action's own
+      // retries replay it (Q7).
+      //
+      // A bare retry never walks: its reservation above already
+      // resolved replay-vs-mint atomically inside the store mutation
+      // (the counted recovery to replay, or the recovery occurrence
+      // to dispatch, is the reservation's claim by now). Resolving
+      // that decision from reads taken here — the counted-recovery
+      // lookup and the occurrence count — let two overlapping bare
+      // retries both observe "no recovery yet" and dispatch a
+      // duplicate recovery.
+      let resendNumber =
+        (await countInvoiceDeliveryClaims({ ownerId, invoiceId, basePurpose: "resend" })) + 1;
+      for (;;) {
+        const attempt = await reserveInvoiceDeliveryClaim({
+          ownerId,
+          invoiceId,
+          recipientEmail,
+          basePurpose: "resend",
+          purpose: `resend_${resendNumber}`,
+          authorizedRevision,
+          resendActionId: parsedRequest.resendActionId
+        });
+        if (attempt.outcome !== "existing") {
+          reservation = attempt;
+          break;
         }
-      }
-      if (!replayResolved) {
-        let resendNumber =
-          (await countInvoiceDeliveryClaims({ ownerId, invoiceId, basePurpose: "resend" })) + 1;
-        for (;;) {
-          const attempt = await reserveInvoiceDeliveryClaim({
-            ownerId,
-            invoiceId,
-            recipientEmail,
-            basePurpose: "resend",
-            purpose: `resend_${resendNumber}`,
-            authorizedRevision,
-            resendActionId:
-              parsedRequest.intent === "resend" ? parsedRequest.resendActionId : undefined
-          });
-          if (attempt.outcome !== "existing") {
-            reservation = attempt;
-            break;
-          }
-          // Q7: the reservation resolved this request's action
-          // identity atomically and returned the claim the action
-          // already established (a concurrent identical request won
-          // the race while this one walked occurrences). This
-          // request is that action's replay — it must not walk on
-          // to the next occurrence and dispatch again.
-          if (
-            parsedRequest.intent === "resend" &&
-            parsedRequest.resendActionId &&
-            attempt.claim.resendActionId === parsedRequest.resendActionId
-          ) {
-            reservation = attempt;
-            resendActionReplayed = true;
-            break;
-          }
-          resendNumber += 1;
+        // Q7: the reservation resolved this request's action
+        // identity atomically and returned the claim the action
+        // already established (a concurrent identical request won
+        // the race while this one walked occurrences). This
+        // request is that action's replay — it must not walk on
+        // to the next occurrence and dispatch again.
+        if (
+          parsedRequest.resendActionId &&
+          attempt.claim.resendActionId === parsedRequest.resendActionId
+        ) {
+          reservation = attempt;
+          resendActionReplayed = true;
+          break;
         }
+        resendNumber += 1;
       }
     }
     if (reservation.outcome === "blocked") {
