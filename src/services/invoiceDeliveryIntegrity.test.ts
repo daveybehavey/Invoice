@@ -952,6 +952,252 @@ test("an ACCEPTED send with no final resolution blocks automatic reminders until
 });
 
 // ---------------------------------------------------------------------------
+// §D eligibility revalidated inside the reservation mutation
+// (re-gate round 3: the scheduler's timing read is not authorization)
+// ---------------------------------------------------------------------------
+
+test("reminder eligibility is revalidated inside reservation, across a barrier-suspended timing read", async () => {
+  const ownerId = "slice0-q2-reminder-race";
+  const invoice = await createInvoice(ownerId, 320);
+  const invoiceId = invoice.invoiceId;
+  const revision = invoice.invoiceData.finishedInvoice.monetaryRevision;
+  const recipientEmail = "reminder-race@example.com";
+
+  // The initial send resolved (DELIVERED): reminder timing is clean.
+  const initial = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: revision
+  });
+  if (initial.outcome !== "reserved") throw new Error("expected initial reservation");
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: initial.claim.claimId,
+    generation: initial.claim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: initial.claim.claimId,
+    generation: initial.claim.generation,
+    outcome: "delivered",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_reminder_race_initial"
+  });
+
+  // Request A performs the scheduler's eligibility read — no
+  // unresolved send — and then suspends at the barrier, exactly
+  // where sendInvoiceReminderById waits between its timing read and
+  // its occurrence count while a twin request completes.
+  const staleTiming = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+    ownerId,
+    invoiceIds: [invoiceId]
+  });
+  assert.equal(staleTiming[invoiceId]?.hasUnresolvedSend, false);
+  let releaseBarrier!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    releaseBarrier = resolve;
+  });
+  const requestA = (async () => {
+    await barrier;
+    // A resumes and counts AFTER B completed: it sees B's claim, so
+    // it reserves the NEXT occurrence. Deciding eligibility from A's
+    // stale timing read would mint reminder_occurrence_2 here and
+    // dispatch a second reminder while B's acceptance is still
+    // unresolved; the reservation mutation itself must refuse.
+    const priorReminderClaims = await deliveryStore.countInvoiceDeliveryClaims({
+      ownerId,
+      invoiceId,
+      basePurpose: "reminder"
+    });
+    assert.equal(priorReminderClaims, 1);
+    return deliveryStore.reserveInvoiceDeliveryClaim({
+      ownerId,
+      invoiceId,
+      recipientEmail,
+      basePurpose: "reminder",
+      purpose: `reminder_occurrence_${priorReminderClaims + 1}`,
+      authorizedRevision: revision
+    });
+  })();
+
+  // Request B — the identical reminder — runs to completion while A
+  // is suspended: it reserves occurrence 1 and the provider accepts
+  // it. ACCEPTED with no final resolution recorded is unresolved
+  // under §D, so it must suppress any further reminder dispatch.
+  const reminderB = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "reminder",
+    purpose: "reminder_occurrence_1",
+    authorizedRevision: revision
+  });
+  if (reminderB.outcome !== "reserved") throw new Error("expected reminder reservation");
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: reminderB.claim.claimId,
+    generation: reminderB.claim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: reminderB.claim.claimId,
+    generation: reminderB.claim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_reminder_race_b"
+  });
+  const liveTiming = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+    ownerId,
+    invoiceIds: [invoiceId]
+  });
+  assert.equal(liveTiming[invoiceId]?.hasUnresolvedSend, true);
+
+  releaseBarrier();
+  const resumed = await requestA;
+  // The mutation revalidated eligibility from its own snapshot: A is
+  // blocked on B's unresolved acceptance and mints nothing, so no
+  // second dispatch can follow from A's request.
+  assert.equal(resumed.outcome, "blocked");
+  if (resumed.outcome === "blocked") {
+    assert.equal(resumed.reason, "unresolved_send");
+    assert.equal(resumed.claim.claimId, reminderB.claim.claimId);
+  }
+  const parsed = JSON.parse(await fs.readFile(deliveryStoreFile, "utf8")) as {
+    claims?: Array<Record<string, unknown>>;
+  };
+  const reminderClaims = (parsed.claims ?? []).filter(
+    (entry) => entry?.invoiceId === invoiceId && entry?.basePurpose === "reminder"
+  );
+  assert.equal(reminderClaims.length, 1);
+  assert.equal(reminderClaims[0]?.purpose, "reminder_occurrence_1");
+
+  // The block is the §D gate, not a wedge: once the owner releases
+  // B's claim (the recorded substitute for the missing resolution),
+  // the same reservation mints occurrence 2.
+  await deliveryStore.releaseInvoiceDeliveryClaim({
+    ownerId,
+    claimId: reminderB.claim.claimId,
+    actor: ownerId,
+    reason: "Provider console confirms the reminder landed; ending the resolution wait."
+  });
+  const afterRelease = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "reminder",
+    purpose: "reminder_occurrence_2",
+    authorizedRevision: revision
+  });
+  assert.equal(afterRelease.outcome, "reserved");
+});
+
+test("an unresolved ACCEPTED send blocks a reminder reservation at the store seam; DELIVERED restores it", async () => {
+  const ownerId = "slice0-q2-reminder-gate";
+  const invoice = await createInvoice(ownerId, 340);
+  const invoiceId = invoice.invoiceId;
+  const revision = invoice.invoiceData.finishedInvoice.monetaryRevision;
+  const recipientEmail = "reminder-gate@example.com";
+
+  // The initial send is ACCEPTED with no final resolution: the
+  // timing projection suppresses reminders, and the reservation
+  // mutation must reach the same verdict on its own — a caller whose
+  // timing read raced the acceptance cannot mint a reminder claim.
+  const initial = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: revision
+  });
+  if (initial.outcome !== "reserved") throw new Error("expected initial reservation");
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: initial.claim.claimId,
+    generation: initial.claim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: initial.claim.claimId,
+    generation: initial.claim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_reminder_gate_initial"
+  });
+  const blocked = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "reminder",
+    purpose: "reminder_occurrence_1",
+    authorizedRevision: revision
+  });
+  assert.equal(blocked.outcome, "blocked");
+  if (blocked.outcome === "blocked") {
+    assert.equal(blocked.reason, "unresolved_send");
+    assert.equal(blocked.claim.claimId, initial.claim.claimId);
+  }
+
+  // Resolution restores eligibility: the DELIVERED fold ends the
+  // unresolved state and the same reservation now mints.
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: initial.claim.claimId,
+    generation: initial.claim.generation,
+    outcome: "delivered",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_reminder_gate_initial"
+  });
+  const allowed = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "reminder",
+    purpose: "reminder_occurrence_1",
+    authorizedRevision: revision
+  });
+  assert.equal(allowed.outcome, "reserved");
+
+  // A resolved reminder never trips the gate either: once that
+  // reminder is itself DELIVERED, the next occurrence mints freely.
+  if (allowed.outcome !== "reserved") throw new Error("expected reminder reservation");
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: allowed.claim.claimId,
+    generation: allowed.claim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: allowed.claim.claimId,
+    generation: allowed.claim.generation,
+    outcome: "delivered",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_reminder_gate_reminder"
+  });
+  const nextOccurrence = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail,
+    basePurpose: "reminder",
+    purpose: "reminder_occurrence_2",
+    authorizedRevision: revision
+  });
+  assert.equal(nextOccurrence.outcome, "reserved");
+});
+
+// ---------------------------------------------------------------------------
 // Audit item 2: delete -> restore must not resurrect a settled balance
 // ---------------------------------------------------------------------------
 

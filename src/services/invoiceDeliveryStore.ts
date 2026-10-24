@@ -345,6 +345,23 @@ const DEFAULT_CLAIM_LEASE_MS = 5 * 60 * 1000;
  * under the same cross-key exclusion as any other creation. Deciding
  * from a read taken before the mutation let two overlapping bare
  * retries both observe "no counted recovery" and mint a duplicate.
+ *
+ * A reminder reservation (basePurpose "reminder") likewise has its
+ * §D eligibility revalidated inside this mutation: while any claim
+ * for the invoice is ACCEPTED with no final resolution recorded, no
+ * new reminder claim is created. The scheduler reads that condition
+ * (the timing projection's hasUnresolvedSend) before it counts prior
+ * occurrences and reserves, but both reads sit outside the mutation:
+ * a request suspended between them lets a twin complete an accepted
+ * reminder, after which the resumed request counts the twin's claim
+ * and mints the NEXT occurrence — a second dispatch straight past
+ * the unresolved-send suppression. The in-flight and UNKNOWN states
+ * were already excluded by the cross-key checks above; the
+ * accepted-unresolved state is the one this check adds. Replays of
+ * an existing claim key never reach it (a replay dispatches
+ * nothing), and the reclaim path cannot bypass it: only the single
+ * active claim can ever become accepted, so no accepted-unresolved
+ * claim can come into existence while a reservation sits reclaimable.
  */
 export async function reserveInvoiceDeliveryClaim(input: {
   ownerId: string;
@@ -565,6 +582,26 @@ export async function reserveInvoiceDeliveryClaim(input: {
     if (unresolved) {
       result = { outcome: "blocked", reason: "unresolved_send", claim: unresolved };
       return;
+    }
+    if (input.basePurpose === "reminder") {
+      // §D (conformance Q2): an ACCEPTED send with no recorded final
+      // resolution blocks automatic reminders until the resolution
+      // arrives or the owner releases the claim. That eligibility is
+      // revalidated HERE, from this mutation's own snapshot — the
+      // timing read the scheduler took before counting occurrences
+      // can be stale by the time this reservation runs (see the
+      // function doc comment). The returned claim is the one the
+      // owner release path addresses.
+      const awaitingResolution = store.claims.find(
+        (claim) =>
+          claim.ownerId === input.ownerId &&
+          claim.invoiceId === input.invoiceId &&
+          isUnresolvedAcceptedClaim(claim)
+      );
+      if (awaitingResolution) {
+        result = { outcome: "blocked", reason: "unresolved_send", claim: { ...awaitingResolution } };
+        return;
+      }
     }
     const claim = createClaim(input.purpose, input.basePurpose, input.resendActionId);
     store.claims.push(claim);
