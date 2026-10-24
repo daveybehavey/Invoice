@@ -9464,6 +9464,147 @@ test("launcher 'Last sent' wording is gated on verified acceptance in the non-ov
   });
 });
 
+test("verified send labels stay bound to the accepted recipient when later activity names another (Codex P2)", async () => {
+  // Recheck 4, disclosed Codex P2 ruled fix-before-merge: the
+  // summary's verified/sentAt are invoice-global while recipientEmail
+  // is the LATEST activity's. A verified send to A followed by
+  // recorded activity addressed to B must not present "Sent to B" on
+  // A's proof — on the library card, in the follow-up plan, or in
+  // the launcher. The accepted-recipient control (existing Q5 tests)
+  // still displays; here both recipients are on one invoice.
+  const acceptedRecipient = "alice.p2@example.com";
+  const recordedRecipient = "bob.p2@example.com";
+  const staleUpdatedAt = new Date(Date.now() - 30 * 86400000).toISOString();
+
+  async function saveP2Invoice(
+    context: BrowserContext,
+    ownerId: string,
+    invoiceNumber: string
+  ): Promise<string> {
+    const response = await context.request.post(`${baseUrl}/api/invoices/save`, {
+      headers: { "x-invoice-user-id": ownerId },
+      data: {
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: { customerName: "P2 Binding Client", workSessions: [], materials: [] },
+          finishedInvoice: {
+            invoiceNumber,
+            issueDate: "2026-03-10",
+            dueDate: futureDueDateIso(60),
+            customerName: "P2 Binding Client",
+            currency: "USD",
+            lineItems: [
+              {
+                id: `line-${invoiceNumber}`,
+                type: "labor",
+                description: "P2 binding baseline",
+                quantity: 1,
+                unitPrice: 100,
+                amount: 100
+              }
+            ],
+            subtotal: 100,
+            total: 100,
+            balanceDue: 100
+          }
+        }
+      }
+    });
+    assert.equal(response.status(), 200);
+    return String((await response.json()).invoice?.invoiceId ?? "");
+  }
+
+  async function prepareDivergentDelivery(
+    context: BrowserContext,
+    ownerId: string,
+    invoiceId: string
+  ): Promise<void> {
+    // Verified provider send to A.
+    const restoreProvider = useVerifiedProviderSend();
+    try {
+      const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+        headers: { "x-invoice-user-id": ownerId },
+        data: { recipientEmail: acceptedRecipient }
+      });
+      assert.equal(sendResponse.status(), 200);
+    } finally {
+      restoreProvider();
+    }
+    // Model the completed historical send (the DELIVERED fold a real
+    // send of that age would carry), then record later activity
+    // addressed to B with no provider configured: a record_only
+    // resend, which makes B the summary's latest recipient while A's
+    // acceptance remains the only verified evidence.
+    await foldStoredDeliveryClaimDelivered(invoiceId);
+    const resendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+      headers: { "x-invoice-user-id": ownerId },
+      data: {
+        recipientEmail: recordedRecipient,
+        intent: "resend",
+        resendActionId: randomUUID()
+      }
+    });
+    assert.equal(resendResponse.status(), 200);
+    await mutateStoredInvoice(invoiceId, { status: "sent", updatedAt: staleUpdatedAt });
+  }
+
+  // Library surfaces: the card and the follow-up plan.
+  {
+    const ownerId = "ui-p2-library-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveP2Invoice(context, ownerId, "INV-P2-CARD");
+      assert.ok(invoiceId);
+      await prepareDivergentDelivery(context, ownerId, invoiceId);
+
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+
+      const card = getLibraryInvoiceCard(page, "INV-P2-CARD");
+      await card.getByText(`Sent to ${acceptedRecipient}`).waitFor({ state: "visible" });
+      const cardText = await card.innerText();
+      assert.ok(!cardText.includes(`Sent to ${recordedRecipient}`));
+      assert.match(cardText, / - Sent /);
+
+      const plan = page.getByTestId("library-follow-up-plan");
+      await plan.waitFor({ state: "visible" });
+      const planText = await plan.innerText();
+      assert.ok(planText.includes(`Sent to ${acceptedRecipient}`));
+      assert.ok(!planText.includes(`Sent to ${recordedRecipient}`));
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Launcher surface: the non-overdue stale branch's "Last sent".
+  {
+    const ownerId = "ui-p2-launcher-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveP2Invoice(context, ownerId, "INV-P2-LAUNCH");
+      assert.ok(invoiceId);
+      await prepareDivergentDelivery(context, ownerId, invoiceId);
+
+      await prepareReturningGuest(context);
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+      const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+      await queue.getByText(`Last sent to ${acceptedRecipient}.`).waitFor({ state: "visible" });
+      const queueText = await queue.innerText();
+      assert.ok(!queueText.includes(`Last sent to ${recordedRecipient}.`));
+    } finally {
+      await context.close();
+    }
+  }
+});
+
 test("invoice library card distinguishes tracked but unopened delivery", async () => {
   const ownerId = "ui-send-unopened-owner";
   const context = await browser.newContext();

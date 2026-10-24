@@ -657,8 +657,13 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
       // tracking entry) is reported as recorded/prepared, never as a
       // send: lastActivityAt is activity, not send evidence.
       const deliveryVerified = delivery?.verified === true && Boolean(delivery?.sentAt);
+      // Codex P2 (recheck 4): "Last sent" names the recipient the
+      // verified evidence belongs to (sentToEmail) — the latest
+      // activity's recipient (reminderRecipient, kept for reminder
+      // addressing) may be a different person with only recorded
+      // activity, and must not be presented as the verified send.
       const lastActivityLabel = deliveryVerified
-        ? `Last sent to ${reminderRecipient}.`
+        ? `Last sent to ${delivery?.sentToEmail ?? reminderRecipient}.`
         : delivery?.mode === "provider"
           ? `Delivery recorded for ${reminderRecipient} (unverified).`
           : `Prepared for ${reminderRecipient} (tracking only).`;

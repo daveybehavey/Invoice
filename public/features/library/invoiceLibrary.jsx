@@ -2201,11 +2201,15 @@
         // VERIFIED acceptance evidence, not just a recorded
         // recipient. Unverified activity (record_only recordings,
         // legacy-only provider history) is labelled as prepared.
+        // Codex P2 (recheck 4): the name in the label is the
+        // recipient the verified evidence belongs to (sentToEmail),
+        // never the latest activity's recipient on someone else's
+        // proof.
         deliveryValue: oldestSentRecipient
           ? oldestSentReminder?.delivery?.openedAt
             ? `Opened by ${oldestSentRecipient}`
             : oldestSentReminder?.delivery?.verified === true
-              ? `Sent to ${oldestSentRecipient}`
+              ? `Sent to ${oldestSentReminder?.delivery?.sentToEmail ?? oldestSentRecipient}`
               : `Prepared for ${oldestSentRecipient} (tracking only)`
           : "No tracked recipient yet",
         nextStepValue: canQuickSendReminderOldest
@@ -3812,6 +3816,18 @@
                 const deliveryOpened = delivery?.status === "opened";
                 const providerDelivery = deliveryVerified;
                 const deliveryRecipient = typeof delivery?.recipientEmail === "string" ? delivery.recipientEmail : "";
+                // Codex P2 (recheck 4, ruled fix-before-merge): the
+                // verified evidence (verified/sentAt) belongs to the
+                // recipient of the accepted operation — sentToEmail —
+                // which diverges from recipientEmail (the LATEST
+                // activity's recipient) whenever later recorded
+                // activity names someone else. Successful-send wording
+                // names the evidence's recipient; recipientEmail stays
+                // what addressing (resend) follows.
+                const deliverySentRecipient =
+                  typeof delivery?.sentToEmail === "string" && delivery.sentToEmail
+                    ? delivery.sentToEmail
+                    : deliveryRecipient;
                 const canInstantResend = Boolean(hasDelivery && isValidEmail(deliveryRecipient));
                 const paymentLinkReady =
                   typeof invoice?.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0;
@@ -4145,7 +4161,7 @@
                           {hasDelivery ? (
                           <p className="mt-1 text-xs text-slate-600">
                               {providerDelivery
-                                ? `Sent to ${delivery.recipientEmail}`
+                                ? `Sent to ${deliverySentRecipient}`
                                 : delivery?.mode === "provider"
                                   ? `Delivery recorded for ${delivery.recipientEmail} (unverified)`
                                   : `Prepared for ${delivery.recipientEmail} (tracking only)`}
