@@ -171,6 +171,17 @@ const DeliveryClaimSchema = z.object({
    * fold itself authorizes no immediate retry; a later deliberate
    * owner action decides what happens next. */
   finalFailureAt: z.string().datetime().optional(),
+  /** Q2 (recheck 4): the instant contradictory TERMINAL outcomes were
+   * both recorded for this claim — a final FAILED and a DELIVERED, in
+   * either order, on top of the acceptance. Neither terminal outcome
+   * may silently erase the other: the claim's outcomeKind, acceptedAt,
+   * and send count stay exactly as the acceptance established them,
+   * and the claim is represented as requiring reconciliation — it
+   * blocks automatic reminder reservations (summary blockingClaim,
+   * reason "awaiting_resolution") until the owner resolves it by
+   * releasing the claim. Set once, when the second contradictory
+   * terminal outcome arrives. */
+  terminalConflictAt: z.string().datetime().optional(),
   outcomeEventId: z.string().min(1).optional(),
   releaseActor: z.string().min(1).optional(),
   releaseReason: z.string().min(1).optional(),
@@ -224,6 +235,18 @@ export const DeliverySummarySchema = z.object({
    * exists (legacy aggregates report through `legacy` instead). */
   sentAt: z.string().datetime().nullable(),
   /**
+   * The recipient of the verified acceptance that supplies `sentAt` —
+   * the recipient the successful-send evidence actually belongs to
+   * (Codex P2, ruled fix-before-merge at recheck 4). Distinct from
+   * `recipientEmail`, which is the LATEST activity's recipient and is
+   * what addressing (resend/reminder) follows: the two diverge
+   * whenever later recorded activity names another recipient, and a
+   * surface that pairs `verified`/`sentAt` with `recipientEmail` can
+   * present one recipient's proof as another's send. Successful-send
+   * wording must name THIS recipient; null exactly when `sentAt` is.
+   */
+  sentToEmail: z.string().email().nullable().default(null),
+  /**
    * Latest delivery activity of any kind (verified send, recorded
    * send, claim outcome, or the legacy aggregate's timestamp).
    * Presentation/activity only — it is NOT send evidence and must
@@ -247,10 +270,13 @@ export const DeliverySummarySchema = z.object({
    * The claim currently blocking sends/reminders for this invoice, if
    * any: an UNKNOWN outcome awaiting owner reconciliation or release
    * (reason "unresolved_send"), an ACCEPTED send whose final
-   * delivery/failure resolution has not been recorded (reason
-   * "awaiting_resolution" — it blocks AUTOMATIC reminders under §D
-   * until the resolution arrives or the owner releases it), or a send
-   * still in flight (reason "send_in_progress"). claimId is the
+   * delivery/failure resolution has not been recorded — or whose
+   * recorded terminal outcomes contradict each other (a final FAILED
+   * and a DELIVERED both on record; the claim carries
+   * terminalConflictAt) — (reason "awaiting_resolution" — both block
+   * AUTOMATIC reminders under §D until the resolution arrives or the
+   * owner releases the claim), or a send still in flight (reason
+   * "send_in_progress"). claimId is the
    * identifier the owner release endpoint is addressed by; surfacing
    * it here — and in the blocked-send 409 response — is what makes the
    * release mechanism discoverable from owner-facing surfaces.
@@ -604,7 +630,7 @@ export async function reserveInvoiceDeliveryClaim(input: {
         (claim) =>
           claim.ownerId === input.ownerId &&
           claim.invoiceId === input.invoiceId &&
-          isUnresolvedAcceptedClaim(claim)
+          isBlockingAcceptedClaim(claim)
       );
       if (awaitingResolution) {
         result = { outcome: "blocked", reason: "unresolved_send", claim: { ...awaitingResolution } };
@@ -717,7 +743,36 @@ export async function recordInvoiceDeliveryClaimOutcome(input: {
       // updatedAt tracks latest activity only — acceptedAt, the send
       // time the projections read, was fixed at ACCEPTED and does not
       // move with this fold (§D).
-      if (existing.outcomeKind === "accepted" && input.outcome === "delivered") {
+      //
+      // Q2 (recheck 4): contradictory TERMINAL outcomes — a final
+      // FAILED and a DELIVERED both recorded for the same claim, in
+      // either order — never fold into each other. The second terminal
+      // outcome does not overwrite the first, the acceptance evidence
+      // (outcomeKind, acceptedAt, the send count) is preserved
+      // untouched, and the claim is marked terminalConflictAt: it now
+      // requires reconciliation and blocks automatic reminder
+      // reservations until the owner resolves it (release). A final
+      // failure already recorded (finalFailureAt, or a primary FAILED
+      // outcome) is what a late DELIVERED contradicts; a recorded
+      // DELIVERED is what a late FAILED contradicts.
+      const hasFinalFailure =
+        Boolean(existing.finalFailureAt) || existing.outcomeKind === "failed";
+      const hasDelivered = existing.outcomeKind === "delivered";
+      if (
+        !existing.terminalConflictAt &&
+        ((input.outcome === "delivered" && hasFinalFailure) ||
+          (input.outcome === "failed" && hasDelivered))
+      ) {
+        if (input.outcome === "failed" && !existing.finalFailureAt) {
+          existing.finalFailureAt = occurredAt;
+        }
+        existing.terminalConflictAt = occurredAt;
+        existing.updatedAt = occurredAt;
+      } else if (
+        existing.outcomeKind === "accepted" &&
+        input.outcome === "delivered" &&
+        !existing.finalFailureAt
+      ) {
         existing.outcomeKind = "delivered";
         existing.updatedAt = occurredAt;
       }
@@ -858,11 +913,18 @@ export async function releaseInvoiceDeliveryClaim(input: {
       existing.status === "outcome_recorded" &&
       existing.outcomeKind === "accepted" &&
       !existing.finalFailureAt;
+    // Q2 (recheck 4): releasing a terminal-conflicted claim is the
+    // owner action that resolves the contradiction — the recorded
+    // outcomes and acceptance evidence stand as evidence; the release
+    // records the owner's decision to proceed despite them.
+    const terminalConflict =
+      existing.status === "outcome_recorded" && Boolean(existing.terminalConflictAt);
     if (
       existing.status !== "blocked_unknown" &&
       !stuckDispatching &&
       !abandonedReservation &&
-      !unresolvedAccepted
+      !unresolvedAccepted &&
+      !terminalConflict
     ) {
       throw new Error("Only an unresolved delivery claim can be released.");
     }
@@ -1396,6 +1458,23 @@ function isUnresolvedAcceptedClaim(claim: DeliveryClaim): boolean {
 }
 
 /**
+ * Q2 (recheck 4): a claim carrying contradictory terminal outcomes
+ * (terminalConflictAt) requires reconciliation — it blocks automatic
+ * reminders and reminder reservations exactly as an unresolved
+ * acceptance does, until the owner resolves it by releasing the
+ * claim. The acceptance evidence on the claim is NOT unresolved —
+ * it stands — but the contradiction about the send's final state is,
+ * and §D gives automatic follow-up no licence to proceed past it.
+ */
+function hasTerminalConflict(claim: DeliveryClaim): boolean {
+  return claim.status === "outcome_recorded" && Boolean(claim.terminalConflictAt);
+}
+
+function isBlockingAcceptedClaim(claim: DeliveryClaim): boolean {
+  return isUnresolvedAcceptedClaim(claim) || hasTerminalConflict(claim);
+}
+
+/**
  * The claim currently blocking sends/reminders for this invoice,
  * mirroring the blocking decisions in reserveInvoiceDeliveryClaim
  * (§C) and the reminder projection (§D): a claim whose outcome is
@@ -1415,7 +1494,7 @@ function projectBlockingClaim(
   if (unknown) {
     return { claimId: unknown.claimId, reason: "unresolved_send" };
   }
-  const awaitingResolution = byUpdatedDesc.find(isUnresolvedAcceptedClaim);
+  const awaitingResolution = byUpdatedDesc.find(isBlockingAcceptedClaim);
   if (awaitingResolution) {
     return { claimId: awaitingResolution.claimId, reason: "awaiting_resolution" };
   }
@@ -1444,10 +1523,12 @@ function projectSummary(store: DeliveryStore, ownerId: string, invoiceId: string
   const acceptedClaimIds = new Set(acceptedClaims.map((claim) => claim.claimId));
   const verifiedAttemptIds = new Set<string>(acceptedClaims.map((claim) => claim.attemptId));
   let lastProviderAcceptedAt: string | null = null;
+  let lastProviderAcceptedRecipient: string | null = null;
   for (const claim of acceptedClaims) {
     const acceptedAt = claimAcceptanceAt(claim, events);
     if (!lastProviderAcceptedAt || Date.parse(acceptedAt) > Date.parse(lastProviderAcceptedAt)) {
       lastProviderAcceptedAt = acceptedAt;
+      lastProviderAcceptedRecipient = claim.recipientEmail;
     }
   }
   let providerRecordedCount = 0;
@@ -1458,6 +1539,7 @@ function projectSummary(store: DeliveryStore, ownerId: string, invoiceId: string
       verifiedAttemptIds.add(event.attemptId);
       if (!lastProviderAcceptedAt || Date.parse(event.occurredAt) > Date.parse(lastProviderAcceptedAt)) {
         lastProviderAcceptedAt = event.occurredAt;
+        lastProviderAcceptedRecipient = event.recipientEmail ?? lastProviderAcceptedRecipient;
       }
     }
     if (event.kind === "send_recorded" && event.mode === "record_only") {
@@ -1525,6 +1607,7 @@ function projectSummary(store: DeliveryStore, ownerId: string, invoiceId: string
   return DeliverySummarySchema.parse({
     recipientEmail,
     sentAt: lastProviderAcceptedAt,
+    sentToEmail: lastProviderAcceptedAt ? lastProviderAcceptedRecipient : null,
     lastActivityAt,
     openedAt: lastVerifiedOpenAt ?? undefined,
     mode,
@@ -1585,15 +1668,17 @@ function projectReminderTiming(
     }
   }
   // §D: automatic reminders are blocked while any send is unresolved —
-  // in flight, UNKNOWN, or ACCEPTED with no final delivery/failure
-  // resolution recorded. The acceptance still establishes timing (see
-  // lastAcceptedClaimAt above); blocking is additional, not instead.
+  // in flight, UNKNOWN, ACCEPTED with no final delivery/failure
+  // resolution recorded, or carrying contradictory terminal outcomes
+  // awaiting owner reconciliation (Q2 recheck 4). The acceptance still
+  // establishes timing (see lastAcceptedClaimAt above); blocking is
+  // additional, not instead.
   const hasUnresolvedSend = claims.some(
     (claim) =>
       claim.status === "reserved" ||
       claim.status === "dispatching" ||
       claim.status === "blocked_unknown" ||
-      isUnresolvedAcceptedClaim(claim)
+      isBlockingAcceptedClaim(claim)
   );
   return {
     recipientEmail: latestRecipient(store, ownerId, invoiceId),

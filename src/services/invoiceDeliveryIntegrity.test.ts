@@ -1059,6 +1059,186 @@ test("a final FAILED outcome resolves an ACCEPTED claim: block released, accepta
   assert.equal(reminder.recipientEmail, "q2-failed@example.com");
 });
 
+test("contradictory terminal outcomes require reconciliation: ACCEPTED then FAILED then DELIVERED blocks automatic reminders until owner release (Q2 recheck 4)", async () => {
+  const ownerId = "slice0-q2-terminal-conflict";
+  const invoice = await createInvoice(ownerId, 190);
+  const invoiceId = invoice.invoiceId;
+  const revision = invoice.invoiceData.finishedInvoice.monetaryRevision;
+  const reservation = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "q2-conflict@example.com",
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: revision
+  });
+  if (reservation.outcome !== "reserved") throw new Error("expected reservation");
+  const claim = reservation.claim;
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    trackingToken: randomUUID()
+  });
+  const acceptedAt = "2026-03-12T12:00:00.000Z";
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_q2_conflict",
+    occurredAt: acceptedAt
+  });
+  await repository.completeInvoiceDelivery({ invoiceId, ownerId, authorizedRevision: revision });
+
+  // Ordinary control state (the test above, in miniature): the final
+  // FAILED alone resolves the claim — no conflict, no block.
+  const failedAt = "2026-03-14T09:30:00.000Z";
+  const folded = await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome: "failed",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_q2_conflict",
+    providerEventId: "evt_q2_conflict_bounce",
+    occurredAt: failedAt
+  });
+  assert.equal(folded.claim.finalFailureAt, failedAt);
+  assert.equal(folded.claim.terminalConflictAt, undefined);
+  const resolvedSummary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(resolvedSummary?.blockingClaim, null);
+
+  // The contradiction: a DELIVERED outcome for the same claim after
+  // the final FAILED. Both terminal outcomes now stand on record;
+  // neither may erase the other, and the acceptance evidence — kind,
+  // time, count — must not move.
+  const deliveredAt = "2026-03-15T10:00:00.000Z";
+  const conflicted = await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome: "delivered",
+    mode: "provider",
+    provider: "resend",
+    providerEventId: "evt_q2_conflict_delivered",
+    occurredAt: deliveredAt
+  });
+  assert.equal(conflicted.claim.outcomeKind, "accepted");
+  assert.equal(conflicted.claim.acceptedAt, acceptedAt);
+  assert.equal(conflicted.claim.finalFailureAt, failedAt);
+  assert.equal(conflicted.claim.terminalConflictAt, deliveredAt);
+  assert.equal(conflicted.claim.status, "outcome_recorded");
+
+  const summary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(summary?.sendCount, 1);
+  assert.equal(summary?.sentAt, acceptedAt);
+  assert.deepEqual(summary?.blockingClaim, {
+    claimId: claim.claimId,
+    reason: "awaiting_resolution"
+  });
+  const timing = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+    ownerId,
+    invoiceIds: [invoiceId]
+  });
+  assert.equal(timing[invoiceId]?.hasUnresolvedSend, true);
+  assert.equal(timing[invoiceId]?.providerSendCount, 1);
+  await assert.rejects(
+    scheduler.sendInvoiceReminderById({ ownerId, repository, baseUrl: BASE_URL, invoiceId }),
+    /unresolved delivery attempt/
+  );
+
+  // Owner action resolves the reconciliation block; the recorded
+  // evidence itself is untouched by the release.
+  const released = await deliveryStore.releaseInvoiceDeliveryClaim({
+    ownerId,
+    claimId: claim.claimId,
+    actor: ownerId,
+    reason: "Provider console shows the message was delivered; bounce was a stale relay report."
+  });
+  assert.equal(released.status, "released");
+  assert.equal(released.terminalConflictAt, deliveredAt);
+  const afterRelease = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(afterRelease?.blockingClaim, null);
+  assert.equal(afterRelease?.sendCount, 1);
+  assert.equal(afterRelease?.sentAt, acceptedAt);
+  const timingAfter = await deliveryStore.getInvoiceReminderTimingByInvoiceIds({
+    ownerId,
+    invoiceIds: [invoiceId]
+  });
+  assert.equal(timingAfter[invoiceId]?.hasUnresolvedSend, false);
+});
+
+test("contradictory terminal outcomes in the other order also require reconciliation: DELIVERED then FAILED (Q2 recheck 4)", async () => {
+  const ownerId = "slice0-q2-terminal-conflict-reverse";
+  const invoiceId = randomUUID();
+  const reservation = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "q2-conflict-reverse@example.com",
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: 0
+  });
+  if (reservation.outcome !== "reserved") throw new Error("expected reservation");
+  const claim = reservation.claim;
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    trackingToken: randomUUID()
+  });
+  const acceptedAt = "2026-03-12T12:00:00.000Z";
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_q2_conflict_reverse",
+    occurredAt: acceptedAt
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome: "delivered",
+    mode: "provider",
+    provider: "resend",
+    providerEventId: "evt_q2_reverse_delivered",
+    occurredAt: "2026-03-13T08:00:00.000Z"
+  });
+  const failedAt = "2026-03-14T09:30:00.000Z";
+  const conflicted = await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome: "failed",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_q2_conflict_reverse",
+    providerEventId: "evt_q2_reverse_bounce",
+    occurredAt: failedAt
+  });
+  // The DELIVERED stands (no regression), the FAILED is recorded as
+  // evidence, and the pair is represented as a terminal conflict.
+  assert.equal(conflicted.claim.outcomeKind, "delivered");
+  assert.equal(conflicted.claim.acceptedAt, acceptedAt);
+  assert.equal(conflicted.claim.finalFailureAt, failedAt);
+  assert.equal(conflicted.claim.terminalConflictAt, failedAt);
+  const summary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(summary?.sendCount, 1);
+  assert.equal(summary?.sentAt, acceptedAt);
+  assert.deepEqual(summary?.blockingClaim, {
+    claimId: claim.claimId,
+    reason: "awaiting_resolution"
+  });
+});
+
 // ---------------------------------------------------------------------------
 // §D eligibility revalidated inside the reservation mutation
 // (re-gate round 3: the scheduler's timing read is not authorization)
