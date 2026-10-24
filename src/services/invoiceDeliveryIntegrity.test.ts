@@ -2492,3 +2492,398 @@ test("invoice and reminder emails show balance due after partial payment, not th
     delete process.env.INVOICE_FROM_EMAIL;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Recheck 5: the Q2 conflict block is enforced where dispatch is
+// authorized, not only where reservations are created; and the P2
+// evidence pair (sentAt, sentToEmail) never inherits a recipient.
+// ---------------------------------------------------------------------------
+
+test("a terminal conflict recorded after a reminder reservation blocks that reminder at dispatch authorization (Q2 recheck 5)", async () => {
+  const ownerId = "slice0-q2-dispatch-gate";
+  const invoice = await createInvoice(ownerId, 210);
+  const invoiceId = invoice.invoiceId;
+  const revision = invoice.invoiceData.finishedInvoice.monetaryRevision;
+  const initial = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "q2-dispatch@example.com",
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: revision
+  });
+  if (initial.outcome !== "reserved") throw new Error("expected reservation");
+  const initialClaim = initial.claim;
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: initialClaim.claimId,
+    generation: initialClaim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: initialClaim.claimId,
+    generation: initialClaim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_q2_dispatch",
+    occurredAt: "2026-03-12T12:00:00.000Z"
+  });
+  await repository.completeInvoiceDelivery({ invoiceId, ownerId, authorizedRevision: revision });
+  // The final FAILED resolves the claim: no conflict, no block. This
+  // is the clean state in which the reminder below reserves.
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: initialClaim.claimId,
+    generation: initialClaim.generation,
+    outcome: "failed",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_q2_dispatch",
+    providerEventId: "evt_q2_dispatch_bounce",
+    occurredAt: "2026-03-14T09:30:00.000Z"
+  });
+  const cleanSummary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(cleanSummary?.blockingClaim, null);
+
+  // The reminder reserves while no conflict exists.
+  const reminder = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "q2-dispatch@example.com",
+    basePurpose: "reminder",
+    purpose: "reminder_occurrence_1",
+    authorizedRevision: revision,
+    leaseMs: 60_000
+  });
+  if (reminder.outcome !== "reserved") throw new Error("expected reminder reservation");
+  const reminderClaim = reminder.claim;
+
+  // A late DELIVERED for the older claim records the durable
+  // terminal conflict — the older claim becomes blocking WHILE the
+  // reminder reservation is outstanding.
+  const conflicted = await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: initialClaim.claimId,
+    generation: initialClaim.generation,
+    outcome: "delivered",
+    mode: "provider",
+    provider: "resend",
+    providerEventId: "evt_q2_dispatch_delivered",
+    occurredAt: "2026-03-15T10:00:00.000Z"
+  });
+  assert.equal(conflicted.claim.terminalConflictAt, "2026-03-15T10:00:00.000Z");
+  const blockedSummary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.deepEqual(blockedSummary?.blockingClaim, {
+    claimId: initialClaim.claimId,
+    reason: "awaiting_resolution"
+  });
+
+  // Dispatch authorization is serialized inside the store mutation:
+  // no provider dispatch may begin for the outstanding reminder
+  // while the recorded conflict remains unreleased.
+  await assert.rejects(
+    deliveryStore.beginInvoiceDeliveryDispatch({
+      ownerId,
+      claimId: reminderClaim.claimId,
+      generation: reminderClaim.generation,
+      trackingToken: randomUUID()
+    }),
+    /terminal conflict/
+  );
+  const stillReserved = await deliveryStore.getInvoiceDeliveryClaimById({
+    ownerId,
+    claimId: reminderClaim.claimId
+  });
+  assert.equal(stillReserved?.status, "reserved");
+
+  // Owner release of the conflicted claim is the resolution action:
+  // it clears the dispatch gate as well.
+  await deliveryStore.releaseInvoiceDeliveryClaim({
+    ownerId,
+    claimId: initialClaim.claimId,
+    actor: ownerId,
+    reason: "Provider console confirms delivery; the bounce was a stale relay report."
+  });
+  const dispatched = await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: reminderClaim.claimId,
+    generation: reminderClaim.generation,
+    trackingToken: randomUUID()
+  });
+  assert.equal(dispatched.status, "dispatching");
+});
+
+test("a terminal conflict recorded while a reminder reservation sits expired blocks the same-key reclaim (Q2 recheck 5)", async () => {
+  const ownerId = "slice0-q2-reclaim-gate";
+  const invoiceId = randomUUID();
+  const initial = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "q2-reclaim@example.com",
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: 0
+  });
+  if (initial.outcome !== "reserved") throw new Error("expected reservation");
+  const initialClaim = initial.claim;
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: initialClaim.claimId,
+    generation: initialClaim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: initialClaim.claimId,
+    generation: initialClaim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_q2_reclaim",
+    occurredAt: "2026-03-12T12:00:00.000Z"
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: initialClaim.claimId,
+    generation: initialClaim.generation,
+    outcome: "failed",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_q2_reclaim",
+    providerEventId: "evt_q2_reclaim_bounce",
+    occurredAt: "2026-03-14T09:30:00.000Z"
+  });
+
+  // The reminder reserves while clean, then its lease expires with
+  // dispatch never begun — the reservation sits reclaimable.
+  const reminder = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "q2-reclaim@example.com",
+    basePurpose: "reminder",
+    purpose: "reminder_occurrence_1",
+    authorizedRevision: 0,
+    leaseMs: 1
+  });
+  if (reminder.outcome !== "reserved") throw new Error("expected reminder reservation");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  // The late DELIVERED records the conflict while the reservation
+  // sits expired.
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: initialClaim.claimId,
+    generation: initialClaim.generation,
+    outcome: "delivered",
+    mode: "provider",
+    provider: "resend",
+    providerEventId: "evt_q2_reclaim_delivered",
+    occurredAt: "2026-03-15T10:00:00.000Z"
+  });
+
+  // The same-key reclaim returns BEFORE the reservation-creation
+  // eligibility check in the current code; it must not bypass the
+  // conflict block either.
+  const reclaim = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "q2-reclaim@example.com",
+    basePurpose: "reminder",
+    purpose: "reminder_occurrence_1",
+    authorizedRevision: 0,
+    leaseMs: 60_000
+  });
+  assert.equal(reclaim.outcome, "blocked");
+  if (reclaim.outcome === "blocked") {
+    assert.equal(reclaim.reason, "unresolved_send");
+    assert.equal(reclaim.claim.claimId, initialClaim.claimId);
+  }
+  const notReclaimed = await deliveryStore.getInvoiceDeliveryClaimById({
+    ownerId,
+    claimId: reminder.claim.claimId
+  });
+  assert.equal(notReclaimed?.status, "reserved");
+  assert.equal(notReclaimed?.generation, reminder.claim.generation);
+
+  // After the owner releases the conflicted claim, the same reclaim
+  // proceeds with a new fencing generation.
+  await deliveryStore.releaseInvoiceDeliveryClaim({
+    ownerId,
+    claimId: initialClaim.claimId,
+    actor: ownerId,
+    reason: "Provider console confirms delivery; the bounce was a stale relay report."
+  });
+  const reclaimed = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "q2-reclaim@example.com",
+    basePurpose: "reminder",
+    purpose: "reminder_occurrence_1",
+    authorizedRevision: 0,
+    leaseMs: 60_000
+  });
+  assert.equal(reclaimed.outcome, "reclaimed");
+  if (reclaimed.outcome === "reclaimed") {
+    assert.equal(reclaimed.claim.generation, reminder.claim.generation + 1);
+  }
+});
+
+test("a recipientless acceptance yields an unknown evidence recipient; later recorded activity changes addressing only (P2 recheck 5)", async () => {
+  const ownerId = "slice0-p2-recipientless";
+  const invoiceId = randomUUID();
+  // A provider/accepted send_recorded event may legitimately carry
+  // no recipientEmail (appendInvoiceDeliveryEvent permits it, and
+  // the conflicting_event_key case above counts this exact shape as
+  // a verified send). The acceptance is real evidence — of a send,
+  // at a time — but its recipient is UNKNOWN.
+  const acceptedAt = "2026-03-12T12:00:00.000Z";
+  await deliveryStore.appendInvoiceDeliveryEvent({
+    eventId: "evt-p2-recipientless-accepted",
+    ownerId,
+    invoiceId,
+    attemptId: "attempt-p2-recipientless",
+    kind: "send_recorded",
+    mode: "provider",
+    provider: "resend",
+    outcome: "accepted",
+    providerMessageId: "email_p2_recipientless",
+    occurredAt: acceptedAt
+  });
+  const summary = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(summary?.verified, true);
+  assert.equal(summary?.sendCount, 1);
+  assert.equal(summary?.sentAt, acceptedAt);
+  assert.equal(summary?.sentToEmail, null);
+
+  // Later record_only activity addressed to B: B becomes the current
+  // addressing recipient, and nothing else moves. The store already
+  // yields sentToEmail null here; the presentation surfaces must not
+  // fall back to B either (covered by the UI case).
+  const after = await deliveryStore.recordInvoiceDeliverySend({
+    ownerId,
+    invoiceId,
+    recipientEmail: "pair-b@example.com",
+    mode: "record_only",
+    provider: "none"
+  });
+  assert.equal(after.recipientEmail, "pair-b@example.com");
+  assert.equal(after.recordOnlyCount, 1);
+  assert.equal(after.sendCount, 1);
+  assert.equal(after.sentAt, acceptedAt);
+  assert.equal(after.sentToEmail, null);
+});
+
+test("a newer recipientless acceptance never inherits the previous recipient: sentAt and sentToEmail move as one evidence pair (P2 recheck 5)", async () => {
+  const ownerId = "slice0-p2-evidence-pair";
+  const invoiceId = randomUUID();
+  const acceptedAt = "2026-03-12T12:00:00.000Z";
+  const reservation = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "pair-a@example.com",
+    basePurpose: "initial_send",
+    purpose: "initial_send",
+    authorizedRevision: 0
+  });
+  if (reservation.outcome !== "reserved") throw new Error("expected reservation");
+  const claim = reservation.claim;
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_pair_a",
+    occurredAt: acceptedAt
+  });
+  const control = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(control?.sentAt, acceptedAt);
+  assert.equal(control?.sentToEmail, "pair-a@example.com");
+
+  // A newer claim-free acceptance with NO recipient on record. The
+  // acceptance time advances; the recipient must become UNKNOWN —
+  // pairing the new time with A's address would present A's name as
+  // the recipient of an operation that never named her.
+  const newerAt = "2026-03-16T09:00:00.000Z";
+  await deliveryStore.appendInvoiceDeliveryEvent({
+    eventId: "evt-p2-pair-recipientless",
+    ownerId,
+    invoiceId,
+    attemptId: "attempt-p2-pair-recipientless",
+    kind: "send_recorded",
+    mode: "provider",
+    provider: "resend",
+    outcome: "accepted",
+    providerMessageId: "email_pair_recipientless",
+    occurredAt: newerAt
+  });
+  const paired = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(paired?.sendCount, 2);
+  assert.equal(paired?.sentAt, newerAt);
+  assert.equal(paired?.sentToEmail, null);
+
+  // Mirror control: recipientless first, a named acceptance second —
+  // the pair lands on the named operation, complete.
+  const mirrorOwnerId = "slice0-p2-evidence-pair-mirror";
+  const mirrorInvoiceId = randomUUID();
+  await deliveryStore.appendInvoiceDeliveryEvent({
+    eventId: "evt-p2-mirror-recipientless",
+    ownerId: mirrorOwnerId,
+    invoiceId: mirrorInvoiceId,
+    attemptId: "attempt-p2-mirror-recipientless",
+    kind: "send_recorded",
+    mode: "provider",
+    provider: "resend",
+    outcome: "accepted",
+    providerMessageId: "email_mirror_recipientless",
+    occurredAt: acceptedAt
+  });
+  const mirrorFirst = await deliveryStore.getInvoiceDeliverySummary({
+    ownerId: mirrorOwnerId,
+    invoiceId: mirrorInvoiceId
+  });
+  assert.equal(mirrorFirst?.sentAt, acceptedAt);
+  assert.equal(mirrorFirst?.sentToEmail, null);
+  const mirrorReservation = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId: mirrorOwnerId,
+    invoiceId: mirrorInvoiceId,
+    recipientEmail: "pair-a@example.com",
+    basePurpose: "resend",
+    purpose: "resend_1",
+    authorizedRevision: 0
+  });
+  if (mirrorReservation.outcome !== "reserved") throw new Error("expected reservation");
+  const mirrorClaim = mirrorReservation.claim;
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId: mirrorOwnerId,
+    claimId: mirrorClaim.claimId,
+    generation: mirrorClaim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId: mirrorOwnerId,
+    claimId: mirrorClaim.claimId,
+    generation: mirrorClaim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_mirror_a",
+    occurredAt: newerAt
+  });
+  const mirror = await deliveryStore.getInvoiceDeliverySummary({
+    ownerId: mirrorOwnerId,
+    invoiceId: mirrorInvoiceId
+  });
+  assert.equal(mirror?.sendCount, 2);
+  assert.equal(mirror?.sentAt, newerAt);
+  assert.equal(mirror?.sentToEmail, "pair-a@example.com");
+});

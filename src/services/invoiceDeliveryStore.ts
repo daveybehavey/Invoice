@@ -243,7 +243,14 @@ export const DeliverySummarySchema = z.object({
    * whenever later recorded activity names another recipient, and a
    * surface that pairs `verified`/`sentAt` with `recipientEmail` can
    * present one recipient's proof as another's send. Successful-send
-   * wording must name THIS recipient; null exactly when `sentAt` is.
+   * wording must name THIS recipient. Null when `sentAt` is null —
+   * and also when the acceptance that supplies `sentAt` carries no
+   * recipient on record (a claim-free provider event may legitimately
+   * omit recipientEmail): the evidence recipient is then UNKNOWN,
+   * and surfaces must render recipient-neutral verified wording
+   * rather than fall back to any other operation's address (P2
+   * recheck 5). The pair (sentAt, sentToEmail) always describes the
+   * SAME acceptance.
    */
   sentToEmail: z.string().email().nullable().default(null),
   /**
@@ -393,9 +400,13 @@ const DEFAULT_CLAIM_LEASE_MS = 5 * 60 * 1000;
  * were already excluded by the cross-key checks above; the
  * accepted-unresolved state is the one this check adds. Replays of
  * an existing claim key never reach it (a replay dispatches
- * nothing), and the reclaim path cannot bypass it: only the single
- * active claim can ever become accepted, so no accepted-unresolved
- * claim can come into existence while a reservation sits reclaimable.
+ * nothing). Two paths sit outside this creation check and re-run it
+ * themselves (recheck 5): the same-key reclaim below — a claim can
+ * become blocking while a reservation sits reclaimable, because a
+ * late contradictory terminal outcome records terminalConflictAt
+ * on an ALREADY-RESOLVED claim — and beginInvoiceDeliveryDispatch,
+ * which re-evaluates the block at dispatch authorization for any
+ * reminder reservation that predates the block.
  */
 export async function reserveInvoiceDeliveryClaim(input: {
   ownerId: string;
@@ -500,6 +511,27 @@ export async function reserveInvoiceDeliveryClaim(input: {
     );
     if (sameKey) {
       if (sameKey.status === "reserved" && Date.parse(sameKey.leaseExpiresAt) <= now.getTime()) {
+        if (sameKey.basePurpose === "reminder") {
+          // §D (recheck 5): the reclaim returns BEFORE the creation
+          // path's reminder-eligibility check below, so it must run
+          // the same check itself. A claim can become blocking AFTER
+          // this reservation was created — a late contradictory
+          // terminal outcome records terminalConflictAt on an
+          // already-resolved claim — so an expired reminder
+          // reservation must not be reclaimed into a dispatch past a
+          // conflict that now stands on the invoice.
+          const awaitingResolution = store.claims.find(
+            (claim) =>
+              claim.ownerId === input.ownerId &&
+              claim.invoiceId === input.invoiceId &&
+              claim.claimId !== sameKey.claimId &&
+              isBlockingAcceptedClaim(claim)
+          );
+          if (awaitingResolution) {
+            result = { outcome: "blocked", reason: "unresolved_send", claim: { ...awaitingResolution } };
+            return;
+          }
+        }
         // The reservation expired before dispatch began (beginDispatch
         // is what moves a claim to "dispatching", and its outcome —
         // recorded or unknown — is what proves dispatch happened).
@@ -663,6 +695,30 @@ export async function beginInvoiceDeliveryDispatch(input: {
     const existing = findClaim(store, input.ownerId, input.claimId);
     if (existing.status !== "reserved" || existing.generation !== input.generation) {
       throw new Error("Delivery claim is no longer dispatchable (it was reclaimed or already resolved).");
+    }
+    if (existing.basePurpose === "reminder") {
+      // §D (recheck 5): reservation-creation eligibility is not
+      // dispatch authorization. A claim can become blocking AFTER
+      // this reminder reserved — a late contradictory terminal
+      // outcome records terminalConflictAt on an already-resolved
+      // claim (or a final resolution is still outstanding) — so the
+      // block is re-evaluated HERE, inside the serialized mutation
+      // that moves the claim to dispatching. No provider dispatch
+      // for the reminder may begin while a recorded block remains
+      // unreleased; the owner release of the blocking claim is the
+      // resolution action that clears this gate.
+      const blocking = store.claims.find(
+        (claim) =>
+          claim.ownerId === existing.ownerId &&
+          claim.invoiceId === existing.invoiceId &&
+          claim.claimId !== existing.claimId &&
+          isBlockingAcceptedClaim(claim)
+      );
+      if (blocking) {
+        throw new Error(
+          "Reminder dispatch is blocked: an accepted send for this invoice is unresolved or carries a terminal conflict awaiting owner resolution."
+        );
+      }
     }
     existing.status = "dispatching";
     existing.trackingToken = input.trackingToken;
@@ -1538,8 +1594,14 @@ function projectSummary(store: DeliveryStore, ownerId: string, invoiceId: string
       providerRecordedCount += 1;
       verifiedAttemptIds.add(event.attemptId);
       if (!lastProviderAcceptedAt || Date.parse(event.occurredAt) > Date.parse(lastProviderAcceptedAt)) {
+        // The acceptance time and its recipient are ONE evidence
+        // pair (P2 recheck 5): they move together or not at all. A
+        // claim-free acceptance may legitimately carry no
+        // recipientEmail — its recipient is then UNKNOWN (null),
+        // never the previous operation's recipient retained under a
+        // newer timestamp.
         lastProviderAcceptedAt = event.occurredAt;
-        lastProviderAcceptedRecipient = event.recipientEmail ?? lastProviderAcceptedRecipient;
+        lastProviderAcceptedRecipient = event.recipientEmail ?? null;
       }
     }
     if (event.kind === "send_recorded" && event.mode === "record_only") {
