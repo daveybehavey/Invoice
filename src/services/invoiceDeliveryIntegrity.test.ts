@@ -2887,3 +2887,146 @@ test("a newer recipientless acceptance never inherits the previous recipient: se
   assert.equal(mirror?.sentAt, newerAt);
   assert.equal(mirror?.sentToEmail, "pair-a@example.com");
 });
+
+test("the opened evidence names the recipient of the attempt that supplied the verified open, not the latest acceptance (P2 recheck 6)", async () => {
+  const ownerId = "slice0-p2-opened-by";
+  const invoiceId = randomUUID();
+
+  async function acceptedClaim(
+    recipientEmail: string,
+    basePurpose: "initial_send" | "resend",
+    purpose: string
+  ): Promise<{ claimId: string; trackingToken: string }> {
+    const reservation = await deliveryStore.reserveInvoiceDeliveryClaim({
+      ownerId,
+      invoiceId,
+      recipientEmail,
+      basePurpose,
+      purpose,
+      authorizedRevision: 0
+    });
+    if (reservation.outcome !== "reserved" && reservation.outcome !== "reclaimed") {
+      throw new Error("expected reservation");
+    }
+    const claim = reservation.claim;
+    const trackingToken = randomUUID();
+    await deliveryStore.beginInvoiceDeliveryDispatch({
+      ownerId,
+      claimId: claim.claimId,
+      generation: claim.generation,
+      trackingToken
+    });
+    await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+      ownerId,
+      claimId: claim.claimId,
+      generation: claim.generation,
+      outcome: "accepted",
+      mode: "provider",
+      provider: "resend",
+      providerMessageId: `email_${purpose}`
+    });
+    await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+      ownerId,
+      claimId: claim.claimId,
+      generation: claim.generation,
+      outcome: "delivered",
+      mode: "provider",
+      provider: "resend",
+      providerMessageId: `email_${purpose}`
+    });
+    return { claimId: claim.claimId, trackingToken };
+  }
+
+  // A's verified send is opened. The open is evidence about A's
+  // attempt — and only A's attempt.
+  const first = await acceptedClaim("opened-a@example.com", "initial_send", "initial_send");
+  await deliveryStore.markInvoiceDeliveryOpenedByTrackingToken({
+    invoiceId,
+    trackingToken: first.trackingToken
+  });
+  const afterOpen = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.ok(afterOpen?.openedAt);
+  assert.equal(afterOpen?.openedByEmail, "opened-a@example.com");
+
+  // A distinct resend to B is ACCEPTED (not merely recorded): the
+  // send evidence pair (sentAt, sentToEmail) moves to B, and B is
+  // the addressing recipient — but B has no open, so the opened
+  // evidence still belongs to A's operation. Pairing openedAt with
+  // the latest acceptance's recipient would render "Opened by B".
+  await acceptedClaim("opened-b@example.com", "resend", "resend_1");
+  const afterResend = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(afterResend?.sendCount, 2);
+  assert.equal(afterResend?.sentToEmail, "opened-b@example.com");
+  assert.equal(afterResend?.recipientEmail, "opened-b@example.com");
+  assert.equal(afterResend?.openedAt, afterOpen?.openedAt);
+  assert.equal(afterResend?.openedByEmail, "opened-a@example.com");
+});
+
+test("an opened attempt whose operation named no recipient yields an unknown opened evidence recipient (P2 recheck 6)", async () => {
+  const ownerId = "slice0-p2-opened-by-unknown";
+  const invoiceId = randomUUID();
+  // A claim-free verified acceptance that names no recipient, then
+  // its verified open. The open is real evidence — of an open, at a
+  // time — but the operation that supplied it named no one, so the
+  // opened evidence recipient is UNKNOWN (null), never inherited
+  // from a later operation.
+  await deliveryStore.appendInvoiceDeliveryEvent({
+    eventId: "evt-p2-opened-unknown-accepted",
+    ownerId,
+    invoiceId,
+    attemptId: "attempt-p2-opened-unknown",
+    kind: "send_recorded",
+    mode: "provider",
+    provider: "resend",
+    outcome: "accepted",
+    providerMessageId: "email_opened_unknown",
+    occurredAt: "2026-03-12T12:00:00.000Z"
+  });
+  await deliveryStore.appendInvoiceDeliveryEvent({
+    eventId: "evt-p2-opened-unknown-open",
+    ownerId,
+    invoiceId,
+    attemptId: "attempt-p2-opened-unknown",
+    kind: "opened",
+    mode: "record_only",
+    provider: "none",
+    outcome: "opened",
+    occurredAt: "2026-03-13T12:00:00.000Z"
+  });
+  const openedOnly = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(openedOnly?.openedAt, "2026-03-13T12:00:00.000Z");
+  assert.equal(openedOnly?.openedByEmail, null);
+
+  // A later named acceptance moves the send pair to B; the opened
+  // evidence still belongs to the recipientless operation.
+  const reservation = await deliveryStore.reserveInvoiceDeliveryClaim({
+    ownerId,
+    invoiceId,
+    recipientEmail: "opened-b@example.com",
+    basePurpose: "resend",
+    purpose: "resend_1",
+    authorizedRevision: 0
+  });
+  if (reservation.outcome !== "reserved") throw new Error("expected reservation");
+  const claim = reservation.claim;
+  await deliveryStore.beginInvoiceDeliveryDispatch({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    trackingToken: randomUUID()
+  });
+  await deliveryStore.recordInvoiceDeliveryClaimOutcome({
+    ownerId,
+    claimId: claim.claimId,
+    generation: claim.generation,
+    outcome: "accepted",
+    mode: "provider",
+    provider: "resend",
+    providerMessageId: "email_opened_b",
+    occurredAt: "2026-03-16T09:00:00.000Z"
+  });
+  const after = await deliveryStore.getInvoiceDeliverySummary({ ownerId, invoiceId });
+  assert.equal(after?.sentToEmail, "opened-b@example.com");
+  assert.equal(after?.openedAt, "2026-03-13T12:00:00.000Z");
+  assert.equal(after?.openedByEmail, null);
+});

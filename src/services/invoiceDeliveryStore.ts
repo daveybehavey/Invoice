@@ -262,6 +262,26 @@ export const DeliverySummarySchema = z.object({
    */
   lastActivityAt: z.string().datetime().nullable().default(null),
   openedAt: z.string().datetime().optional(),
+  /**
+   * The recipient of the operation whose verified open supplies
+   * `openedAt` — the recipient the open evidence actually belongs
+   * to (P2 recheck 6). The open analogue of the (sentAt,
+   * sentToEmail) pair: `openedAt` derives from ANY verified
+   * attempt's open, so pairing it with `sentToEmail` — the LATEST
+   * acceptance's recipient — presents one recipient's open as
+   * another's whenever a later send to someone else was accepted
+   * after the open (send to A opened; resend to B accepted, no open
+   * for B: the open still belongs to A). Resolved from the
+   * supplying operation itself — the accepted claim the open
+   * attaches to, or the claim-free accepted event carrying the
+   * open's attempt — never from the latest activity. Null when
+   * `openedAt` is absent, and also when the supplying operation
+   * carries no recipient on record: the opened evidence recipient
+   * is then UNKNOWN, and surfaces must render recipient-neutral
+   * verified wording. The pair (openedAt, openedByEmail) always
+   * describes the SAME operation.
+   */
+  openedByEmail: z.string().email().nullable().default(null),
   mode: DeliveryModeSchema.default("record_only"),
   provider: DeliveryProviderSchema.default("none"),
   providerMessageId: z.string().min(1).optional(),
@@ -1618,10 +1638,38 @@ function projectSummary(store: DeliveryStore, ownerId: string, invoiceId: string
       verifiedAttemptIds.has(event.attemptId) || (event.claimId ? acceptedClaimIds.has(event.claimId) : false)
   );
   const unverifiedOpenCount = openEvents.length - verifiedOpens.length;
-  const lastVerifiedOpenAt = verifiedOpens.reduce<string | null>(
-    (latest, event) => (!latest || Date.parse(event.occurredAt) > Date.parse(latest) ? event.occurredAt : latest),
+  const lastVerifiedOpen = verifiedOpens.reduce<DeliveryEvent | null>(
+    (latest, event) => (!latest || Date.parse(event.occurredAt) > Date.parse(latest.occurredAt) ? event : latest),
     null
   );
+  const lastVerifiedOpenAt = lastVerifiedOpen?.occurredAt ?? null;
+  // P2 (recheck 6): the opened evidence recipient is the recipient
+  // of the operation that supplied the selected verified open —
+  // resolved from that operation (the accepted claim the open
+  // attaches to, by claim or by attempt; or the claim-free accepted
+  // event carrying the open's attempt), never the latest
+  // acceptance's recipient. The supplying operation may name no
+  // recipient (a claim-free acceptance may omit recipientEmail):
+  // the opened evidence recipient is then UNKNOWN (null).
+  let lastVerifiedOpenRecipient: string | null = null;
+  if (lastVerifiedOpen) {
+    const supplyingClaim =
+      (lastVerifiedOpen.claimId
+        ? acceptedClaims.find((claim) => claim.claimId === lastVerifiedOpen.claimId)
+        : undefined) ?? acceptedClaims.find((claim) => claim.attemptId === lastVerifiedOpen.attemptId);
+    if (supplyingClaim) {
+      lastVerifiedOpenRecipient = supplyingClaim.recipientEmail;
+    } else {
+      const supplyingEvent = events.find(
+        (event) =>
+          event.kind === "send_recorded" &&
+          event.mode === "provider" &&
+          event.outcome === "accepted" &&
+          event.attemptId === lastVerifiedOpen.attemptId
+      );
+      lastVerifiedOpenRecipient = supplyingEvent?.recipientEmail ?? null;
+    }
+  }
 
   const sendCount = acceptedClaims.length + providerRecordedCount;
   // Latest send activity decides the presented mode/provider: prefer the
@@ -1672,6 +1720,7 @@ function projectSummary(store: DeliveryStore, ownerId: string, invoiceId: string
     sentToEmail: lastProviderAcceptedAt ? lastProviderAcceptedRecipient : null,
     lastActivityAt,
     openedAt: lastVerifiedOpenAt ?? undefined,
+    openedByEmail: lastVerifiedOpenAt ? lastVerifiedOpenRecipient : null,
     mode,
     provider,
     providerMessageId,
