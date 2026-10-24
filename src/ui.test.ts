@@ -9668,6 +9668,241 @@ test("verified send labels stay bound to the accepted recipient when later activ
   }
 });
 
+test("verified send labels stay recipient-neutral when the acceptance names no recipient (P2 recheck 5)", async () => {
+  // Recheck 5: a provider/accepted send_recorded event may
+  // legitimately carry no recipientEmail — the send is verified,
+  // its recipient is UNKNOWN (summary sentToEmail is null). Every
+  // evidence-naming path must render recipient-neutral verified
+  // wording then, never fall back to the latest activity's
+  // recipient — and a newer recipientless acceptance must not be
+  // presented paired with an earlier operation's recipient either.
+  const acceptedRecipient = "alice.p2@example.com";
+  const recordedRecipient = "bob.p2@example.com";
+  const neutralSent = "Sent (verified, recipient not recorded)";
+  const neutralOpened = "Opened (verified, recipient not recorded)";
+  const neutralLastSent = "Last sent (verified, recipient not recorded).";
+  const staleUpdatedAt = new Date(Date.now() - 30 * 86400000).toISOString();
+
+  async function saveUnknownInvoice(
+    context: BrowserContext,
+    ownerId: string,
+    invoiceNumber: string
+  ): Promise<string> {
+    const response = await context.request.post(`${baseUrl}/api/invoices/save`, {
+      headers: { "x-invoice-user-id": ownerId },
+      data: {
+        confirmSave: true,
+        sourceType: "text_input",
+        invoiceData: {
+          structuredInvoice: { customerName: "P2 Unknown Client", workSessions: [], materials: [] },
+          finishedInvoice: {
+            invoiceNumber,
+            issueDate: "2026-03-10",
+            dueDate: futureDueDateIso(60),
+            customerName: "P2 Unknown Client",
+            currency: "USD",
+            lineItems: [
+              {
+                id: `line-${invoiceNumber}`,
+                type: "labor",
+                description: "P2 unknown-recipient baseline",
+                quantity: 1,
+                unitPrice: 100,
+                amount: 100
+              }
+            ],
+            subtotal: 100,
+            total: 100,
+            balanceDue: 100
+          }
+        }
+      }
+    });
+    assert.equal(response.status(), 200);
+    return String((await response.json()).invoice?.invoiceId ?? "");
+  }
+
+  async function injectDeliveryEvent(event: Record<string, unknown>): Promise<void> {
+    const deliveryStoreFilePath = path.resolve(process.cwd(), "data/invoice-delivery.json");
+    const raw = await fs.readFile(deliveryStoreFilePath, "utf8").catch(() => "");
+    const parsed = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const events = Array.isArray(parsed.events) ? parsed.events : [];
+    parsed.events = [...events, event];
+    await fs.writeFile(deliveryStoreFilePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+  }
+
+  // A claim-free verified acceptance with NO recipient on record,
+  // followed by record_only activity addressed to B (which makes B
+  // the summary's latest/addressing recipient only).
+  async function prepareRecipientlessDelivery(ownerId: string, invoiceId: string): Promise<void> {
+    await injectDeliveryEvent({
+      eventId: `evt-ui-p2-recipientless-${invoiceId}`,
+      ownerId,
+      invoiceId,
+      attemptId: `attempt-ui-p2-recipientless-${invoiceId}`,
+      kind: "send_recorded",
+      mode: "provider",
+      provider: "resend",
+      outcome: "accepted",
+      providerMessageId: "email_ui_p2_recipientless",
+      occurredAt: new Date(Date.now() - 2 * 86400000).toISOString()
+    });
+    await injectDeliveryEvent({
+      eventId: `evt-ui-p2-recorded-${invoiceId}`,
+      ownerId,
+      invoiceId,
+      attemptId: `attempt-ui-p2-recorded-${invoiceId}`,
+      kind: "send_recorded",
+      mode: "record_only",
+      provider: "none",
+      outcome: "recorded",
+      recipientEmail: recordedRecipient,
+      occurredAt: new Date(Date.now() - 1 * 86400000).toISOString()
+    });
+    await mutateStoredInvoice(invoiceId, { status: "sent", updatedAt: staleUpdatedAt });
+  }
+
+  // Library surfaces: the card and the follow-up plan (Sent branch).
+  {
+    const ownerId = "ui-p2-unknown-library-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveUnknownInvoice(context, ownerId, "INV-P2-UNKNOWN");
+      assert.ok(invoiceId);
+      await prepareRecipientlessDelivery(ownerId, invoiceId);
+
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+
+      const card = getLibraryInvoiceCard(page, "INV-P2-UNKNOWN");
+      await card.getByText(neutralSent).waitFor({ state: "visible" });
+      const cardText = await card.innerText();
+      assert.ok(!cardText.includes(`Sent to ${recordedRecipient}`));
+      assert.ok(!cardText.includes(`Sent to ${acceptedRecipient}`));
+
+      const plan = page.getByTestId("library-follow-up-plan");
+      await plan.waitFor({ state: "visible" });
+      const planText = await plan.innerText();
+      assert.ok(planText.includes(neutralSent));
+      assert.ok(!planText.includes(`Sent to ${recordedRecipient}`));
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Follow-up plan, opened branch: the verified recipientless send
+  // was opened; the open evidence is verified but names no one.
+  {
+    const ownerId = "ui-p2-unknown-opened-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveUnknownInvoice(context, ownerId, "INV-P2-UNKNOWN-OPENED");
+      assert.ok(invoiceId);
+      await prepareRecipientlessDelivery(ownerId, invoiceId);
+      await injectDeliveryEvent({
+        eventId: `evt-ui-p2-opened-${invoiceId}`,
+        ownerId,
+        invoiceId,
+        attemptId: `attempt-ui-p2-recipientless-${invoiceId}`,
+        kind: "opened",
+        mode: "record_only",
+        provider: "none",
+        outcome: "opened",
+        occurredAt: new Date(Date.now() - 12 * 3600000).toISOString()
+      });
+
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+
+      const plan = page.getByTestId("library-follow-up-plan");
+      await plan.waitFor({ state: "visible" });
+      const planText = await plan.innerText();
+      assert.ok(planText.includes(neutralOpened));
+      assert.ok(!planText.includes(`Opened by ${recordedRecipient}`));
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Launcher surface: "Last sent" with an unknown evidence recipient.
+  {
+    const ownerId = "ui-p2-unknown-launcher-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveUnknownInvoice(context, ownerId, "INV-P2-UNKNOWN-LAUNCH");
+      assert.ok(invoiceId);
+      await prepareRecipientlessDelivery(ownerId, invoiceId);
+
+      await prepareReturningGuest(context);
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+      const queue = page.locator("section").filter({ hasText: "Invoice command center" });
+      await queue.getByText(neutralLastSent).waitFor({ state: "visible" });
+      const queueText = await queue.innerText();
+      assert.ok(!queueText.includes(`Last sent to ${recordedRecipient}.`));
+    } finally {
+      await context.close();
+    }
+  }
+
+  // Newer recipientless acceptance after a named one: the evidence
+  // pair moved (newer sentAt, unknown recipient), so neither the
+  // card nor the launcher may present the newer send as A's.
+  {
+    const ownerId = "ui-p2-pair-library-owner";
+    const context = await browser.newContext();
+    await context.addInitScript((initOwnerId) => {
+      window.localStorage.setItem("invoiceOwnerId", initOwnerId);
+    }, ownerId);
+    try {
+      const invoiceId = await saveUnknownInvoice(context, ownerId, "INV-P2-PAIR");
+      assert.ok(invoiceId);
+      const restoreProvider = useVerifiedProviderSend();
+      try {
+        const sendResponse = await context.request.post(`${baseUrl}/api/invoices/${invoiceId}/send`, {
+          headers: { "x-invoice-user-id": ownerId },
+          data: { recipientEmail: acceptedRecipient }
+        });
+        assert.equal(sendResponse.status(), 200);
+      } finally {
+        restoreProvider();
+      }
+      await foldStoredDeliveryClaimDelivered(invoiceId);
+      await injectDeliveryEvent({
+        eventId: `evt-ui-p2-pair-recipientless-${invoiceId}`,
+        ownerId,
+        invoiceId,
+        attemptId: `attempt-ui-p2-pair-recipientless-${invoiceId}`,
+        kind: "send_recorded",
+        mode: "provider",
+        provider: "resend",
+        outcome: "accepted",
+        providerMessageId: "email_ui_p2_pair_recipientless",
+        occurredAt: new Date(Date.now() + 2 * 3600000).toISOString()
+      });
+      await mutateStoredInvoice(invoiceId, { status: "sent", updatedAt: staleUpdatedAt });
+
+      const page = await context.newPage();
+      await page.goto(`${baseUrl}/invoices`, { waitUntil: "networkidle" });
+      const card = getLibraryInvoiceCard(page, "INV-P2-PAIR");
+      await card.getByText(neutralSent).waitFor({ state: "visible" });
+      const cardText = await card.innerText();
+      assert.ok(!cardText.includes(`Sent to ${acceptedRecipient}`));
+    } finally {
+      await context.close();
+    }
+  }
+});
+
 test("invoice library card distinguishes tracked but unopened delivery", async () => {
   const ownerId = "ui-send-unopened-owner";
   const context = await browser.newContext();

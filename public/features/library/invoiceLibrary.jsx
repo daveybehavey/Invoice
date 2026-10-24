@@ -2188,6 +2188,16 @@
       "Billie from NoteBill"
     ].join("\n");
   })();
+  // P2 (recheck 5): the recipient the oldest sent invoice's
+  // VERIFIED evidence belongs to. Null when that acceptance carries
+  // no recipient on record — unknown, never inherited from the
+  // latest activity's recipient (oldestSentRecipient, which remains
+  // the addressing recipient for prepared/reminder wording).
+  const oldestEvidenceRecipient =
+    typeof oldestSentReminder?.delivery?.sentToEmail === "string" &&
+    oldestSentReminder.delivery.sentToEmail
+      ? oldestSentReminder.delivery.sentToEmail
+      : null;
   const followUpPlan = oldestSentReminder
     ? {
         urgencyValue: oldestSentReminder.isPastDue
@@ -2204,12 +2214,20 @@
         // Codex P2 (recheck 4): the name in the label is the
         // recipient the verified evidence belongs to (sentToEmail),
         // never the latest activity's recipient on someone else's
-        // proof.
+        // proof. P2 (recheck 5): when the evidence recipient is
+        // unknown (the acceptance named no one), both the Sent and
+        // the Opened wording render recipient-neutrally — an
+        // unknown recipient is never replaced by the latest
+        // activity's address.
         deliveryValue: oldestSentRecipient
           ? oldestSentReminder?.delivery?.openedAt
-            ? `Opened by ${oldestSentReminder?.delivery?.sentToEmail ?? oldestSentRecipient}`
+            ? oldestEvidenceRecipient
+              ? `Opened by ${oldestEvidenceRecipient}`
+              : "Opened (verified, recipient not recorded)"
             : oldestSentReminder?.delivery?.verified === true
-              ? `Sent to ${oldestSentReminder?.delivery?.sentToEmail ?? oldestSentRecipient}`
+              ? oldestEvidenceRecipient
+                ? `Sent to ${oldestEvidenceRecipient}`
+                : "Sent (verified, recipient not recorded)"
               : `Prepared for ${oldestSentRecipient} (tracking only)`
           : "No tracked recipient yet",
         nextStepValue: canQuickSendReminderOldest
@@ -3824,10 +3842,15 @@
                 // activity names someone else. Successful-send wording
                 // names the evidence's recipient; recipientEmail stays
                 // what addressing (resend) follows.
+                // P2 (recheck 5): sentToEmail is null when the
+                // acceptance carries no recipient on record — the
+                // evidence recipient is UNKNOWN then, and the wording
+                // renders recipient-neutrally below instead of falling
+                // back to the latest activity's recipient.
                 const deliverySentRecipient =
                   typeof delivery?.sentToEmail === "string" && delivery.sentToEmail
                     ? delivery.sentToEmail
-                    : deliveryRecipient;
+                    : null;
                 const canInstantResend = Boolean(hasDelivery && isValidEmail(deliveryRecipient));
                 const paymentLinkReady =
                   typeof invoice?.paymentLinkUrl === "string" && invoice.paymentLinkUrl.trim().length > 0;
@@ -4161,7 +4184,9 @@
                           {hasDelivery ? (
                           <p className="mt-1 text-xs text-slate-600">
                               {providerDelivery
-                                ? `Sent to ${deliverySentRecipient}`
+                                ? deliverySentRecipient
+                                  ? `Sent to ${deliverySentRecipient}`
+                                  : "Sent (verified, recipient not recorded)"
                                 : delivery?.mode === "provider"
                                   ? `Delivery recorded for ${delivery.recipientEmail} (unverified)`
                                   : `Prepared for ${delivery.recipientEmail} (tracking only)`}

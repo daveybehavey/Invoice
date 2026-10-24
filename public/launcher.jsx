@@ -662,8 +662,14 @@ function buildLauncherOperationsSummary(invoices, options = {}, nowMs = Date.now
       // activity's recipient (reminderRecipient, kept for reminder
       // addressing) may be a different person with only recorded
       // activity, and must not be presented as the verified send.
+      // P2 (recheck 5): when the evidence recipient is unknown
+      // (the acceptance named no one), the wording is
+      // recipient-neutral — never a fallback to the addressing
+      // recipient.
       const lastActivityLabel = deliveryVerified
-        ? `Last sent to ${delivery?.sentToEmail ?? reminderRecipient}.`
+        ? delivery?.sentToEmail
+          ? `Last sent to ${delivery.sentToEmail}.`
+          : "Last sent (verified, recipient not recorded)."
         : delivery?.mode === "provider"
           ? `Delivery recorded for ${reminderRecipient} (unverified).`
           : `Prepared for ${reminderRecipient} (tracking only).`;
