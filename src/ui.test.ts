@@ -2728,6 +2728,23 @@ test("importing image notes requires OCR review before building draft", async ()
   useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
 
   const context = await browser.newContext();
+  // SEC-04: OCR dispatch requires a validated session. Redeem a minted
+  // sign-in token once and seed the client session storage the app
+  // reads (the same keys requestIdentity uses) before loading the page.
+  const signInToken = createEmailSignInToken("import-ocr@test.dev").token;
+  const verifyResponse = await context.request.post(`${baseUrl}/api/auth/session/verify`, {
+    data: { token: signInToken }
+  });
+  assert.equal(verifyResponse.status(), 200);
+  const verifiedPayload = await verifyResponse.json();
+  await context.addInitScript(
+    ({ token, session }: { token: string; session: { userId: string } }) => {
+      window.localStorage.setItem("invoiceSessionToken", token);
+      window.localStorage.setItem("invoiceAuthSession", JSON.stringify(session));
+      window.localStorage.setItem("invoiceOwnerId", session.userId);
+    },
+    { token: String(verifiedPayload.token ?? ""), session: verifiedPayload.session }
+  );
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/import`, { waitUntil: "networkidle" });
