@@ -9,6 +9,8 @@ import request from "supertest";
 process.env.NODE_ENV = "test";
 process.env.INVOICE_STORE_FILE = path.join(os.tmpdir(), `invoice-messy-flow-store-${randomUUID()}.json`);
 process.env.OCR_METRICS_STORE_FILE = path.join(os.tmpdir(), `invoice-messy-ocr-${randomUUID()}.json`);
+// SEC-02: model an explicitly configured loopback application origin.
+process.env.APP_BASE_URL = "http://localhost:3000";
 
 const [{ app }, { setJsonTaskRunnerForTests }] = await Promise.all([
   import("./server.js"),

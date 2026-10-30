@@ -133,8 +133,16 @@ import {
   createAuthSessionForEmail,
   createEmailSignInToken,
   getAuthSessionFromRequest,
-  verifyEmailSignInToken
+  inspectEmailSignInToken,
+  type InvoiceAuthSession
 } from "./services/authSession.js";
+import { consumeEmailSignInNonce } from "./services/emailSignInRedemptionStore.js";
+import { reserveProviderUsage } from "./services/providerUsageGate.js";
+import {
+  buildLaunchTestIdempotencyKey,
+  recordLaunchTestClaimOutcome,
+  reserveLaunchTestClaim
+} from "./services/launchTestDispatchStore.js";
 import {
   buildGoogleAuthErrorUrl,
   buildGoogleAuthStart,
@@ -495,8 +503,12 @@ app.post("/api/auth/session", async (req: Request, res: Response, next: NextFunc
     if (!parsed.email) {
       throw new HttpStatusError(400, "Email is required for email sign-in.");
     }
+    // SEC-02: resolve the trusted origin before creating the token or
+    // sending email; unconfigured/invalid origin is a controlled 503
+    // and no usable token is ever created or returned.
+    const publicBaseUrl = resolvePublicBaseUrl(req);
     const requested = createEmailSignInToken(parsed.email);
-    const signInUrl = `${resolvePublicBaseUrl(req)}/auth/verify?token=${encodeURIComponent(requested.token)}`;
+    const signInUrl = `${publicBaseUrl}/auth/verify?token=${encodeURIComponent(requested.token)}`;
     const delivery = await sendAuthSignInEmail({
       recipientEmail: parsed.email,
       signInUrl,
@@ -555,8 +567,21 @@ app.get("/api/auth/google/start", async (req: Request, res: Response, next: Next
   }
 });
 
-app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
-  const publicBaseUrl = resolvePublicBaseUrl(req);
+app.get("/api/auth/google/callback", async (req: Request, res: Response, next: NextFunction) => {
+  // SEC-02 follow-up: resolve the trusted origin first, but a
+  // resolution failure must reach the error middleware like every
+  // other route — with no configured origin there is no error URL to
+  // redirect to and no cookie context to clear against, so forward
+  // the controlled 503 via next BEFORE any cookie logic. Throwing
+  // here outside a try would escape the async handler as an
+  // unhandled rejection under Express 4.
+  let publicBaseUrl: string;
+  try {
+    publicBaseUrl = resolvePublicBaseUrl(req);
+  } catch (error) {
+    next(error);
+    return;
+  }
   const secure = publicBaseUrl.startsWith("https://");
   const clearStateCookie = () =>
     res.setHeader(
@@ -644,11 +669,28 @@ app.post("/api/auth/session/verify", async (req: Request, res: Response, next: N
         )
       })
       .parse(req.body);
-    const verified = verifyEmailSignInToken(parsed.token);
-    if (!verified?.email) {
+    // SEC-03: validation is separated from redemption. The nonce is
+    // consumed atomically BEFORE any session is created; a duplicate
+    // redemption receives the same generic invalid/expired response as
+    // any other invalid link, and a redemption-store failure is a 503
+    // with no session — never a fallback to stateless verification.
+    const inspected = inspectEmailSignInToken(parsed.token);
+    if (!inspected) {
       throw new HttpStatusError(400, "This sign-in link is invalid or expired.");
     }
-    const created = createAuthSessionForEmail(verified.email);
+    let consumption: Awaited<ReturnType<typeof consumeEmailSignInNonce>>;
+    try {
+      consumption = await consumeEmailSignInNonce({
+        nonce: inspected.nonce,
+        expiresAtEpochSeconds: inspected.expiresAtEpochSeconds
+      });
+    } catch (_error) {
+      throw new HttpStatusError(503, "Sign-in is unavailable right now. Please request a new sign-in link.");
+    }
+    if (consumption !== "consumed") {
+      throw new HttpStatusError(400, "This sign-in link is invalid or expired.");
+    }
+    const created = createAuthSessionForEmail(inspected.email);
     await trackRevenueSignalSafely({
       event: "account_signed_in",
       ownerId: created.session.userId,
@@ -795,7 +837,23 @@ app.get("/api/system/delivery", async (req: Request, res: Response, next: NextFu
 
 app.post("/api/system/delivery/test", async (req: Request, res: Response, next: NextFunction) => {
   try {
+    // SEC-05: launch-test dispatch requires a validated session in every
+    // environment, then explicit operator authorization. Caller-supplied
+    // owner headers/query values play no part in either decision.
     const authSession = getAuthSessionFromRequest(req);
+    if (!authSession?.userId) {
+      throw new HttpStatusError(401, "Authentication required.");
+    }
+    if (!isLaunchTestOperator(authSession)) {
+      throw new HttpStatusError(403, "Launch test email is restricted to authorized operators.");
+    }
+    const actionId = asOptionalString(req.body?.actionId);
+    if (!actionId || !LAUNCH_TEST_ACTION_ID_PATTERN.test(actionId)) {
+      throw new HttpStatusError(
+        400,
+        "A stable actionId (8-128 characters: letters, digits, '.', '_', ':', '-') is required for launch test dispatch."
+      );
+    }
     const allowCustomRecipient = (process.env.NODE_ENV ?? "development").trim().toLowerCase() !== "production";
     const recipientEmail =
       (allowCustomRecipient ? asOptionalString(req.body?.recipientEmail) : null) ??
@@ -807,12 +865,93 @@ app.post("/api/system/delivery/test", async (req: Request, res: Response, next: 
         "Missing launch test recipient. Set INVOICE_LAUNCH_TEST_EMAIL or sign in with an email-backed session."
       );
     }
-    const result = await sendLaunchTestEmail({
-      recipientEmail,
-      appBaseUrl: process.env.APP_BASE_URL
-    });
+
+    // The durable claim is reserved before any provider dispatch. A
+    // claim-store failure is a controlled 503 with no dispatch.
+    let reservation: Awaited<ReturnType<typeof reserveLaunchTestClaim>>;
+    try {
+      reservation = await reserveLaunchTestClaim({
+        actionId,
+        operatorUserId: authSession.userId,
+        recipientEmail
+      });
+    } catch (_error) {
+      throw new HttpStatusError(503, "Launch test dispatch is unavailable right now.");
+    }
+    if (reservation.outcome === "conflict") {
+      throw new HttpStatusError(
+        409,
+        "This actionId was already used with a different operator or recipient. Use a new actionId for a new dispatch."
+      );
+    }
+    if (reservation.outcome === "limit_reached") {
+      throw new HttpStatusError(429, "Launch test dispatch limit reached. Try again tomorrow.");
+    }
+    if (reservation.outcome === "existing") {
+      const claim = reservation.claim;
+      if (claim.state === "settled" && claim.outcomeMode === "failed") {
+        res.status(502).json({
+          ok: false,
+          replayed: true,
+          actionId,
+          recipientEmail: claim.recipientEmail,
+          error: claim.outcomeWarning ?? "Launch test dispatch failed."
+        });
+        return;
+      }
+      if (claim.state === "settled") {
+        // Replay the recorded outcome; never dispatch twice for one action.
+        res.json({
+          ok: true,
+          replayed: true,
+          actionId,
+          recipientEmail: claim.recipientEmail,
+          mode: claim.outcomeMode,
+          provider: claim.outcomeProvider,
+          providerMessageId: claim.outcomeProviderMessageId,
+          warning: claim.outcomeWarning
+        });
+        return;
+      }
+      // "reserved" (dispatch in progress) or "uncertain" (dispatch began
+      // but its outcome is unknown): block automatic redispatch.
+      throw new HttpStatusError(
+        409,
+        "This launch test action is already in progress or its outcome is uncertain. Reconcile it before dispatching again."
+      );
+    }
+
+    let result: Awaited<ReturnType<typeof sendLaunchTestEmail>>;
+    try {
+      result = await sendLaunchTestEmail({
+        recipientEmail,
+        appBaseUrl: process.env.APP_BASE_URL,
+        idempotencyKey: buildLaunchTestIdempotencyKey(actionId)
+      });
+    } catch (error) {
+      // A definitive provider rejection proves no email was accepted, so
+      // the claim settles as failed; any other failure leaves the outcome
+      // uncertain and the claim blocks blind retry.
+      const message = error instanceof Error ? error.message : "Launch test dispatch failed.";
+      await recordLaunchTestClaimOutcome({
+        actionId,
+        state: isDefinitiveProviderRejection(error) ? "settled" : "uncertain",
+        outcomeMode: isDefinitiveProviderRejection(error) ? "failed" : undefined,
+        outcomeWarning: message
+      }).catch(() => undefined);
+      throw error;
+    }
+    await recordLaunchTestClaimOutcome({
+      actionId,
+      state: "settled",
+      outcomeMode: result.mode === "provider" ? "provider" : "record_only",
+      outcomeProvider: result.provider,
+      outcomeProviderMessageId: result.providerMessageId ?? null,
+      outcomeWarning: result.warning ?? null
+    }).catch(() => undefined);
     res.json({
       ok: true,
+      actionId,
       recipientEmail: result.recipientEmail,
       mode: result.mode,
       provider: result.provider,
@@ -841,7 +980,10 @@ app.get("/api/system/launch", async (req: Request, res: Response, next: NextFunc
     const deliveryDiagnostics = await getInvoiceEmailDiagnostics();
     const deliverySummary = await getInvoiceDeliveryStoreSummary();
     const deliveryWarning = resolveDeliverySystemWarning(deliveryDiagnostics, deliverySummary);
-    const publicBaseUrl = resolvePublicBaseUrl(req);
+    // SEC-02: diagnostics report the configured origin only; when it is
+    // missing/invalid they report non-readiness without constructing a
+    // request-derived fallback and without failing the whole report.
+    const publicBaseUrl = resolveConfiguredPublicBaseUrl();
     const publicBaseUrlReady = isConfiguredPublicBaseUrl(process.env.APP_BASE_URL);
     const persistenceReady = persistencePolicy.productionReady && migrationPolicy.migrationReady;
     const authReady = authPolicy.productionReady;
@@ -1059,33 +1201,39 @@ app.post(
   }
 );
 
-app.post("/api/invoices/extract-notes", imageUpload.single("invoiceFile"), async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    if (!req.file) {
-      throw new Error("Upload an image file first.");
-    }
-    const extraction = await extractUploadedImageText(req.file);
-    await trackOcrConfidenceMetric({
-      confidence: extraction.confidence,
-      confidenceReasons: extraction.confidenceReasons,
-      warningCount: extraction.warnings.length
-    });
-    if (process.env.OCR_METRICS_EXPORT_AUTOSEND === "true") {
-      void exportOcrMetricsSnapshot().catch((error) => {
-        console.error("OCR metrics export failed", error);
+app.post(
+  "/api/invoices/extract-notes",
+  requireProviderDispatchSession,
+  imageUpload.single("invoiceFile"),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.file) {
+        throw new Error("Upload an image file first.");
+      }
+      await reserveProviderDispatchUsage(res, "ocr");
+      const extraction = await extractUploadedImageText(req.file);
+      await trackOcrConfidenceMetric({
+        confidence: extraction.confidence,
+        confidenceReasons: extraction.confidenceReasons,
+        warningCount: extraction.warnings.length
       });
+      if (process.env.OCR_METRICS_EXPORT_AUTOSEND === "true") {
+        void exportOcrMetricsSnapshot().catch((error) => {
+          console.error("OCR metrics export failed", error);
+        });
+      }
+      res.json({
+        sourceType: "image",
+        extractedText: extraction.text,
+        warnings: extraction.warnings,
+        confidence: extraction.confidence,
+        confidenceReasons: extraction.confidenceReasons
+      });
+    } catch (error) {
+      next(error);
     }
-    res.json({
-      sourceType: "image",
-      extractedText: extraction.text,
-      warnings: extraction.warnings,
-      confidence: extraction.confidence,
-      confidenceReasons: extraction.confidenceReasons
-    });
-  } catch (error) {
-    next(error);
   }
-});
+);
 
 app.post(
   "/api/invoices/extract-upload-text",
@@ -1108,12 +1256,14 @@ app.post(
 
 app.post(
   "/api/invoices/transcribe-audio",
+  requireProviderDispatchSession,
   importUpload.single("audioFile"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       if (!req.file) {
         throw new Error("Upload an audio note first.");
       }
+      await reserveProviderDispatchUsage(res, "transcription");
       const transcript = await extractUploadedAudioText(req.file);
       res.json({
         sourceType: "audio",
@@ -2202,35 +2352,62 @@ function asOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function resolvePublicBaseUrl(req: Request): string {
-  const envBaseUrl = asOptionalString(process.env.APP_BASE_URL);
-  if (envBaseUrl) {
-    try {
-      const parsed = new URL(envBaseUrl);
-      return parsed.origin;
-    } catch (_error) {
-      // ignore invalid APP_BASE_URL and fallback to request-derived origin
-    }
+// SEC-02 (S52-5 / S54-4): the public origin is configuration-only.
+// Request data — Host, X-Forwarded-Proto, X-Forwarded-Protocol — can
+// never influence it, so an attacker who controls those headers cannot
+// poison emailed sign-in links, portal links, billing return URLs, or
+// tracking URLs. A valid APP_BASE_URL is an absolute HTTPS URL (or an
+// explicitly configured HTTP loopback origin for local development),
+// without embedded credentials, canonicalized to its origin. When no
+// valid origin is configured, callers that would build a URL fail
+// closed instead of inventing one from the request.
+function validatePublicBaseUrl(value: string | undefined): string | null {
+  const normalized = asOptionalString(value);
+  if (!normalized) {
+    return null;
   }
-  const hostHeader = asOptionalString(req.headers.host) ?? "localhost:3000";
-  const forwardedProto =
-    asOptionalString(req.headers["x-forwarded-proto"]) ??
-    asOptionalString(req.headers["x-forwarded-protocol"]);
-  const protocol = forwardedProto === "https" || forwardedProto === "http" ? forwardedProto : req.protocol;
-  return `${protocol}://${hostHeader}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch (_error) {
+    return null;
+  }
+  if (parsed.username || parsed.password) {
+    return null;
+  }
+  const isHttps = parsed.protocol === "https:";
+  const isLoopbackHttp = parsed.protocol === "http:" && isLoopbackHostname(parsed.hostname);
+  if (!isHttps && !isLoopbackHttp) {
+    return null;
+  }
+  if (!parsed.origin || parsed.origin === "null") {
+    return null;
+  }
+  return parsed.origin;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "[::1]" || normalized === "::1";
+}
+
+function resolveConfiguredPublicBaseUrl(): string | null {
+  return validatePublicBaseUrl(process.env.APP_BASE_URL);
+}
+
+function resolvePublicBaseUrl(_req: Request): string {
+  const configured = resolveConfiguredPublicBaseUrl();
+  if (!configured) {
+    throw new HttpStatusError(
+      503,
+      "Application base URL is not configured. Set APP_BASE_URL to the public application origin."
+    );
+  }
+  return configured;
 }
 
 function isConfiguredPublicBaseUrl(value: string | undefined): boolean {
-  const normalized = asOptionalString(value);
-  if (!normalized) {
-    return false;
-  }
-  try {
-    const parsed = new URL(normalized);
-    return parsed.protocol === "https:" || parsed.protocol === "http:";
-  } catch (_error) {
-    return false;
-  }
+  return validatePublicBaseUrl(value) !== null;
 }
 
 function resolveBillingSystemWarning(
@@ -2338,6 +2515,60 @@ function normalizePortalCustomerName(value: string | undefined): string {
 
 function asOptionalParseMode(value: unknown): "fast" | "full" | undefined {
   return value === "fast" || value === "full" ? value : undefined;
+}
+
+// SEC-04 (S52-5 / S54-4): paid provider dispatch (OCR, transcription)
+// requires a validated session in every environment — including
+// development auth-disabled mode — and a usage reservation before the
+// provider is called. The session check runs as route middleware BEFORE
+// the Multer upload middleware, and the usage principal comes only from
+// the validated session, never from caller-selected owner headers or
+// query parameters (getRequestOwnerId is not sufficient here).
+function requireProviderDispatchSession(req: Request, res: Response, next: NextFunction): void {
+  const session = getAuthSessionFromRequest(req);
+  if (!session?.userId) {
+    next(new HttpStatusError(401, "Authentication required."));
+    return;
+  }
+  res.locals.providerDispatchSession = session;
+  next();
+}
+
+async function reserveProviderDispatchUsage(
+  res: Response,
+  operationClass: "ocr" | "transcription"
+): Promise<void> {
+  const session = res.locals.providerDispatchSession as InvoiceAuthSession | undefined;
+  if (!session?.userId) {
+    throw new HttpStatusError(401, "Authentication required.");
+  }
+  let reservation: Awaited<ReturnType<typeof reserveProviderUsage>>;
+  try {
+    reservation = await reserveProviderUsage({ operationClass, principalId: session.userId });
+  } catch (_error) {
+    // Enforcement unavailable: fail closed, no provider call.
+    throw new HttpStatusError(503, "Extraction is unavailable right now.");
+  }
+  if (!reservation.admitted) {
+    throw new HttpStatusError(429, "Extraction usage limit reached. Please try again later.");
+  }
+}
+
+// SEC-05: operator authorization for launch-test dispatch is a
+// server-controlled allowlist of session user IDs
+// (INVOICE_LAUNCH_TEST_OPERATOR_USER_IDS, comma-separated), empty by
+// default — when it is empty, no signed-in user is an operator.
+const LAUNCH_TEST_ACTION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
+
+function isLaunchTestOperator(session: InvoiceAuthSession | null): boolean {
+  if (!session?.userId) {
+    return false;
+  }
+  const configured = (process.env.INVOICE_LAUNCH_TEST_OPERATOR_USER_IDS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return configured.includes(session.userId);
 }
 
 function getRequestOwnerId(req: Request): string {

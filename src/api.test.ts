@@ -33,6 +33,23 @@ process.env.REVENUE_SIGNALS_STORE_FILE = path.join(
   os.tmpdir(),
   `invoice-revenue-signals-${randomUUID()}.json`
 );
+process.env.INVOICE_EMAIL_SIGNIN_REDEMPTION_STORE_FILE = path.join(
+  os.tmpdir(),
+  `invoice-email-signin-redemption-${randomUUID()}.json`
+);
+process.env.INVOICE_PROVIDER_USAGE_STORE_FILE = path.join(
+  os.tmpdir(),
+  `invoice-provider-usage-${randomUUID()}.json`
+);
+process.env.INVOICE_LAUNCH_TEST_STORE_FILE = path.join(
+  os.tmpdir(),
+  `invoice-launch-test-dispatch-${randomUUID()}.json`
+);
+// SEC-02: the app resolves its public origin from configuration only.
+// The suite models an explicitly configured loopback origin (permitted
+// for local development); tests that exercise the origin policy itself
+// override or clear it.
+process.env.APP_BASE_URL = "http://localhost:3000";
 
 const [
   { app },
@@ -97,6 +114,18 @@ const revenueSignalsStoreFilePath = process.env.REVENUE_SIGNALS_STORE_FILE;
 if (!revenueSignalsStoreFilePath) {
   throw new Error("REVENUE_SIGNALS_STORE_FILE is required for tests.");
 }
+const emailSignInRedemptionStoreFilePath = process.env.INVOICE_EMAIL_SIGNIN_REDEMPTION_STORE_FILE;
+if (!emailSignInRedemptionStoreFilePath) {
+  throw new Error("INVOICE_EMAIL_SIGNIN_REDEMPTION_STORE_FILE is required for tests.");
+}
+const providerUsageStoreFilePath = process.env.INVOICE_PROVIDER_USAGE_STORE_FILE;
+if (!providerUsageStoreFilePath) {
+  throw new Error("INVOICE_PROVIDER_USAGE_STORE_FILE is required for tests.");
+}
+const launchTestStoreFilePath = process.env.INVOICE_LAUNCH_TEST_STORE_FILE;
+if (!launchTestStoreFilePath) {
+  throw new Error("INVOICE_LAUNCH_TEST_STORE_FILE is required for tests.");
+}
 const nativeFetch = globalThis.fetch;
 
 async function signInForTests(email: string) {
@@ -108,6 +137,16 @@ async function signInForTests(email: string) {
   const verifyResponse = await request(app).post("/api/auth/session/verify").send({ token: requested.token });
   assert.equal(verifyResponse.status, 200);
   return verifyResponse;
+}
+
+async function providerDispatchHeadersForTests(email = "provider-dispatch@test.dev") {
+  // SEC-04: OCR/transcription routes require a validated session in
+  // every environment, so extraction tests sign in first.
+  const signInResponse = await signInForTests(email);
+  const token = signInResponse.body.token as string;
+  assert.equal(typeof token, "string");
+  assert.ok(token.length > 0);
+  return { authorization: `Bearer ${token}` };
 }
 
 beforeEach(async () => {
@@ -126,6 +165,12 @@ beforeEach(async () => {
   await fs.rm(invoiceDeliveryStoreFilePath, { force: true });
   await fs.mkdir(path.dirname(revenueSignalsStoreFilePath), { recursive: true });
   await fs.rm(revenueSignalsStoreFilePath, { force: true });
+  await fs.mkdir(path.dirname(emailSignInRedemptionStoreFilePath), { recursive: true });
+  await fs.rm(emailSignInRedemptionStoreFilePath, { force: true });
+  await fs.mkdir(path.dirname(providerUsageStoreFilePath), { recursive: true });
+  await fs.rm(providerUsageStoreFilePath, { force: true });
+  await fs.mkdir(path.dirname(launchTestStoreFilePath), { recursive: true });
+  await fs.rm(launchTestStoreFilePath, { force: true });
   delete process.env.OCR_METRICS_EXPORT_PROVIDER;
   delete process.env.OCR_METRICS_EXPORT_URL;
   delete process.env.OCR_METRICS_GA4_MEASUREMENT_ID;
@@ -151,7 +196,13 @@ beforeEach(async () => {
   delete process.env.SMTP2GO_API_KEY;
   delete process.env.INVOICE_FROM_EMAIL;
   delete process.env.INVOICE_LAUNCH_TEST_EMAIL;
-  delete process.env.APP_BASE_URL;
+  delete process.env.INVOICE_LAUNCH_TEST_OPERATOR_USER_IDS;
+  delete process.env.INVOICE_LAUNCH_TEST_PER_OPERATOR_DAILY_LIMIT;
+  delete process.env.INVOICE_LAUNCH_TEST_GLOBAL_DAILY_LIMIT;
+  delete process.env.INVOICE_PROVIDER_USAGE_WINDOW_MS;
+  delete process.env.INVOICE_PROVIDER_USAGE_PER_PRINCIPAL_LIMIT;
+  delete process.env.INVOICE_PROVIDER_USAGE_APP_LIMIT;
+  process.env.APP_BASE_URL = "http://localhost:3000";
   delete process.env.GOOGLE_CLIENT_ID;
   delete process.env.GOOGLE_CLIENT_SECRET;
 });
@@ -189,6 +240,9 @@ after(async () => {
   await fs.rm(stripeEntitlementsStoreFilePath, { force: true });
   await fs.rm(invoiceDeliveryStoreFilePath, { force: true });
   await fs.rm(revenueSignalsStoreFilePath, { force: true });
+  await fs.rm(emailSignInRedemptionStoreFilePath, { force: true });
+  await fs.rm(providerUsageStoreFilePath, { force: true });
+  await fs.rm(launchTestStoreFilePath, { force: true });
 });
 
 test("asks one labor pricing follow-up and does not finalize with $0 labor", async () => {
@@ -459,6 +513,7 @@ test("keeps explicit service period when parser already provides a range", async
 });
 
 test("extract-notes returns OCR text and warnings for image uploads", async () => {
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests();
   setImageOcrRunnerForTests(async () => ({
     extractedText: "Jan 28 inspection visit. Jan 30 faucet repair 2h at $80/hr.",
     warnings: ["Handwriting in one line was unclear."]
@@ -466,6 +521,7 @@ test("extract-notes returns OCR text and warnings for image uploads", async () =
 
   const response = await request(app)
     .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
     .attach("invoiceFile", Buffer.from("fake-image"), {
       filename: "notes.png",
       contentType: "image/png"
@@ -498,12 +554,14 @@ test("extract-upload-text returns extracted text for document uploads", async ()
 });
 
 test("transcribe-audio returns transcript text for uploaded voice notes", async () => {
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests();
   setAudioTranscriptionRunnerForTests(async () => ({
     transcript: "Jan 30 repaired flashing, 2 hours at $95 per hour."
   }));
 
   const response = await request(app)
     .post("/api/invoices/transcribe-audio")
+    .set(providerDispatchAuthHeaders)
     .attach("audioFile", Buffer.from("fake-audio"), {
       filename: "voice-note.webm",
       contentType: "audio/webm"
@@ -515,6 +573,7 @@ test("transcribe-audio returns transcript text for uploaded voice notes", async 
 });
 
 test("extract-notes returns low OCR confidence for tiny extracted text", async () => {
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests();
   setImageOcrRunnerForTests(async () => ({
     extractedText: "Fix sink",
     warnings: []
@@ -522,6 +581,7 @@ test("extract-notes returns low OCR confidence for tiny extracted text", async (
 
   const response = await request(app)
     .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
     .attach("invoiceFile", Buffer.from("fake-image"), {
       filename: "notes.png",
       contentType: "image/png"
@@ -543,6 +603,7 @@ test("extract-notes returns low OCR confidence for tiny extracted text", async (
 });
 
 test("extract-notes adds review warning when OCR output is short but not low confidence", async () => {
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests();
   setImageOcrRunnerForTests(async () => ({
     extractedText: "Jan 30 repair labor 2h at $80/hr",
     warnings: []
@@ -550,6 +611,7 @@ test("extract-notes adds review warning when OCR output is short but not low con
 
   const response = await request(app)
     .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
     .attach("invoiceFile", Buffer.from("fake-image"), {
       filename: "notes.png",
       contentType: "image/png"
@@ -571,6 +633,7 @@ test("extract-notes adds review warning when OCR output is short but not low con
 });
 
 test("OCR telemetry endpoint records confidence metrics from extract-notes", async () => {
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests();
   setImageOcrRunnerForTests(async () => ({
     extractedText: "Fix sink",
     warnings: ["Handwriting in one line was unclear."]
@@ -585,6 +648,7 @@ test("OCR telemetry endpoint records confidence metrics from extract-notes", asy
 
   const extractResponse = await request(app)
     .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
     .attach("invoiceFile", Buffer.from("fake-image"), {
       filename: "notes.png",
       contentType: "image/png"
@@ -922,6 +986,7 @@ test("OCR telemetry export endpoint reports not configured by default", async ()
 });
 
 test("OCR telemetry export endpoint posts snapshot when configured", async () => {
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests();
   setImageOcrRunnerForTests(async () => ({
     extractedText: "Jan 30 repair labor 2h at $80/hr",
     warnings: ["Handwriting in one line was unclear."]
@@ -944,6 +1009,7 @@ test("OCR telemetry export endpoint posts snapshot when configured", async () =>
 
   const extractResponse = await request(app)
     .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
     .attach("invoiceFile", Buffer.from("fake-image"), {
       filename: "notes.png",
       contentType: "image/png"
@@ -967,6 +1033,7 @@ test("OCR telemetry export endpoint posts snapshot when configured", async () =>
 });
 
 test("OCR telemetry export endpoint supports GA4 provider payload", async () => {
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests();
   setImageOcrRunnerForTests(async () => ({
     extractedText: "Jan 30 repair labor 2h at $80/hr",
     warnings: ["One line was unclear."]
@@ -1000,6 +1067,7 @@ test("OCR telemetry export endpoint supports GA4 provider payload", async () => 
 
   const extractResponse = await request(app)
     .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
     .attach("invoiceFile", Buffer.from("fake-image"), {
       filename: "notes.png",
       contentType: "image/png"
@@ -1025,6 +1093,7 @@ test("OCR telemetry export endpoint supports GA4 provider payload", async () => 
 });
 
 test("OCR telemetry export endpoint supports Segment provider payload", async () => {
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests();
   setImageOcrRunnerForTests(async () => ({
     extractedText: "Fix sink",
     warnings: []
@@ -1057,6 +1126,7 @@ test("OCR telemetry export endpoint supports Segment provider payload", async ()
 
   const extractResponse = await request(app)
     .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
     .attach("invoiceFile", Buffer.from("fake-image"), {
       filename: "notes.png",
       contentType: "image/png"
@@ -1083,6 +1153,7 @@ test("OCR telemetry export endpoint supports Segment provider payload", async ()
 });
 
 test("OCR telemetry export endpoint skips when no new metrics exist", async () => {
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests();
   setImageOcrRunnerForTests(async () => ({
     extractedText: "Fix sink",
     warnings: []
@@ -1099,6 +1170,7 @@ test("OCR telemetry export endpoint skips when no new metrics exist", async () =
 
   const extractResponse = await request(app)
     .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
     .attach("invoiceFile", Buffer.from("fake-image"), {
       filename: "notes.png",
       contentType: "image/png"
@@ -1165,6 +1237,7 @@ test("intake trends endpoint returns empty baseline when no telemetry exists", a
 });
 
 test("intake trends endpoint summarizes OCR and friction windows", async () => {
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests();
   const now = new Date();
   const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
   const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000).toISOString();
@@ -1190,6 +1263,7 @@ test("intake trends endpoint summarizes OCR and friction windows", async () => {
   }));
   const lowResponse = await request(app)
     .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
     .attach("invoiceFile", Buffer.from("fake-image"), {
       filename: "notes-low.png",
       contentType: "image/png"
@@ -1202,6 +1276,7 @@ test("intake trends endpoint summarizes OCR and friction windows", async () => {
   }));
   const highResponse = await request(app)
     .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
     .attach("invoiceFile", Buffer.from("fake-image"), {
       filename: "notes-high.png",
       contentType: "image/png"
@@ -1222,8 +1297,10 @@ test("intake trends endpoint summarizes OCR and friction windows", async () => {
 });
 
 test("extract-notes rejects non-image uploads", async () => {
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests();
   const response = await request(app)
     .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
     .attach("invoiceFile", Buffer.from("fake-text"), {
       filename: "notes.txt",
       contentType: "text/plain"
@@ -1234,9 +1311,11 @@ test("extract-notes rejects non-image uploads", async () => {
 });
 
 test("extract-notes rejects files over 8MB", async () => {
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests();
   const oversized = Buffer.alloc(8 * 1024 * 1024 + 1, 1);
   const response = await request(app)
     .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
     .attach("invoiceFile", oversized, {
       filename: "large.png",
       contentType: "image/png"
@@ -5950,6 +6029,10 @@ test("delivery test endpoint sends a provider-backed launch verification email w
   process.env.RESEND_API_KEY = "re_test_key";
   process.env.INVOICE_FROM_EMAIL = "NoteBill <billing@notebill.app>";
   process.env.APP_BASE_URL = "https://app.notebill.app";
+  // SEC-05: dispatch requires an authorized operator session + actionId.
+  const operatorSignIn = await signInForTests("qa-launch-operator@test.dev");
+  process.env.INVOICE_LAUNCH_TEST_OPERATOR_USER_IDS = operatorSignIn.body.session.userId as string;
+  const operatorToken = operatorSignIn.body.token as string;
   const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
   (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
     fetchCalls.push({ url: input, init });
@@ -5959,9 +6042,13 @@ test("delivery test endpoint sends a provider-backed launch verification email w
     });
   }) as typeof fetch;
 
-  const response = await request(app).post("/api/system/delivery/test").send({
-    recipientEmail: "qa-launch@example.com"
-  });
+  const response = await request(app)
+    .post("/api/system/delivery/test")
+    .set("authorization", `Bearer ${operatorToken}`)
+    .send({
+      actionId: "legacy-resend-launch-check",
+      recipientEmail: "qa-launch@example.com"
+    });
 
   assert.equal(response.status, 200);
   assert.equal(response.body.ok, true);
@@ -5980,6 +6067,10 @@ test("delivery test endpoint sends a provider-backed launch verification email v
   process.env.SMTP2GO_API_KEY = "smtp2go_test_key";
   process.env.INVOICE_FROM_EMAIL = "NoteBill <invoices@notebill.app>";
   process.env.APP_BASE_URL = "https://app.notebill.app";
+  // SEC-05: dispatch requires an authorized operator session + actionId.
+  const operatorSignIn = await signInForTests("qa-launch-operator-smtp@test.dev");
+  process.env.INVOICE_LAUNCH_TEST_OPERATOR_USER_IDS = operatorSignIn.body.session.userId as string;
+  const operatorToken = operatorSignIn.body.token as string;
   const fetchCalls: Array<{ url: unknown; init: unknown }> = [];
   (globalThis as { fetch: typeof fetch }).fetch = (async (input: unknown, init?: unknown) => {
     fetchCalls.push({ url: input, init });
@@ -5989,9 +6080,13 @@ test("delivery test endpoint sends a provider-backed launch verification email v
     });
   }) as typeof fetch;
 
-  const response = await request(app).post("/api/system/delivery/test").send({
-    recipientEmail: "qa-launch@example.com"
-  });
+  const response = await request(app)
+    .post("/api/system/delivery/test")
+    .set("authorization", `Bearer ${operatorToken}`)
+    .send({
+      actionId: "legacy-smtp2go-launch-check",
+      recipientEmail: "qa-launch@example.com"
+    });
 
   assert.equal(response.status, 200);
   assert.equal(response.body.ok, true);
@@ -10737,6 +10832,388 @@ test("auth providers endpoint reports email-link readiness and Google availabili
   assert.match(String(googleProvider?.warning ?? ""), /GOOGLE_CLIENT_ID/i);
 });
 
+test("auth verify endpoint rejects a second redemption of the same sign-in token", async () => {
+  const requested = createEmailSignInToken("replay@test.dev");
+
+  const firstResponse = await request(app).post("/api/auth/session/verify").send({ token: requested.token });
+  assert.equal(firstResponse.status, 200);
+  assert.equal(typeof firstResponse.body.token, "string");
+
+  const secondResponse = await request(app).post("/api/auth/session/verify").send({ token: requested.token });
+  assert.equal(secondResponse.status, 400);
+  assert.equal(secondResponse.body.error, "This sign-in link is invalid or expired.");
+  assert.equal(secondResponse.body.token, undefined);
+});
+
+test("auth verify endpoint redeems two independently issued links for the same email once each", async () => {
+  const firstLink = createEmailSignInToken("two-links@test.dev");
+  const secondLink = createEmailSignInToken("two-links@test.dev");
+  assert.notEqual(firstLink.token, secondLink.token);
+
+  const firstResponse = await request(app).post("/api/auth/session/verify").send({ token: firstLink.token });
+  assert.equal(firstResponse.status, 200);
+  const secondResponse = await request(app).post("/api/auth/session/verify").send({ token: secondLink.token });
+  assert.equal(secondResponse.status, 200);
+  assert.equal(secondResponse.body.session.email, "two-links@test.dev");
+});
+
+test("auth session endpoint refuses dispatch when APP_BASE_URL is missing and ignores poisoned headers", async () => {
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_placeholder";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  delete process.env.APP_BASE_URL;
+  let providerCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    providerCalls += 1;
+    return new Response(JSON.stringify({ id: "msg_should_not_send" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const response = await request(app)
+    .post("/api/auth/session")
+    .set("Host", "evil.example")
+    .set("X-Forwarded-Proto", "https")
+    .send({ email: "victim@test.dev" });
+
+  assert.equal(response.status, 503);
+  assert.match(String(response.body.error ?? ""), /APP_BASE_URL/);
+  assert.equal(response.body.emailSent, undefined);
+  assert.equal(providerCalls, 0);
+});
+
+test("auth session endpoint builds the sign-in link from the configured origin despite poisoned headers", async () => {
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_placeholder";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.APP_BASE_URL = "https://app.notebill.app";
+  let capturedBody = "";
+  (globalThis as { fetch: typeof fetch }).fetch = (async (_input: unknown, init?: { body?: unknown }) => {
+    capturedBody = String(init?.body ?? "");
+    return new Response(JSON.stringify({ id: "msg_test_123" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const response = await request(app)
+    .post("/api/auth/session")
+    .set("Host", "evil.example")
+    .set("X-Forwarded-Proto", "https")
+    .send({ email: "victim@test.dev" });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.emailSent, true);
+  assert.ok(capturedBody.includes("https://app.notebill.app/auth/verify?token="));
+  assert.ok(!capturedBody.includes("evil.example"));
+});
+
+test("launch diagnostics reports an unconfigured public base URL without inventing an origin", async () => {
+  delete process.env.APP_BASE_URL;
+
+  const response = await request(app).get("/api/system/launch");
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.publicBaseUrlReady, false);
+  assert.equal(response.body.publicBaseUrl, null);
+  assert.ok(
+    response.body.checks.some(
+      (check: { id?: string; ok?: boolean }) => check.id === "public-base-url" && check.ok === false
+    )
+  );
+});
+
+test("extract-notes rejects anonymous uploads with 401 and never invokes the OCR runner", async () => {
+  let runnerCalls = 0;
+  setImageOcrRunnerForTests(async () => {
+    runnerCalls += 1;
+    return { extractedText: "Jan 30 faucet repair 2h at $80/hr.", warnings: [] };
+  });
+
+  const response = await request(app)
+    .post("/api/invoices/extract-notes")
+    .set("x-invoice-user-id", "spoofed-owner")
+    .query({ userId: "spoofed-owner" })
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes.png",
+      contentType: "image/png"
+    });
+
+  assert.equal(response.status, 401);
+  assert.equal(runnerCalls, 0);
+});
+
+test("transcribe-audio rejects anonymous uploads with 401 and never invokes the transcription runner", async () => {
+  let runnerCalls = 0;
+  setAudioTranscriptionRunnerForTests(async () => {
+    runnerCalls += 1;
+    return { transcript: "Jan 30 repaired flashing." };
+  });
+
+  const response = await request(app)
+    .post("/api/invoices/transcribe-audio")
+    .attach("audioFile", Buffer.from("fake-audio"), {
+      filename: "voice-note.webm",
+      contentType: "audio/webm"
+    });
+
+  assert.equal(response.status, 401);
+  assert.equal(runnerCalls, 0);
+});
+
+test("extract-notes rejects an invalid session token with 401", async () => {
+  const response = await request(app)
+    .post("/api/invoices/extract-notes")
+    .set("authorization", "Bearer not-a-real-session-token")
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes.png",
+      contentType: "image/png"
+    });
+
+  assert.equal(response.status, 401);
+});
+
+test("extract-notes enforces the per-principal provider usage limit", async () => {
+  process.env.INVOICE_PROVIDER_USAGE_PER_PRINCIPAL_LIMIT = "2";
+  const providerDispatchAuthHeaders = await providerDispatchHeadersForTests("usage-limit@test.dev");
+  setImageOcrRunnerForTests(async () => ({
+    extractedText: "Jan 30 faucet repair labor 2h at $80/hr for the kitchen sink.",
+    warnings: []
+  }));
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const okResponse = await request(app)
+      .post("/api/invoices/extract-notes")
+      .set(providerDispatchAuthHeaders)
+      .attach("invoiceFile", Buffer.from("fake-image"), {
+        filename: "notes.png",
+        contentType: "image/png"
+      });
+    assert.equal(okResponse.status, 200);
+  }
+
+  const limitedResponse = await request(app)
+    .post("/api/invoices/extract-notes")
+    .set(providerDispatchAuthHeaders)
+    .attach("invoiceFile", Buffer.from("fake-image"), {
+      filename: "notes.png",
+      contentType: "image/png"
+    });
+  assert.equal(limitedResponse.status, 429);
+});
+
+test("launch test dispatch rejects anonymous callers with 401 and sends nothing", async () => {
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_placeholder";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  process.env.INVOICE_LAUNCH_TEST_EMAIL = "ops@test.dev";
+  let providerCalls = 0;
+  (globalThis as { fetch: typeof fetch }).fetch = (async () => {
+    providerCalls += 1;
+    return new Response(JSON.stringify({ id: "msg_should_not_send" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const response = await request(app)
+    .post("/api/system/delivery/test")
+    .send({ actionId: "launch-test-anon-1", recipientEmail: "ops@test.dev" });
+
+  assert.equal(response.status, 401);
+  assert.equal(providerCalls, 0);
+});
+
+test("launch test dispatch rejects signed-in non-operators with 403", async () => {
+  const signInResponse = await signInForTests("not-an-operator@test.dev");
+  const token = signInResponse.body.token as string;
+
+  const response = await request(app)
+    .post("/api/system/delivery/test")
+    .set("authorization", `Bearer ${token}`)
+    .send({ actionId: "launch-test-nonop-1", recipientEmail: "ops@test.dev" });
+
+  assert.equal(response.status, 403);
+});
+
+test("launch test dispatch requires a bounded actionId from operators", async () => {
+  const operatorSignIn = await signInForTests("operator-actionid@test.dev");
+  process.env.INVOICE_LAUNCH_TEST_OPERATOR_USER_IDS = operatorSignIn.body.session.userId as string;
+  const token = operatorSignIn.body.token as string;
+
+  const response = await request(app)
+    .post("/api/system/delivery/test")
+    .set("authorization", `Bearer ${token}`)
+    .send({ recipientEmail: "ops@test.dev" });
+
+  assert.equal(response.status, 400);
+  assert.match(String(response.body.error ?? ""), /actionId/);
+});
+
+test("launch test dispatch sends once per action and replays the recorded outcome", async () => {
+  const operatorSignIn = await signInForTests("operator-replay@test.dev");
+  process.env.INVOICE_LAUNCH_TEST_OPERATOR_USER_IDS = operatorSignIn.body.session.userId as string;
+  const token = operatorSignIn.body.token as string;
+
+  const firstResponse = await request(app)
+    .post("/api/system/delivery/test")
+    .set("authorization", `Bearer ${token}`)
+    .send({ actionId: "launch-test-replay-1", recipientEmail: "ops@test.dev" });
+  assert.equal(firstResponse.status, 200);
+  assert.equal(firstResponse.body.ok, true);
+  assert.equal(firstResponse.body.mode, "record_only");
+  assert.equal(firstResponse.body.recipientEmail, "ops@test.dev");
+
+  const replayResponse = await request(app)
+    .post("/api/system/delivery/test")
+    .set("authorization", `Bearer ${token}`)
+    .send({ actionId: "launch-test-replay-1", recipientEmail: "ops@test.dev" });
+  assert.equal(replayResponse.status, 200);
+  assert.equal(replayResponse.body.replayed, true);
+  assert.equal(replayResponse.body.mode, "record_only");
+  assert.equal(replayResponse.body.recipientEmail, "ops@test.dev");
+});
+
+test("launch test dispatch conflicts when an actionId is reused with a different recipient", async () => {
+  const operatorSignIn = await signInForTests("operator-conflict@test.dev");
+  process.env.INVOICE_LAUNCH_TEST_OPERATOR_USER_IDS = operatorSignIn.body.session.userId as string;
+  const token = operatorSignIn.body.token as string;
+
+  const firstResponse = await request(app)
+    .post("/api/system/delivery/test")
+    .set("authorization", `Bearer ${token}`)
+    .send({ actionId: "launch-test-conflict-1", recipientEmail: "one@test.dev" });
+  assert.equal(firstResponse.status, 200);
+
+  const conflictResponse = await request(app)
+    .post("/api/system/delivery/test")
+    .set("authorization", `Bearer ${token}`)
+    .send({ actionId: "launch-test-conflict-1", recipientEmail: "two@test.dev" });
+  assert.equal(conflictResponse.status, 409);
+});
+
+test("launch test dispatch passes the claim idempotency key to the provider exactly once", async () => {
+  const operatorSignIn = await signInForTests("operator-idem@test.dev");
+  process.env.INVOICE_LAUNCH_TEST_OPERATOR_USER_IDS = operatorSignIn.body.session.userId as string;
+  const token = operatorSignIn.body.token as string;
+  process.env.INVOICE_EMAIL_PROVIDER = "resend";
+  process.env.RESEND_API_KEY = "re_test_placeholder";
+  process.env.INVOICE_FROM_EMAIL = "billing@notebill.app";
+  let providerCalls = 0;
+  let capturedIdempotencyKey: string | null = null;
+  (globalThis as { fetch: typeof fetch }).fetch = (async (
+    _input: unknown,
+    init?: { headers?: Record<string, string> }
+  ) => {
+    providerCalls += 1;
+    capturedIdempotencyKey = init?.headers?.["Idempotency-Key"] ?? null;
+    return new Response(JSON.stringify({ id: "msg_launch_1" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const firstResponse = await request(app)
+    .post("/api/system/delivery/test")
+    .set("authorization", `Bearer ${token}`)
+    .send({ actionId: "launch-test-idem-1", recipientEmail: "ops@test.dev" });
+  assert.equal(firstResponse.status, 200);
+  assert.equal(firstResponse.body.mode, "provider");
+  assert.equal(firstResponse.body.providerMessageId, "msg_launch_1");
+  assert.equal(capturedIdempotencyKey, "launch-test:launch-test-idem-1");
+
+  const replayResponse = await request(app)
+    .post("/api/system/delivery/test")
+    .set("authorization", `Bearer ${token}`)
+    .send({ actionId: "launch-test-idem-1", recipientEmail: "ops@test.dev" });
+  assert.equal(replayResponse.status, 200);
+  assert.equal(replayResponse.body.replayed, true);
+  assert.equal(replayResponse.body.providerMessageId, "msg_launch_1");
+  assert.equal(providerCalls, 1);
+});
+
+test("launch test dispatch ignores the body recipient in production", async () => {
+  const operatorSignIn = await signInForTests("operator-prod@test.dev");
+  process.env.INVOICE_LAUNCH_TEST_OPERATOR_USER_IDS = operatorSignIn.body.session.userId as string;
+  const token = operatorSignIn.body.token as string;
+  const previousNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  try {
+    const response = await request(app)
+      .post("/api/system/delivery/test")
+      .set("authorization", `Bearer ${token}`)
+      .send({ actionId: "launch-test-prod-1", recipientEmail: "attacker-chosen@test.dev" });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.recipientEmail, "operator-prod@test.dev");
+  } finally {
+    process.env.NODE_ENV = previousNodeEnv;
+  }
+});
+
+test("diagnostics UI caller posts a stable per-intent actionId to the launch test endpoint", async () => {
+  // SEC-05 caller contract (Codex P2 on PR #84): the endpoint rejects a
+  // missing/invalid actionId with 400, so the one HTTP caller — the
+  // diagnostics UI in public/features/diagnostics/intakeDiagnostics.jsx
+  // — must post an actionId that is minted once per send intent and held
+  // in a ref, so a repeat click re-presents the SAME action and the
+  // server replays the recorded outcome instead of sending a second
+  // email. The Playwright UI suite does not reach the operator
+  // diagnostics page, so the caller half of the contract is pinned
+  // against the caller source here; the server half is covered by the
+  // launch test dispatch tests above. Run from the repo root.
+  const callerPath = path.resolve(
+    process.cwd(),
+    "public/features/diagnostics/intakeDiagnostics.jsx"
+  );
+  const callerSource = await fs.readFile(callerPath, "utf8");
+
+  const handlerStart = callerSource.indexOf("const handleSendLaunchTestEmail");
+  assert.ok(handlerStart >= 0, "diagnostics launch-email handler not found");
+  const handlerSource = callerSource.slice(handlerStart, handlerStart + 7000);
+  assert.ok(
+    handlerSource.includes('"/api/system/delivery/test"'),
+    "handler must post to the launch test endpoint"
+  );
+  // The regression this pins: the caller used to post an empty body.
+  assert.ok(
+    !/JSON\.stringify\(\{\s*\}\)/.test(handlerSource),
+    "handler must not post an empty JSON body"
+  );
+  assert.match(
+    handlerSource,
+    /JSON\.stringify\(\{\s*actionId\s*\}\)/,
+    "handler must post the held actionId"
+  );
+  // One identity per intent: minted only when the ref is empty, from
+  // the randomUUID-backed helper — never a fresh id per click and never
+  // a shared constant.
+  assert.match(
+    handlerSource,
+    /if \(!launchEmailActionIdRef\.current\) \{\s*launchEmailActionIdRef\.current = createLaunchTestActionId\(\);/,
+    "handler must mint the actionId once per send intent and hold it in a ref"
+  );
+  assert.match(
+    callerSource,
+    /function createLaunchTestActionId\(\) \{[^}]*crypto\.randomUUID\(\)/,
+    "actionId helper must mint with crypto.randomUUID"
+  );
+  assert.match(
+    callerSource,
+    /const launchEmailActionIdRef = useRef\(null\);/,
+    "the pending actionId must be held in a ref"
+  );
+  // The identity is cleared only under its own value (recorded outcome /
+  // terminal rejection), so an unknown-outcome retry keeps it and
+  // replays instead of double-sending.
+  const guardedClears =
+    handlerSource.match(/launchEmailActionIdRef\.current === actionId/g) ?? [];
+  assert.ok(
+    guardedClears.length >= 2,
+    "handler must clear the held actionId only under its own identity"
+  );
+});
+
 test("auth session endpoint redirects Google sign-in callers to the dedicated start route", async () => {
   const response = await request(app).post("/api/auth/session").send({ provider: "google" });
 
@@ -10866,6 +11343,18 @@ test("google auth callback returns launcher error route when Google email is not
   const errorUrl = new URL(String(callbackResponse.headers.location));
   assert.equal(errorUrl.pathname, "/auth/google");
   assert.match(String(errorUrl.searchParams.get("error") ?? ""), /verified Google email/i);
+});
+
+test("google auth callback returns a controlled 503 when APP_BASE_URL is missing", async () => {
+  delete process.env.APP_BASE_URL;
+
+  const response = await request(app).get("/api/auth/google/callback?code=google-code-123&state=state-123");
+
+  // The resolver's 503 must arrive through the error middleware as
+  // controlled JSON — before this fix it escaped the async handler
+  // as an unhandled rejection and no response was ever sent.
+  assert.equal(response.status, 503);
+  assert.match(String(response.body.error ?? ""), /APP_BASE_URL/);
 });
 
 test("auth session request sends a sign-in email when a provider is configured", async () => {

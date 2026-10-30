@@ -121,6 +121,13 @@ function isResendIdempotencyConflict(status: number, _payload: unknown): boolean
 type SendLaunchTestEmailInput = {
   recipientEmail: string;
   appBaseUrl?: string;
+  /**
+   * SEC-05 (S54-4): the durable launch-test claim's derived provider
+   * idempotency key, forwarded through sendInvoiceEmail so a retried
+   * dispatch of the same operator action cannot produce a duplicate
+   * email at providers that honor idempotency keys.
+   */
+  idempotencyKey?: string;
 };
 
 type SendInvoiceEmailInput = {
@@ -335,6 +342,7 @@ export async function sendLaunchTestEmail(
   const result = await sendInvoiceEmail({
     recipientEmail,
     invoiceId: "launch-test",
+    idempotencyKey: input.idempotencyKey,
     openTrackingPixelUrl: buildLaunchTestPixelUrl(input.appBaseUrl),
     messageType: "invoice",
     invoice: {

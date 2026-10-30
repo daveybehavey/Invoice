@@ -108,6 +108,10 @@ before(async () => {
   await once(server, "listening");
   const address = server.address() as AddressInfo;
   baseUrl = `http://127.0.0.1:${address.port}`;
+  // SEC-02: the app resolves its public origin from configuration only.
+  // The UI suite models an explicitly configured loopback origin for
+  // its ephemeral test server.
+  process.env.APP_BASE_URL = baseUrl;
   browser = await chromium.launch({ headless: true });
 });
 
@@ -139,7 +143,7 @@ beforeEach(async () => {
   delete process.env.STRIPE_SECRET_KEY;
   delete process.env.STRIPE_PRICE_ID;
   delete process.env.STRIPE_WEBHOOK_SECRET;
-  delete process.env.APP_BASE_URL;
+  process.env.APP_BASE_URL = baseUrl;
 });
 
 afterEach(() => {
@@ -2724,6 +2728,23 @@ test("importing image notes requires OCR review before building draft", async ()
   useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
 
   const context = await browser.newContext();
+  // SEC-04: OCR dispatch requires a validated session. Redeem a minted
+  // sign-in token once and seed the client session storage the app
+  // reads (the same keys requestIdentity uses) before loading the page.
+  const signInToken = createEmailSignInToken("import-ocr@test.dev").token;
+  const verifyResponse = await context.request.post(`${baseUrl}/api/auth/session/verify`, {
+    data: { token: signInToken }
+  });
+  assert.equal(verifyResponse.status(), 200);
+  const verifiedPayload = await verifyResponse.json();
+  await context.addInitScript(
+    ({ token, session }: { token: string; session: { userId: string } }) => {
+      window.localStorage.setItem("invoiceSessionToken", token);
+      window.localStorage.setItem("invoiceAuthSession", JSON.stringify(session));
+      window.localStorage.setItem("invoiceOwnerId", session.userId);
+    },
+    { token: String(verifiedPayload.token ?? ""), session: verifiedPayload.session }
+  );
   const page = await context.newPage();
   try {
     await page.goto(`${baseUrl}/import`, { waitUntil: "networkidle" });
