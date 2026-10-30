@@ -11345,6 +11345,18 @@ test("google auth callback returns launcher error route when Google email is not
   assert.match(String(errorUrl.searchParams.get("error") ?? ""), /verified Google email/i);
 });
 
+test("google auth callback returns a controlled 503 when APP_BASE_URL is missing", async () => {
+  delete process.env.APP_BASE_URL;
+
+  const response = await request(app).get("/api/auth/google/callback?code=google-code-123&state=state-123");
+
+  // The resolver's 503 must arrive through the error middleware as
+  // controlled JSON — before this fix it escaped the async handler
+  // as an unhandled rejection and no response was ever sent.
+  assert.equal(response.status, 503);
+  assert.match(String(response.body.error ?? ""), /APP_BASE_URL/);
+});
+
 test("auth session request sends a sign-in email when a provider is configured", async () => {
   process.env.INVOICE_EMAIL_PROVIDER = "resend";
   process.env.RESEND_API_KEY = "re_test_auth";

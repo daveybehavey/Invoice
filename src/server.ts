@@ -567,8 +567,21 @@ app.get("/api/auth/google/start", async (req: Request, res: Response, next: Next
   }
 });
 
-app.get("/api/auth/google/callback", async (req: Request, res: Response) => {
-  const publicBaseUrl = resolvePublicBaseUrl(req);
+app.get("/api/auth/google/callback", async (req: Request, res: Response, next: NextFunction) => {
+  // SEC-02 follow-up: resolve the trusted origin first, but a
+  // resolution failure must reach the error middleware like every
+  // other route — with no configured origin there is no error URL to
+  // redirect to and no cookie context to clear against, so forward
+  // the controlled 503 via next BEFORE any cookie logic. Throwing
+  // here outside a try would escape the async handler as an
+  // unhandled rejection under Express 4.
+  let publicBaseUrl: string;
+  try {
+    publicBaseUrl = resolvePublicBaseUrl(req);
+  } catch (error) {
+    next(error);
+    return;
+  }
   const secure = publicBaseUrl.startsWith("https://");
   const clearStateCookie = () =>
     res.setHeader(
