@@ -22,10 +22,18 @@ type LegacySessionPayload = {
 
 type EmailLinkPayload = {
   kind: "email_link";
+  // SEC-03 (S54-4): signed format version. Only version 2 links are
+  // issued and accepted; version 2 is the single-use-redemption format.
+  // Links minted before single-use enforcement carry no version and are
+  // rejected, so no pre-enforcement link can bypass nonce consumption.
+  v: 2;
   email: string;
   nonce: string;
   exp: number;
 };
+
+export const EMAIL_SIGN_IN_LINK_FORMAT_VERSION = 2;
+const EMAIL_LINK_NONCE_PATTERN = /^[A-Za-z0-9_-]{16,80}$/;
 
 const AUTH_HEADER_PREFIX = "Bearer ";
 const DEFAULT_SESSION_SECRET = "local-invoice-session-secret";
@@ -76,6 +84,7 @@ export function createEmailSignInToken(
   const expiresAtMs = Date.now() + ttlMinutes * 60 * 1000;
   const payload: EmailLinkPayload = {
     kind: "email_link",
+    v: EMAIL_SIGN_IN_LINK_FORMAT_VERSION,
     email: normalizedEmail,
     nonce: randomBytes(18).toString("base64url"),
     exp: Math.floor(expiresAtMs / 1000)
@@ -145,27 +154,65 @@ export function verifySessionToken(token: string): InvoiceAuthSession | null {
   };
 }
 
-export function verifyEmailSignInToken(token: string): {
+export type InspectedEmailSignInToken = {
   email: string;
+  nonce: string;
   expiresAt: string;
-} | null {
+  expiresAtEpochSeconds: number;
+};
+
+/**
+ * Cryptographic validation of an email sign-in token, separated from
+ * redemption (SEC-03): checks the signature, purpose, signed format
+ * version, field types, nonce format, and expiry, and returns the
+ * verified nonce internally so the caller can consume it atomically
+ * before any session is created. Validation alone never authorizes a
+ * session — redemption is `consumeEmailSignInNonce` in
+ * emailSignInRedemptionStore.ts.
+ */
+export function inspectEmailSignInToken(token: string): InspectedEmailSignInToken | null {
   const payload = readSignedPayload(token);
   if (!payload || !("kind" in payload) || payload.kind !== "email_link") {
     return null;
   }
-  if (!payload.email || !payload.nonce || !payload.exp) {
+  if (payload.v !== EMAIL_SIGN_IN_LINK_FORMAT_VERSION) {
+    return null;
+  }
+  if (typeof payload.email !== "string" || typeof payload.nonce !== "string") {
+    return null;
+  }
+  if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp)) {
+    return null;
+  }
+  if (!EMAIL_LINK_NONCE_PATTERN.test(payload.nonce)) {
     return null;
   }
   if (payload.exp * 1000 <= Date.now()) {
     return null;
   }
   const normalizedEmail = normalizeEmail(payload.email);
-  if (!normalizedEmail || !payload.nonce.trim()) {
+  if (!normalizedEmail) {
     return null;
   }
   return {
     email: normalizedEmail,
-    expiresAt: new Date(payload.exp * 1000).toISOString()
+    nonce: payload.nonce,
+    expiresAt: new Date(payload.exp * 1000).toISOString(),
+    expiresAtEpochSeconds: payload.exp
+  };
+}
+
+export function verifyEmailSignInToken(token: string): {
+  email: string;
+  expiresAt: string;
+} | null {
+  const inspected = inspectEmailSignInToken(token);
+  if (!inspected) {
+    return null;
+  }
+  return {
+    email: inspected.email,
+    expiresAt: inspected.expiresAt
   };
 }
 

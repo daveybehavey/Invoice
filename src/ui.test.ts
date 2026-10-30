@@ -108,6 +108,10 @@ before(async () => {
   await once(server, "listening");
   const address = server.address() as AddressInfo;
   baseUrl = `http://127.0.0.1:${address.port}`;
+  // SEC-02: the app resolves its public origin from configuration only.
+  // The UI suite models an explicitly configured loopback origin for
+  // its ephemeral test server.
+  process.env.APP_BASE_URL = baseUrl;
   browser = await chromium.launch({ headless: true });
 });
 
@@ -139,7 +143,7 @@ beforeEach(async () => {
   delete process.env.STRIPE_SECRET_KEY;
   delete process.env.STRIPE_PRICE_ID;
   delete process.env.STRIPE_WEBHOOK_SECRET;
-  delete process.env.APP_BASE_URL;
+  process.env.APP_BASE_URL = baseUrl;
 });
 
 afterEach(() => {
