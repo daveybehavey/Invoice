@@ -46,9 +46,11 @@ export function digestEmailSignInNonce(nonce: string): string {
 
 /**
  * Atomically consume an email sign-in nonce. Resolves "consumed" for the
- * first redemption and "already_consumed" for every later one. Storage
- * failures reject: callers must fail closed (no session) rather than fall
- * back to stateless verification.
+ * first redemption and "already_consumed" for every later one — including
+ * a redemption whose token has expired by the time its mutation executes
+ * (see the in-mutation expiry re-check below). Storage failures reject:
+ * callers must fail closed (no session) rather than fall back to
+ * stateless verification.
  */
 export async function consumeEmailSignInNonce(input: {
   nonce: string;
@@ -57,7 +59,24 @@ export async function consumeEmailSignInNonce(input: {
   const nonceDigest = digestEmailSignInNonce(input.nonce);
   let outcome: EmailSignInNonceConsumption = "already_consumed";
   await mutateSnapshot((snapshot) => {
-    pruneExpiredNonces(snapshot);
+    const nowEpochSeconds = Math.floor(Date.now() / 1000);
+    // Prune spent entries, but never the digest being consumed: deleting
+    // it here would erase the record of an earlier consumption once the
+    // token's expiry passes, and the presence check below would then
+    // miss — resurrecting a spent nonce inside the same mutation.
+    pruneExpiredNonces(snapshot, nonceDigest);
+    // Expiry is re-checked inside the serialized mutation, not only by
+    // the caller's pre-redemption validation: two requests can both pass
+    // that validation while the token is live, and the second may only
+    // reach this mutation after the token has expired. It must fail
+    // closed rather than consume on an expired token. The refusal is
+    // reported as "already_consumed" — the caller collapses every
+    // non-"consumed" outcome into the same generic invalid/expired
+    // response, so no third outcome state is warranted.
+    if (input.expiresAtEpochSeconds <= nowEpochSeconds) {
+      outcome = "already_consumed";
+      return;
+    }
     if (snapshot.consumedNonces[nonceDigest] !== undefined) {
       outcome = "already_consumed";
       return;
@@ -68,9 +87,12 @@ export async function consumeEmailSignInNonce(input: {
   return outcome;
 }
 
-function pruneExpiredNonces(snapshot: EmailSignInRedemptionSnapshot): void {
+function pruneExpiredNonces(snapshot: EmailSignInRedemptionSnapshot, exceptDigest?: string): void {
   const nowEpochSeconds = Math.floor(Date.now() / 1000);
   for (const [digest, expiresAtEpochSeconds] of Object.entries(snapshot.consumedNonces)) {
+    if (digest === exceptDigest) {
+      continue;
+    }
     if (expiresAtEpochSeconds <= nowEpochSeconds) {
       delete snapshot.consumedNonces[digest];
     }
