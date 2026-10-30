@@ -1,6 +1,6 @@
 (() => {
   const { useNavigate } = ReactRouterDOM;
-  const { useCallback, useEffect, useMemo, useState } = React;
+  const { useCallback, useEffect, useMemo, useRef, useState } = React;
   const requestIdentity = window.InvoiceRequestIdentity;
   const apiFetch = requestIdentity?.apiFetch ?? window.fetch.bind(window);
   const billieTelemetryUtils = window.InvoiceBillieTelemetry;
@@ -142,6 +142,20 @@
     };
   }
 
+  // SEC-05: the launch-test endpoint requires an actionId matching
+  // /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/ (a UUID qualifies). Minted with
+  // the same guarded-randomUUID idiom as billingActions' createIntentId.
+  function createLaunchTestActionId() {
+    try {
+      if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return crypto.randomUUID();
+      }
+    } catch (_error) {
+      // Fall through.
+    }
+    return `launch-test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+
   function IntakeDiagnostics() {
     const navigate = useNavigate();
     const [loading, setLoading] = useState(true);
@@ -162,6 +176,7 @@
     const [reminderActionResult, setReminderActionResult] = useState(null);
     const [launchEmailBusy, setLaunchEmailBusy] = useState(false);
     const [launchEmailResult, setLaunchEmailResult] = useState(null);
+    const launchEmailActionIdRef = useRef(null);
 
     const loadDiagnostics = useCallback(async ({ silent = false } = {}) => {
       if (silent) {
@@ -370,14 +385,42 @@
     const handleSendLaunchTestEmail = async () => {
       setLaunchEmailBusy(true);
       setLaunchEmailResult(null);
+      // SEC-05: the server requires a stable actionId for this dispatch
+      // and replays the recorded outcome when the same actionId is
+      // posted again. Mint one identity per send intent and hold it in
+      // a ref (the pendingResendActionRef pattern in invoiceLibrary):
+      // a repeat click while the outcome is unknown re-presents the
+      // SAME action, so the server replays it instead of sending a
+      // second email. A fresh id per click would defeat that dedup;
+      // one shared constant would collide across distinct sends.
+      if (!launchEmailActionIdRef.current) {
+        launchEmailActionIdRef.current = createLaunchTestActionId();
+      }
+      const actionId = launchEmailActionIdRef.current;
       try {
         const response = await apiFetch("/api/system/delivery/test", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({})
+          body: JSON.stringify({ actionId })
         });
         const payload = await response.json();
         if (!response.ok) {
+          // Terminal outcomes for THIS actionId: a 400 rejects the
+          // request before any claim exists, and a 502 marked
+          // `replayed` is the recorded failure of this dispatch. Only
+          // those complete the intent (below); every other failure —
+          // transport loss (no status), 409 in-progress/uncertain, 429,
+          // 503, other 5xx — leaves the outcome unknown or the claim
+          // standing, so the identity is kept and the retry replays
+          // this action instead of dispatching a second email.
+          if (
+            response.status === 400 ||
+            (response.status === 502 && payload?.replayed)
+          ) {
+            if (launchEmailActionIdRef.current === actionId) {
+              launchEmailActionIdRef.current = null;
+            }
+          }
           throw new Error(payload?.error || "Failed to send launch test email.");
         }
         setLaunchEmailResult({
@@ -386,6 +429,15 @@
           mode: payload?.mode || "provider",
           warning: payload?.warning || ""
         });
+        // The server answered with a recorded outcome (fresh dispatch
+        // or replay of this action): the send intent is complete, so
+        // the next click is a distinct send with a fresh identity.
+        // Only the action THIS request carried may be cleared — a
+        // response for a different send must not rotate another
+        // action's identity out from under its own retry.
+        if (launchEmailActionIdRef.current === actionId) {
+          launchEmailActionIdRef.current = null;
+        }
         await loadDiagnostics({ silent: true });
       } catch (launchEmailError) {
         console.error("Failed to send launch test email", launchEmailError);

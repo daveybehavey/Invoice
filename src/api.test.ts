@@ -11151,6 +11151,69 @@ test("launch test dispatch ignores the body recipient in production", async () =
   }
 });
 
+test("diagnostics UI caller posts a stable per-intent actionId to the launch test endpoint", async () => {
+  // SEC-05 caller contract (Codex P2 on PR #84): the endpoint rejects a
+  // missing/invalid actionId with 400, so the one HTTP caller — the
+  // diagnostics UI in public/features/diagnostics/intakeDiagnostics.jsx
+  // — must post an actionId that is minted once per send intent and held
+  // in a ref, so a repeat click re-presents the SAME action and the
+  // server replays the recorded outcome instead of sending a second
+  // email. The Playwright UI suite does not reach the operator
+  // diagnostics page, so the caller half of the contract is pinned
+  // against the caller source here; the server half is covered by the
+  // launch test dispatch tests above. Run from the repo root.
+  const callerPath = path.resolve(
+    process.cwd(),
+    "public/features/diagnostics/intakeDiagnostics.jsx"
+  );
+  const callerSource = await fs.readFile(callerPath, "utf8");
+
+  const handlerStart = callerSource.indexOf("const handleSendLaunchTestEmail");
+  assert.ok(handlerStart >= 0, "diagnostics launch-email handler not found");
+  const handlerSource = callerSource.slice(handlerStart, handlerStart + 7000);
+  assert.ok(
+    handlerSource.includes('"/api/system/delivery/test"'),
+    "handler must post to the launch test endpoint"
+  );
+  // The regression this pins: the caller used to post an empty body.
+  assert.ok(
+    !/JSON\.stringify\(\{\s*\}\)/.test(handlerSource),
+    "handler must not post an empty JSON body"
+  );
+  assert.match(
+    handlerSource,
+    /JSON\.stringify\(\{\s*actionId\s*\}\)/,
+    "handler must post the held actionId"
+  );
+  // One identity per intent: minted only when the ref is empty, from
+  // the randomUUID-backed helper — never a fresh id per click and never
+  // a shared constant.
+  assert.match(
+    handlerSource,
+    /if \(!launchEmailActionIdRef\.current\) \{\s*launchEmailActionIdRef\.current = createLaunchTestActionId\(\);/,
+    "handler must mint the actionId once per send intent and hold it in a ref"
+  );
+  assert.match(
+    callerSource,
+    /function createLaunchTestActionId\(\) \{[^}]*crypto\.randomUUID\(\)/,
+    "actionId helper must mint with crypto.randomUUID"
+  );
+  assert.match(
+    callerSource,
+    /const launchEmailActionIdRef = useRef\(null\);/,
+    "the pending actionId must be held in a ref"
+  );
+  // The identity is cleared only under its own value (recorded outcome /
+  // terminal rejection), so an unknown-outcome retry keeps it and
+  // replays instead of double-sending.
+  const guardedClears =
+    handlerSource.match(/launchEmailActionIdRef\.current === actionId/g) ?? [];
+  assert.ok(
+    guardedClears.length >= 2,
+    "handler must clear the held actionId only under its own identity"
+  );
+});
+
 test("auth session endpoint redirects Google sign-in callers to the dedicated start route", async () => {
   const response = await request(app).post("/api/auth/session").send({ provider: "google" });
 
