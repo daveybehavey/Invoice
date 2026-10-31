@@ -3001,7 +3001,7 @@ test("payment-link returns 400 while a billing decision is still open", async ()
   assert.equal(created, false);
 });
 
-test("client portal endpoint creates a tokenized customer portal link and exposes invoice history", async () => {
+test("client portal endpoint creates a tokenized customer portal link scoped to a single invoice", async () => {
   const ownerId = "client-portal-owner";
 
   const firstSaveResponse = await request(app)
@@ -3100,9 +3100,11 @@ test("client portal endpoint creates a tokenized customer portal link and expose
     publicPortalResponse.body.invoice?.invoiceData?.finishedInvoice?.notes,
     "Portal-safe customer terms."
   );
-  assert.equal(publicPortalResponse.body.history.length, 1);
-  assert.equal(publicPortalResponse.body.history[0].invoiceId, firstInvoiceId);
-  assert.equal(publicPortalResponse.body.history[0].status, "draft");
+  // SEC-06: portal access is scoped to the single (invoiceId, token) pair.
+  // Cross-invoice history was withdrawn deliberately — even a same-owner,
+  // same-customer invoice must not be exposed through another invoice's link.
+  assert.deepEqual(publicPortalResponse.body.history, []);
+  assert.equal(JSON.stringify(publicPortalResponse.body).includes(firstInvoiceId), false);
 });
 
 test("client portal returns 400 when a non-waived line is $0", async () => {
