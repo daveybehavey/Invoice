@@ -2572,13 +2572,19 @@ function isLaunchTestOperator(session: InvoiceAuthSession | null): boolean {
 }
 
 function getRequestOwnerId(req: Request): string {
+  // Validate the session first: a valid session identity wins over every
+  // conflicting owner input. Without a valid session, production — and any
+  // environment where auth is effectively required — rejects anonymous
+  // owner selection before any fallback or repository access; the header,
+  // query, and default fallbacks exist only outside production with auth
+  // explicitly disabled.
   const authSession = getAuthSessionFromRequest(req);
-  const authPolicy = getInvoiceAuthPolicy();
-  if (authPolicy.requireAuth && !authSession?.userId) {
-    throw new HttpStatusError(401, "Authentication required.");
-  }
   if (authSession?.userId) {
     return authSession.userId;
+  }
+  const authPolicy = getInvoiceAuthPolicy();
+  if (authPolicy.nodeEnv === "production" || authPolicy.requireAuth) {
+    throw new HttpStatusError(401, "Authentication required.");
   }
   const fromHeader = asOptionalString(req.headers["x-invoice-user-id"]) ?? asOptionalString(req.headers["x-user-id"]);
   const fromQuery = asOptionalString(req.query.userId);
@@ -2596,7 +2602,7 @@ function assertInvoiceAuthSessionPolicy(): void {
       "Invoice auth policy is not production-ready.",
       `NODE_ENV=${policy.nodeEnv} requires authentication but auth prerequisites are incomplete.`,
       policy.warning ?? "A verified email sign-in provider is required in production.",
-      "Set INVOICE_SESSION_SECRET to a strong non-default value, configure email delivery, or override INVOICE_REQUIRE_AUTH=false for local-only mode."
+      "Set INVOICE_SESSION_SECRET to a strong non-default value and configure a verified email delivery provider or complete Google Sign-In setup. INVOICE_REQUIRE_AUTH=false is prohibited in production and does not bypass this check."
     ].join(" ")
   );
 }
