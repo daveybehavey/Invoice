@@ -39,9 +39,70 @@ type AudioTranscriptionTaskResult = {
 };
 
 let openAIClient: OpenAI | null = null;
+let openAIClientApiKey: string | null = null;
 let jsonTaskRunnerForTests: JsonTaskRunner | null = null;
 let imageOcrRunnerForTests: ImageOcrRunner | null = null;
 let audioTranscriptionRunnerForTests: AudioTranscriptionRunner | null = null;
+
+// S93-3 item 4 (S92-3 / SEC follow-up): AI provider dispatch permission.
+// OpenAI is the only implemented provider. Real dispatch is permitted only
+// when the operator explicitly selects it with INVOICE_AI_PROVIDER=openai
+// AND a nonblank OPENAI_API_KEY is configured. Every other configuration —
+// selector missing, blank, unknown, or "disabled", or a missing/blank key —
+// refuses dispatch with a typed configuration error. There is no fallback
+// provider, no adapter registry, and no model-based provider inference.
+export class AiProviderConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AiProviderConfigurationError";
+  }
+}
+
+export type AiProviderConfiguration =
+  | { permitted: true; provider: "openai"; apiKey: string }
+  | {
+      permitted: false;
+      provider: "openai" | "disabled" | "unconfigured";
+      reason: string;
+    };
+
+export function resolveAiProviderConfiguration(
+  env: NodeJS.ProcessEnv = process.env
+): AiProviderConfiguration {
+  const selector = (env.INVOICE_AI_PROVIDER ?? "").trim().toLowerCase();
+  if (selector === "disabled") {
+    return {
+      permitted: false,
+      provider: "disabled",
+      reason: "AI provider dispatch is disabled (INVOICE_AI_PROVIDER=disabled)."
+    };
+  }
+  if (selector !== "openai") {
+    return {
+      permitted: false,
+      provider: "unconfigured",
+      reason:
+        "AI provider is not configured: set INVOICE_AI_PROVIDER=openai to enable OpenAI dispatch."
+    };
+  }
+  const apiKey = (env.OPENAI_API_KEY ?? "").trim();
+  if (!apiKey) {
+    return {
+      permitted: false,
+      provider: "openai",
+      reason: "Missing OPENAI_API_KEY."
+    };
+  }
+  return { permitted: true, provider: "openai", apiKey };
+}
+
+function assertAiDispatchConfiguration(): { apiKey: string } {
+  const configuration = resolveAiProviderConfiguration();
+  if (!configuration.permitted) {
+    throw new AiProviderConfigurationError(configuration.reason);
+  }
+  return { apiKey: configuration.apiKey };
+}
 
 const WORDING_SYSTEM_PROMPT = [
   "You rewrite invoice wording only.",
@@ -108,16 +169,17 @@ export function resolveJsonTaskConfig(options: JsonTaskOptions = {}): JsonTaskCo
 }
 
 function getClient(): OpenAI {
-  if (openAIClient) {
+  // Configuration is re-validated at the dispatch boundary on EVERY call,
+  // before the cached client is returned: switching the selector to
+  // disabled/unknown, or removing/rotating the key, takes effect
+  // immediately and never reuses a stale cached client.
+  const { apiKey } = assertAiDispatchConfiguration();
+  if (openAIClient && openAIClientApiKey === apiKey) {
     return openAIClient;
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing OPENAI_API_KEY.");
-  }
-
   openAIClient = new OpenAI({ apiKey });
+  openAIClientApiKey = apiKey;
   return openAIClient;
 }
 
@@ -160,6 +222,12 @@ export async function runJsonTask<T>(
   try {
     return await runOnce(userTaskPrompt, config);
   } catch (error) {
+    if (error instanceof AiProviderConfigurationError) {
+      // Configuration failures are not provider failures: never retry them
+      // (a retry would not switch providers — there is no other provider —
+      // and must not produce a second dispatch attempt).
+      throw error;
+    }
     const retryOptions: JsonTaskOptions =
       options.taskType === "wording"
         ? {
@@ -246,14 +314,30 @@ export async function runAudioTranscriptionTask(
   return { transcript };
 }
 
+// Test-runner overrides exist only so isolated pipeline tests can bypass
+// real dispatch. They are test-execution mechanisms, NOT runtime
+// configuration: installing one outside a test run is refused so a runner
+// can never become a production dispatch path that skips the provider
+// configuration check above.
+function assertTestRunnerOverrideAllowed(): void {
+  const inTestExecution =
+    process.env.NODE_ENV === "test" || typeof process.env.NODE_TEST_CONTEXT === "string";
+  if (!inTestExecution) {
+    throw new Error("AI test runner overrides may only be installed during test execution.");
+  }
+}
+
 export function setJsonTaskRunnerForTests(runner: JsonTaskRunner | null): void {
+  assertTestRunnerOverrideAllowed();
   jsonTaskRunnerForTests = runner;
 }
 
 export function setImageOcrRunnerForTests(runner: ImageOcrRunner | null): void {
+  assertTestRunnerOverrideAllowed();
   imageOcrRunnerForTests = runner;
 }
 
 export function setAudioTranscriptionRunnerForTests(runner: AudioTranscriptionRunner | null): void {
+  assertTestRunnerOverrideAllowed();
   audioTranscriptionRunnerForTests = runner;
 }
