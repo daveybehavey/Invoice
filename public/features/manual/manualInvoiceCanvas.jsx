@@ -2694,10 +2694,10 @@ function ManualInvoiceCanvas() {
 
   const refreshSaveAuthPolicy = async (shouldApply = () => true) => {
     try {
-      const response = await apiFetch("/api/system/persistence");
+      const response = await apiFetch("/api/auth/policy");
       const payload = await response.json();
       if (!response.ok) {
-        throw new Error(payload?.error || "Failed to load persistence policy.");
+        throw new Error(payload?.error || "Failed to load auth policy.");
       }
       const authRequired = Boolean(payload?.authRequired);
       if (shouldApply()) {

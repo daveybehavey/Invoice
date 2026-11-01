@@ -482,6 +482,19 @@ app.get("/api/auth/providers", async (_req: Request, res: Response) => {
   res.json({ providers });
 });
 
+app.get("/api/auth/policy", async (_req: Request, res: Response) => {
+  // Public, minimal auth policy for product consumers (invoice library,
+  // manual editor): only whether sign-in is required and which providers
+  // are available. The full persistence payload — store backend,
+  // readiness, secret-configuration state — stays behind the operator
+  // diagnostics gate on /api/system/* (S93-3 item 3).
+  const authPolicy = getInvoiceAuthPolicy();
+  res.json({
+    authRequired: authPolicy.requireAuth,
+    authProviders: authPolicy.providers
+  });
+});
+
 app.post("/api/auth/session", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = z
@@ -716,7 +729,7 @@ app.delete("/api/auth/session", (_req: Request, res: Response) => {
   res.status(204).send();
 });
 
-app.get("/api/system/persistence", async (_req: Request, res: Response, next: NextFunction) => {
+app.get("/api/system/persistence", requireDiagnosticsOperatorSession, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const runtimePolicy = getSavedInvoicePersistencePolicy();
     const authPolicy = getInvoiceAuthPolicy();
@@ -747,7 +760,7 @@ app.get("/api/system/persistence", async (_req: Request, res: Response, next: Ne
   }
 });
 
-app.get("/api/system/persistence/migration", async (_req: Request, res: Response, next: NextFunction) => {
+app.get("/api/system/persistence/migration", requireDiagnosticsOperatorSession, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const runtimePolicy = getSavedInvoicePersistencePolicy();
     const authPolicy = getInvoiceAuthPolicy();
@@ -784,7 +797,7 @@ app.get("/api/system/persistence/migration", async (_req: Request, res: Response
   }
 });
 
-app.get("/api/system/billing", async (_req: Request, res: Response, next: NextFunction) => {
+app.get("/api/system/billing", requireDiagnosticsOperatorSession, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const capabilities = getStripeBillingCapabilities();
     const entitlements = await getBillingEntitlementsSummary();
@@ -807,11 +820,13 @@ app.get("/api/system/billing", async (_req: Request, res: Response, next: NextFu
   }
 });
 
-app.get("/api/system/delivery", async (req: Request, res: Response, next: NextFunction) => {
+app.get("/api/system/delivery", requireDiagnosticsOperatorSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const deliveryDiagnostics = await getInvoiceEmailDiagnostics();
     const summary = await getInvoiceDeliveryStoreSummary();
-    const ownerId = getRequestOwnerId(req);
+    // S93-3 item 3: the reminder preview is scoped to the authorized
+    // operator's own session identity — never a caller-selected owner.
+    const ownerId = getDiagnosticsOperatorSession(res).userId;
     const reminderPreview = await listDueInvoiceReminderCandidates({
       ownerId,
       repository: savedInvoiceRepository
@@ -964,7 +979,7 @@ app.post("/api/system/delivery/test", async (req: Request, res: Response, next: 
   }
 });
 
-app.get("/api/system/launch", async (req: Request, res: Response, next: NextFunction) => {
+app.get("/api/system/launch", requireDiagnosticsOperatorSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const persistencePolicy = getSavedInvoicePersistencePolicy();
     const authPolicy = getInvoiceAuthPolicy();
@@ -1062,7 +1077,7 @@ app.get("/api/system/launch", async (req: Request, res: Response, next: NextFunc
   }
 });
 
-app.get("/api/telemetry/ocr-confidence", async (_req: Request, res: Response, next: NextFunction) => {
+app.get("/api/telemetry/ocr-confidence", requireDiagnosticsOperatorSession, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const snapshot = await getOcrMetricsSnapshot();
     res.json(snapshot);
@@ -1071,12 +1086,26 @@ app.get("/api/telemetry/ocr-confidence", async (_req: Request, res: Response, ne
   }
 });
 
-app.post("/api/telemetry/ocr-confidence/export", async (req: Request, res: Response, next: NextFunction) => {
+app.post("/api/telemetry/ocr-confidence/export", requireDiagnosticsOperatorSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const force = Boolean(req.body?.force);
-    const result = await exportOcrMetricsSnapshot({ force });
+    // S93-3 item 3: `force` is an optional strict boolean, default false.
+    // Strings/numbers/objects are rejected with 400 — Boolean("false")
+    // must never mean true for an operator export bypass.
+    const rawForce = (req.body as { force?: unknown } | undefined)?.force;
+    if (rawForce !== undefined && typeof rawForce !== "boolean") {
+      throw new HttpStatusError(400, "force must be a boolean when provided.");
+    }
+    const result = await exportOcrMetricsSnapshot({ force: rawForce ?? false });
+    // Response is built from an explicit field allowlist: export targets
+    // embed provider credentials (the GA4 target carries the API secret)
+    // and must never be spread into a response.
     res.json({
-      ...result,
+      attempted: result.attempted,
+      exported: result.exported,
+      reason: result.reason,
+      provider: result.provider,
+      statusCode: result.statusCode,
+      snapshotUpdatedAt: result.snapshotUpdatedAt,
       configured: isOcrMetricsExportConfigured()
     });
   } catch (error) {
@@ -1084,7 +1113,7 @@ app.post("/api/telemetry/ocr-confidence/export", async (req: Request, res: Respo
   }
 });
 
-app.get("/api/telemetry/flow-friction", async (_req: Request, res: Response, next: NextFunction) => {
+app.get("/api/telemetry/flow-friction", requireDiagnosticsOperatorSession, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const snapshot = await getFlowFrictionSnapshot();
     res.json(snapshot);
@@ -1093,7 +1122,7 @@ app.get("/api/telemetry/flow-friction", async (_req: Request, res: Response, nex
   }
 });
 
-app.get("/api/telemetry/intake-trends", async (_req: Request, res: Response, next: NextFunction) => {
+app.get("/api/telemetry/intake-trends", requireDiagnosticsOperatorSession, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const trends = await getIntakeTelemetryTrends();
     res.json(trends);
@@ -1102,7 +1131,7 @@ app.get("/api/telemetry/intake-trends", async (_req: Request, res: Response, nex
   }
 });
 
-app.get("/api/telemetry/revenue-signals", async (_req: Request, res: Response, next: NextFunction) => {
+app.get("/api/telemetry/revenue-signals", requireDiagnosticsOperatorSession, async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const snapshot = await getRevenueSignalsSnapshot();
     res.json(snapshot);
@@ -2575,6 +2604,49 @@ function isLaunchTestOperator(session: InvoiceAuthSession | null): boolean {
     .map((value) => value.trim())
     .filter(Boolean);
   return configured.includes(session.userId);
+}
+
+// S93-3 item 3: global diagnostics and telemetry exports are
+// operator-only. Authorization follows SEC-05's pattern (validated
+// session, then a user-ID allowlist) but uses a SEPARATE allowlist,
+// INVOICE_DIAGNOSTICS_OPERATOR_USER_IDS, empty by default — launch-test
+// operators do NOT silently gain global diagnostics access. There is no
+// owner fallback, email comparison, query token, or auth-disabled bypass:
+// 401 without a valid session, 403 for a valid non-operator session. The
+// middleware runs before each handler's first read or effect, and marks
+// the eventual response Cache-Control: no-store.
+function isDiagnosticsOperator(session: InvoiceAuthSession | null): boolean {
+  if (!session?.userId) {
+    return false;
+  }
+  const configured = (process.env.INVOICE_DIAGNOSTICS_OPERATOR_USER_IDS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return configured.includes(session.userId);
+}
+
+function requireDiagnosticsOperatorSession(req: Request, res: Response, next: NextFunction): void {
+  const session = getAuthSessionFromRequest(req);
+  if (!session?.userId) {
+    next(new HttpStatusError(401, "Authentication required."));
+    return;
+  }
+  if (!isDiagnosticsOperator(session)) {
+    next(new HttpStatusError(403, "Diagnostics are restricted to authorized operators."));
+    return;
+  }
+  res.locals.diagnosticsOperatorSession = session;
+  res.setHeader("Cache-Control", "no-store");
+  next();
+}
+
+function getDiagnosticsOperatorSession(res: Response): InvoiceAuthSession {
+  const session = res.locals.diagnosticsOperatorSession as InvoiceAuthSession | undefined;
+  if (!session?.userId) {
+    throw new HttpStatusError(401, "Authentication required.");
+  }
+  return session;
 }
 
 function getRequestOwnerId(req: Request): string {

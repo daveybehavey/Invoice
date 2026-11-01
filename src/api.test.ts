@@ -84,6 +84,14 @@ const [
 const aiRouteAuthSession = createAuthSessionForEmail("ai-routes@test.dev");
 const aiRouteAuthHeaders = { authorization: `Bearer ${aiRouteAuthSession.token}` };
 
+// S93-3 item 3: system diagnostics and telemetry endpoints are
+// operator-only. Tests that exercise their behavior (not the gate itself)
+// authenticate as this operator and allowlist its user ID; the gate's own
+// acceptance tests live in src/serverDiagnosticsGate.s933.test.ts.
+const diagnosticsOperatorSession = createAuthSessionForEmail("diagnostics-operator@test.dev");
+process.env.INVOICE_DIAGNOSTICS_OPERATOR_USER_IDS = diagnosticsOperatorSession.session.userId;
+const diagnosticsOperatorHeaders = { authorization: `Bearer ${diagnosticsOperatorSession.token}` };
+
 const { subjectIdFor } = await import("./services/billingEvidence.js");
 
 function validTermsAckFields() {
@@ -646,7 +654,7 @@ test("OCR telemetry endpoint records confidence metrics from extract-notes", asy
     warnings: ["Handwriting in one line was unclear."]
   }));
 
-  const beforeResponse = await request(app).get("/api/telemetry/ocr-confidence");
+  const beforeResponse = await request(app).get("/api/telemetry/ocr-confidence").set(diagnosticsOperatorHeaders);
   assert.equal(beforeResponse.status, 200);
   const beforeTotal =
     Number.isFinite(beforeResponse.body.totalEvents) && beforeResponse.body.totalEvents >= 0
@@ -662,7 +670,7 @@ test("OCR telemetry endpoint records confidence metrics from extract-notes", asy
     });
   assert.equal(extractResponse.status, 200);
 
-  const afterResponse = await request(app).get("/api/telemetry/ocr-confidence");
+  const afterResponse = await request(app).get("/api/telemetry/ocr-confidence").set(diagnosticsOperatorHeaders);
   assert.equal(afterResponse.status, 200);
   assert.ok(afterResponse.body.totalEvents >= beforeTotal + 1);
   assert.ok(Array.isArray(afterResponse.body.recentEvents));
@@ -806,7 +814,7 @@ test("revenue signal telemetry tracks activation and repeat-use milestones", asy
     });
   assert.equal(workspaceSignal.status, 200);
 
-  const snapshot = await request(app).get("/api/telemetry/revenue-signals");
+  const snapshot = await request(app).get("/api/telemetry/revenue-signals").set(diagnosticsOperatorHeaders);
   assert.equal(snapshot.status, 200);
   assert.equal(snapshot.body.byEvent.invoice_generated, 1);
   assert.equal(snapshot.body.byEvent.invoice_saved, 2);
@@ -837,7 +845,7 @@ test("revenue signal telemetry tracks activation and repeat-use milestones", asy
 });
 
 test("system persistence endpoint reports active invoice backend", async () => {
-  const response = await request(app).get("/api/system/persistence");
+  const response = await request(app).get("/api/system/persistence").set(diagnosticsOperatorHeaders);
   assert.equal(response.status, 200);
   assert.equal(response.body.invoiceStoreBackend, "file");
   assert.equal(response.body.configuredBackend, "file");
@@ -860,7 +868,7 @@ test("system persistence endpoint reports active invoice backend", async () => {
 });
 
 test("system persistence migration endpoint reports file-store summary", async () => {
-  const response = await request(app).get("/api/system/persistence/migration");
+  const response = await request(app).get("/api/system/persistence/migration").set(diagnosticsOperatorHeaders);
   assert.equal(response.status, 200);
   assert.equal(response.body.invoiceStoreBackend, "file");
   assert.equal(response.body.configuredMode, "file");
@@ -891,7 +899,7 @@ test("system persistence migration endpoint reports file-store summary", async (
 test("launch diagnostics endpoint aggregates persistence, billing, delivery, and public URL readiness", async () => {
   process.env.APP_BASE_URL = "https://app.notebill.app";
 
-  const baseline = await request(app).get("/api/system/launch");
+  const baseline = await request(app).get("/api/system/launch").set(diagnosticsOperatorHeaders);
   assert.equal(baseline.status, 200);
   assert.equal(baseline.body.ready, false);
   assert.equal(baseline.body.publicBaseUrl, "https://app.notebill.app");
@@ -928,7 +936,7 @@ test("launch diagnostics endpoint aggregates persistence, billing, delivery, and
     throw new Error(`Unexpected fetch in launch diagnostics test: ${String(input)}`);
   }) as typeof fetch;
 
-  const configured = await request(app).get("/api/system/launch");
+  const configured = await request(app).get("/api/system/launch").set(diagnosticsOperatorHeaders);
   assert.equal(configured.status, 200);
   assert.equal(configured.body.ready, true);
   assert.equal(configured.body.billing?.ready, true);
@@ -990,7 +998,7 @@ test("invoice library allows authenticated requests when auth is required", asyn
 });
 
 test("OCR telemetry export endpoint reports not configured by default", async () => {
-  const response = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
+  const response = await request(app).post("/api/telemetry/ocr-confidence/export").set(diagnosticsOperatorHeaders).send({});
   assert.equal(response.status, 200);
   assert.equal(response.body.configured, false);
   assert.equal(response.body.attempted, false);
@@ -1029,7 +1037,7 @@ test("OCR telemetry export endpoint posts snapshot when configured", async () =>
     });
   assert.equal(extractResponse.status, 200);
 
-  const exportResponse = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
+  const exportResponse = await request(app).post("/api/telemetry/ocr-confidence/export").set(diagnosticsOperatorHeaders).send({});
   assert.equal(exportResponse.status, 200);
   assert.equal(exportResponse.body.configured, true);
   assert.equal(exportResponse.body.attempted, true);
@@ -1087,7 +1095,7 @@ test("OCR telemetry export endpoint supports GA4 provider payload", async () => 
     });
   assert.equal(extractResponse.status, 200);
 
-  const exportResponse = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
+  const exportResponse = await request(app).post("/api/telemetry/ocr-confidence/export").set(diagnosticsOperatorHeaders).send({});
   assert.equal(exportResponse.status, 200);
   assert.equal(exportResponse.body.configured, true);
   assert.equal(exportResponse.body.provider, "ga4");
@@ -1146,7 +1154,7 @@ test("OCR telemetry export endpoint supports Segment provider payload", async ()
     });
   assert.equal(extractResponse.status, 200);
 
-  const exportResponse = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
+  const exportResponse = await request(app).post("/api/telemetry/ocr-confidence/export").set(diagnosticsOperatorHeaders).send({});
   assert.equal(exportResponse.status, 200);
   assert.equal(exportResponse.body.configured, true);
   assert.equal(exportResponse.body.provider, "segment");
@@ -1190,12 +1198,12 @@ test("OCR telemetry export endpoint skips when no new metrics exist", async () =
     });
   assert.equal(extractResponse.status, 200);
 
-  const firstExport = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
+  const firstExport = await request(app).post("/api/telemetry/ocr-confidence/export").set(diagnosticsOperatorHeaders).send({});
   assert.equal(firstExport.status, 200);
   assert.equal(firstExport.body.exported, true);
   assert.equal(fetchCount, 1);
 
-  const secondExport = await request(app).post("/api/telemetry/ocr-confidence/export").send({});
+  const secondExport = await request(app).post("/api/telemetry/ocr-confidence/export").set(diagnosticsOperatorHeaders).send({});
   assert.equal(secondExport.status, 200);
   assert.equal(secondExport.body.attempted, false);
   assert.equal(secondExport.body.exported, false);
@@ -1204,7 +1212,7 @@ test("OCR telemetry export endpoint skips when no new metrics exist", async () =
 });
 
 test("flow friction telemetry endpoint reports unavailable when no snapshot exists", async () => {
-  const response = await request(app).get("/api/telemetry/flow-friction");
+  const response = await request(app).get("/api/telemetry/flow-friction").set(diagnosticsOperatorHeaders);
   assert.equal(response.status, 200);
   assert.equal(response.body.available, false);
   assert.equal(response.body.reason, "missing_report");
@@ -1230,7 +1238,7 @@ test("flow friction telemetry endpoint returns summary when snapshot exists", as
     "utf8"
   );
 
-  const response = await request(app).get("/api/telemetry/flow-friction");
+  const response = await request(app).get("/api/telemetry/flow-friction").set(diagnosticsOperatorHeaders);
   assert.equal(response.status, 200);
   assert.equal(response.body.available, true);
   assert.equal(response.body.summary.totalChecks, 2);
@@ -1241,7 +1249,7 @@ test("flow friction telemetry endpoint returns summary when snapshot exists", as
 });
 
 test("intake trends endpoint returns empty baseline when no telemetry exists", async () => {
-  const response = await request(app).get("/api/telemetry/intake-trends");
+  const response = await request(app).get("/api/telemetry/intake-trends").set(diagnosticsOperatorHeaders);
   assert.equal(response.status, 200);
   assert.equal(response.body.ocr.last24h.total, 0);
   assert.equal(response.body.ocr.last7d.total, 0);
@@ -1296,7 +1304,7 @@ test("intake trends endpoint summarizes OCR and friction windows", async () => {
     });
   assert.equal(highResponse.status, 200);
 
-  const response = await request(app).get("/api/telemetry/intake-trends");
+  const response = await request(app).get("/api/telemetry/intake-trends").set(diagnosticsOperatorHeaders);
   assert.equal(response.status, 200);
   assert.ok(response.body.ocr.last24h.total >= 2);
   assert.ok(response.body.ocr.last7d.total >= response.body.ocr.last24h.total);
@@ -5829,7 +5837,7 @@ test("account plan endpoint reports stripe billing capabilities from env flags",
 });
 
 test("billing diagnostics endpoint reports stripe readiness + entitlement counts", async () => {
-  const baseline = await request(app).get("/api/system/billing");
+  const baseline = await request(app).get("/api/system/billing").set(diagnosticsOperatorHeaders);
   assert.equal(baseline.status, 200);
   assert.equal(baseline.body.provider, "none");
   assert.equal(baseline.body.entitlements?.subscriptionCount, 0);
@@ -5870,7 +5878,7 @@ test("billing diagnostics endpoint reports stripe readiness + entitlement counts
     .send(payload);
   assert.equal(webhookResponse.status, 200);
 
-  const afterWebhook = await request(app).get("/api/system/billing");
+  const afterWebhook = await request(app).get("/api/system/billing").set(diagnosticsOperatorHeaders);
   assert.equal(afterWebhook.status, 200);
   assert.equal(afterWebhook.body.provider, "stripe");
   assert.equal(afterWebhook.body.capabilities?.checkoutAvailable, true);
@@ -5890,21 +5898,21 @@ test("billing diagnostics flags test-mode keys when live launch billing is requi
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
   process.env.INVOICE_LAUNCH_REQUIRE_LIVE_BILLING = "true";
 
-  const response = await request(app).get("/api/system/billing");
+  const response = await request(app).get("/api/system/billing").set(diagnosticsOperatorHeaders);
   assert.equal(response.status, 200);
   assert.equal(response.body.capabilities?.secretKeyMode, "test");
   assert.equal(response.body.capabilities?.publishableKeyMode, "test");
   assert.equal(response.body.launchPolicy?.requireLiveMode, true);
   assert.match(String(response.body.warning || ""), /live billing keys/i);
 
-  const launchResponse = await request(app).get("/api/system/launch");
+  const launchResponse = await request(app).get("/api/system/launch").set(diagnosticsOperatorHeaders);
   assert.equal(launchResponse.status, 200);
   assert.equal(launchResponse.body.billing?.ready, false);
   assert.match(String(launchResponse.body.billing?.warning || ""), /live billing keys/i);
 });
 
 test("delivery diagnostics endpoint reports provider readiness + send summary", async () => {
-  const baseline = await request(app).get("/api/system/delivery");
+  const baseline = await request(app).get("/api/system/delivery").set(diagnosticsOperatorHeaders);
   assert.equal(baseline.status, 200);
   assert.equal(baseline.body.provider, "none");
   assert.equal(baseline.body.capabilities?.configured, false);
@@ -5953,7 +5961,7 @@ test("delivery diagnostics endpoint reports provider readiness + send summary", 
     .set("x-invoice-user-id", ownerId)
     .send({ recipientEmail: "diag-delivery@example.com" });
 
-  const afterSend = await request(app).get("/api/system/delivery");
+  const afterSend = await request(app).get("/api/system/delivery").set(diagnosticsOperatorHeaders);
   assert.equal(afterSend.status, 200);
   // Slice 0 (invariant 8): sentCount counts verified provider sends
   // only — a record_only send appears in recordOnlyCount, nowhere else.
@@ -5983,7 +5991,7 @@ test("delivery diagnostics exposes launch test recipient readiness", async () =>
     throw new Error(`Unexpected fetch in delivery diagnostics test: ${String(input)}`);
   }) as typeof fetch;
 
-  const response = await request(app).get("/api/system/delivery");
+  const response = await request(app).get("/api/system/delivery").set(diagnosticsOperatorHeaders);
   assert.equal(response.status, 200);
   assert.equal(response.body.capabilities?.configured, true);
   assert.equal(response.body.capabilities?.fromDomain, "notebill.app");
@@ -5998,7 +6006,7 @@ test("delivery diagnostics reports smtp2go provider as ready when configured", a
   process.env.INVOICE_FROM_EMAIL = "NoteBill <invoices@notebill.app>";
   process.env.INVOICE_LAUNCH_TEST_EMAIL = "launch-test@example.com";
 
-  const response = await request(app).get("/api/system/delivery");
+  const response = await request(app).get("/api/system/delivery").set(diagnosticsOperatorHeaders);
   assert.equal(response.status, 200);
   assert.equal(response.body.provider, "smtp2go");
   assert.equal(response.body.capabilities?.configured, true);
@@ -6028,12 +6036,12 @@ test("delivery diagnostics warns when resend domain is not verified", async () =
     throw new Error(`Unexpected fetch in resend verification test: ${String(input)}`);
   }) as typeof fetch;
 
-  const deliveryResponse = await request(app).get("/api/system/delivery");
+  const deliveryResponse = await request(app).get("/api/system/delivery").set(diagnosticsOperatorHeaders);
   assert.equal(deliveryResponse.status, 200);
   assert.equal(deliveryResponse.body.verification?.ready, false);
   assert.match(String(deliveryResponse.body.warning || ""), /not verified for sending/i);
 
-  const launchResponse = await request(app).get("/api/system/launch");
+  const launchResponse = await request(app).get("/api/system/launch").set(diagnosticsOperatorHeaders);
   assert.equal(launchResponse.status, 200);
   assert.equal(launchResponse.body.delivery?.ready, false);
   assert.match(String(launchResponse.body.delivery?.warning || ""), /not verified for sending/i);
@@ -6566,9 +6574,12 @@ test("reminder run endpoint skips invoices with no open balance", async () => {
   assert.deepEqual(dryRunResponse.body.due, []);
 });
 
-test("delivery diagnostics endpoint scopes reminder preview by request owner", async () => {
+test("delivery diagnostics endpoint scopes reminder preview to the operator session", async () => {
   useMockedResendProvider();
-  const ownerId = "delivery-reminder-diagnostics-owner";
+  // S93-3 item 3: the reminder preview belongs to the authorized
+  // operator's own session identity — a caller-selected owner header
+  // must not steer it. The operator is therefore the invoice owner here.
+  const ownerId = diagnosticsOperatorSession.session.userId;
   const saveResponse = await request(app)
     .post("/api/invoices/save")
     .set("x-invoice-user-id", ownerId)
@@ -6614,8 +6625,8 @@ test("delivery diagnostics endpoint scopes reminder preview by request owner", a
   await backdateVerifiedDeliverySend(invoiceId, "2026-01-01T00:00:00.000Z");
 
   const diagnosticsResponse = await request(app)
-    .get("/api/system/delivery")
-    .set("x-invoice-user-id", ownerId);
+    .get("/api/system/delivery").set(diagnosticsOperatorHeaders)
+    .set("x-invoice-user-id", "caller-selected-other-owner");
   assert.equal(diagnosticsResponse.status, 200);
   assert.equal(diagnosticsResponse.body.reminders?.ownerId, ownerId);
   assert.equal(diagnosticsResponse.body.reminders?.dueCount, 1);
@@ -10927,7 +10938,7 @@ test("auth session endpoint builds the sign-in link from the configured origin d
 test("launch diagnostics reports an unconfigured public base URL without inventing an origin", async () => {
   delete process.env.APP_BASE_URL;
 
-  const response = await request(app).get("/api/system/launch");
+  const response = await request(app).get("/api/system/launch").set(diagnosticsOperatorHeaders);
 
   assert.equal(response.status, 200);
   assert.equal(response.body.publicBaseUrlReady, false);

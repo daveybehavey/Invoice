@@ -860,7 +860,7 @@
     let cancelled = false;
     const loadAuthPolicy = async () => {
       try {
-        const payload = await requestJson("/api/system/persistence", undefined, "Failed to load auth policy.");
+        const payload = await requestJson("/api/auth/policy", undefined, "Failed to load auth policy.");
         if (cancelled) {
           return;
         }
