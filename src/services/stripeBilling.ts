@@ -765,7 +765,19 @@ async function reconcileSubscriptionFromEvent(input: {
     status: retrieved.status,
     linkage: {
       customerId: resolveStripeRefId(retrieved.customer) || input.linkage.customerId,
-      email: input.linkage.email || normalizeEmail(retrievedMetadata.email),
+      // Email is the one refreshable (non-binding) linkage field, and the
+      // retrieval — Stripe's CURRENT state, fetched by this generation —
+      // is its authority. The event payload is a snapshot from the
+      // event's created second: an equal-second event delivered out of
+      // order passes the staleness watermark (only strictly-older events
+      // are stale) yet can carry a pre-correction address. Preferring
+      // the payload here let such an event's commit revert a corrected
+      // granting email back to the stale one. Event linkage remains the
+      // fallback for when the retrieved metadata carries no email.
+      // (ownerId/userId keep linkage-first order: validation above fails
+      // closed whenever both sources are present and disagree, so their
+      // precedence can never select a different value.)
+      email: normalizeEmail(retrievedMetadata.email) || input.linkage.email,
       ownerId: input.linkage.ownerId || normalizeText(retrievedMetadata.ownerId),
       userId: input.linkage.userId || normalizeText(retrievedMetadata.userId)
     }

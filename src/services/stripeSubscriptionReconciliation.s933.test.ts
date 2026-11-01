@@ -517,3 +517,96 @@ test("subscription created alone grants only the retrieved status (past_due gran
   await deliver(subscriptionEvent({ id: "evt_created_inc", created: 100, type: "customer.subscription.created", status: "active" }));
   assert.equal(await hasActiveStripeEntitlement({ ownerId: "owner-1" }), false);
 });
+
+// S93-3 item 2 fix round 2 (Codex P2-3): the email refresh at commit must
+// take the VERIFIED RETRIEVAL's email, not the event payload's. A webhook
+// payload is a snapshot from the event's created second; the staleness
+// watermark rejects only strictly-older events, so an equal-second event
+// issued before a metadata correction but delivered after it is accepted
+// as current — and its payload still carries the pre-correction address.
+// Currency discipline: stale (strictly-older) events never reserve, a
+// superseded generation never commits, and a commit that does land
+// writes the email from its own retrieval (Stripe's present state),
+// so no accepted reconciliation can move the granting email backwards
+// to a payload snapshot.
+test("an out-of-order stale event cannot revert a corrected granting email", async () => {
+  await deliver(checkoutEvent({ id: "evt_revert_a", created: 100, email: "old@test.dev" }));
+  assert.equal((await getSubscriptionReconciliationRecord("sub_main"))?.email, "old@test.dev");
+
+  // The email is corrected in Stripe metadata. The correction event and
+  // every later retrieval carry the corrected address.
+  retrieverImpl = async (id) =>
+    fakeSubscription(id, {
+      metadata: { ownerId: "owner-1", userId: "owner-1", email: "new@test.dev" }
+    });
+  await deliver(
+    subscriptionEvent({ id: "evt_revert_b", created: 200, type: "customer.subscription.updated", email: "new@test.dev" })
+  );
+  assert.equal((await getSubscriptionReconciliationRecord("sub_main"))?.email, "new@test.dev");
+  assert.equal(await hasActiveStripeEntitlement({ email: "new@test.dev" }), true);
+
+  // Out-of-order delivery: an event from the SAME created second as the
+  // correction, issued before it, arrives late. Its payload snapshot
+  // still carries the stale address, but its retrieval returns Stripe's
+  // current (corrected) metadata. The commit must not move the email
+  // back to the payload's stale snapshot.
+  await deliver(
+    subscriptionEvent({ id: "evt_revert_c", created: 200, type: "customer.subscription.updated", email: "old@test.dev" })
+  );
+  const record = await getSubscriptionReconciliationRecord("sub_main");
+  assert.equal(record?.email, "new@test.dev", "a stale payload snapshot never overwrites the retrieved email");
+  assert.equal(await hasActiveStripeEntitlement({ email: "new@test.dev" }), true);
+  assert.equal(
+    await hasActiveStripeEntitlement({ email: "old@test.dev" }),
+    false,
+    "the stale address does not regain access"
+  );
+
+  // And a strictly-older event is refused by the watermark before any
+  // retrieval, so it cannot touch the email either.
+  const callsBeforeStale = retrieverCalls.length;
+  await deliver(
+    subscriptionEvent({ id: "evt_revert_d", created: 150, type: "customer.subscription.updated", email: "old@test.dev" })
+  );
+  assert.equal((await getBillingEventReceipt("evt_revert_d"))?.disposition, "ignored_stale");
+  assert.equal(retrieverCalls.length, callsBeforeStale, "stale events never reach retrieval");
+  assert.equal((await getSubscriptionReconciliationRecord("sub_main"))?.email, "new@test.dev");
+});
+
+test("equal-second update pair: both arrival orders settle on the retrieved email", async () => {
+  // Expectation from the reconciliation's tie rule: equal-created
+  // events are both accepted as current (only strictly-older is stale)
+  // and are resolved in processing order — terminal state wins ties
+  // outright (see the equal-time deletion test above), and for
+  // non-terminal updates the last accepted commit stands. Because the
+  // granting email comes from each commit's verified retrieval — the
+  // same current Stripe state for both events — the settled email is
+  // order-invariant: the retrieved address, never a payload snapshot.
+  retrieverImpl = async (id) =>
+    fakeSubscription(id, {
+      metadata: { ownerId: "owner-1", userId: "owner-1", email: "new@test.dev" }
+    });
+
+  // Order 1: stale-payload event first, corrected-payload event second.
+  await deliver(
+    subscriptionEvent({ id: "evt_tie_a1", created: 200, type: "customer.subscription.updated", email: "old@test.dev" })
+  );
+  await deliver(
+    subscriptionEvent({ id: "evt_tie_a2", created: 200, type: "customer.subscription.updated", email: "new@test.dev" })
+  );
+  assert.equal((await getSubscriptionReconciliationRecord("sub_main"))?.email, "new@test.dev");
+  assert.equal(await hasActiveStripeEntitlement({ email: "new@test.dev" }), true);
+  assert.equal(await hasActiveStripeEntitlement({ email: "old@test.dev" }), false);
+
+  // Order 2 (fresh store): corrected-payload event first, stale second.
+  await fs.writeFile(entitlementsFilePath, `${EMPTY_SNAPSHOT}\n`, "utf8");
+  await deliver(
+    subscriptionEvent({ id: "evt_tie_b1", created: 200, type: "customer.subscription.updated", email: "new@test.dev" })
+  );
+  await deliver(
+    subscriptionEvent({ id: "evt_tie_b2", created: 200, type: "customer.subscription.updated", email: "old@test.dev" })
+  );
+  assert.equal((await getSubscriptionReconciliationRecord("sub_main"))?.email, "new@test.dev");
+  assert.equal(await hasActiveStripeEntitlement({ email: "new@test.dev" }), true);
+  assert.equal(await hasActiveStripeEntitlement({ email: "old@test.dev" }), false);
+});
