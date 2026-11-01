@@ -23,7 +23,7 @@ import {
   SaveInvoiceRequestSchema,
   UpdateInvoiceStatusRequestSchema
 } from "./models/invoice.js";
-import type { InvoiceListItem, SavedInvoice } from "./models/invoice.js";
+import type { SavedInvoice } from "./models/invoice.js";
 import {
   applyDecisionActionToDraft,
   applyDiscountAfterFollowUp,
@@ -1567,19 +1567,14 @@ app.get("/api/public/invoices/:id/portal", async (req: Request, res: Response, n
     if (!invoice) {
       throw new HttpStatusError(404, "Portal link not found.");
     }
-    const customerName =
-      invoice.invoiceData.finishedInvoice.customerName ?? invoice.invoiceData.structuredInvoice.customerName ?? "";
-    const history =
-      customerName.trim().length > 0
-        ? (await savedInvoiceRepository.listSavedInvoiceMetadata(false, invoice.ownerId))
-            .filter((entry) => entry.invoiceId !== invoice.invoiceId)
-            .filter((entry) => isSamePortalCustomer(entry.customerName, customerName))
-            .slice(0, 5)
-            .map(toPublicPortalHistoryItem)
-        : [];
+    // SEC-06: portal access is scoped to the single (invoiceId, token) pair.
+    // Cross-invoice history is withdrawn: distinct customers can share a
+    // name after trim/lowercase normalization, so name matching must never
+    // expose another invoice through this link. The response contract keeps
+    // the history field, always empty.
     res.json({
       invoice: toPublicPortalInvoice(invoice),
-      history
+      history: []
     });
   } catch (error) {
     next(error);
@@ -2491,26 +2486,6 @@ function toPublicPortalInvoice(invoice: SavedInvoice) {
       }
     }
   };
-}
-
-function toPublicPortalHistoryItem(invoice: InvoiceListItem) {
-  return {
-    invoiceId: invoice.invoiceId,
-    invoiceNumber: invoice.invoiceNumber,
-    updatedAt: invoice.updatedAt,
-    status: invoice.status,
-    total: invoice.total,
-    balanceDue: invoice.balanceDue,
-    dueDate: invoice.dueDate
-  };
-}
-
-function isSamePortalCustomer(left: string | undefined, right: string): boolean {
-  return normalizePortalCustomerName(left) === normalizePortalCustomerName(right);
-}
-
-function normalizePortalCustomerName(value: string | undefined): string {
-  return String(value ?? "").trim().toLowerCase();
 }
 
 function asOptionalParseMode(value: unknown): "fast" | "full" | undefined {
