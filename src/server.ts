@@ -138,6 +138,7 @@ import {
 } from "./services/authSession.js";
 import { consumeEmailSignInNonce } from "./services/emailSignInRedemptionStore.js";
 import { reserveProviderUsage } from "./services/providerUsageGate.js";
+import { AiProviderConfigurationError } from "./ai/openaiClient.js";
 import {
   buildLaunchTestIdempotencyKey,
   recordLaunchTestClaimOutcome,
@@ -2308,6 +2309,13 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   }
   if (error instanceof HttpStatusError) {
     res.status(error.statusCode).json({ error: error.message });
+    return;
+  }
+  if (error instanceof AiProviderConfigurationError) {
+    // S93-3 item 4: AI provider configuration failures are operator
+    // configuration problems, not client errors. Respond with a generic
+    // 503 that never echoes configuration values or secrets.
+    res.status(503).json({ error: "AI features are unavailable right now." });
     return;
   }
   if (isErrorWithMessage(error)) {
