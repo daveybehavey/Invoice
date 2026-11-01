@@ -59,6 +59,7 @@ const [
     setInvoicePaymentLinkCreatorForTests,
     setCheckoutSessionCreatorForTests,
     setBillingPortalSessionCreatorForTests,
+    setStripeSubscriptionRetrieverForTests,
     clearCheckoutIntentSessionsForTests
   },
   { resetInvoiceEmailVerificationCacheForTests },
@@ -92,6 +93,38 @@ const diagnosticsOperatorSession = createAuthSessionForEmail("diagnostics-operat
 process.env.INVOICE_DIAGNOSTICS_OPERATOR_USER_IDS = diagnosticsOperatorSession.session.userId;
 const diagnosticsOperatorHeaders = { authorization: `Bearer ${diagnosticsOperatorSession.token}` };
 
+// S93-3 item 2: checkout/subscription webhooks reconcile against a
+// RETRIEVED subscription — checkout completion alone no longer grants.
+// Billing tests register the subscriptions Stripe would return here;
+// the retriever seam serves them (and throws for unregistered IDs, like
+// a provider failure).
+const fakeStripeSubscriptions = new Map<
+  string,
+  { customer: string; status: string; metadata: Record<string, string> }
+>();
+function registerFakeStripeSubscription(
+  subscriptionId: string,
+  customer: string,
+  status = "active",
+  metadata: Record<string, string> = {}
+): void {
+  fakeStripeSubscriptions.set(subscriptionId, { customer, status, metadata });
+}
+function installFakeStripeSubscriptionRetriever(): void {
+  setStripeSubscriptionRetrieverForTests(async (subscriptionId) => {
+    const fake = fakeStripeSubscriptions.get(subscriptionId);
+    if (!fake) {
+      throw new Error(`No fake Stripe subscription registered for ${subscriptionId}`);
+    }
+    return {
+      id: subscriptionId,
+      object: "subscription",
+      status: fake.status,
+      customer: fake.customer,
+      metadata: fake.metadata
+    } as unknown as Stripe.Subscription;
+  });
+}
 const { subjectIdFor } = await import("./services/billingEvidence.js");
 
 function validTermsAckFields() {
@@ -220,6 +253,8 @@ beforeEach(async () => {
   process.env.APP_BASE_URL = "http://localhost:3000";
   delete process.env.GOOGLE_CLIENT_ID;
   delete process.env.GOOGLE_CLIENT_SECRET;
+  fakeStripeSubscriptions.clear();
+  installFakeStripeSubscriptionRetriever();
 });
 
 afterEach(() => {
@@ -5837,6 +5872,7 @@ test("account plan endpoint reports stripe billing capabilities from env flags",
 });
 
 test("billing diagnostics endpoint reports stripe readiness + entitlement counts", async () => {
+  registerFakeStripeSubscription("sub_test_billing_diag", "cus_test_billing_diag");
   const baseline = await request(app).get("/api/system/billing").set(diagnosticsOperatorHeaders);
   assert.equal(baseline.status, 200);
   assert.equal(baseline.body.provider, "none");
@@ -5851,6 +5887,7 @@ test("billing diagnostics endpoint reports stripe readiness + entitlement counts
   const payload = JSON.stringify({
     id: "evt_test_billing_diag_checkout",
     object: "event",
+    created: 1761950000,
     type: "checkout.session.completed",
     data: {
       object: {
@@ -6964,6 +7001,8 @@ test("billing portal selection is scoped to the authenticated owner customer", a
   const ownerSession = ownerSignIn.body.session as { userId: string; email: string };
   const otherSession = otherSignIn.body.session as { userId: string; email: string };
 
+  registerFakeStripeSubscription("sub_evt_portal_owner", "cus_portal_owner");
+  registerFakeStripeSubscription("sub_evt_portal_other", "cus_portal_other");
   for (const [email, session, customerId, eventId] of [
     [ownerSession.email, ownerSession, "cus_portal_owner", "evt_portal_owner"],
     [otherSession.email, otherSession, "cus_portal_other", "evt_portal_other"]
@@ -6971,6 +7010,7 @@ test("billing portal selection is scoped to the authenticated owner customer", a
     const webhookPayload = JSON.stringify({
       id: eventId,
       object: "event",
+      created: 1761950000,
       type: "checkout.session.completed",
       data: {
         object: {
@@ -7035,6 +7075,7 @@ test("billing portal selection is scoped to the authenticated owner customer", a
 });
 
 test("stripe webhook checkout event grants pro access for matching signed-in user", async () => {
+  registerFakeStripeSubscription("sub_test_123", "cus_test_123");
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
 
@@ -7050,6 +7091,7 @@ test("stripe webhook checkout event grants pro access for matching signed-in use
   const webhookPayload = JSON.stringify({
     id: "evt_test_checkout_completed",
     object: "event",
+    created: 1761950100,
     type: "checkout.session.completed",
     data: {
       object: {
@@ -7087,6 +7129,7 @@ test("stripe webhook checkout event grants pro access for matching signed-in use
 });
 
 test("duplicate checkout webhook is idempotent for the bound owner", async () => {
+  registerFakeStripeSubscription("sub_test_idempotent", "cus_test_idempotent");
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
 
@@ -7098,6 +7141,7 @@ test("duplicate checkout webhook is idempotent for the bound owner", async () =>
   const webhookPayload = JSON.stringify({
     id: "evt_test_checkout_idempotent",
     object: "event",
+    created: 1761950200,
     type: "checkout.session.completed",
     data: {
       object: {
@@ -7144,6 +7188,7 @@ test("cancelled checkout does not grant Pro without a successful webhook", async
 });
 
 test("subscription cancellation revokes Pro for the bound owner only", async () => {
+  registerFakeStripeSubscription("sub_test_cancel", "cus_test_cancel");
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
 
@@ -7159,6 +7204,7 @@ test("subscription cancellation revokes Pro for the bound owner only", async () 
   const grantPayload = JSON.stringify({
     id: "evt_test_grant_then_cancel",
     object: "event",
+    created: 1761950300,
     type: "checkout.session.completed",
     data: {
       object: {
@@ -7199,6 +7245,7 @@ test("subscription cancellation revokes Pro for the bound owner only", async () 
   const cancelPayload = JSON.stringify({
     id: "evt_test_subscription_deleted",
     object: "event",
+    created: 1761950400,
     type: "customer.subscription.deleted",
     data: {
       object: {
@@ -7238,6 +7285,7 @@ test("subscription cancellation revokes Pro for the bound owner only", async () 
 });
 
 test("signed-in entitlement recovers in a fresh session simulation", async () => {
+  registerFakeStripeSubscription("sub_test_recover", "cus_test_recover");
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
 
@@ -7248,6 +7296,7 @@ test("signed-in entitlement recovers in a fresh session simulation", async () =>
   const webhookPayload = JSON.stringify({
     id: "evt_test_recover",
     object: "event",
+    created: 1761950500,
     type: "checkout.session.completed",
     data: {
       object: {
@@ -7293,6 +7342,7 @@ test("signed-in entitlement recovers in a fresh session simulation", async () =>
 });
 
 test("one user cannot recover another user's entitlement", async () => {
+  registerFakeStripeSubscription("sub_test_isolation", "cus_test_isolation");
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
 
@@ -7304,6 +7354,7 @@ test("one user cannot recover another user's entitlement", async () => {
   const webhookPayload = JSON.stringify({
     id: "evt_test_isolation",
     object: "event",
+    created: 1761950600,
     type: "checkout.session.completed",
     data: {
       object: {
@@ -7344,6 +7395,7 @@ test("one user cannot recover another user's entitlement", async () => {
 });
 
 test("guest cannot impersonate a paid Stripe owner through header or query owner ids", async () => {
+  registerFakeStripeSubscription("sub_test_guest_impersonation", "cus_test_guest_impersonation");
   process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_placeholder";
 
@@ -7354,6 +7406,7 @@ test("guest cannot impersonate a paid Stripe owner through header or query owner
   const webhookPayload = JSON.stringify({
     id: "evt_test_guest_impersonation",
     object: "event",
+    created: 1761950700,
     type: "checkout.session.completed",
     data: {
       object: {

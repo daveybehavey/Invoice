@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
 import Stripe from "stripe";
 import {
-  applyCheckoutSessionEntitlement,
-  applySubscriptionEntitlement,
-  findBillingCustomerIdForOwner
+  applyBillingCustomerLinkage,
+  beginAdminSubscriptionReconciliation,
+  beginSubscriptionEventProcessing,
+  commitSubscriptionReconciliation,
+  failSubscriptionReconciliation,
+  findBillingCustomerIdForOwner,
+  type SubscriptionEventLinkage,
+  type VerifiedBillingEventEnvelope
 } from "./billingEntitlementsStore.js";
 import {
   TERMS_ACCEPTANCE_METHOD,
@@ -617,8 +622,18 @@ export async function processStripeWebhookEvent(input: {
       })
     : await stripe.webhooks.constructEventAsync(rawPayload, input.signature, webhookSecret);
 
+  // S93-3 item 2: handlers receive ONLY the verified envelope (event ID,
+  // creation time, type). Raw payload fields are never trusted as event
+  // identity or time — processStripeWebhookEvent has already verified
+  // the signature above.
+  const envelope: VerifiedBillingEventEnvelope = {
+    eventId: event.id,
+    eventCreated: event.created,
+    eventType: event.type
+  };
+
   if (event.type === "checkout.session.completed") {
-    await handleCheckoutSessionCompletedEvent(event.data.object as Stripe.Checkout.Session);
+    await handleCheckoutSessionCompletedEvent(event.data.object as Stripe.Checkout.Session, envelope);
     return { eventId: event.id, eventType: event.type, handled: true };
   }
 
@@ -627,7 +642,7 @@ export async function processStripeWebhookEvent(input: {
     event.type === "customer.subscription.updated" ||
     event.type === "customer.subscription.deleted"
   ) {
-    await handleSubscriptionEvent(event.data.object as Stripe.Subscription);
+    await handleSubscriptionEvent(event.data.object as Stripe.Subscription, envelope);
     return { eventId: event.id, eventType: event.type, handled: true };
   }
 
@@ -665,37 +680,243 @@ function getStripeClient(): Stripe | null {
   return client;
 }
 
-async function handleCheckoutSessionCompletedEvent(session: Stripe.Checkout.Session): Promise<void> {
-  const customerId = typeof session.customer === "string" ? session.customer : "";
-  const subscriptionId = typeof session.subscription === "string" ? session.subscription : "";
-  const metadata = session.metadata ?? {};
-  const email =
-    normalizeEmail(session.customer_email) ||
-    normalizeEmail(session.customer_details?.email) ||
-    normalizeEmail(metadata.email);
-  const ownerId = normalizeText(metadata.ownerId);
-  const userId = normalizeText(metadata.userId);
+// ---------------------------------------------------------------------
+// S93-3 item 2: subscription retrieval + reconciliation orchestration.
+// Retrieval happens through the configured Stripe client (or the test
+// seam) and ALWAYS outside snapshot mutations.
 
-  await applyCheckoutSessionEntitlement({
-    customerId,
+type StripeSubscriptionRetriever = (subscriptionId: string) => Promise<Stripe.Subscription>;
+
+let stripeSubscriptionRetrieverForTests: StripeSubscriptionRetriever | null = null;
+
+async function retrieveStripeSubscription(subscriptionId: string): Promise<Stripe.Subscription> {
+  if (stripeSubscriptionRetrieverForTests) {
+    return stripeSubscriptionRetrieverForTests(subscriptionId);
+  }
+  const stripe = getStripeClient();
+  if (!stripe) {
+    throw new Error("Stripe billing is not configured.");
+  }
+  return stripe.subscriptions.retrieve(subscriptionId);
+}
+
+/**
+ * Resolve a Stripe reference that may be a string ID or an expanded
+ * object. Only the ID is extracted — an expanded object's fields are
+ * never used as status or identity evidence.
+ */
+function resolveStripeRefId(ref: unknown): string {
+  if (typeof ref === "string") {
+    return ref.trim();
+  }
+  if (ref && typeof ref === "object" && typeof (ref as { id?: unknown }).id === "string") {
+    return ((ref as { id: string }).id ?? "").trim();
+  }
+  return "";
+}
+
+async function reconcileSubscriptionFromEvent(input: {
+  envelope: VerifiedBillingEventEnvelope;
+  subscriptionId: string;
+  isDeletion: boolean;
+  linkage: SubscriptionEventLinkage;
+}): Promise<void> {
+  const begin = await beginSubscriptionEventProcessing({
+    event: input.envelope,
+    subscriptionId: input.subscriptionId,
+    isDeletion: input.isDeletion,
+    linkage: input.linkage
+  });
+  if (begin.action === "already_processed" || begin.action === "ignored" || begin.action === "applied_deletion") {
+    return;
+  }
+  if (begin.action === "conflict") {
+    throw new Error(
+      `Subscription reconciliation refused for ${input.subscriptionId}: ${begin.reason}.`
+    );
+  }
+
+  const generation = begin.generation;
+  let retrieved: Stripe.Subscription;
+  try {
+    retrieved = await retrieveStripeSubscription(input.subscriptionId);
+  } catch (error) {
+    await failSubscriptionReconciliation({ subscriptionId: input.subscriptionId, generation });
+    throw error;
+  }
+
+  const conflictReason = validateRetrievedSubscription({
+    subscriptionId: input.subscriptionId,
+    retrieved,
+    linkage: input.linkage
+  });
+  if (conflictReason) {
+    await failSubscriptionReconciliation({ subscriptionId: input.subscriptionId, generation });
+    throw new Error(
+      `Subscription reconciliation refused for ${input.subscriptionId}: ${conflictReason}.`
+    );
+  }
+
+  const retrievedMetadata = retrieved.metadata ?? {};
+  const commit = await commitSubscriptionReconciliation({
+    subscriptionId: input.subscriptionId,
+    generation,
+    event: input.envelope,
+    status: retrieved.status,
+    linkage: {
+      customerId: resolveStripeRefId(retrieved.customer) || input.linkage.customerId,
+      email: input.linkage.email || normalizeEmail(retrievedMetadata.email),
+      ownerId: input.linkage.ownerId || normalizeText(retrievedMetadata.ownerId),
+      userId: input.linkage.userId || normalizeText(retrievedMetadata.userId)
+    }
+  });
+  if (commit === "conflict") {
+    await failSubscriptionReconciliation({ subscriptionId: input.subscriptionId, generation });
+    throw new Error(
+      `Subscription reconciliation refused for ${input.subscriptionId}: binding conflict at commit.`
+    );
+  }
+  // "superseded" is a successful no-op: a tombstone or a newer generation
+  // owns the record now, and that generation is responsible for the state.
+}
+
+function validateRetrievedSubscription(input: {
+  subscriptionId: string;
+  retrieved: Stripe.Subscription;
+  linkage: SubscriptionEventLinkage;
+}): string | null {
+  if (!input.retrieved || typeof input.retrieved !== "object") {
+    return "retrieval_invalid";
+  }
+  if (input.retrieved.id !== input.subscriptionId) {
+    return "retrieved_subscription_mismatch";
+  }
+  if (typeof input.retrieved.status !== "string" || !input.retrieved.status.trim()) {
+    return "retrieved_status_missing";
+  }
+  const retrievedCustomerId = resolveStripeRefId(input.retrieved.customer);
+  const linkageCustomerId = normalizeText(input.linkage.customerId);
+  if (retrievedCustomerId && linkageCustomerId && retrievedCustomerId !== linkageCustomerId) {
+    return "retrieved_customer_conflict";
+  }
+  if (!retrievedCustomerId && linkageCustomerId) {
+    return "retrieved_customer_missing";
+  }
+  const retrievedMetadata = input.retrieved.metadata ?? {};
+  const retrievedOwnerId = normalizeText(retrievedMetadata.ownerId);
+  const linkageOwnerId = normalizeText(input.linkage.ownerId);
+  if (retrievedOwnerId && linkageOwnerId && retrievedOwnerId !== linkageOwnerId) {
+    return "retrieved_owner_conflict";
+  }
+  const retrievedUserId = normalizeText(retrievedMetadata.userId);
+  const linkageUserId = normalizeText(input.linkage.userId);
+  if (retrievedUserId && linkageUserId && retrievedUserId !== linkageUserId) {
+    return "retrieved_user_conflict";
+  }
+  return null;
+}
+
+/**
+ * Bounded administrative reconciliation for explicitly supplied existing
+ * subscription IDs (legacy records with no watermark are non-granting
+ * until reconciled through this same retrieval path). Used by
+ * scripts/reconcile-subscriptions.ts. Never fabricates event times.
+ */
+export async function reconcileStoredSubscription(subscriptionId: string): Promise<{
+  subscriptionId: string;
+  outcome: "verified" | "tombstoned" | "missing" | "superseded";
+  status?: string;
+}> {
+  const begin = await beginAdminSubscriptionReconciliation({ subscriptionId });
+  if (begin.action !== "reserved") {
+    return { subscriptionId, outcome: begin.action };
+  }
+  let retrieved: Stripe.Subscription;
+  try {
+    retrieved = await retrieveStripeSubscription(subscriptionId);
+  } catch (error) {
+    await failSubscriptionReconciliation({ subscriptionId, generation: begin.generation });
+    throw error;
+  }
+  const conflictReason = validateRetrievedSubscription({ subscriptionId, retrieved, linkage: {} });
+  if (conflictReason) {
+    await failSubscriptionReconciliation({ subscriptionId, generation: begin.generation });
+    throw new Error(`Subscription reconciliation refused for ${subscriptionId}: ${conflictReason}.`);
+  }
+  const metadata = retrieved.metadata ?? {};
+  const commit = await commitSubscriptionReconciliation({
     subscriptionId,
-    email,
-    ownerId,
-    userId
+    generation: begin.generation,
+    event: null,
+    status: retrieved.status,
+    linkage: {
+      customerId: resolveStripeRefId(retrieved.customer),
+      email: normalizeEmail(metadata.email),
+      ownerId: normalizeText(metadata.ownerId),
+      userId: normalizeText(metadata.userId)
+    }
+  });
+  if (commit === "conflict") {
+    await failSubscriptionReconciliation({ subscriptionId, generation: begin.generation });
+    throw new Error(`Subscription reconciliation refused for ${subscriptionId}: binding conflict at commit.`);
+  }
+  return {
+    subscriptionId,
+    outcome: commit === "committed" ? "verified" : "superseded",
+    status: retrieved.status
+  };
+}
+
+async function handleCheckoutSessionCompletedEvent(
+  session: Stripe.Checkout.Session,
+  envelope: VerifiedBillingEventEnvelope
+): Promise<void> {
+  const customerId = resolveStripeRefId(session.customer);
+  const subscriptionId = resolveStripeRefId(session.subscription);
+  const metadata = session.metadata ?? {};
+  const linkage: SubscriptionEventLinkage = {
+    customerId,
+    email:
+      normalizeEmail(session.customer_email) ||
+      normalizeEmail(session.customer_details?.email) ||
+      normalizeEmail(metadata.email),
+    ownerId: normalizeText(metadata.ownerId),
+    userId: normalizeText(metadata.userId)
+  };
+
+  if (!subscriptionId) {
+    // Checkout completion without a subscription creates no entitlement
+    // record; only the customer linkage is retained.
+    await applyBillingCustomerLinkage(linkage);
+    return;
+  }
+  await reconcileSubscriptionFromEvent({
+    envelope,
+    subscriptionId,
+    isDeletion: false,
+    linkage
   });
 }
 
-async function handleSubscriptionEvent(subscription: Stripe.Subscription): Promise<void> {
-  const subscriptionId = subscription.id;
-  const customerId = typeof subscription.customer === "string" ? subscription.customer : "";
+async function handleSubscriptionEvent(
+  subscription: Stripe.Subscription,
+  envelope: VerifiedBillingEventEnvelope
+): Promise<void> {
+  const subscriptionId = normalizeText(subscription.id);
+  if (!subscriptionId) {
+    return;
+  }
   const metadata = subscription.metadata ?? {};
-  await applySubscriptionEntitlement({
+  await reconcileSubscriptionFromEvent({
+    envelope,
     subscriptionId,
-    customerId,
-    status: subscription.status,
-    email: normalizeEmail(metadata.email),
-    ownerId: normalizeText(metadata.ownerId),
-    userId: normalizeText(metadata.userId)
+    isDeletion: envelope.eventType === "customer.subscription.deleted",
+    linkage: {
+      customerId: resolveStripeRefId(subscription.customer),
+      email: normalizeEmail(metadata.email),
+      ownerId: normalizeText(metadata.ownerId),
+      userId: normalizeText(metadata.userId)
+    }
   });
 }
 
@@ -834,6 +1055,12 @@ export function setBillingPortalSessionCreatorForTests(
 }
 
 /** Test-only override for Stripe webhook signature verification. */
+export function setStripeSubscriptionRetrieverForTests(
+  retriever: StripeSubscriptionRetriever | null
+): void {
+  stripeSubscriptionRetrieverForTests = retriever;
+}
+
 export function setStripeWebhookConstructEventForTests(
   constructor: StripeWebhookConstructEvent | null
 ): void {
