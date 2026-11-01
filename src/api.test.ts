@@ -65,7 +65,7 @@ const [
   { setGoogleAuthClientFactoryForTests },
   { LEGAL_TERMS_VERSION },
   { setContractCopyEmailSenderForTests, clearContractCopyRateLimitForTests },
-  { createEmailSignInToken }
+  { createEmailSignInToken, createAuthSessionForEmail }
 ] = await Promise.all([
   import("./server.js"),
   import("./ai/openaiClient.js"),
@@ -76,6 +76,13 @@ const [
   import("./services/contractCopyDelivery.js"),
   import("./services/authSession.js")
 ]);
+
+// S93-3 item 1: the JSON AI routes require a validated session in every
+// environment. Tests that exercise pipeline behavior (not the gate itself)
+// authenticate with this shared session; the gate's own acceptance tests
+// live in src/serverAiRoutesGate.s933.test.ts.
+const aiRouteAuthSession = createAuthSessionForEmail("ai-routes@test.dev");
+const aiRouteAuthHeaders = { authorization: `Bearer ${aiRouteAuthSession.token}` };
 
 const { subjectIdFor } = await import("./services/billingEvidence.js");
 
@@ -248,7 +255,7 @@ after(async () => {
 test("asks one labor pricing follow-up and does not finalize with $0 labor", async () => {
   useMockResponses([structuredWithoutLaborPricing()]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak and Jan 11 tested seal"
   });
 
@@ -279,7 +286,7 @@ test("asks labor follow-up when hours exist but labor rate is missing", async ()
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "I worked 8 hours Tuesday removing trees and Wednesday cleanup."
   });
 
@@ -302,7 +309,7 @@ test("uses explicit hours and rate in text to avoid labor follow-up", async () =
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Fixed faucet leak (2 hours @ $80/hr)."
   });
 
@@ -328,7 +335,7 @@ test("polishes action-first line item descriptions without changing math", async
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink 2h @ $90/hr. replaced washer $5."
   });
 
@@ -365,7 +372,7 @@ test("converts explicit minutes with rate into hours to avoid labor follow-up", 
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Feb 2 cabinet door adjustment, 20 minutes at $80/hr."
   });
 
@@ -391,7 +398,7 @@ test("does not ask labor follow-up for explicit no-charge labor", async () => {
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Returned Thursday to inspect prior repair, no charge. Replaced one washer $4."
   });
 
@@ -413,7 +420,7 @@ test("maps explicit free labor minutes to hours for $0 labor items", async () =>
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 28 inspection visit, maybe 30 mins. Didn't charge for that visit."
   });
 
@@ -439,7 +446,7 @@ test("extracts customer name from parenthetical name + address text", async () =
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput:
       "Jan 30 fixed sink leak for 1 hour at $90/hr at Mike's place (Mike Johnson, 1423 Pine St)."
   });
@@ -466,7 +473,7 @@ test("infers service period range from multiple explicit work-session dates", as
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 28 inspection visit (no charge). Feb 2 faucet repair (2h @ $80/hr).",
     mode: "fast"
   });
@@ -501,7 +508,7 @@ test("keeps explicit service period when parser already provides a range", async
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Multiple January visits with explicit service period Jan 1 to Jan 31.",
     mode: "fast"
   });
@@ -671,12 +678,18 @@ test("OCR telemetry endpoint records confidence metrics from extract-notes", asy
 });
 
 test("revenue signal telemetry tracks activation and repeat-use milestones", async () => {
-  const ownerId = "revenue-signal-owner";
+  // S93-3 item 1: /from-input telemetry records the validated session
+  // principal, never the caller-selected owner header. This test's owner
+  // is therefore the session user ID; the header below deliberately
+  // disagrees with it (conflicting owner input) and must be ignored.
+  const revenueSession = createAuthSessionForEmail("revenue-signal@test.dev");
+  const ownerId = revenueSession.session.userId;
   useMockResponses([structuredWithLaborPricing()]);
 
   const generated = await request(app)
     .post("/api/invoices/from-input")
-    .set("x-invoice-user-id", ownerId)
+    .set("authorization", `Bearer ${revenueSession.token}`)
+    .set("x-invoice-user-id", "revenue-signal-header-owner")
     .send({ messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7" });
   assert.equal(generated.status, 200);
   assert.equal(generated.body.needsFollowUp, false);
@@ -946,7 +959,7 @@ test("invoice library allows authenticated requests when auth is required", asyn
 
     useMockResponses([structuredWithLaborPricing()]);
     const generated = await request(app)
-      .post("/api/invoices/from-input")
+      .post("/api/invoices/from-input").set(aiRouteAuthHeaders)
       .set("authorization", `Bearer ${token}`)
       .send({
         messyInput: "Jan 10 repaired sink leak 2h @ 95/hr and pipe tape $7"
@@ -1328,7 +1341,7 @@ test("extract-notes rejects files over 8MB", async () => {
 test("returns unparsed lines when messy notes include unrelated items", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput:
       "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7.\nCustomer asked about painting the fence next month."
   });
@@ -1354,7 +1367,7 @@ test("creates decisions for ambiguous billable items even when audit is empty", 
     { assumptions: [], decisions: [], unparsedLines: [] }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput:
       "Feb 3 fixed leak 2h @ $90/hr. Tightened a cabinet hinge maybe — not sure if I should bill it."
   });
@@ -1401,7 +1414,7 @@ test("deduplicates overlapping billing decisions from audit + heuristic extracti
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: [
       "Jan 30 faucet repair, about 2 hours at $80/hr.",
       "Parts: cartridge $18.75, washer kit $6, parking $4.50.",
@@ -1444,7 +1457,7 @@ test("keeps decisions resolved when explicit resolution exists in source transcr
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput:
       "Feb 3 fixed leak 2h @ $90/hr. Tightened a cabinet hinge maybe — not sure if I should bill it. Don't bill the cabinet hinge."
   });
@@ -1475,7 +1488,7 @@ test("flags unsure billing as a decision and holds pricing in fast mode", async 
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 3 emergency leak stop, not sure if I should bill.",
     mode: "fast"
   });
@@ -1516,7 +1529,7 @@ test("keeps billing decisions even when the prompt includes an hourly rate", asy
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 3 emergency leak stop, 0.75 hours at $95/hr — not sure if I should bill.",
     mode: "fast"
   });
@@ -1557,7 +1570,7 @@ test("does not resolve billing decisions from a bill-to directive", async () => 
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput:
       "Adjusted a cabinet hinge 0.25 hours at $95/hr — not sure if I should bill. Bill to Jill Parker.",
     mode: "fast"
@@ -1592,7 +1605,7 @@ test("uses prior sentence context for time-only billing uncertainty", async () =
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 3 emergency leak stop at Cafe Luna. 45 mins, not sure if I should bill.",
     mode: "fast"
   });
@@ -1615,7 +1628,7 @@ test("uses prior sentence context for time-only billing uncertainty", async () =
 test("does not create a decision for ambiguous tax mention in fast mode", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Fixed leak 2h @ $90/hr. Tax? I sometimes add 7.5% depending on job.",
     mode: "fast"
   });
@@ -1628,7 +1641,7 @@ test("does not create a decision for ambiguous tax mention in fast mode", async 
 test("fast mode skips audit and still detects decisions", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput:
       "Feb 3 fixed leak 2h @ $90/hr. Tightened a cabinet hinge maybe — not sure if I should bill it.",
     mode: "fast"
@@ -1659,7 +1672,7 @@ test(
     });
 
     const start = Date.now();
-    const response = await request(app).post("/api/invoices/from-input").send({
+    const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
       messyInput:
         "Feb 3 fixed leak 2h @ $90/hr. Tightened a cabinet hinge maybe — not sure if I should bill it."
     });
@@ -1689,7 +1702,7 @@ test(
       throw new Error("Unexpected prompt");
     });
 
-    const response = await request(app).post("/api/invoices/from-input").send({
+    const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
       messyInput: "Feb 3 fixed leak 2h @ $90/hr. Tightened a cabinet hinge maybe."
     });
 
@@ -1716,7 +1729,7 @@ test("audit endpoint returns decisions and assumptions", async () => {
     throw new Error("Unexpected prompt");
   });
 
-  const response = await request(app).post("/api/invoices/audit").send({
+  const response = await request(app).post("/api/invoices/audit").set(aiRouteAuthHeaders).send({
     sourceText: "Feb 3 fixed leak 2h @ $90/hr. Tightened cabinet hinge maybe.",
     structuredInvoice: structuredWithLaborPricing()
   });
@@ -1756,7 +1769,7 @@ test("chunks long messy input and merges structured invoices", async () => {
   const longInput = `${paragraphOne}\n\n${paragraphTwo}`;
   assert.ok(longInput.length > 4000);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: longInput,
     mode: "fast"
   });
@@ -1790,7 +1803,7 @@ test("moves internal reminder notes to unparsed lines", async () => {
     { assumptions: [], decisions: [], unparsedLines: [] }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Feb 3 fixed leak 2h @ $90/hr. Need to order a new drill next week."
   });
 
@@ -1817,7 +1830,7 @@ test("treats ambiguous tax notes as assumptions not invoice notes", async () => 
     { assumptions: [], decisions: [], unparsedLines: [] }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Feb 3 fixed leak 2h @ $90/hr. Sometimes I add 5% tax."
   });
 
@@ -1831,14 +1844,14 @@ test("treats ambiguous tax notes as assumptions not invoice notes", async () => 
 test("does not silently assume labor hour splits when hourly input is incomplete", async () => {
   useMockResponses([structuredWithoutLaborPricing()]);
 
-  const first = await request(app).post("/api/invoices/from-input").send({
+  const first = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak and Jan 11 tested seal"
   });
 
   assert.equal(first.status, 200);
   assert.equal(first.body.needsFollowUp, true);
 
-  const second = await request(app).post("/api/invoices/from-input/labor-pricing").send({
+  const second = await request(app).post("/api/invoices/from-input/labor-pricing").set(aiRouteAuthHeaders).send({
     structuredInvoice: first.body.structuredInvoice,
     laborPricing: {
       billingType: "hourly",
@@ -1854,11 +1867,11 @@ test("does not silently assume labor hour splits when hourly input is incomplete
 test("finalizes labor totals from explicit hourly values", async () => {
   useMockResponses([structuredWithoutLaborPricing()]);
 
-  const first = await request(app).post("/api/invoices/from-input").send({
+  const first = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak and Jan 11 tested seal"
   });
 
-  const second = await request(app).post("/api/invoices/from-input/labor-pricing").send({
+  const second = await request(app).post("/api/invoices/from-input/labor-pricing").set(aiRouteAuthHeaders).send({
     structuredInvoice: first.body.structuredInvoice,
     laborPricing: {
       billingType: "hourly",
@@ -1901,7 +1914,7 @@ test("auto-generates invoice number when parsed data has none", async () => {
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak 2h @ 95/hr"
   });
 
@@ -1913,7 +1926,7 @@ test("auto-generates invoice number when parsed data has none", async () => {
 test("auto-applies explicit discount amount from input notes", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and please add a $20 discount for delay"
   });
 
@@ -1926,7 +1939,7 @@ test("auto-applies explicit discount amount from input notes", async () => {
 test("does not ask discount follow-up when discount amount is missing", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and apply a discount for delay"
   });
 
@@ -1938,7 +1951,7 @@ test("does not ask discount follow-up when discount amount is missing", async ()
 test("discount endpoint can apply a manual discount to an existing invoice", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 
-  const first = await request(app).post("/api/invoices/from-input").send({
+  const first = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak 2h @ 95/hr"
   });
 
@@ -1983,7 +1996,7 @@ test("edit endpoint applies invoice updates from instruction", async () => {
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/edit").send({
+  const response = await request(app).post("/api/invoices/edit").set(aiRouteAuthHeaders).send({
     instruction: "Change the labor rate to $80/hr.",
     invoice: {
       invoiceNumber: "INV-200",
@@ -2015,7 +2028,7 @@ test("edit endpoint applies invoice updates from instruction", async () => {
 test("does not ask discount follow-up after labor pricing when discount amount is missing", async () => {
   useMockResponses([structuredWithoutLaborPricing()]);
 
-  const first = await request(app).post("/api/invoices/from-input").send({
+  const first = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak and Jan 11 tested seal; apply a discount for delay"
   });
 
@@ -2023,7 +2036,7 @@ test("does not ask discount follow-up after labor pricing when discount amount i
   assert.equal(first.body.needsFollowUp, true);
   assert.equal(first.body.followUp.type, "labor_pricing");
 
-  const second = await request(app).post("/api/invoices/from-input/labor-pricing").send({
+  const second = await request(app).post("/api/invoices/from-input/labor-pricing").set(aiRouteAuthHeaders).send({
     structuredInvoice: first.body.structuredInvoice,
     laborPricing: {
       billingType: "hourly",
@@ -2041,7 +2054,7 @@ test("does not ask discount follow-up after labor pricing when discount amount i
 test("reword-line keeps quantities, rates, and amounts unchanged", async () => {
   useMockResponses([{ description: "Reworded labor description" }]);
 
-  const response = await request(app).post("/api/invoices/reword-line").send({
+  const response = await request(app).post("/api/invoices/reword-line").set(aiRouteAuthHeaders).send({
     lineItemId: "line_1",
     tone: "concise",
     invoice: {
@@ -2073,7 +2086,7 @@ test("reword-line keeps quantities, rates, and amounts unchanged", async () => {
 test("reword-notes keeps line items and totals unchanged", async () => {
   useMockResponses([{ notes: "Payment due within 7 days. Thank you for your business." }]);
 
-  const response = await request(app).post("/api/invoices/reword-notes").send({
+  const response = await request(app).post("/api/invoices/reword-notes").set(aiRouteAuthHeaders).send({
     tone: "more formal",
     invoice: {
       currency: "USD",
@@ -2110,7 +2123,7 @@ test("reword-descriptions keeps notes and totals unchanged", async () => {
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/reword-descriptions").send({
+  const response = await request(app).post("/api/invoices/reword-descriptions").set(aiRouteAuthHeaders).send({
     tone: "more formal",
     invoice: {
       currency: "USD",
@@ -2145,7 +2158,7 @@ test("reword-full uses deterministic wording cleanup for Formal tone when notes 
     throw new Error("Model should not run for deterministic Formal full wording cleanup.");
   });
 
-  const response = await request(app).post("/api/invoices/reword-full").send({
+  const response = await request(app).post("/api/invoices/reword-full").set(aiRouteAuthHeaders).send({
     tone: "Formal",
     invoice: {
       currency: "USD",
@@ -2515,7 +2528,7 @@ test("save remains explicit-only", async () => {
   assert.equal(listBefore.status, 200);
   assert.equal(listBefore.body.invoices.length, 0);
 
-  const generated = await request(app).post("/api/invoices/from-input").send({
+  const generated = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7"
   });
 
@@ -10611,7 +10624,7 @@ test("pro allowlist bypasses free monthly save limit", async () => {
 test("delete removes saved invoice", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 
-  const generated = await request(app).post("/api/invoices/from-input").send({
+  const generated = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7"
   });
 
@@ -10642,7 +10655,7 @@ test("delete removes saved invoice", async () => {
 test("soft delete hides invoice and restore brings it back", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 
-  const generated = await request(app).post("/api/invoices/from-input").send({
+  const generated = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7"
   });
 
@@ -10684,7 +10697,7 @@ test("soft delete hides invoice and restore brings it back", async () => {
 test("invoice library is scoped by owner id", async () => {
   useMockResponses([structuredWithLaborPricing()]);
 
-  const generatedA = await request(app).post("/api/invoices/from-input").send({
+  const generatedA = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7"
   });
   assert.equal(generatedA.status, 200);
@@ -10703,7 +10716,7 @@ test("invoice library is scoped by owner id", async () => {
   const ownerAId = saveA.body.invoice.invoiceId;
 
   useMockResponses([structuredWithLaborPricing()]);
-  const generatedB = await request(app).post("/api/invoices/from-input").send({
+  const generatedB = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 11 unclogged drain 1h @ 90/hr"
   });
   assert.equal(generatedB.status, 200);
@@ -11391,7 +11404,7 @@ test("authenticated owner id takes precedence over spoofed owner header", async 
   const aliceToken = sessionResponse.body.token as string;
 
   useMockResponses([structuredWithLaborPricing()]);
-  const generated = await request(app).post("/api/invoices/from-input").send({
+  const generated = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7"
   });
   assert.equal(generated.status, 200);
@@ -11428,7 +11441,7 @@ test("from-input response includes output quality gate metadata", async () => {
     { assumptions: [], decisions: [], unparsedLines: [] }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed sink leak 2h @ 95/hr and pipe tape $7"
   });
 
@@ -11454,7 +11467,7 @@ test("from-input quality gate warns on non-client-facing line wording without bl
     { assumptions: [], decisions: [], unparsedLines: [] }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Jan 10 fixed thing stuff 1h @ 95/hr"
   });
 
@@ -11919,7 +11932,7 @@ test("AG-082 missing-price: acid at invented $0 stays unresolved and blocks qual
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: AG082_MISSING_PRICE_INPUT
   });
 
@@ -11986,7 +11999,7 @@ test("AG-082 missing-price: omitted acid is restored as unresolved and blocks co
     { assumptions: [], decisions: [], unparsedLines: [] }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: AG082_MISSING_PRICE_INPUT
   });
 
@@ -12051,7 +12064,7 @@ test("AG-082 equipment-replacement exact numeric amounts remain unchanged", asyn
     { assumptions: [], decisions: [], unparsedLines: [] }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput:
       "Replaced circulation pump. Pump $2,530. Fittings $369. Labour 3.25 hr at $125/hr. Removed old pump and tested system."
   });
@@ -12102,7 +12115,7 @@ test("AG-082 two-worker deterministic worker-hours remain exact", async () => {
     { assumptions: ["Tax assumed 0%."], decisions: [], unparsedLines: [] }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput:
       "Two workers were there from 9:00 to 12:30 for brush clearing. Labour billed at $80 per worker-hour. Dump fee $64."
   });
@@ -12147,7 +12160,7 @@ test("AG-088/P1: explicit missing quantity cannot default to 1 or derive amount"
     { assumptions: [], decisions: [], unparsedLines: [] }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Added acid jugs at $74 each; quantity not recorded",
     mode: "fast"
   });
@@ -12186,7 +12199,7 @@ test("AG-088/P1: free/no-charge cannot authorize a different task via one shared
     { assumptions: [], decisions: [], unparsedLines: [] }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "No charge for pump inspection. Cleaned pump baskets and confirmed circulation.",
     mode: "fast"
   });
@@ -12218,7 +12231,7 @@ test("AG-088/P2: missing-price decision cannot self-resolve from its originating
     { assumptions: [], decisions: [], unparsedLines: [] }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Add 1 acid jug but price unknown"
   });
 
@@ -12246,7 +12259,7 @@ test("AG-094: later quantity evidence resolves before invoice application", asyn
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Added acid jugs but quantity unknown. Acid jugs quantity is 2.",
     mode: "fast"
   });
@@ -12278,7 +12291,7 @@ test("AG-094: acid unknown price does not suppress separately priced acid wash",
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Added 1 acid but price unknown. Acid wash for $200.",
     mode: "fast"
   });
@@ -12308,7 +12321,7 @@ test("AG-094: missing rate binds labor task and does not invent material", async
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Repaired pump for 2 hours, but rate unknown",
     mode: "fast"
   });
@@ -12348,7 +12361,7 @@ test("AG-094: no-charge pump cannot authorize cleaned pump baskets as $0", async
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "No charge for pump. Cleaned pump baskets.",
     mode: "fast"
   });
@@ -12376,7 +12389,7 @@ test("AG-094: later cost cannot resolve missing quantity decision", async () => 
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Added acid jugs but quantity unknown. Acid jugs cost $74 each.",
     mode: "fast"
   });
@@ -12408,7 +12421,7 @@ test("AG-094: ambiguous subject identity fails closed without sibling mutation",
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Added filter but price unknown",
     mode: "fast"
   });
