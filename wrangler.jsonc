@@ -24,7 +24,7 @@
     "INVOICE_EMAIL_PROVIDER": "smtp2go",
     "INVOICE_FROM_EMAIL": "NoteBill <invoices@notebill.app>",
     "INVOICE_LAUNCH_TEST_EMAIL": "davidiheslop@gmail.com",
-    "INVOICE_REQUIRE_AUTH": "false",
+    "INVOICE_REQUIRE_AUTH": "true",
     "INVOICE_SESSION_TTL_HOURS": "720",
     "INVOICE_STORE_BACKEND": "auto",
     "INVOICE_STORE_REQUIRE_POSTGRES": "false",
