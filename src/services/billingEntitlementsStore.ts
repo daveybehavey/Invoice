@@ -261,7 +261,10 @@ export async function commitSubscriptionReconciliation(input: {
     if (findLinkageConflict(record, input.linkage)) {
       return "conflict";
     }
-    applyLinkageFill(record, input.linkage);
+    // The commit linkage is built from the verified retrieval, so it is
+    // the authority for the email: refresh it (a metadata correction in
+    // Stripe must move the granting email, not just fill an empty one).
+    applyLinkageFill(record, input.linkage, { refreshEmail: true });
     const linkedCustomer = record.customerId ? snapshot.customers[record.customerId] : undefined;
     if (!record.email && linkedCustomer?.email) {
       record.email = linkedCustomer.email;
@@ -391,14 +394,21 @@ function findLinkageConflict(
 
 function applyLinkageFill(
   record: SubscriptionReconciliationRecord,
-  linkage: SubscriptionEventLinkage
+  linkage: SubscriptionEventLinkage,
+  options: { refreshEmail?: boolean } = {}
 ): void {
   const customerId = normalizeValue(linkage.customerId);
   if (customerId && !record.customerId) {
     record.customerId = customerId;
   }
+  // Email is not a binding: Stripe metadata can correct it, and the
+  // entitlement check grants by email independently of owner/user ID.
+  // Only a caller whose linkage is VERIFIED (a successful reconciliation
+  // commit) may refresh it; unverified linkage — event reservation,
+  // deletion — fills an empty field only, so an unverified or failed
+  // reconciliation can never move an email.
   const email = normalizeEmail(linkage.email);
-  if (email && !record.email) {
+  if (email && (options.refreshEmail || !record.email)) {
     record.email = email;
   }
   const ownerId = normalizeValue(linkage.ownerId);

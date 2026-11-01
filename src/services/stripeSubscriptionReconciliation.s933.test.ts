@@ -106,6 +106,7 @@ function subscriptionEvent(init: {
   customer?: unknown;
   status?: string;
   ownerId?: string;
+  email?: string;
 }): Record<string, unknown> {
   return {
     id: init.id,
@@ -121,7 +122,7 @@ function subscriptionEvent(init: {
         metadata: {
           ownerId: init.ownerId ?? "owner-1",
           userId: init.ownerId ?? "owner-1",
-          email: "owner1@test.dev"
+          email: init.email ?? "owner1@test.dev"
         }
       }
     }
@@ -414,6 +415,91 @@ test("signature failure and invoice-payment settlement are untouched by subscrip
     null,
     "subscription receipts never consume invoice-payment settlement events"
   );
+});
+
+test("a verified reconciliation refreshes the granting email from corrected Stripe metadata (webhook path)", async () => {
+  await deliver(checkoutEvent({ id: "evt_email_a", created: 100, email: "old@test.dev" }));
+  assert.equal((await getSubscriptionReconciliationRecord("sub_main"))?.email, "old@test.dev");
+  assert.equal(await hasActiveStripeEntitlement({ email: "old@test.dev" }), true);
+  assert.equal(await hasActiveStripeEntitlement({ email: "new@test.dev" }), false);
+
+  // The email is corrected in Stripe metadata; the next verified event
+  // and the retrieval both carry the corrected address.
+  retrieverImpl = async (id) =>
+    fakeSubscription(id, {
+      metadata: { ownerId: "owner-1", userId: "owner-1", email: "new@test.dev" }
+    });
+  await deliver(
+    subscriptionEvent({ id: "evt_email_b", created: 200, type: "customer.subscription.updated", email: "new@test.dev" })
+  );
+
+  const record = await getSubscriptionReconciliationRecord("sub_main");
+  assert.equal(record?.email, "new@test.dev", "successful reconciliation refreshes the stored email");
+  assert.equal(await hasActiveStripeEntitlement({ email: "new@test.dev" }), true);
+  assert.equal(
+    await hasActiveStripeEntitlement({ email: "old@test.dev" }),
+    false,
+    "the superseded address no longer grants"
+  );
+});
+
+test("administrative reconciliation refreshes the granting email from retrieved metadata", async () => {
+  const legacySnapshot = {
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    customers: {},
+    subscriptions: {
+      sub_legacy_email: {
+        subscriptionId: "sub_legacy_email",
+        customerId: "cus_owner1",
+        email: "old@test.dev",
+        ownerId: "owner-1",
+        userId: "owner-1",
+        status: "active",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      }
+    }
+  };
+  await fs.writeFile(entitlementsFilePath, `${JSON.stringify(legacySnapshot, null, 2)}\n`, "utf8");
+
+  retrieverImpl = async (id) =>
+    fakeSubscription(id, {
+      customer: "cus_owner1",
+      metadata: { ownerId: "owner-1", userId: "owner-1", email: "new@test.dev" }
+    });
+  const outcome = await reconcileStoredSubscription("sub_legacy_email");
+  assert.equal(outcome.outcome, "verified");
+  assert.equal((await getSubscriptionReconciliationRecord("sub_legacy_email"))?.email, "new@test.dev");
+  assert.equal(await hasActiveStripeEntitlement({ email: "new@test.dev" }), true);
+  assert.equal(await hasActiveStripeEntitlement({ email: "old@test.dev" }), false);
+});
+
+test("an unverified reservation or a failed reconciliation never moves the email", async () => {
+  await deliver(checkoutEvent({ id: "evt_email_hold_a", created: 100, email: "old@test.dev" }));
+  assert.equal((await getSubscriptionReconciliationRecord("sub_main"))?.email, "old@test.dev");
+
+  // Reservation only (no retrieval, no commit): linkage is unverified.
+  await beginSubscriptionEventProcessing({
+    event: { eventId: "evt_email_hold_b", eventCreated: 200, eventType: "customer.subscription.updated" },
+    subscriptionId: "sub_main",
+    isDeletion: false,
+    linkage: { customerId: "cus_owner1", email: "new@test.dev", ownerId: "owner-1", userId: "owner-1" }
+  });
+  assert.equal((await getSubscriptionReconciliationRecord("sub_main"))?.email, "old@test.dev");
+
+  // Failed reconciliation: retrieval throws, so nothing commits.
+  retrieverImpl = async () => {
+    throw new Error("stripe timeout (simulated)");
+  };
+  await assert.rejects(
+    () =>
+      deliver(
+        subscriptionEvent({ id: "evt_email_hold_c", created: 300, type: "customer.subscription.updated", email: "new@test.dev" })
+      ),
+    /timeout/
+  );
+  const record = await getSubscriptionReconciliationRecord("sub_main");
+  assert.equal(record?.email, "old@test.dev");
+  assert.equal(record?.reconciliationState, "failed");
 });
 
 test("subscription created alone grants only the retrieved status (past_due grants, incomplete does not)", async () => {

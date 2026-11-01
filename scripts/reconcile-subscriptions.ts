@@ -18,12 +18,41 @@
  * fails to reconcile. Cancellation tombstones are never cleared: a
  * tombstoned subscription reports "tombstoned" and stays canceled.
  */
+// Load the server's environment BEFORE any service import: the
+// entitlements store resolves its backend and file path from process.env
+// at module init, exactly as it does for src/server.ts. Without this the
+// command silently reconciles against the default file store instead of
+// the configured one. Same mechanism as src/server.ts line 1 — do not
+// substitute a local .env reader.
+import "dotenv/config";
 import { reconcileStoredSubscription } from "../src/services/stripeBilling.js";
 
 const subscriptionIds = process.argv.slice(2).map((value) => value.trim()).filter(Boolean);
 
 if (subscriptionIds.length === 0) {
   console.error("Usage: npx tsx scripts/reconcile-subscriptions.ts <subscriptionId> [moreIds...]");
+  process.exit(2);
+}
+
+// Fail loudly on missing prerequisites instead of reconciling against
+// the wrong configuration: retrieval needs the Stripe secret, and a
+// Postgres store configured without its URL would silently fall back to
+// the file backend in resolveRuntimeStateBackend.
+if (!process.env.STRIPE_SECRET_KEY?.trim()) {
+  console.error(
+    "reconcile-subscriptions: STRIPE_SECRET_KEY is not configured (checked process env and .env); refusing to run."
+  );
+  process.exit(2);
+}
+const runtimeBackendOverride = process.env.INVOICE_RUNTIME_STORE_BACKEND?.trim().toLowerCase();
+const invoiceStoreBackend = process.env.INVOICE_STORE_BACKEND?.trim().toLowerCase();
+const postgresUrlConfigured = Boolean(
+  process.env.INVOICE_STORE_POSTGRES_URL?.trim() || process.env.DATABASE_URL?.trim()
+);
+if ((runtimeBackendOverride === "postgres" || invoiceStoreBackend === "postgres") && !postgresUrlConfigured) {
+  console.error(
+    "reconcile-subscriptions: a Postgres entitlements store is configured but INVOICE_STORE_POSTGRES_URL (or DATABASE_URL) is not set; refusing to fall back to the file store."
+  );
   process.exit(2);
 }
 
