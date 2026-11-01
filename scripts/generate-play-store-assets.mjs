@@ -268,11 +268,11 @@ async function routeCommon(page, options = {}) {
     }
     await route.continue();
   });
-  await page.route("**/api/system/persistence*", async (route) => {
+  await page.route("**/api/auth/policy*", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ authRequired: true })
+      body: JSON.stringify({ authRequired: true, authProviders: [] })
     });
   });
   await page.route("**/api/account/plan*", async (route) => {

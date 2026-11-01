@@ -482,6 +482,19 @@ app.get("/api/auth/providers", async (_req: Request, res: Response) => {
   res.json({ providers });
 });
 
+app.get("/api/auth/policy", async (_req: Request, res: Response) => {
+  // Public, minimal auth policy for product consumers (invoice library,
+  // manual editor): only whether sign-in is required and which providers
+  // are available. The full persistence payload — store backend,
+  // readiness, secret-configuration state — stays behind the operator
+  // diagnostics gate on /api/system/* (S93-3 item 3).
+  const authPolicy = getInvoiceAuthPolicy();
+  res.json({
+    authRequired: authPolicy.requireAuth,
+    authProviders: authPolicy.providers
+  });
+});
+
 app.post("/api/auth/session", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = z
