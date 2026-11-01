@@ -1131,9 +1131,15 @@ app.post("/api/telemetry/revenue-signals", async (req: Request, res: Response, n
 
 app.post(
   "/api/invoices/from-input",
+  // S93-3 item 1: JSON AI work requires a validated session in every
+  // environment (SEC-04 boundary extended to the JSON pipeline). The
+  // session middleware runs BEFORE Multer so anonymous multipart requests
+  // never reach file extraction or generation.
+  requireProviderDispatchSession,
   importUpload.single("invoiceFile"),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const dispatchOwnerId = getProviderDispatchOwnerId(res);
       const messyInput = asOptionalString(req.body.messyInput);
       const uploadedInvoiceTextFromBody = asOptionalString(req.body.uploadedInvoiceText);
       const lastUserMessage = asOptionalString(req.body.lastUserMessage);
@@ -1149,7 +1155,7 @@ app.post(
       if ("invoice" in result && result.invoice) {
         await trackRevenueSignalSafely({
           event: "invoice_generated",
-          ownerId: getRequestOwnerId(req),
+          ownerId: dispatchOwnerId,
           source: "from_input"
         });
       }
@@ -1275,7 +1281,7 @@ app.post(
   }
 );
 
-app.post("/api/invoices/from-input/labor-pricing", async (req: Request, res: Response, next: NextFunction) => {
+app.post("/api/invoices/from-input/labor-pricing", requireProviderDispatchSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = LaborPricingFollowUpRequestSchema.parse(req.body);
     const result = await continueInvoiceAfterLaborPricing(
@@ -1346,7 +1352,7 @@ app.post("/api/invoices/apply-decision", async (req: Request, res: Response, nex
   }
 });
 
-app.post("/api/invoices/audit", async (req: Request, res: Response, next: NextFunction) => {
+app.post("/api/invoices/audit", requireProviderDispatchSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = InvoiceAuditRequestSchema.parse(req.body);
     const result = await runInvoiceAuditOverlay({
@@ -1376,7 +1382,7 @@ app.post("/api/invoices/from-input/discount", async (req: Request, res: Response
   }
 });
 
-app.post("/api/invoices/reword-line", async (req: Request, res: Response, next: NextFunction) => {
+app.post("/api/invoices/reword-line", requireProviderDispatchSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = ChangeLineWordingRequestSchema.parse(req.body);
     const invoice = FinishedInvoiceSchema.parse(parsedRequest.invoice);
@@ -1388,7 +1394,7 @@ app.post("/api/invoices/reword-line", async (req: Request, res: Response, next: 
   }
 });
 
-app.post("/api/invoices/reword-notes", async (req: Request, res: Response, next: NextFunction) => {
+app.post("/api/invoices/reword-notes", requireProviderDispatchSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = ChangeNotesWordingRequestSchema.parse(req.body);
     const invoice = FinishedInvoiceSchema.parse(parsedRequest.invoice);
@@ -1400,7 +1406,7 @@ app.post("/api/invoices/reword-notes", async (req: Request, res: Response, next:
   }
 });
 
-app.post("/api/invoices/reword-descriptions", async (req: Request, res: Response, next: NextFunction) => {
+app.post("/api/invoices/reword-descriptions", requireProviderDispatchSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = ChangeDescriptionsWordingRequestSchema.parse(req.body);
     const invoice = FinishedInvoiceSchema.parse(parsedRequest.invoice);
@@ -1412,7 +1418,7 @@ app.post("/api/invoices/reword-descriptions", async (req: Request, res: Response
   }
 });
 
-app.post("/api/invoices/edit", async (req: Request, res: Response, next: NextFunction) => {
+app.post("/api/invoices/edit", requireProviderDispatchSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = InvoiceEditRequestSchema.parse(req.body);
     const result = await applyInvoiceEditInstruction(parsedRequest.invoice, parsedRequest.instruction);
@@ -1422,7 +1428,7 @@ app.post("/api/invoices/edit", async (req: Request, res: Response, next: NextFun
   }
 });
 
-app.post("/api/invoices/reword-full", async (req: Request, res: Response, next: NextFunction) => {
+app.post("/api/invoices/reword-full", requireProviderDispatchSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = FullInvoiceRewordRequestSchema.parse(req.body);
     const invoice = FinishedInvoiceSchema.parse(parsedRequest.invoice);
@@ -2507,6 +2513,23 @@ function requireProviderDispatchSession(req: Request, res: Response, next: NextF
   }
   res.locals.providerDispatchSession = session;
   next();
+}
+
+// S93-3 item 1: the JSON AI routes (/from-input and its follow-ups, audit,
+// wording, edit) sit behind the same requireProviderDispatchSession
+// middleware as OCR/transcription, so no pipeline branch — AI or
+// deterministic — runs without a validated session in any environment,
+// including non-production auth-disabled mode. The principal for these
+// routes comes ONLY from the middleware-established session: owner
+// headers, query parameters, body fields, and configured default owners
+// never establish it (getRequestOwnerId alone is insufficient because its
+// non-production contract retains anonymous owner selection).
+function getProviderDispatchOwnerId(res: Response): string {
+  const session = res.locals.providerDispatchSession as InvoiceAuthSession | undefined;
+  if (!session?.userId) {
+    throw new HttpStatusError(401, "Authentication required.");
+  }
+  return session.userId;
 }
 
 async function reserveProviderDispatchUsage(

@@ -12,10 +12,17 @@ process.env.OCR_METRICS_STORE_FILE = path.join(os.tmpdir(), `invoice-messy-ocr-$
 // SEC-02: model an explicitly configured loopback application origin.
 process.env.APP_BASE_URL = "http://localhost:3000";
 
-const [{ app }, { setJsonTaskRunnerForTests }] = await Promise.all([
+const [{ app }, { setJsonTaskRunnerForTests }, { createAuthSessionForEmail }] = await Promise.all([
   import("./server.js"),
-  import("./ai/openaiClient.js")
+  import("./ai/openaiClient.js"),
+  import("./services/authSession.js")
 ]);
+
+// S93-3 item 1: /from-input requires a validated session in every
+// environment; these pipeline-behavior tests authenticate explicitly.
+const aiRouteAuthHeaders = {
+  authorization: `Bearer ${createAuthSessionForEmail("messy-flow@test.dev").token}`
+};
 
 const storeFilePath = process.env.INVOICE_STORE_FILE;
 if (!storeFilePath) {
@@ -58,7 +65,7 @@ test("messy control script produces a ready draft with no open decisions", async
     { assumptions: ["Tax assumed 0%."], decisions: [], unparsedLines: [] }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: "Fixed leaking sink on Jan 10. 2 hours at $90/hr. Parts: washer $5. Bill Mike Johnson. No tax."
   });
 
@@ -86,7 +93,7 @@ test("messy script keeps cabinet decision open and tax as assumption", async () 
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: [
       "Jan 28 inspection visit, no charge, maybe 30 mins.",
       "Jan 30 faucet repair, about 2 hours at $80/hr.",
@@ -131,7 +138,7 @@ test("messy script clears decisions when user explicitly resolves them", async (
     }
   ]);
 
-  const response = await request(app).post("/api/invoices/from-input").send({
+  const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
     messyInput: [
       "Jan 28 inspection visit, no charge, maybe 30 mins.",
       "Jan 30 faucet repair, about 2 hours at $80/hr.",
@@ -512,7 +519,7 @@ test("messy regression matrix keeps capture + decision outcomes stable", async (
 
   for (const testCase of cases) {
     useMockResponses(testCase.responses);
-    const response = await request(app).post("/api/invoices/from-input").send({
+    const response = await request(app).post("/api/invoices/from-input").set(aiRouteAuthHeaders).send({
       messyInput: testCase.messyInput
     });
     assert.equal(response.status, 200, `status for case: ${testCase.name}`);
