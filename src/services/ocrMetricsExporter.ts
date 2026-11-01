@@ -1,10 +1,14 @@
 import { getOcrMetricsSnapshot, updateOcrMetricsExportState } from "./ocrMetricsStore.js";
 
+// S93-3 item 3: export results never carry the target URL. Targets are
+// private to outbound request construction — the GA4 target embeds the
+// API secret in its query string, so returning it (as this type formerly
+// did on success and failure) exposes the credential to any caller of the
+// export route.
 export type OcrMetricsExportResult = {
   attempted: boolean;
   exported: boolean;
   reason: string;
-  target?: string;
   provider?: string;
   statusCode?: number;
   snapshotUpdatedAt?: string;
@@ -248,7 +252,6 @@ export async function exportOcrMetricsSnapshot(options?: {
       attempted: true,
       exported: false,
       reason: "export_failed",
-      target: request.target,
       provider: request.provider,
       statusCode: response.status,
       snapshotUpdatedAt
@@ -264,7 +267,6 @@ export async function exportOcrMetricsSnapshot(options?: {
     attempted: true,
     exported: true,
     reason: "exported",
-    target: request.target,
     provider: request.provider,
     statusCode: response.status,
     snapshotUpdatedAt
