@@ -1,9 +1,9 @@
 (() => {
-  const LEGAL_TERMS_VERSION = "2026-10-20.1";
-  const LEGAL_PRIVACY_VERSION = "2026-10-20.1";
-  const LEGAL_EFFECTIVE_DATE = "2026-10-20";
+  const LEGAL_TERMS_VERSION = "2026-11-03.1";
+  const LEGAL_PRIVACY_VERSION = "2026-11-03.1";
+  const LEGAL_EFFECTIVE_DATE = "2026-11-03";
   /** Keep IDs in sync with server listRegisteredTermsVersions (production base only). */
-  const REGISTERED_TERMS_VERSIONS = ["2026-08-12.1", "2026-10-20.1"];
+  const REGISTERED_TERMS_VERSIONS = ["2026-08-12.1", "2026-10-20.1", "2026-11-03.1"];
 
   const isRegisteredTermsVersion = (version) => {
     const trimmed = typeof version === "string" ? version.trim() : "";
