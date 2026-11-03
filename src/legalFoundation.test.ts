@@ -89,7 +89,7 @@ test("terms registry resolves only the registered current version", () => {
 
   clearTermsRegistryOverlaysForTests();
 
-  assert.deepEqual(listRegisteredTermsVersions(), ["2026-08-12.1", LEGAL_TERMS_VERSION]);
+  assert.deepEqual(listRegisteredTermsVersions(), ["2026-08-12.1", "2026-10-20.1", LEGAL_TERMS_VERSION]);
 
   const prior = resolveTermsDocument("2026-08-12.1");
 
@@ -136,6 +136,24 @@ test("terms registry resolves only the registered current version", () => {
 });
 
 
+
+test("current terms publish locality-only addresses in every section, including notices", () => {
+  clearTermsRegistryOverlaysForTests();
+  const current = resolveTermsDocument();
+  assert.equal(current.version, LEGAL_TERMS_VERSION);
+  const notices = current.sections.find((section) => section.title.startsWith("13. Notices"));
+  assert.ok(
+    notices?.paragraphs.some((paragraph) => paragraph.includes("Postal: Victoria, BC, Canada."))
+  );
+  const allText = current.sections
+    .map((section) => [...section.paragraphs, ...(section.items ?? [])].join("\n"))
+    .join("\n");
+  assert.doesNotMatch(allText, /Kangaroo/);
+  assert.doesNotMatch(buildTermsPlainText(LEGAL_TERMS_VERSION), /Kangaroo/);
+  // The prior version remains registered as a frozen historical document.
+  const prior = resolveTermsDocument("2026-10-20.1");
+  assert.equal(prior.isCurrent, false);
+});
 
 test("registered Terms 2026-08-12.1 plain text is frozen against alternate facts", () => {
 
@@ -219,7 +237,7 @@ test("terms plain text and download filename include version identity", () => {
 
   assert.match(plain, new RegExp(`Version: ${LEGAL_TERMS_VERSION}`));
 
-  assert.match(plain, /Effective date: 2026-10-20/);
+  assert.match(plain, /Effective date: 2026-11-03/);
 
   assert.match(plain, /15\. Contract copy and version/);
 
@@ -275,7 +293,7 @@ test("checkout disclosure snapshot matches client mirror strings", async () => {
 
   assert.match(clientSource, new RegExp(`LEGAL_TERMS_VERSION = "${LEGAL_TERMS_VERSION}"`));
 
-  assert.match(clientSource, /REGISTERED_TERMS_VERSIONS = \["2026-08-12\.1", "2026-10-20\.1"\]/);
+  assert.match(clientSource, /REGISTERED_TERMS_VERSIONS = \["2026-08-12\.1", "2026-10-20\.1", "2026-11-03\.1"\]/);
 
   // Evaluate client IIFE in a tiny VM-like scope by Function wrapping window export.
 
@@ -309,7 +327,7 @@ test("checkout disclosure snapshot matches client mirror strings", async () => {
 
   assert.equal(client.LEGAL_TERMS_VERSION, LEGAL_TERMS_VERSION);
 
-  assert.deepEqual(client.REGISTERED_TERMS_VERSIONS, ["2026-08-12.1", LEGAL_TERMS_VERSION]);
+  assert.deepEqual(client.REGISTERED_TERMS_VERSIONS, ["2026-08-12.1", "2026-10-20.1", LEGAL_TERMS_VERSION]);
 
   assert.equal(client.isRegisteredTermsVersion(LEGAL_TERMS_VERSION), true);
 

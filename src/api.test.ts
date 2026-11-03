@@ -6875,12 +6875,12 @@ test("legal foundation and documents endpoints expose versioned Terms and Privac
   );
   assert.equal(txt.status, 200);
   assert.match(String(txt.headers["content-type"] || ""), /text\/plain/i);
-  assert.match(String(txt.headers["content-disposition"] || ""), /notebill-terms-2026-10-20\.1\.txt/);
+  assert.match(String(txt.headers["content-disposition"] || ""), /notebill-terms-2026-11-03\.1\.txt/);
   assert.match(String(txt.text || ""), new RegExp(`Version: ${LEGAL_TERMS_VERSION}`));
 
   const privacy = await request(app).get("/api/legal/documents/privacy");
   assert.equal(privacy.status, 200);
-  assert.match(String(privacy.body.version || ""), /2026-10-20/);
+  assert.match(String(privacy.body.version || ""), /2026-11-03/);
   assert.ok(
     privacy.body.sections.some((section: { paragraphs?: string[] }) =>
       (section.paragraphs || []).some((paragraph) => /do not currently know|AI training|model training/i.test(paragraph))

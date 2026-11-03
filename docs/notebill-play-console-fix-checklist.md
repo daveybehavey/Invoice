@@ -52,6 +52,14 @@ Terms (section 13, notices) still carries the full postal address because a
 notices clause needs a deliverable postal address. Once a business mailing
 address exists, that line can be swapped in a follow-up legal version bump.
 
+**Update 2026-11-03 (owner decision):** the Terms half of this item is
+settled independently of the console choice above. The current Terms
+(version 2026-11-03.1) no longer carry a full postal line: section 13 now
+falls back to the locality-only address line, matching section 1. If a
+business mailing address is later adopted under options 1–2, it can be
+restored to section 13 in a follow-up legal version bump. The Play Console
+developer-address decision itself remains open and console-side only.
+
 ## B. Replace screenshot 3 (signed-in personal email visible)
 
 One of the current phone screenshots shows the app's Account row signed in

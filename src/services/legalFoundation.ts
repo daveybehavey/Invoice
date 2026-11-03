@@ -8,11 +8,11 @@
 
 
 
-export const LEGAL_TERMS_VERSION = "2026-10-20.1";
+export const LEGAL_TERMS_VERSION = "2026-11-03.1";
 
-export const LEGAL_PRIVACY_VERSION = "2026-10-20.1";
+export const LEGAL_PRIVACY_VERSION = "2026-11-03.1";
 
-export const LEGAL_EFFECTIVE_DATE = "2026-10-20";
+export const LEGAL_EFFECTIVE_DATE = "2026-11-03";
 
 
 
@@ -249,6 +249,64 @@ export const TERMS_2026_10_20_1_FACTS: Readonly<FrozenTermsFacts> = Object.freez
     addressLine: "Victoria, BC, Canada",
 
     postalAddressLine: "1193 Kangaroo Road, Metchosin, BC V9C 4C9, Canada",
+
+    supportEmail: "support@notebill.app",
+
+    siteUrl: "https://notebill.app",
+
+    appUrl: "https://app.notebill.app"
+
+  }),
+
+  offer: Object.freeze({
+
+    planName: "NoteBill Pro",
+
+    priceDisplay: "$19 USD",
+
+    intervalLabel: "per month",
+
+    goodwillRefundDays: 7
+
+  })
+
+});
+
+
+
+/**
+
+ * Literal freeze of Terms 2026-11-03.1 facts.
+
+ * Registered 2026-11-03 on the owner's decision to stop publishing the
+
+ * supplier's residential street address in the section 13 notices line:
+
+ * the new facts carry no postalAddressLine, so section 13 falls back to
+
+ * the locality-only address line, matching section 1. Every other fact
+
+ * is unchanged from 2026-10-20.1. Historical registered versions keep
+
+ * their frozen facts untouched.
+
+ */
+
+export const TERMS_2026_11_03_1_FACTS: Readonly<FrozenTermsFacts> = Object.freeze({
+
+  version: "2026-11-03.1",
+
+  effectiveDate: "2026-11-03",
+
+  privacyVersion: "2026-11-03.1",
+
+  supplier: Object.freeze({
+
+    legalName: "David Heslop, carrying on business as EuroDigital",
+
+    tradeStyle: "EuroDigital",
+
+    addressLine: "Victoria, BC, Canada",
 
     supportEmail: "support@notebill.app",
 
@@ -559,6 +617,22 @@ const TERMS_REGISTRY_BASE: ReadonlyMap<string, RegisteredTermsEntry> = new Map([
       effectiveDate: TERMS_2026_10_20_1_FACTS.effectiveDate,
 
       buildSections: () => buildTermsSectionsFromFrozenFacts(TERMS_2026_10_20_1_FACTS)
+
+    })
+
+  ],
+
+  [
+
+    TERMS_2026_11_03_1_FACTS.version,
+
+    Object.freeze({
+
+      version: TERMS_2026_11_03_1_FACTS.version,
+
+      effectiveDate: TERMS_2026_11_03_1_FACTS.effectiveDate,
+
+      buildSections: () => buildTermsSectionsFromFrozenFacts(TERMS_2026_11_03_1_FACTS)
 
     })
 
