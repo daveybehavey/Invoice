@@ -6,14 +6,16 @@ This checklist is for shipping `NoteBill` to the Google Play Store from a Window
 
 - Confirm latest signed bundle exists:
   - `android/app/build/outputs/bundle/release/app-release.aab`
-- For the V2 candidate, use the archived named file:
-  - `android/app/build/outputs/bundle/release/app-release-2.0.0.aab`
-- If uploading an older named bundle, use the exact archived file:
-  - `android/app/build/outputs/bundle/release/app-release-1.0.13.aab`
+- Select the exact release candidate by inspecting its embedded application id, `versionCode`, and `versionName`; archived file names alone do not establish identity or freshness.
+- Read current source values from `android/app/build.gradle`. Historical named bundles are not the default release candidate.
 - Confirm package/application id is correct:
   - `app.notebill.app`
 - Confirm the Android `versionCode` is higher than any bundle already uploaded to Play Console.
+  - Check every Play track and previously uploaded artifact, including testing tracks. Never reuse a code.
   - Play treats `versionCode`, not `versionName` or file name, as the update sequence.
+  - Choose the next code only after the owner checks Play Console; do not bump it speculatively during an audit.
+  - `versionName` is the user-facing release label; the private npm package version is not the Android release version.
+  - `npm run check:android-release` reports source values and local file inventory only. It does not inspect embedded bundle metadata, signing, or Play history; a missing local bundle directory is not proof of invalid source config.
 - Confirm app name is correct:
   - `NoteBill`
 
@@ -21,6 +23,8 @@ This checklist is for shipping `NoteBill` to the Google Play Store from a Window
 
 - Keep `android/notebill-release.keystore` out of git
 - Keep `android/keystore.properties` out of git
+- Gradle reads the properties file selected by `NOTEBILL_ANDROID_KEYSTORE_PROPERTIES`, or defaults to `~/.notebill/android-release/keystore.properties`; an `android/keystore.properties` file alone is not loaded.
+- Keep that properties file and its referenced keystore outside git. Confirm the candidate is signed with the expected upload certificate; Gradle can build an unsigned release when signing properties are absent.
 - Back up the keystore in at least two safe places before publishing
 - Record the keystore alias and passwords in your password manager
 - Never rotate or lose the production signing key without an intentional recovery plan
@@ -30,6 +34,7 @@ This checklist is for shipping `NoteBill` to the Google Play Store from a Window
 ```powershell
 cd C:\Users\david\OneDrive\Desktop\Invoice
 npm run check:android-release
+npm run build:frontend
 npx cap sync android
 cd android
 $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
