@@ -14592,3 +14592,30 @@ async function expectAttributeEquals(
     `Expected attribute "${attributeName}" to equal "${expectedValue}" but got "${finalValue}".`
   );
 }
+
+test("first-run next step submits typed notes and shows busy feedback", async () => {
+  const context = await browser.newContext();
+  await prepareReturningGuest(context);
+  const page = await context.newPage();
+  let requests = 0;
+  let release: (() => void) | undefined;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/invoices/from-input', async route => {
+    requests += 1;
+    await held;
+    await route.fulfill({status: 503, contentType: 'application/json', body: JSON.stringify({error: 'Synthetic unavailable'})});
+  });
+  try {
+    await page.goto(`${baseUrl}/ai-intake`, {waitUntil: 'networkidle'});
+    await page.locator('textarea#ai-intake-input:visible').fill('Unique roof repair for Cedar, fixed amount 325');
+    const checklist = page.getByTestId('intake-onboarding-section');
+    await checklist.getByRole('button', {name: 'Start with Billie'}).click();
+    const busy = checklist.getByRole('button', {name: 'Billie is working…'});
+    await busy.waitFor();
+    assert.equal(await busy.isDisabled(), true);
+    assert.equal(requests, 1);
+  } finally {
+    release?.();
+    await context.close();
+  }
+});
