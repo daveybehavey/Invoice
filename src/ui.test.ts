@@ -1180,6 +1180,46 @@ test("library can reopen a saved invoice directly in Billie workspace", async ()
   }
 });
 
+test("manual-first onboarding completes through Blank Invoice without intake", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const intakeVisits: string[] = [];
+  page.on("framenavigated", (frame) => {
+    if (frame === page.mainFrame() && new URL(frame.url()).pathname === "/ai-intake") {
+      intakeVisits.push(frame.url());
+    }
+  });
+  try {
+    await openLauncherAsReturningGuest(page);
+    await page.getByRole("button", { name: "Need a different start?" }).click();
+    await page.getByRole("button", { name: /Blank Invoice/ }).click();
+    await page.waitForURL(/\/manual$/);
+    const checklist = page.getByTestId("manual-onboarding-section");
+    await checklist.getByText("1 of 3 core steps complete").waitFor();
+    assert.equal(await checklist.getByRole("button", { name: "Start with Billie" }).count(), 0);
+    await page.locator('textarea[placeholder="Client Name"]:visible').fill("Northwind Roofing");
+    await page.locator('input[placeholder="Description"]:visible').first().fill("Roof patch repair");
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
+    await page.locator('input[placeholder="$0"]:visible').first().fill("325");
+    await checklist.getByRole("button", { name: "Save first draft" }).click();
+    await checklist.getByText("2 of 3 core steps complete").waitFor();
+    const downloadPromise = page.waitForEvent("download");
+    await checklist.getByRole("button", { name: "Export PDF" }).click();
+    const download = await downloadPromise;
+    assert.match(download.suggestedFilename(), /^Invoice-.*\.pdf$/i);
+    assert.equal(await download.failure(), null);
+    await checklist.getByText("You finished the first full NoteBill loop.").waitFor();
+    await page.reload({ waitUntil: "networkidle" });
+    await page.getByTestId("manual-onboarding-section")
+      .getByText("You finished the first full NoteBill loop.").waitFor();
+    await openLauncherAsReturningGuest(page);
+    await page.getByTestId("launcher-onboarding-complete").waitFor();
+    assert.deepEqual(intakeVisits, []);
+  } finally {
+    await context.close();
+  }
+});
+
 test("first invoice onboarding tracks progress across launcher, intake, and manual", async () => {
   useMockResponses([structuredInvoiceForImport(), emptyAudit()]);
   const context = await browser.newContext();
