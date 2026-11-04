@@ -14684,3 +14684,49 @@ test("first-run intake reset clears recovery and another identity cannot restore
     assert.equal(await page.locator('textarea#ai-intake-input:visible').inputValue(), '');
   } finally { await context.close(); }
 });
+
+for (const required of [true, false]) {
+  test(`first-run save promise follows auth policy ${required}`, async () => {
+    const context = await browser.newContext();
+    await prepareReturningGuest(context);
+    const page = await context.newPage();
+    await page.route('**/api/auth/policy', route => route.fulfill({contentType:'application/json',body:JSON.stringify({authRequired:required,authProviders:[]})}));
+    try {
+      await page.goto(`${baseUrl}/`, {waitUntil:'networkidle'});
+      await page.getByTestId('launcher-onboarding-section').getByText(required ? 'Try editing without an account; sign in to save to your library.' : 'Sign-in is optional for saving on this build.', {exact:true}).waitFor();
+      await page.goto(`${baseUrl}/manual`, {waitUntil:'networkidle'});
+      await page.getByTestId('manual-save-auth-notice').getByText(required ? 'Sign in to save to your library. You can keep editing without an account.' : 'Sign-in is optional for saving on this build.', {exact:true}).waitFor();
+    } finally { await context.close(); }
+  });
+}
+
+test('first-run sign-in returns to the existing invoice without saving it automatically', async () => {
+  const context = await browser.newContext();
+  await prepareReturningGuest(context);
+  const page = await context.newPage();
+  await page.route('**/api/auth/policy', route => route.fulfill({contentType:'application/json',body:JSON.stringify({authRequired:true,authProviders:[]})}));
+  let saves = 0;
+  page.on('request', request => { if(request.url().endsWith('/api/invoices/save')) saves++; });
+  try {
+    await page.goto(`${baseUrl}/manual`, {waitUntil:'networkidle'});
+    await page.locator('textarea[placeholder="Client Name"]:visible').fill('Sign-in Cedar 484');
+    await page.locator('input[placeholder="Description"]:visible').first().fill('Preserve this roof repair');
+    await page.locator('input[placeholder="0"]:visible').nth(1).fill('1');
+    await page.locator('input[placeholder="$0"]:visible').first().fill('325');
+    await page.getByRole('button',{name:'Sign in and return to this draft',exact:true}).click();
+    await page.getByLabel('Email link sign-in').waitFor();
+    await page.route('**/api/auth/session', route => route.request().method() === 'POST' ? route.fulfill({contentType:'application/json',body:JSON.stringify({emailSent:true})}) : route.continue());
+    await page.getByLabel('Email link sign-in').fill('first-run-484@example.com');
+    await page.getByRole('button',{name:'Email sign-in link',exact:true}).click();
+    await page.getByText('Check first-run-484@example.com for your secure sign-in link.',{exact:true}).waitFor();
+    const token = createEmailSignInToken('first-run-484@example.com').token;
+    await page.goto(`${baseUrl}/auth/verify?token=${encodeURIComponent(token)}`, {waitUntil:'networkidle'});
+    await page.waitForURL(/\/manual\?resumeDraft=/);
+    assert.equal(await page.locator('textarea[placeholder="Client Name"]:visible').inputValue(), 'Sign-in Cedar 484');
+    assert.equal(await page.locator('input[placeholder="Description"]:visible').first().inputValue(), 'Preserve this roof repair');
+    assert.equal(saves,0);
+    await page.getByTestId('manual-onboarding-section').getByRole('button',{name:'Save first invoice to library'}).click();
+    await page.getByTestId('manual-library-save-status').getByText('Saved to library',{exact:true}).waitFor();
+    assert.equal(saves,1);
+  } finally {await context.close();}
+});

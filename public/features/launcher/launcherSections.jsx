@@ -347,6 +347,18 @@ function LauncherOnboardingSection({
   onOpenFeedback,
   onDismissCompletion
 }) {
+  const [libraryAuthRequired, setLibraryAuthRequired] = React.useState(null);
+  React.useEffect(() => {
+    let active = true;
+    const identity = window.InvoiceRequestIdentity;
+    (identity.apiFetch ?? window.fetch.bind(window))("/api/auth/policy")
+      .then(async response => {
+        if (!response.ok) throw new Error("Policy unavailable");
+        const policy = await response.json();
+        if (active) setLibraryAuthRequired(typeof policy.authRequired === "boolean" ? policy.authRequired : null);
+      }).catch(() => { if (active) setLibraryAuthRequired(null); });
+    return () => { active = false; };
+  }, []);
   const launchReadyVisible = Boolean(status?.complete && status?.setupComplete);
   if (!status?.visible && !status?.completionVisible && !status?.setupVisible && !launchReadyVisible) {
     return null;
@@ -521,12 +533,12 @@ function LauncherOnboardingSection({
       {status.optionalSteps.some((step) => !step.complete) ? (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-slate-200 bg-white/82 px-4 py-3">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Optional</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{libraryAuthRequired === false ? "Optional sign-in" : "Library access"}</p>
             <p className="mt-1 text-sm font-semibold text-slate-900">
-              Sign in to keep saved work tied to your email.
+              {libraryAuthRequired === true ? "Try editing without an account; sign in to save to your library." : libraryAuthRequired === false ? "Sign-in is optional for saving on this build." : "You can start editing now. Library saving may require sign-in."}
             </p>
             <p className="mt-1 text-xs leading-5 text-slate-600">
-              Email-link sign-in is always available here, and Google Sign-In can be enabled in builds that have Google credentials configured.
+              Open sign-in options to see the methods available on this build.
             </p>
           </div>
           <button

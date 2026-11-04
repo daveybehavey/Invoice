@@ -447,7 +447,7 @@ function ManualInvoiceCanvas() {
   const [saveStatus, setSaveStatus] = useState("");
   const [saveError, setSaveError] = useState("");
   const [saveNeedsAuth, setSaveNeedsAuth] = useState(false);
-  const [saveAuthRequiredPolicy, setSaveAuthRequiredPolicy] = useState(false);
+  const [saveAuthRequiredPolicy, setSaveAuthRequiredPolicy] = useState(null);
   const [saveAuthProviders, setSaveAuthProviders] = useState([]);
   const [accountPlan, setAccountPlan] = useState(null);
   const [savedInvoiceId, setSavedInvoiceId] = useState(() => initialDraft?.savedInvoiceId ?? "");
@@ -1744,6 +1744,16 @@ function ManualInvoiceCanvas() {
       savedInvoiceStatus
     };
     window.localStorage.setItem(draftStorageKey, JSON.stringify(payload));
+    return payload;
+  };
+
+  const handleGoToSaveSignIn = () => {
+    try {
+      const nonce = manualDraftStorageUtils.rememberSignInDraft(persistDraft());
+      navigate('/?auth=sign-in&returnTo=' + encodeURIComponent('/manual?resumeDraft=' + nonce));
+    } catch {
+      setSaveError("Could not retain your draft for sign-in. Copy your invoice details before leaving, then try again.");
+    }
   };
 
   useEffect(() => {
@@ -2603,7 +2613,7 @@ function ManualInvoiceCanvas() {
       return authRequired;
     } catch (_error) {
       if (shouldApply()) {
-        setSaveAuthRequiredPolicy(false);
+        setSaveAuthRequiredPolicy(null);
         setSaveAuthProviders([]);
       }
       return false;
@@ -3216,6 +3226,12 @@ function ManualInvoiceCanvas() {
               ))}
             </div>
           </section>
+        ) : null}
+        {!authSession?.userId ? (
+          <div className="mb-3 text-sm text-slate-600 print:hidden" data-testid="manual-save-auth-notice">
+            <p>{saveAuthRequiredPolicy === true ? "Sign in to save to your library. You can keep editing without an account." : saveAuthRequiredPolicy === false ? "Sign-in is optional for saving on this build." : "Library saving may require sign-in. Your device draft is separate."}</p>
+            {saveAuthRequiredPolicy === true ? <button type="button" className="font-semibold underline" onClick={handleGoToSaveSignIn}>Sign in and return to this draft</button> : null}
+          </div>
         ) : null}
         <div className="mb-3 flex flex-wrap items-center gap-3 text-sm text-slate-600 print:hidden" data-testid="manual-library-save-status">
           <span>{hasSavedDraft ? "Saved to library" : "Not saved to library. Save to library to reopen this invoice later."}</span>
@@ -4594,10 +4610,7 @@ function ManualInvoiceCanvas() {
             paymentRecordError={paymentRecordError}
             accountPlan={accountPlan}
             onSaveAuthRetry={handleSaveAuthRetry}
-            onGoToLauncherSignIn={() => {
-              persistDraft();
-              navigate(`/?auth=sign-in&returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`);
-            }}
+            onGoToLauncherSignIn={handleGoToSaveSignIn}
             savedInvoiceId={savedInvoiceId}
             savedInvoiceStatus={savedInvoiceStatus}
             statusUpdateLoading={statusUpdateLoading}
@@ -4723,10 +4736,7 @@ function ManualInvoiceCanvas() {
                 paymentRecordError={paymentRecordError}
                 accountPlan={accountPlan}
                 onSaveAuthRetry={handleSaveAuthRetry}
-                onGoToLauncherSignIn={() => {
-                  persistDraft();
-                  navigate(`/?auth=sign-in&returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`);
-                }}
+                onGoToLauncherSignIn={handleGoToSaveSignIn}
                 savedInvoiceId={savedInvoiceId}
                 savedInvoiceStatus={savedInvoiceStatus}
                 statusUpdateLoading={statusUpdateLoading}

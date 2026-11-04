@@ -46,7 +46,7 @@
     {
       id: "sign_in",
       label: "Sign in for saved account access",
-      helper: "Optional, but helpful if you want saved work tied to your email."
+      helper: "Start editing without an account; library saving may require sign-in on this build."
     }
   ];
   const SETUP_DEFINITIONS = [
