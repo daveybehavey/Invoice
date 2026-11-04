@@ -400,6 +400,10 @@ function AIIntake() {
     requestIdentity.getScopedStorageKey?.("invoiceLastLaborRate") ?? legacyLaborRateStorageKey;
   const intakeSessionKey = requestIdentity.getScopedStorageKey?.("invoiceIntakeSession") ?? "invoiceIntakeSession";
   const [restoredIntake] = useState(() => {
+    // An explicit sample start ignores any previous recovery snapshot.
+    if (new URLSearchParams(window.location.search).get("sample") === "starter") {
+      return null;
+    }
     const restored = readIntakeSession(intakeSessionKey);
     if (!restored) {
       return null;
@@ -2996,7 +3000,7 @@ function AIIntake() {
                           onClick={() => handleOnboardingContinue(onboardingStatus.nextStep)}
                           disabled={isTyping}
                         >
-                          {isTyping ? "Billie is working…" : onboardingStatus.nextStep.ctaLabel}
+                          {isTyping ? "Billie is working…" : intakePhase === "awaiting_follow_up" && followUp ? "Answer pricing question" : onboardingStatus.nextStep.id === "open_editor" && hasReviewCard && !canGenerateInvoice ? "Resolve draft details" : onboardingStatus.nextStep.ctaLabel}
                         </button>
                       ) : null}
                       {onboardingStatus.walkthroughActive ? (
