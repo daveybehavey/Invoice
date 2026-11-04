@@ -831,7 +831,12 @@
     } catch (loadError) {
       setInvoiceLoadError(loadError?.status !== 401);
       setInvoicesLoaded(false);
-      handleLibraryError(loadError, "Failed to load invoices.");
+      // Load failures surface in the dedicated load-error alert, not the
+      // shared error banner, so later action errors stay visible. The auth
+      // path still needs handleLibraryError's auth-required handling.
+      if (loadError?.status === 401) {
+        handleLibraryError(loadError, "Failed to load invoices.");
+      }
     } finally {
       setLoading(false);
     }
@@ -3121,7 +3126,7 @@
         </div>
         </div>
 
-        {error && !invoiceLoadError ? (
+        {error ? (
           <div className="nb-banner nb-banner--danger mt-6">
             {error}
           </div>
