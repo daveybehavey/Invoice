@@ -1054,6 +1054,20 @@
   };
 
   const handleOpen = (invoiceId) => openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`);
+  const openedFromSaveRef = useRef(null);
+  useEffect(() => {
+    const invoiceId = location.state?.openInvoiceId;
+    if (!invoiceId || openedFromSaveRef.current === invoiceId || !authPolicyLoaded || requiresSignIn) {
+      return;
+    }
+    openedFromSaveRef.current = invoiceId;
+    // Consume the handoff state: leaving this history entry carrying
+    // openInvoiceId would replay the open on browser Back and overwrite
+    // newer device edits with the last library copy.
+    navigate(location.pathname, { replace: true, state: {} });
+    void handleOpen(invoiceId);
+  }, [location.state?.openInvoiceId, authPolicyLoaded, requiresSignIn, location.pathname, navigate]);
+
   const handleOpenWithBillie = (invoiceId) =>
     openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`, "GET", {}, {
       onLoaded: (savedInvoice) => {
