@@ -254,7 +254,21 @@
 
   const buildStatus = ({ authSession } = {}) => {
     const state = readState();
-    const steps = STEP_DEFINITIONS.map((definition) => ({
+    // Opening the editor without intake milestones is the manual-first path.
+    // Derive this from existing milestones so saved manual progress also recovers.
+    const manualFirst = Boolean(
+      state.completedSteps.open_editor &&
+      !state.completedSteps.capture_notes &&
+      !state.completedSteps.review_draft
+    );
+    const definitions = manualFirst
+      ? STEP_DEFINITIONS.filter((step) => step.routeHint === "manual").map((step) =>
+          step.id === "open_editor"
+            ? { ...step, label: "Open the invoice editor", helper: "Create your invoice in the editor." }
+            : step
+        )
+      : STEP_DEFINITIONS;
+    const steps = definitions.map((definition) => ({
       ...definition,
       completedAt: state.completedSteps[definition.id] ?? "",
       complete: Boolean(state.completedSteps[definition.id])
