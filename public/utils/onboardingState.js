@@ -14,15 +14,15 @@
     },
     {
       id: "review_draft",
-      label: "Review the first draft",
-      helper: "Confirm what Billie captured before you generate.",
-      ctaLabel: "Review draft",
+      label: "Draft created",
+      helper: "Create a draft from your notes, then check the captured details.",
+      ctaLabel: "Build draft",
       routeHint: "ai-intake"
     },
     {
       id: "open_editor",
       label: "Open the draft in editor",
-      helper: "Move into manual editing once the draft looks right.",
+      helper: "Review the draft and resolve pricing questions before opening the editor.",
       ctaLabel: "Open editor",
       routeHint: "manual"
     },

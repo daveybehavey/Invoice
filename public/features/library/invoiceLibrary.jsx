@@ -389,6 +389,8 @@
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [invoiceLoadError, setInvoiceLoadError] = useState(false);
+  const [invoicesLoaded, setInvoicesLoaded] = useState(false);
   const [authSession, setAuthSession] = useState(() => getAuthSession?.() ?? null);
   const [authPolicyLoaded, setAuthPolicyLoaded] = useState(false);
   const [authRequiredByPolicy, setAuthRequiredByPolicy] = useState(false);
@@ -815,7 +817,10 @@
         "Failed to load invoices."
       );
       setAuthRequiredError(false);
-      const list = Array.isArray(payload?.invoices) ? payload.invoices : [];
+      if (!Array.isArray(payload?.invoices)) throw new Error("Invalid invoice list response.");
+      const list = payload.invoices;
+      setInvoiceLoadError(false);
+      setInvoicesLoaded(true);
       const filtered = includeDeleted
         ? list.filter((invoice) => invoice.status === "deleted")
         : list;
@@ -824,6 +829,8 @@
         prev.filter((id) => filtered.some((invoice) => invoice.invoiceId === id))
       );
     } catch (loadError) {
+      setInvoiceLoadError(loadError?.status !== 401);
+      setInvoicesLoaded(false);
       handleLibraryError(loadError, "Failed to load invoices.");
     } finally {
       setLoading(false);
@@ -3114,7 +3121,7 @@
         </div>
         </div>
 
-        {error ? (
+        {error && !invoiceLoadError ? (
           <div className="nb-banner nb-banner--danger mt-6">
             {error}
           </div>
@@ -3776,7 +3783,13 @@
             </div>
           ) : null}
 
-          {!loading && filteredInvoices.length === 0 ? (
+          {!loading && invoiceLoadError ? (
+            <div className="nb-banner nb-banner--danger" role="alert" data-testid="library-load-error">
+              <p>We couldn't load your invoices. Your saved invoices may still be available.</p>
+              <button type="button" className="nb-btn-secondary mt-3" onClick={() => loadInvoices(showTrash)}>Retry</button>
+            </div>
+          ) : null}
+          {!loading && invoicesLoaded && !invoiceLoadError && filteredInvoices.length === 0 ? (
             <div className="nb-empty">
               {showTrash ? (
                 <>

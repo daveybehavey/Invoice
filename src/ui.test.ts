@@ -14730,3 +14730,72 @@ test('first-run sign-in returns to the existing invoice without saving it automa
     assert.equal(saves,1);
   } finally {await context.close();}
 });
+
+test('first-run draft-created milestone does not claim review or bypass pricing', async () => {
+  const context=await browser.newContext();await prepareReturningGuest(context);
+  const page=await context.newPage();
+  await page.route('**/api/invoices/from-input',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({
+    needsFollowUp:true,followUp:null,structuredInvoice:{customerName:'Cedar 485',workSessions:[],materials:[]},
+    invoice:{customerName:'Cedar 485',currency:'USD',lineItems:[{id:'roof',type:'labor',description:'Roof work',quantity:1,unitPrice:0,amount:0}]},
+    openDecisions:[{kind:'billing',prompt:'Enter roof work price',sourceSnippet:'Roof work price missing'}],assumptions:[],unparsedLines:[],qualityGate:{blockerCount:1}
+  })}));
+  try {
+    await page.goto(`${baseUrl}/ai-intake`,{waitUntil:'networkidle'});
+    await page.locator('textarea#ai-intake-input:visible').fill('Roof work for Cedar 485, price missing');
+    const checklist=page.getByTestId('intake-onboarding-section');
+    await checklist.getByRole('button',{name:'Start with Billie'}).click();
+    await checklist.getByText('2 of 5 core steps complete',{exact:true}).waitFor();
+    await checklist.getByText('Draft created',{exact:true}).waitFor();
+    assert.equal(await checklist.getByText('Review the first draft',{exact:true}).count(),0);
+    await checklist.getByRole('button',{name:'Resolve draft details',exact:true}).click();
+    await checklist.getByRole('status').waitFor();
+    assert.equal(new URL(page.url()).pathname,'/ai-intake');
+  } finally {await context.close();}
+});
+
+test('first-run library load failure is retryable without a false empty state',async()=>{
+  const context=await browser.newContext();await prepareReturningGuest(context);
+  const page=await context.newPage();let attempts=0;
+  await page.route('**/api/invoices',route=>{
+    attempts++;
+    return route.fulfill(attempts===1 ? {status:503,contentType:'application/json',body:JSON.stringify({error:'Synthetic unavailable'})} : {status:200,contentType:'application/json',body:JSON.stringify({invoices:[]})});
+  });
+  try {
+    await page.goto(`${baseUrl}/invoices`,{waitUntil:'networkidle'});
+    const error=page.getByTestId('library-load-error');await error.waitFor();
+    assert.equal(await page.getByText('No invoices saved yet',{exact:true}).count(),0);
+    assert.equal(await page.getByRole('button',{name:'Start with notes',exact:true}).count(),0);
+    await error.getByRole('button',{name:'Retry',exact:true}).click();
+    await page.getByText('No invoices saved yet',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'Start with notes',exact:true}).waitFor();
+    await page.getByRole('button',{name:'Try sample job',exact:true}).waitFor();
+    assert.equal(await error.count(),0);
+  } finally {await context.close();}
+});
+
+test('first-run explicit sample starts fresh instead of pairing sample notes with recovered work',async()=>{
+  const context=await browser.newContext();await prepareReturningGuest(context);
+  const page=await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/ai-intake`,{waitUntil:'networkidle'});
+    await page.route('**/api/invoices/from-input',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({
+      needsFollowUp:false,followUp:null,structuredInvoice:{customerName:'Previous 486',workSessions:[],materials:[]},
+      invoice:{customerName:'Previous 486',currency:'USD',lineItems:[{id:'old',type:'labor',description:'Previous work',quantity:1,unitPrice:25,amount:25}]},
+      openDecisions:[],assumptions:[],unparsedLines:[],qualityGate:{blockerCount:0}
+    })}));
+    await page.locator('textarea#ai-intake-input:visible').fill('Previous unique customer 486');
+    await page.getByTestId('intake-onboarding-section').getByRole('button',{name:'Start with Billie'}).click();
+    await page.getByTestId('intake-onboarding-section').getByRole('button',{name:'Open editor',exact:true}).waitFor();
+    await page.goto(`${baseUrl}/ai-intake?sample=starter`,{waitUntil:'networkidle'});
+    const notes=await page.locator('textarea#ai-intake-input:visible').inputValue();
+    assert.ok(notes.length>0);assert.ok(!notes.includes('486'));
+    const snapshot=await page.evaluate(()=>{
+      const key=window.InvoiceRequestIdentity!.getScopedStorageKey!('invoiceIntakeSession');
+      return JSON.parse(window.sessionStorage.getItem(key)!);
+    });
+    assert.equal(snapshot.finishedInvoice,null);
+    assert.equal(snapshot.messages.some((message:{kind?:string})=>message.kind==='review'),false);
+    await page.reload({waitUntil:'networkidle'});
+    assert.equal(await page.locator('textarea#ai-intake-input:visible').inputValue(),notes);
+  } finally {await context.close();}
+});
