@@ -342,6 +342,44 @@ function readIntakeSession(key) {
   }
 }
 
+// Decide what a validated recovery snapshot means at mount time.
+// A pending scratchpad seed is an explicit, newer handoff: when its text is
+// not already part of the recovered work, the handoff wins and the previous
+// tab session is not resurrected over it. When the seed is already reflected
+// in the recovered work, recovery proceeds untouched.
+// An interrupted snapshot keeps the in-flight submission as editable input
+// only: the same text must not also stay in messages, or resubmitting would
+// append a duplicate copy to the transcript sent for interpretation.
+function resolveRestoredIntake(saved, seedText) {
+  if (!saved) return null;
+  const normalizedSeed = typeof seedText === "string" ? seedText.trim() : "";
+  if (normalizedSeed) {
+    const reflected =
+      saved.inputValue.trim() === normalizedSeed ||
+      saved.messages.some(
+        message =>
+          message?.role === "user" &&
+          typeof message.text === "string" &&
+          message.text.trim() === normalizedSeed
+      ) ||
+      (typeof saved.transcript === "string" && saved.transcript.includes(normalizedSeed));
+    if (!reflected) return null;
+  }
+  if (saved.interrupted) {
+    const messages = [...saved.messages];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === "user") {
+        if (typeof messages[index].text === "string" && messages[index].text === saved.inputValue) {
+          messages.splice(index, 1);
+        }
+        break;
+      }
+    }
+    return { ...saved, messages };
+  }
+  return saved;
+}
+
 function AIIntake() {
   const navigate = useNavigate();
   const legacyDraftStorageKey = "invoiceDraft";
@@ -359,7 +397,26 @@ function AIIntake() {
   const laborRateStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceLastLaborRate") ?? legacyLaborRateStorageKey;
   const intakeSessionKey = requestIdentity.getScopedStorageKey?.("invoiceIntakeSession") ?? "invoiceIntakeSession";
-  const [restoredIntake] = useState(() => readIntakeSession(intakeSessionKey));
+  const [restoredIntake] = useState(() => {
+    const restored = readIntakeSession(intakeSessionKey);
+    if (!restored) {
+      return null;
+    }
+    const seed =
+      readDraftFromStorage(scratchpadSeedStorageKey) ??
+      (scratchpadSeedStorageKey !== legacyScratchpadSeedStorageKey
+        ? readDraftFromStorage(legacyScratchpadSeedStorageKey)
+        : null);
+    const resolved = resolveRestoredIntake(restored, typeof seed?.text === "string" ? seed.text : "");
+    if (!resolved) {
+      try {
+        window.sessionStorage.removeItem(intakeSessionKey);
+      } catch {
+        // Best-effort: the persist effect overwrites the snapshot on mount.
+      }
+    }
+    return resolved;
+  });
   const intakeSessionOwner = useRef(intakeSessionKey);
   const [intakeStorageError, setIntakeStorageError] = useState("");
   const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
