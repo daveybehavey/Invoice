@@ -343,17 +343,19 @@ function readIntakeSession(key) {
 }
 
 // Decide what a validated recovery snapshot means at mount time.
-// A pending scratchpad seed is an explicit, newer handoff: when its text is
-// not already part of the recovered work, the handoff wins and the previous
-// tab session is not resurrected over it. When the seed is already reflected
-// in the recovered work, recovery proceeds untouched.
+// A pending scratchpad seed that intake has not loaded yet is an explicit,
+// newer handoff: when its text is not already part of the recovered work,
+// the handoff wins and the previous tab session is not resurrected over it.
+// A seed intake already loaded (marked loadedIntoIntake and retained until
+// save for refresh recovery) never displaces recovered work, even after the
+// user edits the loaded text — a text mismatch alone is not a new handoff.
 // An interrupted snapshot keeps the in-flight submission as editable input
 // only: the same text must not also stay in messages, or resubmitting would
 // append a duplicate copy to the transcript sent for interpretation.
-function resolveRestoredIntake(saved, seedText) {
+function resolveRestoredIntake(saved, seed) {
   if (!saved) return null;
-  const normalizedSeed = typeof seedText === "string" ? seedText.trim() : "";
-  if (normalizedSeed) {
+  const normalizedSeed = typeof seed?.text === "string" ? seed.text.trim() : "";
+  if (normalizedSeed && !seed.loadedIntoIntake) {
     const reflected =
       saved.inputValue.trim() === normalizedSeed ||
       saved.messages.some(
@@ -407,7 +409,7 @@ function AIIntake() {
       (scratchpadSeedStorageKey !== legacyScratchpadSeedStorageKey
         ? readDraftFromStorage(legacyScratchpadSeedStorageKey)
         : null);
-    const resolved = resolveRestoredIntake(restored, typeof seed?.text === "string" ? seed.text : "");
+    const resolved = resolveRestoredIntake(restored, seed);
     if (!resolved) {
       try {
         window.sessionStorage.removeItem(intakeSessionKey);
@@ -2502,6 +2504,16 @@ function AIIntake() {
         ? `Scratchpad note loaded with tags: ${seedTags.map((tag) => `#${tag}`).join(", ")}`
         : "Scratchpad note loaded into Billie intake."
     );
+    // Mark the handoff as loaded so a later mount can tell this retained
+    // seed from a genuinely new scratchpad handoff (see resolveRestoredIntake).
+    try {
+      window.localStorage.setItem(
+        seedFromScoped ? scratchpadSeedStorageKey : legacyScratchpadSeedStorageKey,
+        JSON.stringify({ ...seed, loadedIntoIntake: true })
+      );
+    } catch {
+      // Best-effort only.
+    }
     // Keep the seed until the invoice is saved so a refresh can still recover the note.
   }, [scratchpadSeedStorageKey, legacyScratchpadSeedStorageKey, inputValue, messages.length]);
 
