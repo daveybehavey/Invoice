@@ -1054,6 +1054,16 @@
   };
 
   const handleOpen = (invoiceId) => openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`);
+  const openedFromSaveRef = useRef(null);
+  useEffect(() => {
+    const invoiceId = location.state?.openInvoiceId;
+    if (!invoiceId || openedFromSaveRef.current === invoiceId || !authPolicyLoaded || requiresSignIn) {
+      return;
+    }
+    openedFromSaveRef.current = invoiceId;
+    void handleOpen(invoiceId);
+  }, [location.state?.openInvoiceId, authPolicyLoaded, requiresSignIn]);
+
   const handleOpenWithBillie = (invoiceId) =>
     openSavedInvoice(invoiceId, `/api/invoices/${invoiceId}`, "GET", {}, {
       onLoaded: (savedInvoice) => {
