@@ -269,6 +269,7 @@
         setStatus("Business identity saved.");
         setError("");
       } catch (_error) {
+        setStatus("");
         setError("Couldn't save identity. Try again.");
       }
     };
