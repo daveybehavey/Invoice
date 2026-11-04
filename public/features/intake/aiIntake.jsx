@@ -353,6 +353,7 @@ function AIIntake() {
   const [billingError, setBillingError] = useState("");
   const [importStudioContext, setImportStudioContext] = useState(null);
   const [scratchpadSeedNotice, setScratchpadSeedNotice] = useState("");
+  const [onboardingActionNotice, setOnboardingActionNotice] = useState("");
   const [messages, setMessages] = useState(initialIntakeMessages);
   const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -2500,21 +2501,42 @@ function AIIntake() {
     if (!step?.id) {
       return;
     }
-    if (step.id === "capture_notes") {
-      if (!inputValue.trim()) {
-        handleLoadStarterSample();
+    setOnboardingActionNotice("");
+    if (isTyping) {
+      setOnboardingActionNotice("Billie is working on your draft. Please wait.");
+      return;
+    }
+    if (intakePhase === "awaiting_follow_up" && followUp) {
+      if (inputValue.trim()) {
+        handleSubmitUserMessage(inputValue);
+      } else {
+        setOnboardingActionNotice(followUp.message || "Enter the missing pricing details to continue.");
+        focusInputWithValue("");
       }
       return;
     }
-    if (step.id === "review_draft") {
-      if (!hasReviewCard && inputValue.trim()) {
+    if (step.id === "capture_notes" || step.id === "review_draft") {
+      if (inputValue.trim()) {
         handleSubmitUserMessage(inputValue);
+      } else if (step.id === "capture_notes") {
+        handleLoadStarterSample();
+        focusInputWithValue(SAMPLE_JOB_NOTES);
+      } else {
+        setOnboardingActionNotice("Enter your job notes to rebuild the draft, or load sample notes.");
+        focusInputWithValue("");
       }
       return;
     }
     if (step.id === "open_editor") {
-      if (finishedInvoice) {
+      if (finishedInvoice && canGenerateInvoice) {
         handleGenerateInvoice();
+      } else if (hasReviewCard) {
+        setOnboardingActionNotice(ctaHelper || "Resolve the missing details in the review before opening the editor.");
+        setReviewCardCollapsed(false);
+        scrollToSection(decisionsRef);
+      } else {
+        setOnboardingActionNotice("Your draft is unavailable. Enter job notes to rebuild it before opening the editor.");
+        focusInputWithValue(inputValue || "");
       }
       return;
     }
@@ -2860,8 +2882,9 @@ function AIIntake() {
                           type="button"
                           className="nb-btn-secondary shrink-0 rounded-full px-3 py-1.5 text-sm"
                           onClick={() => handleOnboardingContinue(onboardingStatus.nextStep)}
+                          disabled={isTyping}
                         >
-                          {onboardingStatus.nextStep.ctaLabel}
+                          {isTyping ? "Billie is working…" : onboardingStatus.nextStep.ctaLabel}
                         </button>
                       ) : null}
                       {onboardingStatus.walkthroughActive ? (
@@ -2875,6 +2898,7 @@ function AIIntake() {
                       ) : null}
                     </div>
                   </div>
+                  {onboardingActionNotice ? <p role="status" className="mt-3 text-sm text-slate-700">{onboardingActionNotice}</p> : null}
                   <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-200/80">
                     <div
                       className="h-full rounded-full transition-all duration-300"
