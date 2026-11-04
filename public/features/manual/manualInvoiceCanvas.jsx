@@ -1764,7 +1764,7 @@ function ManualInvoiceCanvas() {
       if (isActionFeedbackActive()) {
         return;
       }
-      setDraftStatus("Draft saved on this device");
+      setDraftStatus("Draft saved");
       scheduleDraftStatusClear(1500);
     }, 500);
     return () => {
@@ -1949,7 +1949,7 @@ function ManualInvoiceCanvas() {
       );
       completeOnboardingStep("save_invoice");
       setSaveNeedsAuth(false);
-      setSaveStatus("Saved to library");
+      setSaveStatus("Saved");
       if (clearScratchpadSeedOnSave) {
         try {
           const scratchpadSeedStorageKey =
@@ -2175,16 +2175,6 @@ function ManualInvoiceCanvas() {
 
   const billieNextMoves = useMemo(() => {
     const moves = [];
-    if (savedInvoiceId && !sendBlockedByPrice && onboardingStatus.visible && !onboardingStatus.completionVisible) {
-      return [{
-        id: "export-pdf",
-        label: "Finish with a PDF",
-        helper: "Download the PDF you can send. Payment links and client portals are optional.",
-        actionLabel: "Download PDF",
-        busy: false,
-        onClick: () => { void handleDownloadPdf(); }
-      }];
-    }
     if (!savedInvoiceId) {
       moves.push({
         id: "save",
@@ -2207,11 +2197,13 @@ function ManualInvoiceCanvas() {
         onClick: () => handleRememberCurrentLineItem(currentServiceMemoryCandidate)
       });
     }
-    if (savedInvoiceId && !paymentLinkUrl.trim() && !sendBlockedByPrice && !hostedPaymentLinkUnavailable) {
+    if (savedInvoiceId && !paymentLinkUrl.trim() && !sendBlockedByPrice) {
       moves.push({
         id: "payment-link",
-        label: "Optional: add a payment link",
-        helper: "Optionally add a hosted payment link when you are ready to share.",
+        label: "Add a payment link",
+        helper: hostedPaymentLinkUnavailable
+          ? "Hosted payment links are unavailable on this build, so use the client portal or share pack instead."
+          : "Generate a hosted payment link so send, share pack, and portal handoff feel complete.",
         actionLabel: paymentLinkBusy ? "Creating..." : "Create payment link",
         busy: paymentLinkBusy,
         onClick: () => {
@@ -2222,7 +2214,7 @@ function ManualInvoiceCanvas() {
     if (savedInvoiceId && !clientPortalUrl && !sendBlockedByPrice) {
       moves.push({
         id: "client-portal",
-        label: "Optional: create the client portal",
+        label: "Create the client portal",
         helper: "Give the customer one clean place to review the invoice and payment details.",
         actionLabel: clientPortalBusy ? "Creating..." : "Create client portal",
         busy: clientPortalBusy,
@@ -2253,9 +2245,6 @@ function ManualInvoiceCanvas() {
     }
     return moves.slice(0, 3);
   }, [
-    handleDownloadPdf,
-    onboardingStatus.visible,
-    onboardingStatus.completionVisible,
     clientPortalBusy,
     clientPortalUrl,
     currentServiceMemoryCandidate,
@@ -2357,7 +2346,7 @@ function ManualInvoiceCanvas() {
         eyebrow: "Right now",
         title: "Your draft is ready to save.",
         detail:
-          "Save to library so you can reopen this invoice later. Device autosave only keeps a draft on this device.",
+          "Save it once so the library, hosted payment link, and client portal unlock for this invoice.",
         actions: [
           {
             id: "save-draft",
@@ -2393,38 +2382,153 @@ function ManualInvoiceCanvas() {
       return needsAPriceCue;
     }
 
+    if (!hasHostedPaymentLink && !hasClientPortal) {
+      if (sendBlockedByPrice) {
+        return needsAPriceCue;
+      }
+      return {
+        eyebrow: "Nice progress",
+        title: "The draft is saved. Add the customer handoff pieces next.",
+        detail:
+          "Create the hosted payment link and client portal before you send so the invoice feels complete on first delivery.",
+        actions: [
+          {
+            id: "payment-link",
+            label: paymentLinkBusy ? "Creating..." : "Create payment link",
+            disabled: paymentLinkBusy,
+            onClick: () => {
+              void handleGeneratePaymentLink();
+            }
+          },
+          ...(sendBlockedByPrice
+            ? []
+            : [
+                {
+                  id: "client-portal",
+                  label: clientPortalBusy ? "Creating..." : "Create client portal",
+                  disabled: clientPortalBusy,
+                  onClick: () => {
+                    void handleGenerateClientPortalLink();
+                  }
+                }
+              ]),
+          {
+            id: "open-library",
+            label: "Open library",
+            onClick: () => navigate("/invoices")
+          }
+        ]
+      };
+    }
+
+    if (hasHostedPaymentLink && !hasClientPortal && !sendBlockedByPrice) {
+      return {
+        eyebrow: "Nice progress",
+        title: "Payment link is ready. Add the portal to finish the handoff.",
+        detail:
+          "The payment step is covered. Create the client portal next so customers also have a clean review page.",
+        actions: [
+          {
+            id: "client-portal",
+            label: clientPortalBusy ? "Creating..." : "Create client portal",
+            disabled: clientPortalBusy,
+            onClick: () => {
+              void handleGenerateClientPortalLink();
+            }
+          },
+          ...(canCopySharePack
+            ? [
+                {
+                  id: "share-pack",
+                  label: sharePackBusy ? "Copying..." : "Copy share pack",
+                  disabled: sharePackBusy,
+                  onClick: handleCopySharePack
+                }
+              ]
+            : []),
+          {
+            id: "open-library",
+            label: "Open library",
+            onClick: () => navigate("/invoices")
+          }
+        ]
+      };
+    }
+
+    if (!hasHostedPaymentLink && hasClientPortal) {
+      return {
+        eyebrow: "Nice progress",
+        title: "Portal is ready. Add the payment link before you send.",
+        detail:
+          "The client can review the invoice already. Add the hosted payment link so paying feels just as polished.",
+        actions: [
+          {
+            id: "payment-link",
+            label: paymentLinkBusy ? "Creating..." : "Create payment link",
+            disabled: paymentLinkBusy,
+            onClick: () => {
+              void handleGeneratePaymentLink();
+            }
+          },
+          {
+            id: "open-library",
+            label: "Open library",
+            onClick: () => navigate("/invoices")
+          }
+        ]
+      };
+    }
+
     return {
-      eyebrow: "Saved to library",
-      title: "Your invoice is saved. Download the PDF next.",
+      eyebrow: "Ready to send",
+      title: "Everything needed for a polished handoff is ready.",
       detail:
-        "Finish with a PDF you can send. Payment links and client portals are optional; you can set them up later.",
+        "Copy the share pack or export the PDF next. You already have the saved draft, payment link, and portal in place.",
       actions: [
+        ...(canCopySharePack
+          ? [
+              {
+                id: "share-pack",
+                label: sharePackBusy ? "Copying..." : "Copy share pack",
+                disabled: sharePackBusy,
+                onClick: handleCopySharePack
+              }
+            ]
+          : []),
         {
           id: "export-pdf",
-          label: "Download PDF",
+          label: "Export PDF",
           onClick: () => {
             void handleDownloadPdf();
           }
         },
         {
-          id: "open-saved-invoice",
-          label: "Open saved invoice",
-          onClick: () => navigate("/invoices", { state: { openInvoiceId: savedInvoiceId } })
+          id: "open-library",
+          label: "Open library",
+          onClick: () => navigate("/invoices")
         }
       ]
     };
   }, [
+    clientPortalBusy,
     handleDownloadPdf,
+    handleGenerateClientPortalLink,
+    handleGeneratePaymentLink,
+    handleCopySharePack,
     handleSaveInvoice,
+    canCopySharePack,
     hasBillableLineItem,
     hasClientDetails,
+    hasClientPortal,
+    hasHostedPaymentLink,
     hasSavedDraft,
-    savedInvoiceId,
     sendBlockedByPrice,
     onboardingStatus.completionVisible,
     onboardingStatus.visible,
     navigate,
-    saveStatus
+    paymentLinkBusy,
+    saveStatus,
+    sharePackBusy
   ]);
 
   const handleBillieLineRefine = (lineNumber, description) => {
@@ -3217,14 +3321,6 @@ function ManualInvoiceCanvas() {
             </div>
           </section>
         ) : null}
-        <div className="mb-3 flex flex-wrap items-center gap-3 text-sm text-slate-600 print:hidden" data-testid="manual-library-save-status">
-          <span>{hasSavedDraft ? "Saved to library" : "Not saved to library. Save to library to reopen this invoice later."}</span>
-          {hasSavedDraft ? (
-            <button type="button" className="font-semibold underline" onClick={() => navigate("/invoices", { state: { openInvoiceId: savedInvoiceId } })}>
-              Open saved invoice
-            </button>
-          ) : null}
-        </div>
         <div
           className={`printable-invoice relative w-full overflow-hidden rounded-[32px] border ${activeSpacing.shellPaddingClass} ${activePreset.shellClass} ${invoiceInteractionClass}`}
           style={{ borderColor: accent.border }}

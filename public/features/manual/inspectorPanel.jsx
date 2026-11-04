@@ -2104,7 +2104,7 @@ function InspectorPanel({
                 className="w-full rounded-lg px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
                 style={accentButtonStyle}
                 onClick={onSaveInvoice}
-                disabled={planLimitReached || Boolean(saveStatus && saveStatus !== "Saved to library")}
+                disabled={planLimitReached || Boolean(saveStatus && saveStatus !== "Saved")}
               >
                 {saveLabel}
               </button>

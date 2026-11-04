@@ -783,63 +783,63 @@ test("guided walkthrough stays active from launcher through manual editor", asyn
   }
 });
 
-test("manual autosave stays device-only until library save and offers the saved invoice", async () => {
+test("manual onboarding cue updates through save, payment link, and portal setup", async () => {
   const context = await browser.newContext();
+  await context.addInitScript(() => {
+    window.localStorage.setItem("invoiceOwnerId", "ui-manual-onboarding-cue-owner");
+  });
   const page = await context.newPage();
   try {
-    await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
-    await page.locator('textarea[placeholder="Client Name"]:visible').fill("Northwind Roofing");
-    await page.locator('input[placeholder="Description"]:visible').first().fill("Roof patch repair");
-    await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
-    await page.locator('input[placeholder="$0"]:visible').first().fill("325");
-    await page.getByTestId("manual-draft-status").getByText("Draft saved on this device", { exact: true }).waitFor();
-    const storageStatus = page.getByTestId("manual-library-save-status");
-    await storageStatus.getByText("Not saved to library. Save to library to reopen this invoice later.", { exact: true }).waitFor();
-    // The persistent reminder survives the transient autosave message.
-    await page.getByTestId("manual-draft-status").waitFor({ state: "hidden" });
-    await storageStatus.waitFor({ state: "visible" });
-    assert.equal(await storageStatus.getByRole("button", { name: "Open saved invoice" }).count(), 0);
-    const cue = page.getByTestId("manual-onboarding-next-cue");
-    await page.route("**/api/invoices/save", route => route.fulfill({ status: 500, body: '{"error":"Retry save"}', contentType: "application/json" }));
-    const failedSave = page.waitForResponse(response => response.url().endsWith("/api/invoices/save") && response.status() === 500);
-    await cue.getByRole("button", { name: "Save draft" }).click();
-    await failedSave;
-    await storageStatus.getByText(/Not saved to library/).waitFor();
-    await page.unroute("**/api/invoices/save");
-    await cue.getByRole("button", { name: "Save draft" }).click();
-    await storageStatus.getByText("Saved to library", { exact: true }).waitFor();
-    const reopenResponse = page.waitForResponse(response => /\/api\/invoices\/[^/]+$/.test(response.url()) && response.request().method() === "GET");
-    await storageStatus.getByRole("button", { name: "Open saved invoice" }).click();
-    assert.equal((await reopenResponse).ok(), true);
-    await page.waitForURL(/\/manual$/);
-    await expectValueContains(page.locator('textarea[placeholder="Client Name"]:visible'), "Northwind Roofing");
-  } finally {
-    await context.close();
-  }
-});
-
-test("manual post-save guidance finishes with PDF when hosted payments are unavailable", async () => {
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  try {
-    await page.route("**/api/account/plan", async route => {
-      const response = await route.fetch();
-      const payload = await response.json();
-      await route.fulfill({ json: { ...payload, billing: { ...payload.billing, invoicePaymentAvailable: false } } });
+    await page.route("**/api/invoices/*/payment-link", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          paymentLinkUrl: "https://pay.stripe.test/plink_manual_onboarding_123"
+        })
+      });
     });
+    await page.route("**/api/invoices/*/client-portal-link", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          clientPortalUrl: "https://app.notebill.app/portal/123e4567-e89b-12d3-a456-426614174111/token-onboarding",
+          invoice: {
+            invoiceData: {
+              finishedInvoice: {
+                portalAccessToken: "token-onboarding"
+              }
+            }
+          }
+        })
+      });
+    });
+
     await page.goto(`${baseUrl}/manual`, { waitUntil: "networkidle" });
+    const cue = page.getByTestId("manual-onboarding-next-cue");
+    await cue.getByText("Make this invoice send-ready first.").waitFor({ state: "visible" });
+
     await page.locator('textarea[placeholder="Client Name"]:visible').fill("Northwind Roofing");
     await page.locator('input[placeholder="Description"]:visible').first().fill("Roof patch repair");
     await page.locator('input[placeholder="0"]:visible').nth(1).fill("1");
     await page.locator('input[placeholder="$0"]:visible').first().fill("325");
-    const cue = page.getByTestId("manual-onboarding-next-cue");
+
+    await cue.getByText("Your draft is ready to save.").waitFor({ state: "visible" });
     await cue.getByRole("button", { name: "Save draft" }).click();
-    await cue.getByText("Your invoice is saved. Download the PDF next.").waitFor();
-    assert.equal(await cue.getByRole("button", { name: "Create payment link" }).count(), 0);
-    await cue.getByText(/Payment links and client portals are optional/).waitFor();
-    const downloadPromise = page.waitForEvent("download");
-    await cue.getByRole("button", { name: "Download PDF" }).click();
-    assert.match((await downloadPromise).suggestedFilename(), /^Invoice-.*\.pdf$/i);
+    await cue.getByText("The draft is saved. Add the customer handoff pieces next.").waitFor({
+      state: "visible"
+    });
+    await cue.getByRole("button", { name: "Create payment link" }).click();
+    await cue.getByText("Payment link is ready. Add the portal to finish the handoff.").waitFor({
+      state: "visible"
+    });
+
+    await cue.getByRole("button", { name: "Create client portal" }).click();
+    await cue.getByText("Everything needed for a polished handoff is ready.").waitFor({
+      state: "visible"
+    });
+    await cue.getByRole("button", { name: "Copy share pack" }).waitFor({ state: "visible" });
   } finally {
     await context.close();
   }
@@ -962,7 +962,7 @@ test("saved draft with an open price and no links shows Needs a price", async ()
     await cue.getByText("A line is still $0 or waiting on a price.").waitFor({ state: "visible" });
     assert.equal(await cue.getByText("Nice progress").count(), 0);
     assert.equal(
-      await cue.getByText("Your invoice is saved. Download the PDF next.").count(),
+      await cue.getByText("The draft is saved. Add the customer handoff pieces next.").count(),
       0
     );
     await cue.getByRole("button", { name: "Review line items" }).waitFor({ state: "visible" });
@@ -1009,11 +1009,11 @@ test("saved draft with an open price and one link shows Needs a price", async ()
 
     await cue.getByText("Your draft is ready to save.").waitFor({ state: "visible" });
     await cue.getByRole("button", { name: "Save draft" }).click();
-    await cue.getByText("Your invoice is saved. Download the PDF next.").waitFor({
+    await cue.getByText("The draft is saved. Add the customer handoff pieces next.").waitFor({
       state: "visible"
     });
-    await page.getByTestId("manual-send-payment-handoff").getByRole("button", { name: "Create payment link" }).click();
-    await cue.getByText("Your invoice is saved. Download the PDF next.").waitFor({
+    await cue.getByRole("button", { name: "Create payment link" }).click();
+    await cue.getByText("Payment link is ready. Add the portal to finish the handoff.").waitFor({
       state: "visible"
     });
     await page.getByLabel("Hosted payment link").waitFor({ state: "visible" });
@@ -1207,13 +1207,13 @@ test("first invoice onboarding tracks progress across launcher, intake, and manu
     await manualOnboarding.getByText("3 of 5 core steps complete").waitFor({ state: "visible" });
 
     await page.getByRole("button", { name: "Export" }).last().click();
-    await page.getByText("Save to library", { exact: true }).first().waitFor({ state: "visible" });
+    await page.getByText("Save to library").waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Save invoice" }).click();
     await page.getByRole("button", { name: "Update saved invoice" }).waitFor({ state: "visible" });
     await manualOnboarding.getByText("4 of 5 core steps complete").waitFor({ state: "visible" });
 
     const downloadPromise = page.waitForEvent("download");
-    await manualOnboarding.getByRole("button", { name: "Download PDF", exact: true }).first().click();
+    await page.getByRole("button", { name: "Download PDF" }).click();
     const download = await downloadPromise;
     assert.match(await download.suggestedFilename(), /^Invoice-.*\.pdf$/i);
     await manualOnboarding.getByText("You finished the first full NoteBill loop.").waitFor({
@@ -3876,7 +3876,7 @@ test("manual editor keeps action feedback through autosave and restores Draft sa
     await notesInput.fill(
       "Retainer: Monthly service plan billed on the first business day of each month.\nBaseline note before retainer.\nLater edit after retainer toast expired."
     );
-    await draftStatus.filter({ hasText: /^Draft saved on this device$/ }).waitFor({ state: "visible", timeout: 5000 });
+    await draftStatus.filter({ hasText: /^Draft saved$/ }).waitFor({ state: "visible", timeout: 5000 });
 
     // Unrelated timed status (polish) shares the generic clear timer, but must not leave a
     // stale truthy handle that permanently suppresses Draft saved after timers settle.
@@ -3895,7 +3895,7 @@ test("manual editor keeps action feedback through autosave and restores Draft sa
     await notesInput.fill(
       "Retainer: Monthly service plan billed on the first business day of each month.\nBaseline note before retainer.\nLater edit after retainer toast expired.\nPost-polish autosave check."
     );
-    await draftStatus.filter({ hasText: /^Draft saved on this device$/ }).waitFor({ state: "visible", timeout: 8000 });
+    await draftStatus.filter({ hasText: /^Draft saved$/ }).waitFor({ state: "visible", timeout: 8000 });
   } finally {
     await context.close();
   }
