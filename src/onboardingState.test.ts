@@ -41,6 +41,22 @@ test("previously saved manual progress recovers without a storage migration", ()
   assert.equal(state.buildStatus().completedAt, "2026-11-03");
 });
 
+test("later intake use does not revoke a completed manual-first flow", () => {
+  const state = load({
+    open_editor: "2026-11-01T00:00:00.000Z",
+    save_invoice: "2026-11-02T00:00:00.000Z",
+    export_pdf: "2026-11-03T00:00:00.000Z",
+    capture_notes: "2026-11-04T00:00:00.000Z"
+  });
+  const status = state.buildStatus();
+  assert.equal(status.totalSteps, 3);
+  assert.equal(status.complete, true);
+  assert.equal(status.completedAt, "2026-11-03T00:00:00.000Z");
+  state.markStep("review_draft");
+  assert.equal(state.buildStatus().complete, true);
+  assert.equal(state.buildStatus().totalSteps, 3);
+});
+
 test("intake progress retains all five steps", () => {
   for (const intakeStep of ["capture_notes", "review_draft"]) {
     const state = load({ [intakeStep]: "done", open_editor: "done", save_invoice: "done", export_pdf: "done" });

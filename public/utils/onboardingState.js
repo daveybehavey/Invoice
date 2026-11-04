@@ -256,10 +256,26 @@
     const state = readState();
     // Opening the editor without intake milestones is the manual-first path.
     // Derive this from existing milestones so saved manual progress also recovers.
+    // Once the manual path has been completed, later intake activity must not
+    // revoke that completion: when every manual milestone predates the first
+    // intake milestone, the manual checklist remains the established path.
+    const manualStepIds = STEP_DEFINITIONS.filter((step) => step.routeHint === "manual").map(
+      (step) => step.id
+    );
+    const manualTimestamps = manualStepIds
+      .map((id) => state.completedSteps[id])
+      .filter(Boolean)
+      .sort();
+    const manualCompletedAt =
+      manualTimestamps.length === manualStepIds.length ? manualTimestamps.slice(-1)[0] : "";
+    const intakeTimestamps = STEP_DEFINITIONS.filter((step) => step.routeHint === "ai-intake")
+      .map((step) => state.completedSteps[step.id])
+      .filter(Boolean)
+      .sort();
     const manualFirst = Boolean(
       state.completedSteps.open_editor &&
-      !state.completedSteps.capture_notes &&
-      !state.completedSteps.review_draft
+        (intakeTimestamps.length === 0 ||
+          (manualCompletedAt && intakeTimestamps[0] > manualCompletedAt))
     );
     const definitions = manualFirst
       ? STEP_DEFINITIONS.filter((step) => step.routeHint === "manual").map((step) =>
