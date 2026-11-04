@@ -14619,3 +14619,68 @@ test("first-run next step submits typed notes and shows busy feedback", async ()
     await context.close();
   }
 });
+
+test("first-run intake restores notes and review across navigation and reload", async () => {
+  const context = await browser.newContext();
+  await prepareReturningGuest(context);
+  const page = await context.newPage();
+  const job = 'Cedar roof patch unique job 481, fixed amount 325';
+  await page.route('**/api/invoices/from-input', route => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({
+      needsFollowUp: false, followUp: null,
+      structuredInvoice: {customerName: 'Cedar 481', workSessions: [], materials: []},
+      invoice: {customerName: 'Cedar 481', currency: 'USD', lineItems: [{id: 'roof', type: 'labor', description: 'Unique roof patch 481', quantity: 1, unitPrice: 325, amount: 325}], subtotal: 325, total: 325, balanceDue: 325},
+      openDecisions: [], assumptions: [], unparsedLines: [], qualityGate: {blockerCount: 0}
+    })
+  }));
+  try {
+    await page.goto(`${baseUrl}/ai-intake`, {waitUntil: 'networkidle'});
+    await page.locator('textarea#ai-intake-input:visible').fill(job);
+    await page.goto(`${baseUrl}/`);
+    await page.goto(`${baseUrl}/ai-intake`, {waitUntil: 'networkidle'});
+    assert.equal(await page.locator('textarea#ai-intake-input:visible').inputValue(), job);
+    await page.getByTestId('intake-onboarding-section').getByRole('button', {name: 'Start with Billie'}).click();
+    await page.getByTestId('intake-onboarding-section').getByRole('button', {name: 'Open editor'}).waitFor();
+    await page.goto(`${baseUrl}/`);
+    await page.goto(`${baseUrl}/ai-intake`, {waitUntil: 'networkidle'});
+    await page.reload({waitUntil: 'networkidle'});
+    await page.getByTestId('intake-onboarding-section').getByRole('button', {name: 'Open editor'}).click();
+    await page.waitForURL(/\/manual$/);
+    assert.equal(await page.locator('textarea[placeholder="Client Name"]:visible').inputValue(), 'Cedar 481');
+    assert.equal(await page.locator('input[placeholder="Description"]:visible').first().inputValue(), 'Unique roof patch 481');
+  } finally { await context.close(); }
+});
+
+test("first-run intake warns when tab storage is unavailable", async () => {
+  const context = await browser.newContext();
+  await prepareReturningGuest(context);
+  await context.addInitScript(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key, value) {
+      if (key.startsWith('invoiceIntakeSession')) throw new Error('Synthetic quota failure');
+      return original.call(this, key, value);
+    };
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/ai-intake`, {waitUntil: 'networkidle'});
+    await page.getByTestId('intake-recovery-status').getByText(/Copy your notes before leaving/).waitFor();
+  } finally { await context.close(); }
+});
+
+test("first-run intake reset clears recovery and another identity cannot restore it", async () => {
+  const context = await browser.newContext();
+  await prepareReturningGuest(context);
+  const page = await context.newPage();
+  try {
+    await page.goto(`${baseUrl}/ai-intake`, {waitUntil: 'networkidle'});
+    await page.locator('textarea#ai-intake-input:visible').fill('Discard this unique job 482');
+    await page.getByRole('button', {name: 'New intake', exact: true}).click();
+    await page.reload({waitUntil: 'networkidle'});
+    assert.equal(await page.locator('textarea#ai-intake-input:visible').inputValue(), '');
+    await page.locator('textarea#ai-intake-input:visible').fill('Private unique job 483');
+    await page.evaluate(() => window.localStorage.setItem('invoiceOwnerId', 'different-synthetic-owner'));
+    await page.reload({waitUntil: 'networkidle'});
+    assert.equal(await page.locator('textarea#ai-intake-input:visible').inputValue(), '');
+  } finally { await context.close(); }
+});
