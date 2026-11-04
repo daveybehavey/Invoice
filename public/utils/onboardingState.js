@@ -28,16 +28,16 @@
     },
     {
       id: "save_invoice",
-      label: "Save your first invoice",
-      helper: "Keep the draft so you can reopen it later.",
-      ctaLabel: "Save first draft",
+      label: "Save your first invoice to library",
+      helper: "Save to library so you can reopen it later; device autosave is separate.",
+      ctaLabel: "Save first invoice to library",
       routeHint: "manual"
     },
     {
       id: "export_pdf",
-      label: "Export the PDF",
+      label: "Download the PDF",
       helper: "Finish with a client-ready file you can send.",
-      ctaLabel: "Export PDF",
+      ctaLabel: "Download PDF",
       routeHint: "manual"
     }
   ];
