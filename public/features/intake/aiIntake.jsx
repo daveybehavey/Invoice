@@ -327,6 +327,61 @@
     return parts.length > 0 ? `Latest: ${parts.join(" + ")}` : "";
   };
 
+// Tab-local recovery is separate from an explicitly saved library invoice.
+function readIntakeSession(key) {
+  try {
+    const saved = JSON.parse(window.sessionStorage.getItem(key) || "null");
+    if (saved?.version !== 1 || !Array.isArray(saved.messages) ||
+        !saved.messages.every(message => message && typeof message === "object") ||
+        typeof saved.inputValue !== "string" || typeof saved.transcript !== "string" ||
+        !["collecting", "awaiting_follow_up", "ready_to_summarize", "ready_to_generate"].includes(saved.intakePhase) ||
+        !["openDecisions", "assumptions", "unparsedLines"].every(key => Array.isArray(saved[key]))) return null;
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
+// Decide what a validated recovery snapshot means at mount time.
+// A pending scratchpad seed that intake has not loaded yet is an explicit,
+// newer handoff: when its text is not already part of the recovered work,
+// the handoff wins and the previous tab session is not resurrected over it.
+// A seed intake already loaded (marked loadedIntoIntake and retained until
+// save for refresh recovery) never displaces recovered work, even after the
+// user edits the loaded text — a text mismatch alone is not a new handoff.
+// An interrupted snapshot keeps the in-flight submission as editable input
+// only: the same text must not also stay in messages, or resubmitting would
+// append a duplicate copy to the transcript sent for interpretation.
+function resolveRestoredIntake(saved, seed) {
+  if (!saved) return null;
+  const normalizedSeed = typeof seed?.text === "string" ? seed.text.trim() : "";
+  if (normalizedSeed && !seed.loadedIntoIntake) {
+    const reflected =
+      saved.inputValue.trim() === normalizedSeed ||
+      saved.messages.some(
+        message =>
+          message?.role === "user" &&
+          typeof message.text === "string" &&
+          message.text.trim() === normalizedSeed
+      ) ||
+      (typeof saved.transcript === "string" && saved.transcript.includes(normalizedSeed));
+    if (!reflected) return null;
+  }
+  if (saved.interrupted) {
+    const messages = [...saved.messages];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === "user") {
+        if (typeof messages[index].text === "string" && messages[index].text === saved.inputValue) {
+          messages.splice(index, 1);
+        }
+        break;
+      }
+    }
+    return { ...saved, messages };
+  }
+  return saved;
+}
+
 function AIIntake() {
   const navigate = useNavigate();
   const legacyDraftStorageKey = "invoiceDraft";
@@ -343,6 +398,29 @@ function AIIntake() {
   const legacyLaborRateStorageKey = "invoiceLastLaborRate";
   const laborRateStorageKey =
     requestIdentity.getScopedStorageKey?.("invoiceLastLaborRate") ?? legacyLaborRateStorageKey;
+  const intakeSessionKey = requestIdentity.getScopedStorageKey?.("invoiceIntakeSession") ?? "invoiceIntakeSession";
+  const [restoredIntake] = useState(() => {
+    const restored = readIntakeSession(intakeSessionKey);
+    if (!restored) {
+      return null;
+    }
+    const seed =
+      readDraftFromStorage(scratchpadSeedStorageKey) ??
+      (scratchpadSeedStorageKey !== legacyScratchpadSeedStorageKey
+        ? readDraftFromStorage(legacyScratchpadSeedStorageKey)
+        : null);
+    const resolved = resolveRestoredIntake(restored, seed);
+    if (!resolved) {
+      try {
+        window.sessionStorage.removeItem(intakeSessionKey);
+      } catch {
+        // Best-effort: the persist effect overwrites the snapshot on mount.
+      }
+    }
+    return resolved;
+  });
+  const intakeSessionOwner = useRef(intakeSessionKey);
+  const [intakeStorageError, setIntakeStorageError] = useState("");
   const [authSession, setAuthSession] = useState(() => requestIdentity.getAuthSession?.() ?? null);
   const [onboardingStatus, setOnboardingStatus] = useState(() =>
     buildOnboardingStatus({ authSession: requestIdentity.getAuthSession?.() ?? null })
@@ -353,21 +431,21 @@ function AIIntake() {
   const [billingError, setBillingError] = useState("");
   const [importStudioContext, setImportStudioContext] = useState(null);
   const [scratchpadSeedNotice, setScratchpadSeedNotice] = useState("");
-  const [onboardingActionNotice, setOnboardingActionNotice] = useState("");
-  const [messages, setMessages] = useState(initialIntakeMessages);
-  const [inputValue, setInputValue] = useState("");
+  const [onboardingActionNotice, setOnboardingActionNotice] = useState(() => restoredIntake?.interrupted ? "The previous request was interrupted. Your notes are restored; submit them again to continue." : "");
+  const [messages, setMessages] = useState(() => restoredIntake?.messages ?? initialIntakeMessages);
+  const [inputValue, setInputValue] = useState(() => restoredIntake?.inputValue ?? "");
   const [isTyping, setIsTyping] = useState(false);
-  const [intakePhase, setIntakePhase] = useState("collecting");
-  const [followUp, setFollowUp] = useState(null);
-  const [structuredInvoice, setStructuredInvoice] = useState(null);
-  const [finishedInvoice, setFinishedInvoice] = useState(null);
-  const [laborPricingNote, setLaborPricingNote] = useState("");
-  const [pendingLaborRate, setPendingLaborRate] = useState(null);
-  const [pendingTaxRate, setPendingTaxRate] = useState(null);
-  const [openDecisions, setOpenDecisions] = useState([]);
-  const [assumptions, setAssumptions] = useState([]);
-  const [unparsedLines, setUnparsedLines] = useState([]);
-  const [outputQuality, setOutputQuality] = useState(null);
+  const [intakePhase, setIntakePhase] = useState(() => restoredIntake?.intakePhase ?? "collecting");
+  const [followUp, setFollowUp] = useState(() => restoredIntake?.followUp ?? null);
+  const [structuredInvoice, setStructuredInvoice] = useState(() => restoredIntake?.structuredInvoice ?? null);
+  const [finishedInvoice, setFinishedInvoice] = useState(() => restoredIntake?.finishedInvoice ?? null);
+  const [laborPricingNote, setLaborPricingNote] = useState(() => restoredIntake?.laborPricingNote ?? "");
+  const [pendingLaborRate, setPendingLaborRate] = useState(() => restoredIntake?.pendingLaborRate ?? null);
+  const [pendingTaxRate, setPendingTaxRate] = useState(() => restoredIntake?.pendingTaxRate ?? null);
+  const [openDecisions, setOpenDecisions] = useState(() => restoredIntake?.openDecisions ?? []);
+  const [assumptions, setAssumptions] = useState(() => restoredIntake?.assumptions ?? []);
+  const [unparsedLines, setUnparsedLines] = useState(() => restoredIntake?.unparsedLines ?? []);
+  const [outputQuality, setOutputQuality] = useState(() => restoredIntake?.outputQuality ?? null);
   const [auditStatus, setAuditStatus] = useState(null);
   const [auditSummary, setAuditSummary] = useState("");
   const [auditSummaryAt, setAuditSummaryAt] = useState(null);
@@ -661,8 +739,8 @@ function AIIntake() {
   const slowResponseTimeoutRef = useRef(null);
   const timeoutMessageIdRef = useRef(null);
   const abortControllerRef = useRef(null);
-  const lastMessagesRef = useRef([]);
-  const lastTranscriptRef = useRef("");
+  const lastMessagesRef = useRef(restoredIntake?.messages ?? []);
+  const lastTranscriptRef = useRef(restoredIntake?.transcript ?? "");
   const lastUserMessageRef = useRef("");
   const lastIntakeModeRef = useRef("full");
   const importSeedRef = useRef(false);
@@ -678,6 +756,26 @@ function AIIntake() {
   const billieHighlightTimeoutRef = useRef(null);
   const pendingDecisionUndoRef = useRef(null);
   const billieRefineStartMsRef = useRef(null);
+  useEffect(() => {
+    // Never copy another identity's active work into a newly selected account.
+    if (intakeSessionOwner.current !== intakeSessionKey) return;
+    const snapshot = {
+      version: 1, interrupted: isTyping, messages, inputValue: isTyping ? (inputValue || [...messages].reverse().find(message => message.role === "user")?.text || "") : inputValue,
+      intakePhase: isTyping && !followUp ? "collecting" : intakePhase,
+      followUp, structuredInvoice, finishedInvoice, laborPricingNote,
+      pendingLaborRate, pendingTaxRate, openDecisions, assumptions, unparsedLines,
+      outputQuality, transcript: lastTranscriptRef.current
+    };
+    try {
+      window.sessionStorage.setItem(intakeSessionKey, JSON.stringify(snapshot));
+      setIntakeStorageError("");
+    } catch {
+      setIntakeStorageError("This tab cannot retain your intake work. Copy your notes before leaving or reloading.");
+    }
+  }, [intakeSessionKey, messages, inputValue, isTyping, intakePhase, followUp, structuredInvoice,
+    finishedInvoice, laborPricingNote, pendingLaborRate, pendingTaxRate, openDecisions, assumptions,
+    unparsedLines, outputQuality]);
+
   const intakeComplete = intakePhase === "ready_to_generate";
   const confirmationKeywords = [];
   const rejectionKeywords = ["no", "not correct", "wrong", "incorrect", "needs change"];
@@ -2104,6 +2202,7 @@ function AIIntake() {
 
   const handleResetIntake = () => {
     requestIdRef.current += 1;
+    lastTranscriptRef.current = "";
     setMessages(initialIntakeMessages);
     setInputValue("");
     setIsTyping(false);
@@ -2405,6 +2504,16 @@ function AIIntake() {
         ? `Scratchpad note loaded with tags: ${seedTags.map((tag) => `#${tag}`).join(", ")}`
         : "Scratchpad note loaded into Billie intake."
     );
+    // Mark the handoff as loaded so a later mount can tell this retained
+    // seed from a genuinely new scratchpad handoff (see resolveRestoredIntake).
+    try {
+      window.localStorage.setItem(
+        seedFromScoped ? scratchpadSeedStorageKey : legacyScratchpadSeedStorageKey,
+        JSON.stringify({ ...seed, loadedIntoIntake: true })
+      );
+    } catch {
+      // Best-effort only.
+    }
     // Keep the seed until the invoice is saved so a refresh can still recover the note.
   }, [scratchpadSeedStorageKey, legacyScratchpadSeedStorageKey, inputValue, messages.length]);
 
@@ -2856,6 +2965,9 @@ function AIIntake() {
                 ) : null}
               </div>
 
+              <p role="status" className="text-sm text-slate-600" data-testid="intake-recovery-status">
+                {intakeStorageError || "Intake work is retained in this browser tab when you leave and return or reload. Choose New intake to clear it; save in the editor to add it to your library."}
+              </p>
               {onboardingStatus.visible ? (
                 <div
                   className="nb-surface rounded-[30px] border border-[#6993d2]/18 bg-[linear-gradient(145deg,_rgba(255,255,255,0.96)_0%,_rgba(247,250,255,0.92)_100%)] p-5"
