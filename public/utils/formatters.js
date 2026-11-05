@@ -14,8 +14,47 @@
     return JSON.parse(JSON.stringify(value));
   };
 
-  const formatMoney = (value) =>
-    Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
+  const currencyFormatters = new Map();
+
+  const normalizeCurrencyCode = (currency) => {
+    if (typeof currency !== "string") {
+      return "USD";
+    }
+    const normalized = currency.trim().toUpperCase();
+    return normalized || "USD";
+  };
+
+  const getCurrencyFormatter = (currency) => {
+    const code = normalizeCurrencyCode(currency);
+    let formatter = currencyFormatters.get(code);
+    if (!formatter) {
+      // useGrouping:false keeps USD output byte-identical to the prior
+      // `$${Number(value).toFixed(2)}` path (no thousands separators).
+      formatter = new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: code,
+        useGrouping: false
+      });
+      currencyFormatters.set(code, formatter);
+    }
+    return formatter;
+  };
+
+  const formatCurrencyAmount = (value, currency = "USD") => {
+    if (!Number.isFinite(value)) {
+      return "";
+    }
+    return getCurrencyFormatter(currency).format(Number(value));
+  };
+
+  const formatMoney = (value, currency = "USD") => formatCurrencyAmount(value, currency);
+
+  const formatPreviewMoney = (value, currency = "USD") => {
+    if (!Number.isFinite(value)) {
+      return "—";
+    }
+    return formatCurrencyAmount(value, currency);
+  };
 
   const formatLaborDuration = (hours) => {
     if (!Number.isFinite(hours) || hours <= 0) {
@@ -115,7 +154,9 @@
   window.InvoiceFormatUtils = {
     formatRateToken,
     cloneJson,
+    formatCurrencyAmount,
     formatMoney,
+    formatPreviewMoney,
     formatLaborDuration,
     generateInvoiceNumber,
     polishLineItemDescription,

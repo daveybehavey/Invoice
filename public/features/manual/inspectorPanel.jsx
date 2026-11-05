@@ -45,7 +45,7 @@
     );
   }
 
-  const { polishLineItemDescription } = formatUtils;
+  const { polishLineItemDescription, formatPreviewMoney } = formatUtils;
   const {
     formatPlanSummary,
     getPlanUpgradeUrl,
@@ -1109,8 +1109,6 @@ function InspectorPanel({
             placeholder: true
           }
         ];
-  const formatPreviewMoney = (value) =>
-    Number.isFinite(value) ? `$${value.toFixed(2)}` : "—";
   const previewPaymentRecords = Array.isArray(previewData?.paymentRecords) ? previewData.paymentRecords : paymentRecords;
   // Fallback totals come from the same shared computation the editor
   // uses (public/utils/invoiceMoney.js): described rows only, discount
