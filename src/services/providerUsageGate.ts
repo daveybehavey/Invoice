@@ -9,7 +9,8 @@ import {
 } from "./postgresRuntimeState.js";
 
 // SEC-04 (Slate 52 S52-5 / Slate 54 S54-4): shared usage admission for
-// paid provider dispatch (OCR / transcription). A dispatch is admitted
+// paid provider dispatch (OCR / transcription; audit NEW-2, 2026-11-04,
+// adds the JSON AI routes as their own operation class). A dispatch is admitted
 // only when both the per-principal and the application-wide counters for
 // the current fixed window are below their limits; the check and the
 // increment happen inside one serialized store mutation, so concurrent
@@ -42,7 +43,7 @@ const EMPTY_SNAPSHOT: ProviderUsageSnapshot = {
 
 let mutationQueue: Promise<void> = Promise.resolve();
 
-export type ProviderUsageOperationClass = "ocr" | "transcription";
+export type ProviderUsageOperationClass = "ocr" | "transcription" | "json-ai";
 
 export type ProviderUsageReservation = { admitted: true } | { admitted: false; reason: "limit_reached" };
 
