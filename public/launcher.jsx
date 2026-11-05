@@ -217,11 +217,22 @@ function deriveTaxRate(invoice) {
   if (!Number.isFinite(subtotal) || !Number.isFinite(total) || subtotal <= 0) {
     return "0";
   }
-  const taxAmount = total - subtotal;
+  // The finished total is tax applied to the discounted subtotal
+  // (total = (subtotal - discount) * (1 + rate)), so the recorded
+  // discount comes off the base before the rate is recovered;
+  // deriving against the full subtotal reads "0" for any invoice
+  // whose discount pulls its total at or below the subtotal.
+  const discountAmount = Number(invoice.discountAmount);
+  const taxableBase =
+    subtotal - (Number.isFinite(discountAmount) && discountAmount > 0 ? discountAmount : 0);
+  if (taxableBase <= 0) {
+    return "0";
+  }
+  const taxAmount = total - taxableBase;
   if (taxAmount <= 0) {
     return "0";
   }
-  return ((taxAmount / subtotal) * 100).toFixed(2);
+  return ((taxAmount / taxableBase) * 100).toFixed(2);
 }
 
 function parseDisplayTimestamp(value) {
