@@ -331,6 +331,16 @@
         };
       }) ?? [];
 
+    // Carry the invoice's recorded discount into the draft, mirroring
+    // buildDraftFromFinishedInvoice in readiness.js; without it the
+    // editor rebuilds from the undiscounted subtotal and the total
+    // drifts from the finished invoice's total on this handoff path.
+    const recordedDiscountAmount = Number(invoice?.discountAmount);
+    const discountAmount =
+      Number.isFinite(recordedDiscountAmount) && recordedDiscountAmount > 0
+        ? String(recordedDiscountAmount)
+        : "0";
+
     const draft = {
       invoiceNumber:
         typeof invoice?.invoiceNumber === "string" && invoice.invoiceNumber.trim()
@@ -342,6 +352,7 @@
       notes: invoice?.notes ?? "",
       sourceNote: typeof transcript === "string" ? transcript.trim().slice(0, 20000) : "",
       taxRate: taxOverride ?? "0",
+      discountAmount,
       lineItems: lineItems.length
         ? lineItems
         : [{ id: `line-${Date.now()}`, description: "", qty: "", rate: "" }],
