@@ -190,6 +190,15 @@
         };
       }) ?? [];
 
+    // Carry the finished invoice's recorded discount into the draft;
+    // without it the editor rebuilds from the undiscounted subtotal
+    // and the reopened total drifts from the finished total.
+    const recordedDiscountAmount = Number(invoice?.discountAmount);
+    const discountAmount =
+      Number.isFinite(recordedDiscountAmount) && recordedDiscountAmount > 0
+        ? String(recordedDiscountAmount)
+        : "0";
+
     const draft = {
       documentType: invoice?.documentType === "estimate" ? "estimate" : "invoice",
       invoiceNumber:
@@ -219,6 +228,7 @@
       paymentLinkUrl: invoice?.paymentLinkUrl ?? "",
       portalAccessToken: invoice?.portalAccessToken ?? "",
       taxRate: options.taxRate ?? "0",
+      discountAmount,
       lineItems: lineItems.length
         ? lineItems
         : [{ id: `line-${Date.now()}`, description: "", qty: "", rate: "" }],
