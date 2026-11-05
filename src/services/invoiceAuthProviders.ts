@@ -26,10 +26,12 @@ type InvoiceAuthProviderInput = {
 export function getInvoiceAuthProviderCapabilities(
   input: InvoiceAuthProviderInput = {}
 ): InvoiceAuthProviderCapability[] {
-  const nodeEnv = (input.nodeEnv ?? process.env.NODE_ENV ?? "development").trim().toLowerCase() || "development";
   const emailCapabilities = input.emailCapabilities ?? getInvoiceEmailCapabilities();
   const emailConfigured = emailCapabilities.configured && emailCapabilities.provider !== "none";
-  const emailAvailable = emailConfigured || nodeEnv !== "production";
+  // Match /api/auth/session: unconfigured email delivery fails closed with
+  // 503 (record_only), so never advertise email sign-in — including the old
+  // "preview links" path — as available when delivery cannot send mail.
+  const emailAvailable = emailConfigured;
   const googleReadiness = getGoogleAuthReadiness({
     clientId: input.googleClientId,
     clientSecret: input.googleClientSecret
@@ -44,10 +46,8 @@ export function getInvoiceAuthProviderCapabilities(
       configured: emailConfigured,
       available: emailAvailable,
       warning: emailAvailable
-        ? emailConfigured
-          ? undefined
-          : "Email sign-in will use preview links until an email provider is configured."
-        : "A configured email delivery provider is required for email sign-in in production."
+        ? undefined
+        : "A configured email delivery provider is required for email sign-in."
     },
     {
       id: "google",
