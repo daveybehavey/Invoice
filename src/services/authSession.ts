@@ -36,6 +36,7 @@ export const EMAIL_SIGN_IN_LINK_FORMAT_VERSION = 2;
 const EMAIL_LINK_NONCE_PATTERN = /^[A-Za-z0-9_-]{16,80}$/;
 
 const AUTH_HEADER_PREFIX = "Bearer ";
+/** Rejected when supplied via env; never used as a signing fallback. */
 const DEFAULT_SESSION_SECRET = "local-invoice-session-secret";
 const defaultTtlHours = Number.parseInt(process.env.INVOICE_SESSION_TTL_HOURS ?? "720", 10);
 const defaultEmailLinkTtlMinutes = Number.parseInt(process.env.INVOICE_EMAIL_LINK_TTL_MINUTES ?? "15", 10);
@@ -46,6 +47,9 @@ const INSECURE_SESSION_SECRETS = new Set([
   "local-default",
   "replace-me"
 ]);
+
+/** Generated once per process when INVOICE_SESSION_SECRET is unset. */
+let processLocalSessionSecret: string | undefined;
 
 export function createAuthSessionForEmail(rawEmail: string): { token: string; session: InvoiceAuthSession } {
   const normalizedEmail = normalizeEmail(rawEmail);
@@ -240,7 +244,10 @@ export function getSessionSecret(): string {
   if (fromEnv) {
     return fromEnv;
   }
-  return DEFAULT_SESSION_SECRET;
+  if (!processLocalSessionSecret) {
+    processLocalSessionSecret = randomBytes(32).toString("base64url");
+  }
+  return processLocalSessionSecret;
 }
 
 function normalizeEmail(value: string): string {
