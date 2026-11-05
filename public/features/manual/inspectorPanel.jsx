@@ -10,6 +10,14 @@
     );
   }
 
+  const moneyUtils = window.InvoiceMoneyUtils;
+  if (!moneyUtils) {
+    throw new Error(
+      "Missing /utils/invoiceMoney.js load. Ensure it is loaded before /features/manual/inspectorPanel.jsx."
+    );
+  }
+  const { computeInvoiceTotals, resolveLineAmount } = moneyUtils;
+
   const brandThemeUtils = window.InvoiceBrandTheme;
   if (!brandThemeUtils) {
     throw new Error(
@@ -1081,9 +1089,10 @@ function InspectorPanel({
       return {
         id: item.id,
         description: polishLineItemDescription(item.description?.trim()) || "Untitled line item",
+        hasDescription: Boolean(item.description?.trim()),
         qty: hasQuantity ? quantity : null,
         rate: hasRate ? rate : null,
-        amount: hasQuantity && hasRate ? quantity * rate : null,
+        amount: hasQuantity && hasRate ? resolveLineAmount({ quantity, unitPrice: rate }) : null,
         explicitFree: item.explicitFree === true
       };
     });
@@ -1102,18 +1111,36 @@ function InspectorPanel({
         ];
   const formatPreviewMoney = (value) =>
     Number.isFinite(value) ? `$${value.toFixed(2)}` : "—";
+  const previewPaymentRecords = Array.isArray(previewData?.paymentRecords) ? previewData.paymentRecords : paymentRecords;
+  // Fallback totals come from the same shared computation the editor
+  // uses (public/utils/invoiceMoney.js): described rows only, discount
+  // before tax, balance net of recorded payments. Finite canvas-supplied
+  // figures still win; the fallback must never invent a second set of
+  // books (previously it taxed the undiscounted subtotal, dropped the
+  // discount from the total, and defaulted the balance to the full
+  // total even when payments were recorded).
+  const previewTaxRate = (() => {
+    const fromPreview = Number.parseFloat(`${previewData?.taxRate ?? ""}`);
+    return Number.isFinite(fromPreview) ? fromPreview : Number.parseFloat(`${taxRate ?? ""}`);
+  })();
+  const previewDiscountAmount = Number.isFinite(previewData?.discountAmount)
+    ? previewData.discountAmount
+    : Number.parseFloat(`${discountAmount ?? ""}`);
+  const fallbackTotals = computeInvoiceTotals({
+    lineItems: parsedLineItems.filter((item) => item.hasDescription),
+    discountAmount: previewDiscountAmount,
+    taxRate: previewTaxRate,
+    paymentRecords: previewPaymentRecords
+  });
   const previewSubtotal = Number.isFinite(previewData?.subtotal)
     ? previewData.subtotal
-    : parsedLineItems.reduce((sum, item) => sum + (item.amount ?? 0), 0);
-  const previewTaxRate = Number.parseFloat(`${previewData?.taxRate ?? ""}`);
+    : fallbackTotals.subtotal;
   const previewTaxAmount = Number.isFinite(previewData?.taxAmount)
     ? previewData.taxAmount
-    : Number.isFinite(previewTaxRate)
-      ? previewSubtotal * (previewTaxRate / 100)
-      : 0;
+    : fallbackTotals.taxAmount;
   const previewTotal = Number.isFinite(previewData?.total)
     ? previewData.total
-    : previewSubtotal + previewTaxAmount;
+    : fallbackTotals.total;
   const previewInvoiceNumber =
     previewData?.invoiceNumber?.trim() || (previewItems[0]?.placeholder ? "Invoice" : "Invoice");
   const previewIssueDate = previewData?.invoiceDate?.trim() || "—";
@@ -1121,11 +1148,12 @@ function InspectorPanel({
   const previewBillToDetails = previewData?.billToDetails?.trim() || "Add client details";
   const previewNotes = previewData?.notes?.trim() || "Add payment terms or a note.";
   const previewPaymentLink = previewData?.paymentLinkUrl?.trim() || "";
-  const previewPaymentRecords = Array.isArray(previewData?.paymentRecords) ? previewData.paymentRecords : paymentRecords;
-  const previewBalanceDue = Number.isFinite(previewData?.balanceDue) ? previewData.balanceDue : previewTotal;
+  const previewBalanceDue = Number.isFinite(previewData?.balanceDue) ? previewData.balanceDue : fallbackTotals.balanceDue;
   const previewAmountPaid = Number.isFinite(previewData?.amountPaid)
     ? previewData.amountPaid
-    : Math.max(0, previewTotal - previewBalanceDue);
+    : Number.isFinite(previewData?.balanceDue)
+      ? Math.max(0, Number((previewTotal - previewBalanceDue).toFixed(2)))
+      : fallbackTotals.amountPaid;
   const previewPaymentsTotal = previewPaymentRecords.reduce((sum, payment) => {
     const amount = Number(payment?.amount ?? 0);
     return sum + (Number.isFinite(amount) ? Math.max(amount, 0) : 0);

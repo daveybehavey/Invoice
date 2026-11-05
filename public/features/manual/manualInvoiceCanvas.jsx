@@ -29,6 +29,14 @@
     );
   }
 
+  const moneyUtils = window.InvoiceMoneyUtils;
+  if (!moneyUtils) {
+    throw new Error(
+      "Missing /utils/invoiceMoney.js load. Ensure it is loaded before /features/manual/manualInvoiceCanvas.jsx."
+    );
+  }
+  const { computeInvoiceTotals, resolveLineAmount } = moneyUtils;
+
   const manualInspectorUtils = window.InvoiceManualInspector;
   if (!manualInspectorUtils) {
     throw new Error(
@@ -820,7 +828,10 @@ function ManualInvoiceCanvas() {
       .slice(0, 2);
   };
 
-  const getLineAmount = (item) => parseNumber(item.qty) * parseNumber(item.rate);
+  // Shared money rules (public/utils/invoiceMoney.js, mirroring
+  // src/lib/invoiceMath.ts): explicit amount wins, otherwise qty x rate,
+  // rounded to cents per line.
+  const getLineAmount = (item) => resolveLineAmount(item);
   const explicitFreeSentence =
     /\b(?:no charge|no-charge|didn't charge|did not charge|didnt charge|not charged|no cost|complimentary|\bfree\b)\b/i;
   const lineIsExplicitFree = (item) => {
@@ -864,13 +875,23 @@ function ManualInvoiceCanvas() {
     return missing && !lineIsExplicitFree(item);
   });
   const sendBlockedByPrice = hasNonWaivedZeroLine || hasOpenBillingDecision;
-  const subtotal = lineItems.reduce((sum, item) => sum + getLineAmount(item), 0);
-  const effectiveDiscountAmount = Math.min(subtotal, Math.max(0, parseNumber(discountAmount)));
-  const discountedSubtotal = Math.max(0, subtotal - effectiveDiscountAmount);
-  const taxAmount = discountedSubtotal * (parseNumber(taxRate) / 100);
-  const total = discountedSubtotal + taxAmount;
-  const amountPaid = paymentRecords.reduce((sum, record) => sum + parseNumber(record?.amount), 0);
-  const balanceDue = Math.max(0, Number((total - amountPaid).toFixed(2)));
+  // Totals run over the described rows only — the same rows
+  // buildEditableInvoicePayload / buildRewriteInvoicePayload send — so
+  // the editor can never total a row the payload (and therefore the
+  // stored invoice and PDF) omits. All figures come from the shared
+  // computation in public/utils/invoiceMoney.js.
+  const totals = computeInvoiceTotals({
+    lineItems: describedLines,
+    discountAmount: parseNumber(discountAmount),
+    taxRate: parseNumber(taxRate),
+    paymentRecords
+  });
+  const subtotal = totals.subtotal;
+  const effectiveDiscountAmount = totals.discountAmount;
+  const taxAmount = totals.taxAmount;
+  const total = totals.total;
+  const amountPaid = totals.amountPaid;
+  const balanceDue = totals.balanceDue;
   const previewData = {
     documentType,
     invoiceNumber,
