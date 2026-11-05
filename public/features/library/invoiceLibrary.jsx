@@ -156,7 +156,10 @@
 
   const getInvoiceOpenBalance = (invoice) => {
     const amount = Number(
-      invoice?.balanceDue ?? invoice?.invoiceData?.finishedInvoice?.balanceDue ?? invoice?.total
+      invoice?.balanceDue ??
+        invoice?.invoiceData?.finishedInvoice?.balanceDue ??
+        invoice?.total ??
+        invoice?.invoiceData?.finishedInvoice?.total
     );
     return Number.isFinite(amount) ? Math.max(amount, 0) : 0;
   };
