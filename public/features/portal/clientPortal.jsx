@@ -12,8 +12,14 @@
     throw new Error("Missing /utils/formatters.js load. Ensure it is loaded before /launcher.jsx.");
   }
 
+  const moneyUtils = window.InvoiceMoneyUtils;
+  if (!moneyUtils) {
+    throw new Error("Missing /utils/invoiceMoney.js load. Ensure it is loaded before /launcher.jsx.");
+  }
+
   const { apiFetch } = requestIdentity;
   const { formatMoney } = formatUtils;
+  const { resolveLineAmount, roundToCents } = moneyUtils;
 
   function ClientPortalPage() {
     const navigate = useNavigate();
@@ -62,8 +68,15 @@
 
     const finishedInvoice = invoice?.invoiceData?.finishedInvoice ?? null;
     const lineItems = Array.isArray(finishedInvoice?.lineItems) ? finishedInvoice.lineItems : [];
-    const total = Number(finishedInvoice?.total ?? 0);
-    const balanceDue = Number(finishedInvoice?.balanceDue ?? total);
+    // Stored total/balanceDue are the ledger truth; they are only
+    // re-derived when absent or non-finite, using the shared line rules
+    // (public/utils/invoiceMoney.js, mirroring invoiceMath.ts) so the
+    // fallback can never disagree with the lines rendered below.
+    const derivedLineTotal = lineItems.reduce((sum, item) => sum + resolveLineAmount(item), 0);
+    const rawTotal = Number(finishedInvoice?.total);
+    const total = Number.isFinite(rawTotal) ? roundToCents(rawTotal) : roundToCents(derivedLineTotal);
+    const rawBalanceDue = Number(finishedInvoice?.balanceDue);
+    const balanceDue = Number.isFinite(rawBalanceDue) ? roundToCents(rawBalanceDue) : total;
     const paymentLinkUrl = typeof finishedInvoice?.paymentLinkUrl === "string" ? finishedInvoice.paymentLinkUrl.trim() : "";
     const notes = typeof finishedInvoice?.notes === "string" ? finishedInvoice.notes.trim() : "";
     const customerName =
@@ -79,7 +92,10 @@
         .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
         .join(" ");
     })();
-    const isPaid = invoice?.status === "paid" || balanceDue <= 0;
+    // "Paid in full" follows the balance, not the status label: a record
+    // marked paid that still carries a positive balance is presented as
+    // owing that balance, never as paid in full beside it.
+    const isPaid = balanceDue <= 0;
     const paymentAvailable = Boolean(paymentLinkUrl) && !isPaid;
     const nextStepTitle = isPaid ? "Paid in full" : paymentAvailable ? "Ready for payment" : "Review invoice";
     const nextStepBody = isPaid
@@ -209,7 +225,7 @@
                             </p>
                           </div>
                           <p className="text-sm font-semibold text-slate-900 tabular-nums">
-                            {Number.isFinite(item.amount) ? formatMoney(item.amount) : formatMoney(0)}
+                            {formatMoney(resolveLineAmount(item))}
                           </p>
                         </div>
                       ))}
