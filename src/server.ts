@@ -137,7 +137,7 @@ import {
   type InvoiceAuthSession
 } from "./services/authSession.js";
 import { consumeEmailSignInNonce } from "./services/emailSignInRedemptionStore.js";
-import { reserveProviderUsage } from "./services/providerUsageGate.js";
+import { reserveProviderUsage, type ProviderUsageOperationClass } from "./services/providerUsageGate.js";
 import { AiProviderConfigurationError } from "./ai/openaiClient.js";
 import {
   buildLaunchTestIdempotencyKey,
@@ -1170,6 +1170,7 @@ app.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const dispatchOwnerId = getProviderDispatchOwnerId(res);
+      await reserveProviderDispatchUsage(res, "json-ai");
       const messyInput = asOptionalString(req.body.messyInput);
       const uploadedInvoiceTextFromBody = asOptionalString(req.body.uploadedInvoiceText);
       const lastUserMessage = asOptionalString(req.body.lastUserMessage);
@@ -1314,6 +1315,7 @@ app.post(
 app.post("/api/invoices/from-input/labor-pricing", requireProviderDispatchSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = LaborPricingFollowUpRequestSchema.parse(req.body);
+    await reserveProviderDispatchUsage(res, "json-ai");
     const result = await continueInvoiceAfterLaborPricing(
       parsedRequest.structuredInvoice,
       parsedRequest.laborPricing,
@@ -1385,6 +1387,7 @@ app.post("/api/invoices/apply-decision", async (req: Request, res: Response, nex
 app.post("/api/invoices/audit", requireProviderDispatchSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = InvoiceAuditRequestSchema.parse(req.body);
+    await reserveProviderDispatchUsage(res, "json-ai");
     const result = await runInvoiceAuditOverlay({
       sourceText: parsedRequest.sourceText,
       structuredInvoice: parsedRequest.structuredInvoice,
@@ -1417,6 +1420,7 @@ app.post("/api/invoices/reword-line", requireProviderDispatchSession, async (req
     const parsedRequest = ChangeLineWordingRequestSchema.parse(req.body);
     const invoice = FinishedInvoiceSchema.parse(parsedRequest.invoice);
 
+    await reserveProviderDispatchUsage(res, "json-ai");
     const updatedInvoice = await changeLineWording(invoice, parsedRequest.lineItemId, parsedRequest.tone);
     res.json({ invoice: updatedInvoice });
   } catch (error) {
@@ -1429,6 +1433,7 @@ app.post("/api/invoices/reword-notes", requireProviderDispatchSession, async (re
     const parsedRequest = ChangeNotesWordingRequestSchema.parse(req.body);
     const invoice = FinishedInvoiceSchema.parse(parsedRequest.invoice);
 
+    await reserveProviderDispatchUsage(res, "json-ai");
     const updatedInvoice = await changeNotesWording(invoice, parsedRequest.tone);
     res.json({ invoice: updatedInvoice });
   } catch (error) {
@@ -1441,6 +1446,7 @@ app.post("/api/invoices/reword-descriptions", requireProviderDispatchSession, as
     const parsedRequest = ChangeDescriptionsWordingRequestSchema.parse(req.body);
     const invoice = FinishedInvoiceSchema.parse(parsedRequest.invoice);
 
+    await reserveProviderDispatchUsage(res, "json-ai");
     const updatedInvoice = await changeDescriptionsWording(invoice, parsedRequest.tone);
     res.json({ invoice: updatedInvoice });
   } catch (error) {
@@ -1451,6 +1457,7 @@ app.post("/api/invoices/reword-descriptions", requireProviderDispatchSession, as
 app.post("/api/invoices/edit", requireProviderDispatchSession, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsedRequest = InvoiceEditRequestSchema.parse(req.body);
+    await reserveProviderDispatchUsage(res, "json-ai");
     const result = await applyInvoiceEditInstruction(parsedRequest.invoice, parsedRequest.instruction);
     res.json(result);
   } catch (error) {
@@ -1463,6 +1470,7 @@ app.post("/api/invoices/reword-full", requireProviderDispatchSession, async (req
     const parsedRequest = FullInvoiceRewordRequestSchema.parse(req.body);
     const invoice = FinishedInvoiceSchema.parse(parsedRequest.invoice);
 
+    await reserveProviderDispatchUsage(res, "json-ai");
     const updatedInvoice = await rewordFullInvoice(invoice, parsedRequest.tone);
     res.json({ invoice: updatedInvoice });
   } catch (error) {
@@ -2561,6 +2569,14 @@ function requireProviderDispatchSession(req: Request, res: Response, next: NextF
 // headers, query parameters, body fields, and configured default owners
 // never establish it (getRequestOwnerId alone is insufficient because its
 // non-production contract retains anonymous owner selection).
+//
+// Audit NEW-2 (2026-11-04): the same handlers also reserve provider
+// usage under the "json-ai" operation class before any pipeline work,
+// mirroring the OCR/transcription reservation below — the session gate
+// alone did not bound authenticated JSON AI dispatch by the SEC-04
+// counters. Reservation follows request validation and precedes any
+// provider-bound work; refusals are 429 and enforcement failures fail
+// closed with 503, exactly as for extraction.
 function getProviderDispatchOwnerId(res: Response): string {
   const session = res.locals.providerDispatchSession as InvoiceAuthSession | undefined;
   if (!session?.userId) {
@@ -2571,21 +2587,22 @@ function getProviderDispatchOwnerId(res: Response): string {
 
 async function reserveProviderDispatchUsage(
   res: Response,
-  operationClass: "ocr" | "transcription"
+  operationClass: ProviderUsageOperationClass
 ): Promise<void> {
   const session = res.locals.providerDispatchSession as InvoiceAuthSession | undefined;
   if (!session?.userId) {
     throw new HttpStatusError(401, "Authentication required.");
   }
+  const featureLabel = operationClass === "json-ai" ? "AI assistance" : "Extraction";
   let reservation: Awaited<ReturnType<typeof reserveProviderUsage>>;
   try {
     reservation = await reserveProviderUsage({ operationClass, principalId: session.userId });
   } catch (_error) {
     // Enforcement unavailable: fail closed, no provider call.
-    throw new HttpStatusError(503, "Extraction is unavailable right now.");
+    throw new HttpStatusError(503, `${featureLabel} is unavailable right now.`);
   }
   if (!reservation.admitted) {
-    throw new HttpStatusError(429, "Extraction usage limit reached. Please try again later.");
+    throw new HttpStatusError(429, `${featureLabel} usage limit reached. Please try again later.`);
   }
 }
 
