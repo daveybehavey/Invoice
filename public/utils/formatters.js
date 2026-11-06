@@ -44,7 +44,22 @@
     if (!Number.isFinite(value)) {
       return "";
     }
-    return getCurrencyFormatter(currency).format(Number(value));
+    const code = normalizeCurrencyCode(currency);
+    const formatter = getCurrencyFormatter(code);
+    const fractionDigits = formatter.resolvedOptions().maximumFractionDigits;
+    // Round with the historical Number#toFixed rule before Intl formats the
+    // value. Intl rounds the shortest decimal form of the double, which
+    // disagrees with toFixed on exact half-step values (2.675 -> $2.68
+    // instead of $2.67, 1.005 -> $1.01 instead of $1.00); pre-rounding keeps
+    // USD output byte-identical to the prior path for every input.
+    const rounded = Number(Number(value).toFixed(fractionDigits));
+    const formatted = formatter.format(rounded);
+    if (code === "USD" && formatted.startsWith("-$")) {
+      // Intl renders USD negatives as "-$5.00"; the historical formatter
+      // rendered "$-5.00" (sign after the symbol). Preserve the old bytes.
+      return `$-${formatted.slice(2)}`;
+    }
+    return formatted;
   };
 
   const formatMoney = (value, currency = "USD") => formatCurrencyAmount(value, currency);
