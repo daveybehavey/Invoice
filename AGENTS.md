@@ -140,6 +140,16 @@ Cursor-authored PRs require independent Codex review. An implementation agent's 
 
 Never automatically mutate production data, billing/provider configuration, Cloudflare configuration, repository permissions, branch protection, or secrets. Never run destructive migrations. Do not treat a passing test or an available credential as permission to act on production.
 
+## Cursor Cloud specific instructions
+
+The default image already has Node.js 22. Cloud install is `npm ci`, then `npm run build:frontend`, then `npx playwright install chromium`. `npm ci` does not download Playwright's browser. `src/ui.test.ts` launches that Chromium.
+
+Cloud start runs the API with `NODE_ENV=development`, `INVOICE_STORE_BACKEND=file`, and `npx tsx watch src/server.ts` on port 3000. It does not rebuild the frontend. After editing `public/**/*.jsx` or `public/**/*.js`, run `npm run build:frontend` again. `GET /health` returns `{ "ok": true }` when the server is up. Guest mode can build a manual invoice, save it, and reopen it. Totals are calculated in the editor without OpenAI.
+
+`npm test` passes `src/**/*.test.ts` through to the runner. That pattern matches nested test files and the explicit golden-corpus path. It does not match root files such as `src/api.test.ts`, `src/ui.test.ts`, or `src/legalFoundation.test.ts`. Run those with an explicit path when a change touches them. `npm run build` is the typecheck (`tsc --noEmit`) and rebuilds the frontend first.
+
+Notes-to-invoice generation needs `OPENAI_API_KEY` and `INVOICE_AI_PROVIDER=openai`, plus a validated sign-in session. Email sign-in stays unavailable until a real email provider is configured. Do not point local development at production Postgres, Stripe, email, or Cloudflare, and do not run deploy, public-host, migration, or Stripe setup scripts as validation.
+
 ## Further reading
 
 - [README.md](README.md): application overview and local commands.
