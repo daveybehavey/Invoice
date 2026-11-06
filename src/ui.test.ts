@@ -420,12 +420,14 @@ test("launcher sign-in modal shows provider readiness and email sign-in fails cl
     const providerList = page.getByTestId("launcher-auth-provider-list");
     await providerList.waitFor({ state: "visible" });
     await providerList.getByText("Email sign-in link", { exact: true }).waitFor({ state: "visible" });
-    await providerList.getByText("Available now", { exact: true }).waitFor({ state: "visible" });
+    // Reporting must match the route: record_only / unconfigured delivery
+    // fails closed with 503, so email sign-in is not "Available now".
+    assert.equal(await providerList.getByText("Available now", { exact: true }).count(), 0);
     await providerList
-      .getByText("Email sign-in will use preview links until an email provider is configured.")
+      .getByText("A configured email delivery provider is required for email sign-in.")
       .waitFor({ state: "visible" });
     await providerList.getByText("Google Sign-In", { exact: true }).waitFor({ state: "visible" });
-    await providerList.getByText("Needs setup", { exact: true }).waitFor({ state: "visible" });
+    await providerList.getByText("Needs setup", { exact: true }).first().waitFor({ state: "visible" });
     await providerList
       .getByText("Google Sign-In requires GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET before it can be used.")
       .waitFor({ state: "visible" });

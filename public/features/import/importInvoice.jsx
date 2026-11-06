@@ -52,6 +52,13 @@
   }
   const { BillingNoticeActions } = contractCopyControls;
 
+  const formatUtils = window.InvoiceFormatUtils;
+  if (!formatUtils?.formatCurrencyAmount) {
+    throw new Error(
+      "Missing /utils/formatters.js load. Ensure it is loaded before /features/import/importInvoice.jsx."
+    );
+  }
+
 function ImportInvoice() {
   const navigate = useNavigate();
   const legacyImportSeedStorageKey = "invoiceImportSeed";
@@ -154,11 +161,13 @@ function ImportInvoice() {
         ? "nb-usage-meter--warning"
         : "";
 
-  const formatPreviewMoney = (value) => {
+  // Preserve the import preview's historical empty/"$12" shape for USD while
+  // routing through the shared currency-aware formatter.
+  const formatPreviewMoney = (value, currency = "USD") => {
     if (!Number.isFinite(value)) {
       return "";
     }
-    return `$${Number(value).toFixed(2).replace(/\.00$/, "")}`;
+    return formatUtils.formatCurrencyAmount(value, currency).replace(/\.00$/, "");
   };
 
   const buildLineItemPreview = (payload) => {

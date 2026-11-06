@@ -10905,7 +10905,10 @@ test("auth providers endpoint reports email-link readiness and Google availabili
   const emailProvider = response.body.providers.find((provider: { id?: string }) => provider.id === "email_link");
   const googleProvider = response.body.providers.find((provider: { id?: string }) => provider.id === "google");
   assert.equal(emailProvider?.implemented, true);
-  assert.equal(typeof emailProvider?.available, "boolean");
+  // Default test fixture has no email provider (record_only), matching the
+  // session route's 503 fail-closed behaviour — not "preview link" availability.
+  assert.equal(emailProvider?.available, false);
+  assert.match(String(emailProvider?.warning ?? ""), /email delivery provider/i);
   assert.equal(googleProvider?.implemented, true);
   assert.equal(googleProvider?.available, false);
   assert.match(String(googleProvider?.warning ?? ""), /GOOGLE_CLIENT_ID/i);

@@ -14,8 +14,62 @@
     return JSON.parse(JSON.stringify(value));
   };
 
-  const formatMoney = (value) =>
-    Number.isFinite(value) ? `$${Number(value).toFixed(2)}` : "";
+  const currencyFormatters = new Map();
+
+  const normalizeCurrencyCode = (currency) => {
+    if (typeof currency !== "string") {
+      return "USD";
+    }
+    const normalized = currency.trim().toUpperCase();
+    return normalized || "USD";
+  };
+
+  const getCurrencyFormatter = (currency) => {
+    const code = normalizeCurrencyCode(currency);
+    let formatter = currencyFormatters.get(code);
+    if (!formatter) {
+      // useGrouping:false keeps USD output byte-identical to the prior
+      // `$${Number(value).toFixed(2)}` path (no thousands separators).
+      formatter = new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: code,
+        useGrouping: false
+      });
+      currencyFormatters.set(code, formatter);
+    }
+    return formatter;
+  };
+
+  const formatCurrencyAmount = (value, currency = "USD") => {
+    if (!Number.isFinite(value)) {
+      return "";
+    }
+    const code = normalizeCurrencyCode(currency);
+    const formatter = getCurrencyFormatter(code);
+    const fractionDigits = formatter.resolvedOptions().maximumFractionDigits;
+    // Round with the historical Number#toFixed rule before Intl formats the
+    // value. Intl rounds the shortest decimal form of the double, which
+    // disagrees with toFixed on exact half-step values (2.675 -> $2.68
+    // instead of $2.67, 1.005 -> $1.01 instead of $1.00); pre-rounding keeps
+    // USD output byte-identical to the prior path for every input.
+    const rounded = Number(Number(value).toFixed(fractionDigits));
+    const formatted = formatter.format(rounded);
+    if (code === "USD" && formatted.startsWith("-$")) {
+      // Intl renders USD negatives as "-$5.00"; the historical formatter
+      // rendered "$-5.00" (sign after the symbol). Preserve the old bytes.
+      return `$-${formatted.slice(2)}`;
+    }
+    return formatted;
+  };
+
+  const formatMoney = (value, currency = "USD") => formatCurrencyAmount(value, currency);
+
+  const formatPreviewMoney = (value, currency = "USD") => {
+    if (!Number.isFinite(value)) {
+      return "—";
+    }
+    return formatCurrencyAmount(value, currency);
+  };
 
   const formatLaborDuration = (hours) => {
     if (!Number.isFinite(hours) || hours <= 0) {
@@ -115,7 +169,9 @@
   window.InvoiceFormatUtils = {
     formatRateToken,
     cloneJson,
+    formatCurrencyAmount,
     formatMoney,
+    formatPreviewMoney,
     formatLaborDuration,
     generateInvoiceNumber,
     polishLineItemDescription,
