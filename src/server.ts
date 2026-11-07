@@ -50,11 +50,11 @@ import {
   LEGAL_PRIVACY_VERSION,
   LEGAL_TERMS_VERSION,
   buildPrivacySections,
+  buildPublicTermsPlainText,
   buildTermsDownloadFilename,
   buildTermsDownloadPath,
-  buildTermsPlainText,
   getLegalFoundationSnapshot,
-  resolveTermsDocument
+  resolvePublicTermsDocument
 } from "./services/legalFoundation.js";
 import { deliverContractCopy } from "./services/contractCopyDelivery.js";
 import { getBillingEntitlementsSummary } from "./services/billingEntitlementsStore.js";
@@ -288,7 +288,7 @@ app.get("/api/legal/documents/:kind", (req: Request, res: Response, next: NextFu
     if (kind === "terms") {
       let termsDoc;
       try {
-        termsDoc = resolveTermsDocument(versionQuery || null);
+        termsDoc = resolvePublicTermsDocument(versionQuery || null);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown Terms version.";
         throw new HttpStatusError(/Unknown Terms version/i.test(message) ? 404 : 400, message);
@@ -298,7 +298,7 @@ app.get("/api/legal/documents/:kind", (req: Request, res: Response, next: NextFu
         const filename = buildTermsDownloadFilename(termsDoc.version);
         res.setHeader("Content-Type", "text/plain; charset=utf-8");
         res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-        res.send(buildTermsPlainText(termsDoc.version));
+        res.send(buildPublicTermsPlainText(termsDoc.version));
         return;
       }
 

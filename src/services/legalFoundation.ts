@@ -964,7 +964,7 @@ export function resolveTermsDocument(version?: string | null): ResolvedTermsDocu
 
     throw new Error(
 
-      `Unknown Terms version "${requested}". Registered versions: ${listRegisteredTermsVersions().join(", ")}.`
+      `Unknown Terms version "${requested}".`
 
     );
 
@@ -1027,6 +1027,116 @@ export function buildTermsPlainText(version: string): string {
     body
 
   ].join("\n");
+
+}
+
+
+
+/**
+
+ * Public-serving redaction for registered Terms documents.
+
+ *
+
+ * The canonical registered facts above stay byte-identical: they are the
+
+ * contract evidence for customers who accepted those versions, and
+
+ * contract-copy delivery renders from them unchanged. The archived
+
+ * freezes, however, carry the supplier's residential street address in
+
+ * their address lines, and the public documents API must not publish it
+
+ * (owner-directed privacy fix, 2026-11-07). The two functions below are
+
+ * the public serving layer: they substitute the locality-only address
+
+ * line used by the current version wherever an archived street-address
+
+ * line would otherwise be served. The current version contains no
+
+ * street address, so the substitution is a no-op for it.
+
+ */
+
+const ARCHIVED_TERMS_STREET_ADDRESS_LINES: ReadonlyArray<string> = Array.from(
+
+  new Set(
+
+    [
+
+      TERMS_2026_08_12_1_FACTS.supplier.addressLine,
+
+      TERMS_2026_10_20_1_FACTS.supplier.postalAddressLine ?? ""
+
+    ].filter((line) => line !== "" && line !== LEGAL_SUPPLIER.addressLine)
+
+  )
+
+);
+
+
+
+function redactArchivedStreetAddress(text: string): string {
+
+  let result = text;
+
+  for (const line of ARCHIVED_TERMS_STREET_ADDRESS_LINES) {
+
+    result = result.split(line).join(LEGAL_SUPPLIER.addressLine);
+
+  }
+
+  return result;
+
+}
+
+
+
+export function resolvePublicTermsDocument(
+
+  version?: string | null
+
+): ResolvedTermsDocument {
+
+  const doc = resolveTermsDocument(version);
+
+  return {
+
+    ...doc,
+
+    sections: doc.sections.map((section) => ({
+
+      ...section,
+
+      paragraphs: section.paragraphs.map((paragraph) =>
+
+        redactArchivedStreetAddress(paragraph)
+
+      ),
+
+      ...(section.items
+
+        ? {
+
+            items: section.items.map((item) => redactArchivedStreetAddress(item))
+
+          }
+
+        : {})
+
+    }))
+
+  };
+
+}
+
+
+
+export function buildPublicTermsPlainText(version: string): string {
+
+  return redactArchivedStreetAddress(buildTermsPlainText(version));
 
 }
 

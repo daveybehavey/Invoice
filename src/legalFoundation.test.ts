@@ -19,6 +19,8 @@ import {
 
   buildTermsDownloadFilename,
 
+  buildPublicTermsPlainText,
+
   buildTermsPlainText,
 
   buildTermsSectionsFromFrozenFacts,
@@ -32,6 +34,8 @@ import {
   getLegalFoundationSnapshot,
 
   listRegisteredTermsVersions,
+
+  resolvePublicTermsDocument,
 
   resolveTermsDocument
 
@@ -153,6 +157,57 @@ test("current terms publish locality-only addresses in every section, including 
   // The prior version remains registered as a frozen historical document.
   const prior = resolveTermsDocument("2026-10-20.1");
   assert.equal(prior.isCurrent, false);
+});
+
+test("archived Terms stay canonical; the public serving layer redacts their address lines", () => {
+  clearTermsRegistryOverlaysForTests();
+  // Canonical documents are the contract evidence for customers who accepted
+  // them: the frozen historical text is preserved byte-for-byte (the
+  // fingerprint test below pins 2026-08-12.1).
+  assert.match(buildTermsPlainText("2026-08-12.1"), /Kangaroo/);
+  assert.match(buildTermsPlainText("2026-10-20.1"), /Kangaroo/);
+  // The public serving layer substitutes the locality-only address line.
+  for (const version of ["2026-08-12.1", "2026-10-20.1"]) {
+    const doc = resolvePublicTermsDocument(version);
+    assert.equal(doc.isCurrent, false);
+    const allText = doc.sections
+      .map((section) => [...section.paragraphs, ...(section.items ?? [])].join("\n"))
+      .join("\n");
+    assert.doesNotMatch(allText, /Kangaroo/);
+    assert.doesNotMatch(buildPublicTermsPlainText(version), /Kangaroo/);
+    const notices = doc.sections.find((section) => section.title.startsWith("13. Notices"));
+    assert.ok(
+      notices?.paragraphs.some((paragraph) => paragraph.includes("Postal: Victoria, BC, Canada."))
+    );
+  }
+  const first = resolvePublicTermsDocument("2026-08-12.1");
+  const supplier = first.sections.find((section) => section.title.startsWith("1. Supplier"));
+  assert.ok(
+    supplier?.paragraphs.some((paragraph) =>
+      paragraph.includes("Business address: Victoria, BC, Canada.")
+    )
+  );
+  // The substitution is a no-op for the current version.
+  assert.equal(
+    buildPublicTermsPlainText(LEGAL_TERMS_VERSION),
+    buildTermsPlainText(LEGAL_TERMS_VERSION)
+  );
+});
+
+test("unknown Terms version error does not enumerate registered versions", () => {
+  clearTermsRegistryOverlaysForTests();
+  assert.throws(
+    () => resolveTermsDocument("1999-01-01.0"),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Unknown Terms version/);
+      assert.doesNotMatch(error.message, /Registered versions/);
+      assert.doesNotMatch(error.message, /2026-08-12\.1/);
+      assert.doesNotMatch(error.message, /2026-10-20\.1/);
+      assert.doesNotMatch(error.message, /2026-11-03\.1/);
+      return true;
+    }
+  );
 });
 
 test("registered Terms 2026-08-12.1 plain text is frozen against alternate facts", () => {
