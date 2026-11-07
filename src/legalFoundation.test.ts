@@ -155,6 +155,46 @@ test("current terms publish locality-only addresses in every section, including 
   assert.equal(prior.isCurrent, false);
 });
 
+test("archived Terms versions serve locality-only address lines", () => {
+  clearTermsRegistryOverlaysForTests();
+  for (const version of ["2026-08-12.1", "2026-10-20.1"]) {
+    const doc = resolveTermsDocument(version);
+    assert.equal(doc.isCurrent, false);
+    const allText = doc.sections
+      .map((section) => [...section.paragraphs, ...(section.items ?? [])].join("\n"))
+      .join("\n");
+    assert.doesNotMatch(allText, /Kangaroo/);
+    assert.doesNotMatch(buildTermsPlainText(version), /Kangaroo/);
+    const notices = doc.sections.find((section) => section.title.startsWith("13. Notices"));
+    assert.ok(
+      notices?.paragraphs.some((paragraph) => paragraph.includes("Postal: Victoria, BC, Canada."))
+    );
+  }
+  const first = resolveTermsDocument("2026-08-12.1");
+  const supplier = first.sections.find((section) => section.title.startsWith("1. Supplier"));
+  assert.ok(
+    supplier?.paragraphs.some((paragraph) =>
+      paragraph.includes("Business address: Victoria, BC, Canada.")
+    )
+  );
+});
+
+test("unknown Terms version error does not enumerate registered versions", () => {
+  clearTermsRegistryOverlaysForTests();
+  assert.throws(
+    () => resolveTermsDocument("1999-01-01.0"),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Unknown Terms version/);
+      assert.doesNotMatch(error.message, /Registered versions/);
+      assert.doesNotMatch(error.message, /2026-08-12\.1/);
+      assert.doesNotMatch(error.message, /2026-10-20\.1/);
+      assert.doesNotMatch(error.message, /2026-11-03\.1/);
+      return true;
+    }
+  );
+});
+
 test("registered Terms 2026-08-12.1 plain text is frozen against alternate facts", () => {
 
   clearTermsRegistryOverlaysForTests();
@@ -436,8 +476,11 @@ test("terms acknowledgement requires current version and accepted true", () => {
 test("registered Terms 2026-08-12.1 body fingerprint is independent of current constants", () => {
   clearTermsRegistryOverlaysForTests();
   // Independent expected digest: hardcoded, not derived from LEGAL_* or TERMS_2026_08_12_1_FACTS.
-  const expectedSha256 = "ae2e5e51e0d2fd7ff3fc5e8f31e61950653521f770160a5bddd435458f871c83";
-  const expectedLength = 5957;
+  // Digest and length updated 2026-11-07 for the owner-directed redaction of the
+  // archived supplier address lines to the locality-only form (sections 1 and 13);
+  // every other byte of the frozen document is unchanged.
+  const expectedSha256 = "0a68a86ebda7dd910bb52bba5994891201a105fefe8e5f74329128561b97bad9";
+  const expectedLength = 5899;
   const plain = buildTermsPlainText("2026-08-12.1");
   const digest = createHash("sha256").update(plain, "utf8").digest("hex");
   assert.equal(plain.length, expectedLength);

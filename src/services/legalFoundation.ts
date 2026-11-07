@@ -174,6 +174,14 @@ type RegisteredTermsEntry = {
 
  * Historical/registered Terms sections must use only this object — never live globals.
 
+ * Redaction (2026-11-07, owner-directed privacy fix): the supplier address
+
+ * line in this freeze was replaced with the locality-only form used by the
+
+ * current version, because the frozen text carried a residential street
+
+ * address. Every other fact is preserved verbatim.
+
  */
 
 export const TERMS_2026_08_12_1_FACTS: Readonly<FrozenTermsFacts> = Object.freeze({
@@ -190,7 +198,7 @@ export const TERMS_2026_08_12_1_FACTS: Readonly<FrozenTermsFacts> = Object.freez
 
     tradeStyle: "EuroDigital",
 
-    addressLine: "1193 Kangaroo Road, Metchosin, BC V9C 4C9, Canada",
+    addressLine: "Victoria, BC, Canada",
 
     supportEmail: "support@notebill.app",
 
@@ -224,11 +232,17 @@ export const TERMS_2026_08_12_1_FACTS: Readonly<FrozenTermsFacts> = Object.freez
 
  * address in the current Terms and Privacy Policy: the public address line is
 
- * locality-only. The section 13 postal notice address is retained verbatim
+ * locality-only. The section 13 postal notice address was initially retained
 
- * from the prior version pending an owner decision on a business mailing
+ * verbatim from the prior version pending an owner decision on a business
 
- * address — see docs/notebill-play-console-fix-checklist.md.
+ * mailing address; on 2026-11-07 the owner directed its redaction, so this
+
+ * freeze no longer carries a postalAddressLine and section 13 falls back to
+
+ * the locality-only address line, matching 2026-11-03.1. Every other fact
+
+ * is preserved verbatim.
 
  */
 
@@ -247,8 +261,6 @@ export const TERMS_2026_10_20_1_FACTS: Readonly<FrozenTermsFacts> = Object.freez
     tradeStyle: "EuroDigital",
 
     addressLine: "Victoria, BC, Canada",
-
-    postalAddressLine: "1193 Kangaroo Road, Metchosin, BC V9C 4C9, Canada",
 
     supportEmail: "support@notebill.app",
 
@@ -288,7 +300,11 @@ export const TERMS_2026_10_20_1_FACTS: Readonly<FrozenTermsFacts> = Object.freez
 
  * is unchanged from 2026-10-20.1. Historical registered versions keep
 
- * their frozen facts untouched.
+ * their frozen facts untouched, except that on 2026-11-07 their address
+
+ * lines were redacted to this same locality-only form under the owner's
+
+ * privacy direction.
 
  */
 
@@ -964,7 +980,7 @@ export function resolveTermsDocument(version?: string | null): ResolvedTermsDocu
 
     throw new Error(
 
-      `Unknown Terms version "${requested}". Registered versions: ${listRegisteredTermsVersions().join(", ")}.`
+      `Unknown Terms version "${requested}".`
 
     );
 
