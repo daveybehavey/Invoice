@@ -6888,6 +6888,28 @@ test("legal foundation and documents endpoints expose versioned Terms and Privac
   );
 });
 
+test("legal documents endpoint redacts archived Terms address lines and does not enumerate versions", async () => {
+  for (const version of ["2026-08-12.1", "2026-10-20.1"]) {
+    const doc = await request(app).get(`/api/legal/documents/terms?version=${version}`);
+    assert.equal(doc.status, 200);
+    assert.equal(doc.body.version, version);
+    assert.equal(doc.body.isCurrent, false);
+    assert.doesNotMatch(JSON.stringify(doc.body), /Kangaroo/);
+
+    const txt = await request(app).get(`/api/legal/documents/terms?version=${version}&format=txt`);
+    assert.equal(txt.status, 200);
+    assert.doesNotMatch(String(txt.text || ""), /Kangaroo/);
+    assert.match(String(txt.text || ""), /Postal: Victoria, BC, Canada\./);
+  }
+
+  const unknown = await request(app).get("/api/legal/documents/terms?version=bogus");
+  assert.equal(unknown.status, 404);
+  assert.doesNotMatch(String(unknown.body.error || ""), /Registered versions/);
+  assert.doesNotMatch(String(unknown.body.error || ""), /2026-08-12\.1/);
+  assert.doesNotMatch(String(unknown.body.error || ""), /2026-10-20\.1/);
+  assert.doesNotMatch(String(unknown.body.error || ""), /2026-11-03\.1/);
+});
+
 test("SPA serves /terms and /privacy", async () => {
   const terms = await request(app).get("/terms");
   const privacy = await request(app).get("/privacy");

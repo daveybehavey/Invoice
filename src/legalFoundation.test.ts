@@ -19,6 +19,8 @@ import {
 
   buildTermsDownloadFilename,
 
+  buildPublicTermsPlainText,
+
   buildTermsPlainText,
 
   buildTermsSectionsFromFrozenFacts,
@@ -32,6 +34,8 @@ import {
   getLegalFoundationSnapshot,
 
   listRegisteredTermsVersions,
+
+  resolvePublicTermsDocument,
 
   resolveTermsDocument
 
@@ -155,27 +159,38 @@ test("current terms publish locality-only addresses in every section, including 
   assert.equal(prior.isCurrent, false);
 });
 
-test("archived Terms versions serve locality-only address lines", () => {
+test("archived Terms stay canonical; the public serving layer redacts their address lines", () => {
   clearTermsRegistryOverlaysForTests();
+  // Canonical documents are the contract evidence for customers who accepted
+  // them: the frozen historical text is preserved byte-for-byte (the
+  // fingerprint test below pins 2026-08-12.1).
+  assert.match(buildTermsPlainText("2026-08-12.1"), /Kangaroo/);
+  assert.match(buildTermsPlainText("2026-10-20.1"), /Kangaroo/);
+  // The public serving layer substitutes the locality-only address line.
   for (const version of ["2026-08-12.1", "2026-10-20.1"]) {
-    const doc = resolveTermsDocument(version);
+    const doc = resolvePublicTermsDocument(version);
     assert.equal(doc.isCurrent, false);
     const allText = doc.sections
       .map((section) => [...section.paragraphs, ...(section.items ?? [])].join("\n"))
       .join("\n");
     assert.doesNotMatch(allText, /Kangaroo/);
-    assert.doesNotMatch(buildTermsPlainText(version), /Kangaroo/);
+    assert.doesNotMatch(buildPublicTermsPlainText(version), /Kangaroo/);
     const notices = doc.sections.find((section) => section.title.startsWith("13. Notices"));
     assert.ok(
       notices?.paragraphs.some((paragraph) => paragraph.includes("Postal: Victoria, BC, Canada."))
     );
   }
-  const first = resolveTermsDocument("2026-08-12.1");
+  const first = resolvePublicTermsDocument("2026-08-12.1");
   const supplier = first.sections.find((section) => section.title.startsWith("1. Supplier"));
   assert.ok(
     supplier?.paragraphs.some((paragraph) =>
       paragraph.includes("Business address: Victoria, BC, Canada.")
     )
+  );
+  // The substitution is a no-op for the current version.
+  assert.equal(
+    buildPublicTermsPlainText(LEGAL_TERMS_VERSION),
+    buildTermsPlainText(LEGAL_TERMS_VERSION)
   );
 });
 
@@ -476,11 +491,8 @@ test("terms acknowledgement requires current version and accepted true", () => {
 test("registered Terms 2026-08-12.1 body fingerprint is independent of current constants", () => {
   clearTermsRegistryOverlaysForTests();
   // Independent expected digest: hardcoded, not derived from LEGAL_* or TERMS_2026_08_12_1_FACTS.
-  // Digest and length updated 2026-11-07 for the owner-directed redaction of the
-  // archived supplier address lines to the locality-only form (sections 1 and 13);
-  // every other byte of the frozen document is unchanged.
-  const expectedSha256 = "0a68a86ebda7dd910bb52bba5994891201a105fefe8e5f74329128561b97bad9";
-  const expectedLength = 5899;
+  const expectedSha256 = "ae2e5e51e0d2fd7ff3fc5e8f31e61950653521f770160a5bddd435458f871c83";
+  const expectedLength = 5957;
   const plain = buildTermsPlainText("2026-08-12.1");
   const digest = createHash("sha256").update(plain, "utf8").digest("hex");
   assert.equal(plain.length, expectedLength);

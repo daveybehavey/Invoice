@@ -174,14 +174,6 @@ type RegisteredTermsEntry = {
 
  * Historical/registered Terms sections must use only this object — never live globals.
 
- * Redaction (2026-11-07, owner-directed privacy fix): the supplier address
-
- * line in this freeze was replaced with the locality-only form used by the
-
- * current version, because the frozen text carried a residential street
-
- * address. Every other fact is preserved verbatim.
-
  */
 
 export const TERMS_2026_08_12_1_FACTS: Readonly<FrozenTermsFacts> = Object.freeze({
@@ -198,7 +190,7 @@ export const TERMS_2026_08_12_1_FACTS: Readonly<FrozenTermsFacts> = Object.freez
 
     tradeStyle: "EuroDigital",
 
-    addressLine: "Victoria, BC, Canada",
+    addressLine: "1193 Kangaroo Road, Metchosin, BC V9C 4C9, Canada",
 
     supportEmail: "support@notebill.app",
 
@@ -232,17 +224,11 @@ export const TERMS_2026_08_12_1_FACTS: Readonly<FrozenTermsFacts> = Object.freez
 
  * address in the current Terms and Privacy Policy: the public address line is
 
- * locality-only. The section 13 postal notice address was initially retained
+ * locality-only. The section 13 postal notice address is retained verbatim
 
- * verbatim from the prior version pending an owner decision on a business
+ * from the prior version pending an owner decision on a business mailing
 
- * mailing address; on 2026-11-07 the owner directed its redaction, so this
-
- * freeze no longer carries a postalAddressLine and section 13 falls back to
-
- * the locality-only address line, matching 2026-11-03.1. Every other fact
-
- * is preserved verbatim.
+ * address — see docs/notebill-play-console-fix-checklist.md.
 
  */
 
@@ -261,6 +247,8 @@ export const TERMS_2026_10_20_1_FACTS: Readonly<FrozenTermsFacts> = Object.freez
     tradeStyle: "EuroDigital",
 
     addressLine: "Victoria, BC, Canada",
+
+    postalAddressLine: "1193 Kangaroo Road, Metchosin, BC V9C 4C9, Canada",
 
     supportEmail: "support@notebill.app",
 
@@ -300,11 +288,7 @@ export const TERMS_2026_10_20_1_FACTS: Readonly<FrozenTermsFacts> = Object.freez
 
  * is unchanged from 2026-10-20.1. Historical registered versions keep
 
- * their frozen facts untouched, except that on 2026-11-07 their address
-
- * lines were redacted to this same locality-only form under the owner's
-
- * privacy direction.
+ * their frozen facts untouched.
 
  */
 
@@ -1043,6 +1027,116 @@ export function buildTermsPlainText(version: string): string {
     body
 
   ].join("\n");
+
+}
+
+
+
+/**
+
+ * Public-serving redaction for registered Terms documents.
+
+ *
+
+ * The canonical registered facts above stay byte-identical: they are the
+
+ * contract evidence for customers who accepted those versions, and
+
+ * contract-copy delivery renders from them unchanged. The archived
+
+ * freezes, however, carry the supplier's residential street address in
+
+ * their address lines, and the public documents API must not publish it
+
+ * (owner-directed privacy fix, 2026-11-07). The two functions below are
+
+ * the public serving layer: they substitute the locality-only address
+
+ * line used by the current version wherever an archived street-address
+
+ * line would otherwise be served. The current version contains no
+
+ * street address, so the substitution is a no-op for it.
+
+ */
+
+const ARCHIVED_TERMS_STREET_ADDRESS_LINES: ReadonlyArray<string> = Array.from(
+
+  new Set(
+
+    [
+
+      TERMS_2026_08_12_1_FACTS.supplier.addressLine,
+
+      TERMS_2026_10_20_1_FACTS.supplier.postalAddressLine ?? ""
+
+    ].filter((line) => line !== "" && line !== LEGAL_SUPPLIER.addressLine)
+
+  )
+
+);
+
+
+
+function redactArchivedStreetAddress(text: string): string {
+
+  let result = text;
+
+  for (const line of ARCHIVED_TERMS_STREET_ADDRESS_LINES) {
+
+    result = result.split(line).join(LEGAL_SUPPLIER.addressLine);
+
+  }
+
+  return result;
+
+}
+
+
+
+export function resolvePublicTermsDocument(
+
+  version?: string | null
+
+): ResolvedTermsDocument {
+
+  const doc = resolveTermsDocument(version);
+
+  return {
+
+    ...doc,
+
+    sections: doc.sections.map((section) => ({
+
+      ...section,
+
+      paragraphs: section.paragraphs.map((paragraph) =>
+
+        redactArchivedStreetAddress(paragraph)
+
+      ),
+
+      ...(section.items
+
+        ? {
+
+            items: section.items.map((item) => redactArchivedStreetAddress(item))
+
+          }
+
+        : {})
+
+    }))
+
+  };
+
+}
+
+
+
+export function buildPublicTermsPlainText(version: string): string {
+
+  return redactArchivedStreetAddress(buildTermsPlainText(version));
 
 }
 
