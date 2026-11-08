@@ -1,0 +1,13 @@
+# NoteBill
+
+> NoteBill is AI-assisted invoicing software that turns rough job notes into clean, itemized invoices for freelancers, contractors, and service businesses.
+
+NoteBill turns incomplete, messy invoice notes into a professional invoice. It structures free-form input, asks focused follow-up questions when pricing is missing instead of making silent assumptions, supports wording changes, saves invoice documents, and produces a clean print/PDF-ready result.
+
+## Pages
+
+- [NoteBill](https://notebill.app/): Turn job notes into invoices
+- [Help](https://notebill.app/help): Help and guidance for using NoteBill
+- [Support](https://notebill.app/support): Support for NoteBill users
+- [Privacy Policy](https://notebill.app/privacy): NoteBill privacy policy
+- [Terms of Service](https://notebill.app/terms): NoteBill terms of service
