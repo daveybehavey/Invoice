@@ -1,3 +1,5 @@
+import { toAmountMinorExact, toAmountMajor, currencyExponent, supportsStripeIsoUnits } from "../lib/currencyUnits.js";
+export { toAmountMinorExact } from "../lib/currencyUnits.js";
 import { randomUUID } from "node:crypto";
 import type {
   PaymentLinkRecord,
@@ -156,33 +158,6 @@ export type StripeSettlementResult = {
   reason?: string;
 };
 
-/** Two-decimal minor-unit conversion (existing codebase convention). */
-export function toAmountMinor(amountMajor: number): number {
-  return Math.round(Number(amountMajor) * 100);
-}
-
-/**
- * Exact two-decimal minor-unit conversion: returns the integer minor units
- * iff the major-unit value is representable in minor units (within float
- * noise), otherwise null. A value like 10.005 has no exact minor-unit form —
- * it must never be rounded into a settlement, because the rounded amount is
- * a different amount of money than the invoice demands.
- */
-export function toAmountMinorExact(amountMajor: number): number | null {
-  const value = Number(amountMajor);
-  if (!Number.isFinite(value)) {
-    return null;
-  }
-  const scaled = value * 100;
-  const rounded = Math.round(scaled);
-  // Float noise for invoice-scale amounts is ~1e-12; a genuinely
-  // non-representable value (a third decimal place) sits ~0.5 away.
-  if (Math.abs(scaled - rounded) > 1e-6) {
-    return null;
-  }
-  return rounded;
-}
-
 /** A payment record carrying provider evidence (its dedupe/binding key). */
 export function isProviderPaymentRecord(record: { providerPaymentIntentId?: string }): boolean {
   return typeof record?.providerPaymentIntentId === "string" && record.providerPaymentIntentId.length > 0;
@@ -196,24 +171,26 @@ export function isProviderPaymentRecord(record: { providerPaymentIntentId?: stri
  * must not guess.
  */
 export function sumPaymentRecordsMinor(
-  paymentRecords: Array<{ amount?: number; amountMinor?: number }>
+  paymentRecords: Array<{ amount?: number; amountMinor?: number }>,
+  currency: string | undefined
 ): number | null {
+  if (currencyExponent(currency) === null) return null;
   let totalMinor = 0;
   for (const record of paymentRecords) {
     if (typeof record?.amountMinor === "number") {
-      if (!Number.isInteger(record.amountMinor) || record.amountMinor < 0) {
+      if (!Number.isSafeInteger(record.amountMinor) || record.amountMinor < 0) {
         return null;
       }
       totalMinor += record.amountMinor;
       continue;
     }
-    const exact = toAmountMinorExact(Number(record?.amount ?? 0));
+    const exact = toAmountMinorExact(Number(record?.amount ?? 0), currency);
     if (exact === null) {
       return null;
     }
     totalMinor += exact;
   }
-  return totalMinor;
+  return Number.isSafeInteger(totalMinor) ? totalMinor : null;
 }
 
 /**
@@ -223,13 +200,14 @@ export function sumPaymentRecordsMinor(
  */
 export function calculateInvoiceBalanceMinor(
   totalMajor: number,
-  paymentRecords: Array<{ amount?: number; amountMinor?: number }>
+  paymentRecords: Array<{ amount?: number; amountMinor?: number }>,
+  currency: string | undefined
 ): number | null {
-  const totalMinor = toAmountMinorExact(totalMajor);
+  const totalMinor = toAmountMinorExact(totalMajor, currency);
   if (totalMinor === null) {
     return null;
   }
-  const paidMinor = sumPaymentRecordsMinor(paymentRecords);
+  const paidMinor = sumPaymentRecordsMinor(paymentRecords, currency);
   if (paidMinor === null) {
     return null;
   }
@@ -241,9 +219,6 @@ export function normalizeMoneyCurrency(value: string | undefined | null): string
   return normalized || "usd";
 }
 
-function roundCurrencyAmount(value: number): number {
-  return Math.max(0, Number(value.toFixed(2)));
-}
 
 /**
  * Stable fingerprint of every money-bearing field of a finished invoice.
@@ -427,13 +402,13 @@ export function assertValidSavePaymentRecordChanges(input: {
   }
 
   for (const record of changedManualRecords) {
-    if (toAmountMinorExact(Number(record.amount ?? 0)) === null) {
+    if (toAmountMinorExact(Number(record.amount ?? 0), input.merged.currency) === null) {
       throw new Error("Payment amount must be exact to the cent.");
     }
   }
 
   const totalMajor = Number(input.merged.total ?? input.merged.balanceDue ?? 0);
-  const derivedAfterMinor = calculateInvoiceBalanceMinor(totalMajor, mergedRecords);
+  const derivedAfterMinor = calculateInvoiceBalanceMinor(totalMajor, mergedRecords, input.merged.currency);
   if (derivedAfterMinor === null) {
     // This save changed manual records (the no-changes case returned
     // above), and the post-merge balance cannot be derived exactly —
@@ -450,7 +425,7 @@ export function assertValidSavePaymentRecordChanges(input: {
   if (derivedAfterMinor >= 0) {
     return;
   }
-  const derivedWithoutChangesMinor = calculateInvoiceBalanceMinor(totalMajor, existingRecords);
+  const derivedWithoutChangesMinor = calculateInvoiceBalanceMinor(totalMajor, existingRecords, input.merged.currency);
   if (derivedWithoutChangesMinor !== null && derivedWithoutChangesMinor <= derivedAfterMinor) {
     // The negativity pre-existed this save's record changes (the stored
     // records against this same total were already at least as far
@@ -488,7 +463,7 @@ export function sanitizeCreatedInvoicePaymentState(
     monetaryRevision: 0,
     paymentRecords: (finishedInvoice.paymentRecords ?? []).map((record) => {
       const manual = stripProviderEvidence(record);
-      const amountMinor = toAmountMinorExact(Number(manual.amount ?? 0));
+      const amountMinor = toAmountMinorExact(Number(manual.amount ?? 0), finishedInvoice.currency);
       return amountMinor === null ? manual : { ...manual, amountMinor };
     })
   };
@@ -566,10 +541,11 @@ export function prepareCreatedInvoicePaymentState(
   // reconcilePaidStatusAfterSave).
   const derivedBalanceMinor = calculateInvoiceBalanceMinor(
     Number(sanitized.total ?? sanitized.balanceDue ?? 0),
-    sanitized.paymentRecords ?? []
+    sanitized.paymentRecords ?? [],
+    sanitized.currency
   );
   if (derivedBalanceMinor !== null) {
-    return { ...sanitized, balanceDue: Math.max(0, derivedBalanceMinor) / 100 };
+    return { ...sanitized, balanceDue: toAmountMajor(Math.max(0, derivedBalanceMinor), sanitized.currency) };
   }
   // Indeterminate (fix round 7): the payload's balanceDue is never
   // the fallback. Validation has already refused any non-representable
@@ -636,8 +612,8 @@ export function sanitizeDuplicatedInvoicePaymentState(
   return {
     ...sanitized,
     paymentRecords: [],
-    total: grossMinor / 100,
-    balanceDue: grossMinor / 100
+    total: toAmountMajor(grossMinor, finishedInvoice.currency),
+    balanceDue: toAmountMajor(grossMinor, finishedInvoice.currency)
   };
 }
 
@@ -735,7 +711,7 @@ export function isGrandfatheredPaidState(
     return false;
   }
   return (
-    toAmountMinorExact(Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0)) === 0
+    toAmountMinorExact(Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0), finishedInvoice.currency) === 0
   );
 }
 
@@ -750,7 +726,8 @@ export function reconcilePaidStatusAfterSave(
   const paymentRecords = finishedInvoice.paymentRecords ?? [];
   const derivedMinor = calculateInvoiceBalanceMinor(
     Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0),
-    paymentRecords
+    paymentRecords,
+    finishedInvoice.currency
   );
   if (status === "paid") {
     if (derivedMinor !== null) {
@@ -766,7 +743,7 @@ export function reconcilePaidStatusAfterSave(
           paymentRecords.length === 0 &&
           !monetaryFingerprintChanged &&
           toAmountMinorExact(
-            Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0)
+            Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0), finishedInvoice.currency
           ) === 0;
         return grandfathered ? status : "sent";
       }
@@ -776,7 +753,7 @@ export function reconcilePaidStatusAfterSave(
   }
   if (status === "draft" || status === "sent") {
     const totalMinor = toAmountMinorExact(
-      Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0)
+      Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0), finishedInvoice.currency
     );
     if (derivedMinor === 0 && totalMinor !== null && totalMinor > 0 && paymentRecords.length > 0) {
       return "paid";
@@ -843,10 +820,10 @@ export function applyMonetaryEditInvalidation(input: {
   const stableTotal =
     incoming.total ??
     existing.total ??
-    (reconstructedGrossMinor !== null ? reconstructedGrossMinor / 100 : undefined);
+    (reconstructedGrossMinor !== null ? toAmountMajor(reconstructedGrossMinor, existing.currency) : undefined);
   const existingForFingerprint: StoredFinishedInvoice =
     reconstructedGrossMinor !== null
-      ? { ...existing, total: reconstructedGrossMinor / 100 }
+      ? { ...existing, total: toAmountMajor(reconstructedGrossMinor, existing.currency) }
       : existing;
   const serverOwned: StoredFinishedInvoice = {
     ...incoming,
@@ -964,12 +941,12 @@ export function reconstructGrossTotalMinor(
   finishedInvoice: StoredFinishedInvoice
 ): number | null {
   const balanceMinor = toAmountMinorExact(
-    Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0)
+    Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0), finishedInvoice.currency
   );
   if (balanceMinor === null) {
     return null;
   }
-  const paidMinor = sumPaymentRecordsMinor(finishedInvoice.paymentRecords ?? []);
+  const paidMinor = sumPaymentRecordsMinor(finishedInvoice.paymentRecords ?? [], finishedInvoice.currency);
   if (paidMinor === null) {
     return null;
   }
@@ -982,14 +959,15 @@ function deriveBalanceFromPaymentRecords(
 ): StoredFinishedInvoice {
   const balanceMinor = calculateInvoiceBalanceMinor(
     Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0),
-    finishedInvoice.paymentRecords ?? []
+    finishedInvoice.paymentRecords ?? [],
+    finishedInvoice.currency
   );
   if (balanceMinor === null) {
     return indeterminateBalanceDue === undefined
       ? finishedInvoice
       : { ...finishedInvoice, balanceDue: indeterminateBalanceDue };
   }
-  return { ...finishedInvoice, balanceDue: Math.max(0, balanceMinor) / 100 };
+  return { ...finishedInvoice, balanceDue: toAmountMajor(Math.max(0, balanceMinor), finishedInvoice.currency) };
 }
 
 /** Server-side mutation (manual payment recorded/removed) changed the balance. */
@@ -1030,15 +1008,17 @@ export function invalidateLinksForBalanceChange(
 export function getExactCollectibleBalanceMinor(
   finishedInvoice: StoredFinishedInvoice
 ): number | null {
+  if (!supportsStripeIsoUnits(finishedInvoice.currency)) return null;
   const balanceMinor = toAmountMinorExact(
-    Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0)
+    Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0), finishedInvoice.currency
   );
   if (balanceMinor === null) {
     return null;
   }
   const derivedMinor = calculateInvoiceBalanceMinor(
     Number(finishedInvoice.total ?? finishedInvoice.balanceDue ?? 0),
-    finishedInvoice.paymentRecords ?? []
+    finishedInvoice.paymentRecords ?? [],
+    finishedInvoice.currency
   );
   if (derivedMinor === null || derivedMinor !== balanceMinor) {
     return null;
@@ -1053,7 +1033,7 @@ export function findReusablePaymentLink(finishedInvoice: StoredFinishedInvoice):
   }
   const links = finishedInvoice.paymentLinks ?? [];
   const expectedAmountMinor = toAmountMinorExact(
-    Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0)
+    Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0), finishedInvoice.currency
   );
   if (expectedAmountMinor === null) {
     return null;
@@ -1116,7 +1096,7 @@ export function settleStripePaymentOnInvoice(input: {
   const receivedCurrency = normalizeMoneyCurrency(settlement.currency);
   const links = finishedInvoice.paymentLinks ?? [];
   const expectedBalanceMinor = toAmountMinorExact(
-    Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0)
+    Number(finishedInvoice.balanceDue ?? finishedInvoice.total ?? 0), finishedInvoice.currency
   );
 
   const unmatched = (reason: string, expectedAmountMinor?: number) => {
@@ -1149,7 +1129,11 @@ export function settleStripePaymentOnInvoice(input: {
     };
   };
 
-  if (amountReceivedMinor === null || !Number.isFinite(amountReceivedMinor) || amountReceivedMinor <= 0) {
+  if (!supportsStripeIsoUnits(finishedInvoice.currency) || !supportsStripeIsoUnits(settlement.currency)) {
+    return unmatched("unsupported_currency");
+  }
+
+  if (amountReceivedMinor === null || !Number.isSafeInteger(amountReceivedMinor) || amountReceivedMinor <= 0) {
     return unmatched("missing_or_non_positive_amount", expectedBalanceMinor ?? undefined);
   }
 
@@ -1230,7 +1214,7 @@ export function settleStripePaymentOnInvoice(input: {
   let totalMinor: number | null;
   let reconstructedTotalMajor: number | undefined;
   if (finishedInvoice.total != null) {
-    totalMinor = toAmountMinorExact(Number(finishedInvoice.total));
+    totalMinor = toAmountMinorExact(Number(finishedInvoice.total), finishedInvoice.currency);
     if (totalMinor === null) {
       return unmatched("non_representable_total", boundExpectedMinor);
     }
@@ -1240,9 +1224,9 @@ export function settleStripePaymentOnInvoice(input: {
       return unmatched("non_representable_total", boundExpectedMinor);
     }
     totalMinor = grossMinor;
-    reconstructedTotalMajor = grossMinor / 100;
+    reconstructedTotalMajor = toAmountMajor(grossMinor, finishedInvoice.currency);
   }
-  const paidMinorBefore = sumPaymentRecordsMinor(finishedInvoice.paymentRecords ?? []);
+  const paidMinorBefore = sumPaymentRecordsMinor(finishedInvoice.paymentRecords ?? [], finishedInvoice.currency);
   if (paidMinorBefore === null) {
     return unmatched("non_representable_payment_record", boundExpectedMinor);
   }
@@ -1253,7 +1237,7 @@ export function settleStripePaymentOnInvoice(input: {
 
   const paymentRecord = {
     id: randomUUID(),
-    amount: roundCurrencyAmount(amountReceivedMinor / 100),
+    amount: toAmountMajor(amountReceivedMinor, finishedInvoice.currency),
     paidAt: settlement.receivedAt.slice(0, 10),
     note: "Stripe payment",
     provider: "stripe",
@@ -1263,7 +1247,7 @@ export function settleStripePaymentOnInvoice(input: {
     amountMinor: amountReceivedMinor
   };
   const nextPaymentRecords = [...(finishedInvoice.paymentRecords ?? []), paymentRecord];
-  const nextBalanceDue = nextBalanceMinor / 100;
+  const nextBalanceDue = toAmountMajor(nextBalanceMinor, finishedInvoice.currency);
   const nextLinks = links.map((link) => {
     if (settledLink && link.id === settledLink.id) {
       return { ...link, status: "paid" as const, deactivatedAt: settlement.receivedAt };
