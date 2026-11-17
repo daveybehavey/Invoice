@@ -69,7 +69,3 @@ export function loadSystemPrompt(): string {
   cachedSystemPrompt = normalized;
   return cachedSystemPrompt;
 }
-
-export function clearSystemPromptCache(): void {
-  cachedSystemPrompt = null;
-}
