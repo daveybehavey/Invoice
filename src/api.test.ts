@@ -7651,7 +7651,7 @@ test("stripe payment-intent webhook marks a saved invoice paid and clears balanc
 
 const SETTLEMENT_WEBHOOK_SECRET = "whsec_settlement_test_secret";
 
-async function saveSettlementInvoice(ownerId: string, total: number, invoiceNumber: string) {
+async function saveSettlementInvoice(ownerId: string, total: number, invoiceNumber: string, currency = "USD") {
   const response = await request(app)
     .post("/api/invoices/save")
     .set("x-invoice-user-id", ownerId)
@@ -7668,7 +7668,7 @@ async function saveSettlementInvoice(ownerId: string, total: number, invoiceNumb
           invoiceNumber,
           issueDate: "2026-03-12",
           customerName: "Settlement Client",
-          currency: "USD",
+          currency,
           lineItems: [
             {
               id: "line-settle-1",
@@ -12917,3 +12917,58 @@ test("send stays open when a skipped missing price is not on the invoice", async
   assert.equal(sendResponse.status, 200);
   assert.equal(sendResponse.body.invoice.invoiceData.finishedInvoice.total, 148);
 });
+
+// C1: exercise the HTTP -> provider conversion boundary and signed webhook reversal.
+for (const [currency, total, expectedMinor] of [
+  ["JPY", 100, 100], ["KRW", 100, 100],
+  ["USD", 100, 10000], ["CAD", 100, 10000], ["EUR", 100, 10000],
+  ["BHD", 100, 100000], ["KWD", 100, 100000], ["BHD", 100.123, 100123]
+] as const) {
+  test(`C1 payment link and settlement: ${currency} ${total} -> ${expectedMinor}`, async () => {
+    const ownerId = `c1-${currency}-${expectedMinor}`;
+    const inputs: Array<{ amountMinor: number }> = [];
+    setInvoicePaymentLinkCreatorForTests(async input => {
+      inputs.push(input);
+      return { url: "https://pay.stripe.test/c1", paymentLinkId: "plink_c1" };
+    });
+    process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+    const invoiceId = await saveSettlementInvoice(ownerId, total, "INV-C1", currency);
+    const linked = await request(app).post(`/api/invoices/${invoiceId}/payment-link`)
+      .set("x-invoice-user-id", ownerId).send({});
+    assert.equal(linked.status, 200, JSON.stringify(linked.body));
+    assert.equal(inputs.length, 1);
+    assert.equal(inputs[0].amountMinor, expectedMinor);
+    const before = await getSettlementInvoice(ownerId, invoiceId);
+    const link = before.invoiceData.finishedInvoice.paymentLinks[0];
+    assert.equal(link.amountMinor, expectedMinor);
+    const response = await deliverSettlementWebhook({
+      eventId: `evt_${ownerId}`, paymentIntentId: `pi_${ownerId}`,
+      invoiceId, ownerId, paymentLinkRecordId: link.id,
+      amountReceived: expectedMinor, currency: currency.toLowerCase()
+    });
+    assert.equal(response.status, 200);
+    const after = await getSettlementInvoice(ownerId, invoiceId);
+    assert.equal(after.status, "paid");
+    assert.equal(after.invoiceData.finishedInvoice.balanceDue, 0);
+    assert.equal(after.invoiceData.finishedInvoice.paymentRecords[0].amount, total);
+    assert.equal(after.invoiceData.finishedInvoice.paymentRecords[0].amountMinor, expectedMinor);
+  });
+}
+for (const currency of ["ZZZ", "ISK", "UGX"]) {
+  test(`C1 refuses ${currency} before creating a Stripe payment`, async () => {
+    let calls = 0;
+    setInvoicePaymentLinkCreatorForTests(async () => {
+      calls++;
+      return { url: "https://pay.stripe.test/forbidden", paymentLinkId: "forbidden" };
+    });
+    process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+    const ownerId = `c1-refuse-${currency}`;
+    const invoiceId = await saveSettlementInvoice(ownerId, 100, "INV-C1-REFUSE", currency);
+    const response = await request(app).post(`/api/invoices/${invoiceId}/payment-link`)
+      .set("x-invoice-user-id", ownerId).send({});
+    assert.equal(response.status, 400);
+    assert.equal(calls, 0);
+    const stored = await getSettlementInvoice(ownerId, invoiceId);
+    assert.equal(stored.invoiceData.finishedInvoice.paymentLinks.length, 0);
+  });
+}

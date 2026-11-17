@@ -1,3 +1,4 @@
+import { supportsStripeIsoUnits, toAmountMinorExact } from "../lib/currencyUnits.js";
 import { createHash } from "node:crypto";
 import Stripe from "stripe";
 import {
@@ -342,6 +343,11 @@ export function getStripeBillingCapabilities(): StripeBillingCapabilities {
 export async function createStripeInvoicePaymentLink(
   input: InvoicePaymentLinkInput
 ): Promise<InvoicePaymentLinkResult> {
+  if (!supportsStripeIsoUnits(input.currency) ||
+      toAmountMinorExact(input.total, input.currency) !== input.amountMinor ||
+      !Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) {
+    throw new Error("Unsupported currency or invalid invoice payment amount.");
+  }
   if (invoicePaymentLinkCreatorForTests) {
     return invoicePaymentLinkCreatorForTests(input);
   }
@@ -354,8 +360,8 @@ export async function createStripeInvoicePaymentLink(
     throw new Error("Stripe billing is not configured.");
   }
 
-  const amountCents = Math.round(Number(input.amountMinor));
-  if (!Number.isFinite(amountCents) || amountCents <= 0) {
+  const amountMinor = input.amountMinor;
+  if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
     throw new Error("Invoice total must be greater than 0 before creating a payment link.");
   }
 
@@ -376,7 +382,7 @@ export async function createStripeInvoicePaymentLink(
     ownerId: input.ownerId,
     invoiceNumber,
     paymentLinkRecordId: input.paymentLinkRecordId,
-    amountMinor: String(amountCents),
+    amountMinor: String(amountMinor),
     currency
   };
   const paymentLink = await stripe.paymentLinks.create({
@@ -384,7 +390,7 @@ export async function createStripeInvoicePaymentLink(
       {
         price_data: {
           currency,
-          unit_amount: amountCents,
+          unit_amount: amountMinor,
           product_data: {
             name: `Invoice ${invoiceNumber}`,
             description: customerName ? `Payment for ${customerName}` : undefined
