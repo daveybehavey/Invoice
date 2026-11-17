@@ -109,11 +109,7 @@
   };
 
   const writeProfile = (storageKey, profile) => {
-    try {
-      window.localStorage.setItem(storageKey, JSON.stringify(profile));
-    } catch (_error) {
-      // Best-effort write only.
-    }
+    window.localStorage.setItem(storageKey, JSON.stringify(profile));
   };
 
   const removeProfile = (storageKey) => {
@@ -133,7 +129,11 @@
     if (scopedStorageKey !== legacyStorageKey) {
       const legacyProfile = readProfile(legacyStorageKey);
       if (legacyProfile) {
-        writeProfile(scopedStorageKey, legacyProfile);
+        try {
+          writeProfile(scopedStorageKey, legacyProfile);
+        } catch (_error) {
+          // Reading legacy defaults must still work when migration cannot persist.
+        }
         return legacyProfile;
       }
     }
