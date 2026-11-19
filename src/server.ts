@@ -180,6 +180,24 @@ const port = Number(process.env.PORT ?? 3000);
 const publicDir = path.resolve(process.cwd(), "public");
 const TRANSPARENT_GIF_BUFFER = Buffer.from("R0lGODlhAQABAIABAP///wAAACwAAAAAAQABAAACAkQBADs=", "base64");
 
+// RDC-NB-1: www.notebill.app serves the same app as the apex with no
+// redirect and no canonical, so the same content is reachable on three
+// hosts. Redirect www to the apex, preserving path and query, before any
+// static or API handling. The app host (app.notebill.app) is intentional
+// and is left alone, as are loopback hosts used in local development.
+const APEX_HOST = "notebill.app";
+const WWW_HOST = "www.notebill.app";
+
+function redirectWwwToApex(req: Request, res: Response, next: NextFunction): void {
+  if (req.hostname.toLowerCase() === WWW_HOST) {
+    res.redirect(301, `https://${APEX_HOST}${req.originalUrl}`);
+    return;
+  }
+  next();
+}
+
+app.use(redirectWwwToApex);
+
 app.use(cors());
 app.post(
   "/api/billing/stripe/webhook",

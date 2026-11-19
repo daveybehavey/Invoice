@@ -11013,6 +11013,62 @@ test("auth session endpoint builds the sign-in link from the configured origin d
   assert.ok(!capturedBody.includes("evil.example"));
 });
 
+// RDC-NB-1: www.notebill.app must redirect to the apex instead of serving
+// the same app as a duplicate host.
+test("www host redirects to the apex, preserving path and query", async () => {
+  const response = await request(app).get("/help?x=1").set("Host", "www.notebill.app");
+
+  assert.equal(response.status, 301);
+  assert.equal(response.headers.location, "https://notebill.app/help?x=1");
+});
+
+test("www host redirects the root and API paths to the apex", async () => {
+  const root = await request(app).get("/").set("Host", "www.notebill.app");
+  assert.equal(root.status, 301);
+  assert.equal(root.headers.location, "https://notebill.app/");
+
+  const health = await request(app).get("/health").set("Host", "www.notebill.app");
+  assert.equal(health.status, 301);
+  assert.equal(health.headers.location, "https://notebill.app/health");
+});
+
+test("apex and app hosts are not redirected", async () => {
+  const apex = await request(app).get("/health").set("Host", "notebill.app");
+  assert.equal(apex.status, 200);
+  assert.deepEqual(apex.body, { ok: true });
+
+  const appHost = await request(app).get("/health").set("Host", "app.notebill.app");
+  assert.equal(appHost.status, 200);
+  assert.deepEqual(appHost.body, { ok: true });
+});
+
+test("www redirect ignores port and case, loopback stays put, X-Forwarded-Host cannot spoof it", async () => {
+  const loopback = await request(app).get("/health").set("Host", "localhost:3000");
+  assert.equal(loopback.status, 200);
+
+  const mixedCase = await request(app).get("/health").set("Host", "WWW.Notebill.App");
+  assert.equal(mixedCase.status, 301);
+  assert.equal(mixedCase.headers.location, "https://notebill.app/health");
+
+  const withPort = await request(app).get("/health").set("Host", "www.notebill.app:8443");
+  assert.equal(withPort.status, 301);
+  assert.equal(withPort.headers.location, "https://notebill.app/health");
+
+  // No trust proxy is configured, so X-Forwarded-Host never decides the host.
+  const spoofedApex = await request(app)
+    .get("/health")
+    .set("Host", "notebill.app")
+    .set("X-Forwarded-Host", "www.notebill.app");
+  assert.equal(spoofedApex.status, 200);
+
+  const spoofedWww = await request(app)
+    .get("/health")
+    .set("Host", "www.notebill.app")
+    .set("X-Forwarded-Host", "evil.example");
+  assert.equal(spoofedWww.status, 301);
+  assert.equal(spoofedWww.headers.location, "https://notebill.app/health");
+});
+
 test("launch diagnostics reports an unconfigured public base URL without inventing an origin", async () => {
   delete process.env.APP_BASE_URL;
 
