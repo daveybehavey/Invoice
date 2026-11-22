@@ -1882,6 +1882,13 @@ function Launcher() {
                     </div>
                   ))}
                 </div>
+                <p data-testid="launcher-pricing" className="mt-5 text-sm leading-6 text-slate-600">
+                  Free includes 25 saved invoices a month. NoteBill Pro is $19 USD per month, with unlimited saved
+                  invoices.{" "}
+                  <a href="/support" className="font-semibold text-[#14532d] underline underline-offset-4">
+                    Pricing details
+                  </a>
+                </p>
               </div>
               <div className="nb-launcher-start-cta rounded-[30px] border border-[#4f8b5f]/20 bg-[#14532d] p-5 text-white shadow-[0_24px_60px_rgba(20,83,45,0.22)] md:p-6">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#d7f1dd]">Start here</p>
