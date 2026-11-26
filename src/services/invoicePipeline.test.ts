@@ -5,6 +5,7 @@ import {
   changeDescriptionsWording,
   changeLineWording,
   changeNotesWording,
+  detectDiscountIntent,
   rewriteFollowUpMessage,
   rewordFullInvoice
 } from "./invoicePipeline.js";
@@ -416,5 +417,101 @@ test("rewordFullInvoice uses deterministic description cleanup when notes are bl
   assert.deepEqual(
     updated.lineItems.map((lineItem) => lineItem.description),
     ["Sink repair and cartridge replacement", "Washer kit"]
+  );
+});
+
+// Pass-7 P1 (finding 2): the word "credit" near any number used to become
+// an invoice discount — "Credit card payment: $500" became a $500 discount
+// and "credit terms net 30" became $30 off. Payment/terms uses of "credit"
+// must not discount, while genuine discount phrasing still does.
+test("detectDiscountIntent ignores a credit-card payment mention", () => {
+  assert.deepEqual(
+    detectDiscountIntent("Fixed the faucet. Credit card payment: $500."),
+    { kind: "none" },
+    "a $500 credit-card payment is not a $500 discount"
+  );
+  assert.deepEqual(
+    detectDiscountIntent("Paid $500 credit card for the repair."),
+    { kind: "none" },
+    "an amount before 'credit card' is not a discount either"
+  );
+});
+
+test("detectDiscountIntent ignores credit terms", () => {
+  assert.deepEqual(
+    detectDiscountIntent("Job done, credit terms net 30, please invoice."),
+    { kind: "none" },
+    "'credit terms net 30' is not a $30 discount"
+  );
+});
+
+test("detectDiscountIntent ignores other non-discount credit phrases", () => {
+  for (const text of [
+    "Customer credit limit $5000 on file.",
+    "Ran a credit check, score 720.",
+    "Credit score is 720.",
+    "Paid from the credit account, $300."
+  ]) {
+    assert.deepEqual(detectDiscountIntent(text), { kind: "none" }, text);
+  }
+});
+
+test("detectDiscountIntent still applies genuine discount phrasing", () => {
+  assert.deepEqual(
+    detectDiscountIntent("Sink leak repair 2h @ $95/hr and please add a $20 discount for delay."),
+    { kind: "apply", amount: 20, reason: "Discount for delay" },
+    "the golden-corpus $20 discount still applies"
+  );
+  assert.deepEqual(
+    detectDiscountIntent("Apply a $25 credit for the delay."),
+    { kind: "apply", amount: 25, reason: "Discount for the delay" },
+    "an explicit $25 credit still applies"
+  );
+  assert.deepEqual(
+    detectDiscountIntent("Credit $50 for the late arrival."),
+    { kind: "apply", amount: 50, reason: "Discount for the late arrival" },
+    "'credit $50 for ...' still applies"
+  );
+  assert.deepEqual(
+    detectDiscountIntent("Please apply a credit of $50 for the inconvenience."),
+    { kind: "apply", amount: 50, reason: "Discount for the inconvenience" },
+    "'credit of $50' still applies"
+  );
+  assert.deepEqual(
+    detectDiscountIntent("Take $30 off the total for the delay."),
+    { kind: "apply", amount: 30, reason: "Discount for the delay" },
+    "'$30 off' still applies"
+  );
+});
+
+test("detectDiscountIntent keeps the customer's reason wording verbatim", () => {
+  assert.deepEqual(
+    detectDiscountIntent("Give a $20 discount for credit card processing."),
+    { kind: "apply", amount: 20, reason: "Discount for credit card processing" },
+    "masking must not rewrite the reason to 'payment processing'"
+  );
+});
+
+test("detectDiscountIntent does not take a reason from a later sentence", () => {
+  assert.deepEqual(
+    detectDiscountIntent("Give a $20 discount. Credit card for materials."),
+    { kind: "apply", amount: 20, reason: undefined },
+    "a masked phrase in a later sentence cannot donate its reason"
+  );
+});
+
+test("detectDiscountIntent ties the reason to the genuine discount, not an earlier credit phrase", () => {
+  assert.deepEqual(
+    detectDiscountIntent("Credit card for materials. Give a $20 discount for delay."),
+    { kind: "apply", amount: 20, reason: "Discount for delay" },
+    "the reason comes from the discount's own sentence, not the earlier credit-card phrase"
+  );
+});
+
+test("detectDiscountIntent picks the real discount when credit-card text is also present", () => {
+  assert.deepEqual(
+    detectDiscountIntent("Credit card payment: $500. Give a $20 discount for delay."),
+    { kind: "apply", amount: 20, reason: "Discount for delay" },
+    "the $500 payment is ignored and only the $20 discount applies"
   );
 });

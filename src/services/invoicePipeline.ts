@@ -3643,20 +3643,57 @@ type DiscountIntent =
   | { kind: "none" }
   | { kind: "apply"; amount: number; reason?: string };
 
-function detectDiscountIntent(sourceText: string): DiscountIntent {
+// Pass-7 P1 (finding 2): "credit" in payment/terms phrases is not a
+// discount — "Credit card payment: $500" and "credit terms net 30" must not
+// become a $500 / $30 discount. Blank those compounds before scanning so a
+// nearby number cannot match. Genuine credit phrasing ("$25 credit",
+// "credit of $50", "credit $50 for ...") is untouched. The blanking is
+// length-preserving (same-length whitespace), so positions in the scannable
+// copy line up 1:1 with the original text.
+const NON_DISCOUNT_CREDIT_PHRASES =
+  /\bcredit[-\s]+(?:card|terms|limit|score|check|account)\b/gi;
+
+// Exported for unit tests (invoicePipeline.test.ts); the pipeline calls it
+// on the full source text from createInvoiceFromInput /
+// continueInvoiceAfterLaborPricing.
+export function detectDiscountIntent(sourceText: string): DiscountIntent {
   const text = sourceText.trim();
   if (!text) {
     return { kind: "none" };
   }
+  const scannable = text.replace(NON_DISCOUNT_CREDIT_PHRASES, (match) =>
+    " ".repeat(match.length)
+  );
 
   const explicitAmountMatch =
-    text.match(/\$\s*(\d+(?:\.\d{1,2})?)\s*(?:courtesy\s+)?(?:discount|credit|off)\b/i) ??
-    text.match(/\b(?:discount|credit)\b[^$0-9]{0,25}\$?\s*(\d+(?:\.\d{1,2})?)/i) ??
-    text.match(/\b(\d+(?:\.\d{1,2})?)\s*(?:dollars?\s*)?(?:off)\b/i);
+    scannable.match(/\$\s*(\d+(?:\.\d{1,2})?)\s*(?:courtesy\s+)?(?:discount|credit|off)\b/i) ??
+    scannable.match(/\b(?:discount|credit)\b[^$0-9]{0,25}\$?\s*(\d+(?:\.\d{1,2})?)/i) ??
+    scannable.match(/\b(\d+(?:\.\d{1,2})?)\s*(?:dollars?\s*)?(?:off)\b/i);
 
+  // Reason wording comes from the ORIGINAL text, scoped to the sentence
+  // holding the amount match (positions line up because the blanking is
+  // length-preserving). That ties the reason to the genuine discount —
+  // "Credit card for materials. Give a $20 discount for delay." reasons
+  // "delay", not "materials", and a masked phrase in a LATER sentence
+  // cannot donate its reason either — without rewriting what the customer
+  // said: "$20 discount for credit card processing" keeps that reason
+  // verbatim. The reason is only used when an amount already matched on
+  // the scannable copy, so a masked "credit" phrase on its own can never
+  // produce a discount or a reason.
+  const amountIndex = explicitAmountMatch?.index ?? 0;
+  const amountEnd = amountIndex + (explicitAmountMatch?.[0]?.length ?? 0);
+  const sentenceStart =
+    Math.max(scannable.lastIndexOf(".", amountIndex), scannable.lastIndexOf("\n", amountIndex)) + 1;
+  const sentenceEndCandidates = [
+    scannable.indexOf(".", amountEnd),
+    scannable.indexOf("\n", amountEnd)
+  ].filter((index) => index >= 0);
+  const sentenceEnd =
+    sentenceEndCandidates.length > 0 ? Math.min(...sentenceEndCandidates) : text.length;
+  const reasonScope = text.slice(sentenceStart, sentenceEnd);
   const reasonMatch =
-    text.match(/\b(?:discount|credit|off)\b[^.:\n-]{0,80}\b(?:because|for)\b([^.\n]+)/i) ??
-    text.match(/\b(?:because|for)\b([^.\n]+)\b(?:discount|credit|off)/i);
+    reasonScope.match(/\b(?:discount|credit|off)\b[^.:\n-]{0,80}\b(?:because|for)\b([^.\n]+)/i) ??
+    reasonScope.match(/\b(?:because|for)\b([^.\n]+)\b(?:discount|credit|off)/i);
   const reason = reasonMatch?.[1]?.trim();
 
   if (explicitAmountMatch) {
