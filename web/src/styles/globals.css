@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --nb-bg: #F5F6F2;
+    --nb-surface: #FFFFFF;
+    --nb-border: #E2E7E3;
+    --nb-ink: #101915;
+    --nb-ink-secondary: #47554E;
+    --nb-ink-muted: #6B7A72;
+    --nb-emerald: #0F5132;
+    --nb-emerald-hover: #146C43;
+    --nb-emerald-soft: #E8F5EE;
+    --nb-amber-ink: #B45309;
+    --nb-amber-soft: #FEF3C7;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--nb-bg);
+    color: var(--nb-ink);
+    font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    overflow-x: hidden;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.paper-grid-bg {
+  background-image: radial-gradient(rgba(15, 81, 50, 0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+@media print {
+  @page {
+    size: auto;
+    margin: 12mm;
+  }
+
+  body {
+    background: #FFFFFF !important;
+    color: #101915 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only-container {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  #notebill-invoice-sheet {
+    box-shadow: none !important;
+    border: none !important;
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+}

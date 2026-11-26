@@ -324,15 +324,15 @@ test("NB-D-01: portal line rows render the shared resolved amount", () => {
   assert.equal(money.resolveLineAmount({ quantity: 2, unitPrice: 10 }), 20);
 });
 
-test("the shared money module loads before every surface that consumes it", () => {
+test("V3 SPA index loads hashed Vite module bundle and V3 surfaces share web/src/lib/money.ts", () => {
   const indexHtml = readFileSync("public/index.html", "utf8");
-  const utilIndex = indexHtml.indexOf("/utils/invoiceMoney.js");
-  assert.ok(utilIndex > -1, "index.html must load invoiceMoney.js");
+  assert.match(indexHtml, /<script type="module"[^>]+src="\/v3\/assets\/[^"]+\.js"/, "index.html must load V3 Vite bundle");
   for (const consumer of [
-    "/dist/features/manual/manualInvoiceCanvas.js",
-    "/dist/features/manual/inspectorPanel.js",
-    "/dist/features/portal/clientPortal.js"
+    "web/src/components/InvoicePaperSheet.tsx",
+    "web/src/pages/CreatePage.tsx",
+    "web/src/pages/PortalPage.tsx"
   ]) {
-    assert.ok(utilIndex < indexHtml.indexOf(consumer), `invoiceMoney.js must load before ${consumer}`);
+    const src = readFileSync(consumer, "utf8");
+    assert.ok(src.includes("lib/money"), `${consumer} must consume shared web/src/lib/money`);
   }
 });

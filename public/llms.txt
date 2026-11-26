@@ -7,6 +7,10 @@ NoteBill turns incomplete, messy invoice notes into a professional invoice. It s
 ## Pages
 
 - [NoteBill](https://notebill.app/): Turn job notes into invoices
+- [Pricing](https://notebill.app/pricing): Free plan and NoteBill Pro pricing
+- [Free Invoice Generator](https://notebill.app/free-invoice-generator): Turn rough job notes into a downloadable PDF invoice without an account
+- [Contractor Estimate Template](https://notebill.app/contractor-estimate-template): Build Good / Better / Best trade quotes with deposit requests and client e-signatures
+- [Materials Markup Calculator](https://notebill.app/materials-markup-calculator): Calculate parts markup vs. profit margin and send line items into an invoice
 - [Help](https://notebill.app/help): Help and guidance for using NoteBill
 - [Support](https://notebill.app/support): Support for NoteBill users
 - [Privacy Policy](https://notebill.app/privacy): NoteBill privacy policy

@@ -3,12 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NoteBill — Turn Job Notes into Invoices</title>
+    <title>NoteBill — Dump the Mess. Get Paid Before You Leave the Driveway.</title>
     <meta
       name="description"
-      content="NoteBill is AI-assisted invoicing software that turns rough job notes into clean, itemized invoices for freelancers, contractors, and service businesses."
+      content="Turn rough job notes, voice memos, or receipts into crisp, itemized invoices and quotes in seconds — with zero silent price assumptions."
     />
-    <meta name="theme-color" content="#14532d" />
+    <link rel="canonical" href="https://notebill.app/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="NoteBill" />
+    <meta property="og:title" content="NoteBill — Turn Rough Job Notes Into Paid Invoices" />
+    <meta
+      property="og:description"
+      content="Paste a client text thread, talk into your phone, or snap a receipt. Build quotes, job-site photo proof, signatures, and paid invoices fast."
+    />
+    <meta property="og:url" content="https://notebill.app/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="NoteBill — Turn Rough Job Notes Into Paid Invoices" />
+    <meta
+      name="twitter:description"
+      content="Paste a client text thread, talk into your phone, or snap a receipt. Build quotes, job-site photo proof, signatures, and paid invoices fast."
+    />
+    <meta name="theme-color" content="#0F5132" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="NoteBill" />
@@ -18,61 +33,38 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700&family=Sora:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/dist/app.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "NoteBill",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Web",
+        "url": "https://notebill.app/",
+        "description": "Invoicing and quoting software for tradespeople, contractors, and freelancers that turns messy job notes and text threads into itemized invoices with zero silent price assumptions.",
+        "offers": [
+          {
+            "@type": "Offer",
+            "name": "Free",
+            "price": "0",
+            "priceCurrency": "USD"
+          },
+          {
+            "@type": "Offer",
+            "name": "NoteBill Pro",
+            "price": "19",
+            "priceCurrency": "USD"
+          }
+        ]
+      }
+    </script>
+    <script type="module" crossorigin src="/v3/assets/index-Cil4Hhwv.js"></script>
+    <link rel="stylesheet" crossorigin href="/v3/assets/index-BoKQu-u_.css">
   </head>
-  <body class="bg-slate-50 text-slate-900">
+  <body class="bg-[#F5F6F2] text-[#101915] antialiased selection:bg-[#E8F5EE] selection:text-[#0F5132]">
     <div id="root"></div>
-    <script src="/dist/vendor/react.production.min.js"></script>
-    <script src="/dist/vendor/react-dom.production.min.js"></script>
-    <script src="/dist/vendor/router.umd.min.js"></script>
-    <script src="/dist/vendor/react-router.production.min.js"></script>
-    <script src="/dist/vendor/react-router-dom.production.min.js"></script>
-    <script src="/utils/formatters.js"></script>
-    <script src="/utils/invoiceMoney.js"></script>
-    <script src="/utils/accountPlan.js"></script>
-    <script src="/utils/requestIdentity.js"></script>
-    <script src="/utils/legalFoundation.js"></script>
-    <script src="/utils/billingActions.js"></script>
-    <script src="/utils/intakeHelpers.js"></script>
-    <script src="/utils/onboardingState.js"></script>
-    <script src="/utils/billieTelemetry.js"></script>
-    <script src="/utils/brandTheme.js"></script>
-    <script src="/utils/manualStyleCatalog.js"></script>
-    <script src="/utils/businessProfile.js"></script>
-    <script src="/utils/clientMemory.js"></script>
-    <script src="/utils/lineItemLibrary.js"></script>
-    <script src="/utils/logoImage.js"></script>
-    <script src="/features/manual/manualDraftStorage.js"></script>
-    <script src="/features/manual/assistantCommandHelpers.js"></script>
-    <script src="/features/manual/smartRateSuggestions.js"></script>
-    <script src="/utils/registerServiceWorker.js"></script>
-    <script src="/features/intake/readiness.js"></script>
-    <script src="/features/intake/controller.js"></script>
-    <script src="/features/intake/runtime.js"></script>
-    <script src="/features/intake/orchestration.js"></script>
-    <script src="/features/intake/actions.js"></script>
-    <script src="/features/intake/reviewModel.js"></script>
-    <script src="/features/intake/aiIntakeHelpers.js"></script>
-    <script src="/dist/ui/primitives.js"></script>
-    <script src="/dist/ui/contractCopyControls.js"></script>
-    <script src="/dist/features/import/importInvoice.js"></script>
-    <script src="/dist/features/library/invoiceLibrary.js"></script>
-    <script src="/dist/features/diagnostics/intakeDiagnostics.js"></script>
-    <script src="/dist/features/settings/businessIdentity.js"></script>
-    <script src="/dist/features/settings/clientWorkspace.js"></script>
-    <script src="/dist/features/settings/operatorDashboard.js"></script>
-    <script src="/dist/features/manual/inspectorPanel.js"></script>
-    <script src="/dist/features/manual/manualInvoiceCanvas.js"></script>
-    <script src="/dist/features/intake/reviewCard.js"></script>
-    <script src="/dist/features/intake/decisionPanel.js"></script>
-    <script src="/dist/features/intake/aiIntake.js"></script>
-    <script src="/dist/features/scratchpad/dailyScratchpad.js"></script>
-    <script src="/dist/features/portal/clientPortal.js"></script>
-    <script src="/dist/features/launcher/launcherSections.js"></script>
-    <script src="/features/launcher/launcherHelpers.js"></script>
-    <script src="/dist/launcher.js"></script>
   </body>
 </html>

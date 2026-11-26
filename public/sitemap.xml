@@ -2,22 +2,38 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://notebill.app/</loc>
-    <lastmod>2026-10-17</lastmod>
+    <lastmod>2026-11-26</lastmod>
+  </url>
+  <url>
+    <loc>https://notebill.app/pricing</loc>
+    <lastmod>2026-11-26</lastmod>
+  </url>
+  <url>
+    <loc>https://notebill.app/free-invoice-generator</loc>
+    <lastmod>2026-11-26</lastmod>
+  </url>
+  <url>
+    <loc>https://notebill.app/contractor-estimate-template</loc>
+    <lastmod>2026-11-26</lastmod>
+  </url>
+  <url>
+    <loc>https://notebill.app/materials-markup-calculator</loc>
+    <lastmod>2026-11-26</lastmod>
   </url>
   <url>
     <loc>https://notebill.app/privacy</loc>
-    <lastmod>2026-10-17</lastmod>
+    <lastmod>2026-11-26</lastmod>
   </url>
   <url>
     <loc>https://notebill.app/terms</loc>
-    <lastmod>2026-10-17</lastmod>
+    <lastmod>2026-11-26</lastmod>
   </url>
   <url>
     <loc>https://notebill.app/help</loc>
-    <lastmod>2026-10-17</lastmod>
+    <lastmod>2026-11-26</lastmod>
   </url>
   <url>
     <loc>https://notebill.app/support</loc>
-    <lastmod>2026-10-17</lastmod>
+    <lastmod>2026-11-26</lastmod>
   </url>
 </urlset>

@@ -218,6 +218,14 @@ app.use(express.static(publicDir));
 
 const spaRoutes = [
   "/",
+  "/pricing",
+  "/free-invoice-generator",
+  "/contractor-estimate-template",
+  "/materials-markup-calculator",
+  "/create",
+  "/jobs",
+  "/brand",
+  "/settings",
   "/auth/verify",
   "/auth/google",
   "/ai-intake",
@@ -1625,6 +1633,93 @@ app.get("/api/public/invoices/:id/portal", async (req: Request, res: Response, n
   }
 });
 
+app.post("/api/public/invoices/:id/portal/approve", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invoiceId = z.string().uuid().parse(req.params.id);
+    const body = z
+      .object({
+        token: z.string().trim().min(1),
+        approvedBy: z.string().trim().min(1).max(120),
+        selectedOptionId: z.string().trim().min(1).max(80).optional(),
+        signatureDataUrl: z.string().max(400_000).optional(),
+        note: z.string().trim().max(500).optional()
+      })
+      .parse(req.body ?? {});
+
+    const existing = await savedInvoiceRepository.getSavedInvoiceByPortalToken(invoiceId, body.token);
+    if (!existing) {
+      throw new HttpStatusError(404, "Portal link not found.");
+    }
+
+    const updated = await savedInvoiceRepository.mutateSavedInvoice({
+      invoiceId,
+      ownerId: existing.ownerId,
+      mutate: (current) => ({
+        ...current,
+        invoiceData: {
+          ...current.invoiceData,
+          finishedInvoice: {
+            ...current.invoiceData.finishedInvoice,
+            quoteApproval: {
+              approvedBy: body.approvedBy,
+              approvedAt: new Date().toISOString(),
+              selectedOptionId: body.selectedOptionId,
+              signatureDataUrl: body.signatureDataUrl,
+              note: body.note
+            }
+          }
+        }
+      })
+    });
+
+    res.json({ invoice: toPublicPortalInvoice(updated) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/public/invoices/:id/portal/payment-notice", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const invoiceId = z.string().uuid().parse(req.params.id);
+    const body = z
+      .object({
+        token: z.string().trim().min(1),
+        method: z.string().trim().min(1).max(80),
+        note: z.string().trim().max(400).optional()
+      })
+      .parse(req.body ?? {});
+
+    const existing = await savedInvoiceRepository.getSavedInvoiceByPortalToken(invoiceId, body.token);
+    if (!existing) {
+      throw new HttpStatusError(404, "Portal link not found.");
+    }
+
+    // Non-settling client notice only: never mutates paymentRecords, balanceDue, or status.
+    const updated = await savedInvoiceRepository.mutateSavedInvoice({
+      invoiceId,
+      ownerId: existing.ownerId,
+      mutate: (current) => ({
+        ...current,
+        invoiceData: {
+          ...current.invoiceData,
+          finishedInvoice: {
+            ...current.invoiceData.finishedInvoice,
+            clientPaymentNotice: {
+              method: body.method,
+              sentAt: new Date().toISOString(),
+              note: body.note
+            }
+          }
+        }
+      })
+    });
+
+    res.json({ invoice: toPublicPortalInvoice(updated) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/invoices/:id/send", async (req: Request, res: Response, next: NextFunction) => {
   try {
     const invoiceId = z.string().uuid().parse(req.params.id);
@@ -2529,11 +2624,24 @@ function toPublicPortalInvoice(invoice: SavedInvoice) {
         customerName: finishedInvoice.customerName,
         currency: finishedInvoice.currency,
         lineItems: finishedInvoice.lineItems,
+        discountAmount: finishedInvoice.discountAmount,
+        discountReason: finishedInvoice.discountReason,
         subtotal: finishedInvoice.subtotal,
         total: finishedInvoice.total,
         balanceDue: finishedInvoice.balanceDue,
+        paymentRecords: finishedInvoice.paymentRecords,
+        paymentMethods: finishedInvoice.paymentMethods,
         paymentLinkUrl: finishedInvoice.paymentLinkUrl,
-        notes: finishedInvoice.notes
+        notes: finishedInvoice.notes,
+        jobPhotos: finishedInvoice.jobPhotos,
+        depositPercent: finishedInvoice.depositPercent,
+        depositAmount: finishedInvoice.depositAmount,
+        quoteOptions: finishedInvoice.quoteOptions,
+        quoteApproval: finishedInvoice.quoteApproval,
+        clientPaymentNotice: finishedInvoice.clientPaymentNotice,
+        tipEnabled: finishedInvoice.tipEnabled,
+        cardFeePassThrough: finishedInvoice.cardFeePassThrough,
+        hideMaterialsBreakdown: finishedInvoice.hideMaterialsBreakdown
       }
     }
   };

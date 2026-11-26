@@ -191,6 +191,36 @@ export const PaymentMethodSchema = z.object({
   enabled: z.boolean().optional().default(true)
 });
 
+export const JobPhotoSchema = z.object({
+  id: z.string().min(1),
+  dataUrl: z.string().min(1).max(2_000_000),
+  caption: OptionalString,
+  stage: z.enum(["before", "after", "progress"]).optional()
+});
+
+export const QuoteOptionSchema = z.object({
+  id: z.string().min(1),
+  tier: z.enum(["good", "better", "best"]),
+  label: z.string().min(1),
+  description: OptionalString,
+  amount: z.number().finite().nonnegative(),
+  recommended: z.boolean().optional()
+});
+
+export const QuoteApprovalSchema = z.object({
+  approvedBy: z.string().min(1),
+  approvedAt: z.string().min(1),
+  selectedOptionId: OptionalString,
+  signatureDataUrl: z.string().max(400_000).optional(),
+  note: OptionalString
+});
+
+export const ClientPaymentNoticeSchema = z.object({
+  method: z.string().min(1),
+  sentAt: z.string().min(1),
+  note: OptionalString
+});
+
 export const FinishedInvoiceSchema = z.object({
   documentType: InvoiceDocumentTypeSchema,
   invoiceNumber: OptionalString,
@@ -217,7 +247,17 @@ export const FinishedInvoiceSchema = z.object({
   // values rather than trusting the request body.
   monetaryRevision: z.number().int().nonnegative().default(0),
   paymentLinks: z.array(PaymentLinkRecordSchema).default([]),
-  unmatchedPayments: z.array(UnmatchedPaymentRecordSchema).default([])
+  unmatchedPayments: z.array(UnmatchedPaymentRecordSchema).default([]),
+  jobPhotos: z.array(JobPhotoSchema).max(4).optional(),
+  depositPercent: OptionalNumber,
+  depositAmount: OptionalNumber,
+  quoteOptions: z.array(QuoteOptionSchema).max(3).optional(),
+  quoteApproval: QuoteApprovalSchema.optional(),
+  clientPaymentNotice: ClientPaymentNoticeSchema.optional(),
+  tipEnabled: z.boolean().optional(),
+  cardFeePassThrough: z.boolean().optional(),
+  materialsMarkupPercent: OptionalNumber,
+  hideMaterialsBreakdown: z.boolean().optional()
 });
 
 export const RecordPaymentRequestSchema = z.object({
@@ -346,7 +386,9 @@ export const InvoicePdfExportRequestSchema = z.object({
   logoVisible: z.boolean().optional(),
   notesVisible: z.boolean().optional(),
   headerLayout: z.enum(["split", "centered"]).optional(),
-  spacingDensity: z.enum(["tight", "balanced", "airy"]).optional()
+  spacingDensity: z.enum(["tight", "balanced", "airy"]).optional(),
+  poweredByVisible: z.boolean().optional(),
+  googleReviewUrl: OptionalUrl
 });
 
 export const SavedInvoiceStatusSchema = z.enum(["draft", "sent", "paid", "deleted"]);
@@ -464,3 +506,7 @@ export type InvoiceListItem = z.infer<typeof InvoiceListItemSchema>;
 export type RecentClientContextItem = z.infer<typeof RecentClientContextItemSchema>;
 export type OpenDecision = z.infer<typeof OpenDecisionSchema>;
 export type DecisionAction = z.infer<typeof DecisionActionSchema>;
+export type JobPhoto = z.infer<typeof JobPhotoSchema>;
+export type QuoteOption = z.infer<typeof QuoteOptionSchema>;
+export type QuoteApproval = z.infer<typeof QuoteApprovalSchema>;
+export type ClientPaymentNotice = z.infer<typeof ClientPaymentNoticeSchema>;

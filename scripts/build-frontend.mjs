@@ -6,10 +6,13 @@ import { build as esbuild } from "esbuild";
 const rootDir = process.cwd();
 const publicDir = path.join(rootDir, "public");
 const distDir = path.join(publicDir, "dist");
+const v3Dir = path.join(publicDir, "v3");
 const tailwindInput = path.join(publicDir, "styles", "app.css");
 const tailwindConfig = path.join(rootDir, "tailwind.config.cjs");
 const tailwindOutput = path.join(distDir, "app.css");
 const tailwindCli = path.join(rootDir, "node_modules", "tailwindcss", "lib", "cli.js");
+const viteCli = path.join(rootDir, "node_modules", "vite", "bin", "vite.js");
+const viteConfig = path.join(rootDir, "web", "vite.config.ts");
 const vendorFiles = [
   ["node_modules/react/umd/react.production.min.js", "react.production.min.js"],
   ["node_modules/react-dom/umd/react-dom.production.min.js", "react-dom.production.min.js"],
@@ -59,6 +62,34 @@ async function main() {
 
   await runTailwindBuild();
   await copyVendorAssets();
+  await runViteV3Build();
+}
+
+async function runViteV3Build() {
+  await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [viteCli, "build", "--config", viteConfig], {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        BROWSERSLIST_IGNORE_OLD_DATA: "1"
+      }
+    });
+
+    child.on("error", (error) => {
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`vite v3 build failed with exit code ${code}`));
+    });
+  });
+
+  const v3Index = path.join(v3Dir, "index.html");
+  const publicIndex = path.join(publicDir, "index.html");
+  await fs.copyFile(v3Index, publicIndex);
 }
 
 async function collectFiles(directory, extension) {
@@ -66,7 +97,7 @@ async function collectFiles(directory, extension) {
   const files = [];
 
   for (const entry of entries) {
-    if (entry.name === "dist") {
+    if (entry.name === "dist" || entry.name === "v3") {
       continue;
     }
     const absolutePath = path.join(directory, entry.name);

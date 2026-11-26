@@ -18,6 +18,7 @@ type InvoicePdfInput = {
   notesVisible?: boolean;
   headerLayout?: "split" | "centered";
   spacingDensity?: "tight" | "balanced" | "airy";
+  poweredByVisible?: boolean;
 };
 
 const PAGE_WIDTH = 612;
@@ -100,11 +101,14 @@ export async function createInvoicePdfBuffer(input: InvoicePdfInput): Promise<Bu
     registrations: input.businessRegistrations ?? [],
     registrationBlockVisible: input.registrationBlockVisible
   });
+  await renderJobPhotos(state, input.invoice.jobPhotos);
+  renderQuoteApprovalBanner(state, input.invoice.quoteApproval);
+  renderPaymentMethodsBlock(state, input.invoice.paymentMethods);
   if (input.notesVisible !== false) {
     renderNotes(state, { notes: input.invoice.notes ?? "", styleScale });
   }
   renderPaymentLink(state, { paymentLinkUrl: input.invoice.paymentLinkUrl ?? "", styleScale });
-  renderFooter(state, { fromLines });
+  renderFooter(state, { fromLines, poweredByVisible: input.poweredByVisible });
 
   const pdfBytes = await doc.save({ useObjectStreams: false });
   return Buffer.from(pdfBytes);
@@ -831,13 +835,159 @@ function renderPaymentLink(
   state.cursorY = y - 8 * spacingScale;
 }
 
-function renderFooter(state: PdfRenderState, options: { fromLines: string[] }): void {
+async function renderJobPhotos(
+  state: PdfRenderState,
+  photos?: FinishedInvoice["jobPhotos"]
+): Promise<void> {
+  if (!Array.isArray(photos) || photos.length === 0) {
+    return;
+  }
+  const items = photos.slice(0, 4);
+  const embedded: Array<{ image: PDFImage; label: string }> = [];
+  for (const photo of items) {
+    try {
+      const img = await tryEmbedLogoImage(state.doc, photo.dataUrl);
+      if (img) {
+        const stageLabel = photo.stage ? `[${photo.stage.toUpperCase()}] ` : "";
+        embedded.push({
+          image: img,
+          label: `${stageLabel}${photo.caption || "Job site photo"}`.trim()
+        });
+      }
+    } catch {
+      // Skip malformed image bytes safely
+    }
+  }
+  if (embedded.length === 0) {
+    return;
+  }
+
+  const colGap = 14;
+  const colWidth = (CONTENT_WIDTH - colGap) / 2;
+  const boxHeight = 112;
+  const rows = Math.ceil(embedded.length / 2);
+  ensureVerticalSpace(state, 28 + rows * (boxHeight + 24), false);
+  drawSectionTitle(state, "Job Photo Proof");
+
+  for (let i = 0; i < embedded.length; i += 2) {
+    const rowItems = embedded.slice(i, i + 2);
+    ensureVerticalSpace(state, boxHeight + 22, false);
+    const topY = state.cursorY;
+    rowItems.forEach((entry, colIdx) => {
+      const x = PAGE_MARGIN_X + colIdx * (colWidth + colGap);
+      const scaled = entry.image.scale(1);
+      const scale = Math.min(colWidth / scaled.width, boxHeight / scaled.height, 1);
+      const w = scaled.width * scale;
+      const h = scaled.height * scale;
+      state.page.drawRectangle({
+        x,
+        y: topY - boxHeight,
+        width: colWidth,
+        height: boxHeight,
+        borderColor: SLATE_200,
+        borderWidth: 1,
+        color: SURFACE
+      });
+      state.page.drawImage(entry.image, {
+        x: x + (colWidth - w) / 2,
+        y: topY - boxHeight + (boxHeight - h) / 2,
+        width: w,
+        height: h
+      });
+      state.page.drawText(truncateText(entry.label, state.regularFont, 8.5, colWidth - 4), {
+        x: x + 2,
+        y: topY - boxHeight - 12,
+        size: 8.5,
+        font: state.regularFont,
+        color: SLATE_600
+      });
+    });
+    state.cursorY -= boxHeight + 22;
+  }
+}
+
+function renderQuoteApprovalBanner(
+  state: PdfRenderState,
+  approval?: FinishedInvoice["quoteApproval"]
+): void {
+  if (!approval?.approvedBy) {
+    return;
+  }
+  ensureVerticalSpace(state, 42 * state.spacingScale, false);
+  const boxHeight = 32;
+  state.page.drawRectangle({
+    x: PAGE_MARGIN_X,
+    y: state.cursorY - boxHeight,
+    width: CONTENT_WIDTH,
+    height: boxHeight,
+    borderColor: state.accent.border,
+    borderWidth: 1,
+    color: state.accent.soft
+  });
+  const dateLabel = approval.approvedAt ? approval.approvedAt.slice(0, 10) : "";
+  const text = `Client Approved: ${approval.approvedBy}${dateLabel ? ` on ${dateLabel}` : ""}`;
+  state.page.drawText(truncateText(text, state.boldFont, 10, CONTENT_WIDTH - 24), {
+    x: PAGE_MARGIN_X + 12,
+    y: state.cursorY - 20,
+    size: 10,
+    font: state.boldFont,
+    color: state.accent.text
+  });
+  state.cursorY -= boxHeight + 12 * state.spacingScale;
+}
+
+function renderPaymentMethodsBlock(
+  state: PdfRenderState,
+  methods?: FinishedInvoice["paymentMethods"]
+): void {
+  const enabled = (Array.isArray(methods) ? methods : []).filter(
+    (m) => m?.enabled !== false && (m.label || m.details)
+  );
+  if (enabled.length === 0) {
+    return;
+  }
+  const lines = enabled
+    .slice(0, 5)
+    .map((m) => `${m.label || m.kind}: ${m.details || "Accepted"}`);
+  const boxHeight = lines.length * 12 + 16;
+  ensureVerticalSpace(state, 28 + boxHeight, false);
+  drawSectionTitle(state, "Accepted Payment Methods");
+  state.page.drawRectangle({
+    x: PAGE_MARGIN_X,
+    y: state.cursorY - boxHeight,
+    width: CONTENT_WIDTH,
+    height: boxHeight,
+    borderColor: SLATE_200,
+    borderWidth: 1,
+    color: SURFACE
+  });
+  let y = state.cursorY - 12;
+  for (const line of lines) {
+    state.page.drawText(truncateText(line, state.regularFont, 9.5, CONTENT_WIDTH - 20), {
+      x: PAGE_MARGIN_X + 10,
+      y,
+      size: 9.5,
+      font: state.regularFont,
+      color: SLATE_700
+    });
+    y -= 12;
+  }
+  state.cursorY = y - 10;
+}
+
+function renderFooter(
+  state: PdfRenderState,
+  options: { fromLines: string[]; poweredByVisible?: boolean }
+): void {
   const footerLine = options.fromLines
     .slice(1)
     .filter((line) => line.length > 0)
     .slice(0, 3)
     .join("   ");
-  if (!footerLine) {
+  const poweredLine = options.poweredByVisible
+    ? "Powered by NoteBill (notebill.app)"
+    : "";
+  if (!footerLine && !poweredLine) {
     return;
   }
 
@@ -848,13 +998,25 @@ function renderFooter(state: PdfRenderState, options: { fromLines: string[] }): 
     thickness: 0.8,
     color: SLATE_200
   });
-  state.page.drawText(footerLine, {
-    x: PAGE_MARGIN_X,
-    y,
-    size: 9,
-    font: state.regularFont,
-    color: SLATE_500
-  });
+  if (footerLine) {
+    state.page.drawText(footerLine, {
+      x: PAGE_MARGIN_X,
+      y,
+      size: 9,
+      font: state.regularFont,
+      color: SLATE_500
+    });
+  }
+  if (poweredLine) {
+    const pw = state.regularFont.widthOfTextAtSize(poweredLine, 8.5);
+    state.page.drawText(poweredLine, {
+      x: PAGE_WIDTH - PAGE_MARGIN_X - pw,
+      y,
+      size: 8.5,
+      font: state.regularFont,
+      color: SLATE_500
+    });
+  }
 }
 
 function drawSectionTitle(state: PdfRenderState, title: string): void {
