@@ -196,3 +196,26 @@ export function computeDueDate(
   base.setDate(base.getDate() + daysMap[terms]);
   return base.toISOString().slice(0, 10);
 }
+
+/**
+ * Derives the effective tax % applied to a saved invoice when `total` exceeds
+ * the discounted pre-tax subtotal (since FinishedInvoice omits a standalone taxRate field).
+ */
+export function deriveEffectiveTaxRate(
+  invoice: Pick<FinishedInvoice, "lineItems" | "discountAmount" | "total">
+): number {
+  const base = computeInvoiceTotals({
+    lineItems: invoice.lineItems,
+    discountAmount: invoice.discountAmount,
+    taxRate: 0
+  });
+  if (
+    typeof invoice.total === "number" &&
+    Number.isFinite(invoice.total) &&
+    base.discountedSubtotal > 0 &&
+    invoice.total > base.discountedSubtotal + 0.005
+  ) {
+    return Math.round(((invoice.total - base.discountedSubtotal) / base.discountedSubtotal) * 10000) / 100;
+  }
+  return 0;
+}

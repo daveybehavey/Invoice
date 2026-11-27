@@ -190,6 +190,17 @@ export interface ActiveDraft {
   updatedAt: string;
 }
 
+export interface LocalDraftSnapshot {
+  id: string;
+  invoiceNumber: string;
+  customerName: string;
+  documentType: InvoiceDocumentType;
+  currency: string;
+  total: number;
+  savedAt: string;
+  draft: ActiveDraft;
+}
+
 export interface SavedClient {
   id: string;
   name: string;

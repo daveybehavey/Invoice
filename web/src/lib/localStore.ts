@@ -1,9 +1,10 @@
-import { computeDueDate, generateInvoiceNumber, syncFinishedInvoiceTotals } from "./money";
+import { computeDueDate, generateInvoiceNumber, roundToCents, syncFinishedInvoiceTotals } from "./money";
 import type {
   ActiveDraft,
   BusinessProfile,
   FinishedInvoice,
   JobTimerState,
+  LocalDraftSnapshot,
   PaymentMethod,
   SavedClient,
   SavedService,
@@ -13,6 +14,7 @@ import type {
 
 const KEYS = {
   ACTIVE_DRAFT: "notebill.v3.activeDraft",
+  DRAFT_HISTORY: "notebill.v3.draftHistory",
   AUTH_RETURN_DRAFT: "notebill.v3.authReturnDraft",
   AUTH_RETURN_PATH: "notebill.v3.authReturnPath",
   BUSINESS_PROFILE: "notebill.v3.businessProfile",
@@ -168,6 +170,58 @@ export function getActiveDraft(): ActiveDraft {
 
 export function saveActiveDraft(draft: ActiveDraft): void {
   writeJson(KEYS.ACTIVE_DRAFT, { ...draft, updatedAt: new Date().toISOString() });
+}
+
+export function getLocalDraftHistory(): LocalDraftSnapshot[] {
+  const stored = readJson<LocalDraftSnapshot[]>(KEYS.DRAFT_HISTORY, []);
+  return Array.isArray(stored) ? stored : [];
+}
+
+export function archiveDraftLocally(draft: ActiveDraft): LocalDraftSnapshot[] {
+  const hasLines = draft.invoice.lineItems.some((l) => l.description.trim().length > 0);
+  const hasNotes = draft.rawInput.trim().length > 0;
+  if (!hasLines && !hasNotes) {
+    return getLocalDraftHistory();
+  }
+
+  const synced = syncFinishedInvoiceTotals(draft.invoice, draft.taxRate);
+  const dedupeKey = (synced.invoiceNumber || draft.invoiceId || "").trim();
+  const id = dedupeKey
+    ? `ld_${dedupeKey.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`
+    : `ld_${Date.now().toString(36)}`;
+
+  const snapshot: LocalDraftSnapshot = {
+    id,
+    invoiceNumber: synced.invoiceNumber || "Draft",
+    customerName: synced.customerName?.trim() || "Unnamed Client",
+    documentType: synced.documentType,
+    currency: synced.currency || "USD",
+    total: roundToCents(synced.total ?? 0),
+    savedAt: new Date().toISOString(),
+    draft: {
+      ...draft,
+      invoice: synced,
+      updatedAt: new Date().toISOString()
+    }
+  };
+
+  const existing = getLocalDraftHistory();
+  const filtered = existing.filter((item) => item.id !== id);
+  const next = [snapshot, ...filtered]
+    .sort((a, b) => b.savedAt.localeCompare(a.savedAt))
+    .slice(0, 25);
+  writeJson(KEYS.DRAFT_HISTORY, next);
+  return next;
+}
+
+export function deleteLocalDraft(id: string): LocalDraftSnapshot[] {
+  const next = getLocalDraftHistory().filter((item) => item.id !== id);
+  writeJson(KEYS.DRAFT_HISTORY, next);
+  return next;
+}
+
+export function clearLocalDraftHistory(): void {
+  writeJson(KEYS.DRAFT_HISTORY, []);
 }
 
 export function saveAuthReturnHandoff(draft: ActiveDraft, returnPath: string): void {

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { Check, CheckCircle2, Copy, CreditCard, Download, Loader2, Send } from "lucide-react";
+import { Link, useParams } from "react-router-dom";
+import { ArrowRight, Check, CheckCircle2, Copy, CreditCard, Download, Loader2, Printer, Send, Sparkles } from "lucide-react";
 import { useApp } from "../components/AppContext";
 import { AppShell } from "../components/AppShell";
 import { InvoicePaperSheet } from "../components/InvoicePaperSheet";
@@ -10,7 +10,7 @@ import {
   fetchPublicPortalInvoice,
   submitPublicPortalPaymentNotice
 } from "../lib/api";
-import { computeInvoiceTotals, formatMoney, roundToCents } from "../lib/money";
+import { computeInvoiceTotals, deriveEffectiveTaxRate, formatMoney, roundToCents } from "../lib/money";
 import { exportInvoicePdf } from "../lib/pdfExport";
 import type { SavedInvoiceFull } from "../lib/types";
 
@@ -78,11 +78,20 @@ export function PortalPage() {
 
   const inv = record.invoiceData.finishedInvoice;
   const isQuote = inv.documentType === "estimate";
+  const derivedTaxRate = deriveEffectiveTaxRate(inv);
   const totals = computeInvoiceTotals({
     lineItems: inv.lineItems,
     discountAmount: inv.discountAmount,
+    taxRate: derivedTaxRate,
     paymentRecords: inv.paymentRecords
   });
+  const portalProfile =
+    profile.businessName === "Your Business Name"
+      ? {
+          ...profile,
+          businessName: inv.invoiceNumber ? `Invoice ${inv.invoiceNumber}` : "Service Invoice"
+        }
+      : profile;
   const selectedTier = inv.quoteOptions?.find((o) => o.id === selectedOptionId);
   const basePayable = selectedTier ? selectedTier.amount : totals.balanceDue;
   const tipAmount = inv.tipEnabled && tipPct > 0 ? roundToCents((basePayable * tipPct) / 100) : 0;
@@ -129,7 +138,10 @@ export function PortalPage() {
         note: tipAmount > 0 ? `Included ${tipPct}% tip (${formatMoney(tipAmount, inv.currency)})` : undefined
       });
       setRecord(res.invoice);
-      showToast(`Notified ${profile.businessName || "the sender"} that you sent ${methodLabel}.`, "success");
+      showToast(
+        `Notified ${profile.businessName && profile.businessName !== "Your Business Name" ? profile.businessName : "the sender"} that you sent ${methodLabel}.`,
+        "success"
+      );
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Could not send notice.", "error");
     } finally {
@@ -175,11 +187,19 @@ export function PortalPage() {
           <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
-              onClick={() => void exportInvoicePdf({ invoice: inv, profile, poweredByVisible: true })}
+              onClick={() => void exportInvoicePdf({ invoice: inv, profile: portalProfile, poweredByVisible: true })}
               className="inline-flex items-center gap-2 rounded-xl border border-[#D9E0DC] bg-white px-4 py-2.5 text-sm font-semibold text-[#101915] hover:bg-[#F5F6F2]"
             >
               <Download className="h-4 w-4 text-[#0F5132]" />
               <span>Download PDF</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-2 rounded-xl border border-[#D9E0DC] bg-white px-3.5 py-2.5 text-sm font-semibold text-[#101915] hover:bg-[#F5F6F2]"
+            >
+              <Printer className="h-4 w-4 text-[#0F5132]" />
+              <span>Print</span>
             </button>
             {!isQuote && !isPaid && inv.paymentLinkUrl && (
               <a
@@ -305,12 +325,27 @@ export function PortalPage() {
       <div className="print-only-container">
         <InvoicePaperSheet
           invoice={inv}
-          profile={profile}
+          profile={portalProfile}
+          taxRate={derivedTaxRate}
           readOnly
           poweredByVisible
           selectedQuoteOptionId={selectedOptionId}
           onSelectQuoteOption={isQuote && !inv.quoteApproval ? setSelectedOptionId : undefined}
         />
+      </div>
+
+      <div className="no-print mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#E2E7E3] bg-white px-5 py-3.5 text-xs text-[#47554E]">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 shrink-0 text-[#0F5132]" />
+          <span>Send invoices like this from your phone in seconds</span>
+        </div>
+        <Link
+          to="/free-invoice-generator"
+          className="inline-flex items-center gap-1 rounded-lg bg-[#E8F5EE] px-3 py-1.5 font-bold text-[#0F5132] hover:bg-[#0F5132] hover:text-white"
+        >
+          <span>Try NoteBill Free</span>
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
       </div>
     </AppShell>
   );

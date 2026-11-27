@@ -5,9 +5,11 @@ import {
   Bell,
   CheckCircle2,
   Copy,
+  DollarSign,
   Download,
   Eye,
   FilePlus2,
+  History,
   Loader2,
   MessageCircle,
   NotebookPen,
@@ -24,17 +26,21 @@ import {
   deleteSavedInvoice,
   duplicateSavedInvoice,
   listSavedInvoices,
+  recordSavedInvoicePayment,
   sendInvoiceReminder,
+  trackClientRevenueSignal,
   updateSavedInvoiceStatus
 } from "../lib/api";
 import { estimateNotesValue, parseRoughNotesInstant } from "../lib/instantParser";
 import {
   addScratchpadNote,
+  deleteLocalDraft,
   deleteScratchpadNote,
+  getLocalDraftHistory,
   getScratchpadNotes
 } from "../lib/localStore";
 import { formatMoney, roundToCents } from "../lib/money";
-import type { SavedInvoiceListItem, ScratchpadNote } from "../lib/types";
+import type { LocalDraftSnapshot, SavedInvoiceListItem, ScratchpadNote } from "../lib/types";
 
 function getChaseStage(inv: SavedInvoiceListItem, todayIso: string): {
   label: string;
@@ -87,7 +93,12 @@ export function JobsPage() {
   const [search, setSearch] = useState("");
   const [scratchInput, setScratchInput] = useState("");
   const [scratchNotes, setScratchNotes] = useState<ScratchpadNote[]>(() => getScratchpadNotes());
+  const [localDrafts, setLocalDrafts] = useState<LocalDraftSnapshot[]>(() => getLocalDraftHistory());
   const [reviewAskInvoice, setReviewAskInvoice] = useState<SavedInvoiceListItem | null>(null);
+  const [paymentModalInvoice, setPaymentModalInvoice] = useState<SavedInvoiceListItem | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentNote, setPaymentNote] = useState("");
+  const [paymentBusy, setPaymentBusy] = useState(false);
 
   const loadInvoices = useCallback(async () => {
     if (!session) {
@@ -168,10 +179,12 @@ export function JobsPage() {
     if (!scratchInput.trim()) return;
     setScratchNotes(addScratchpadNote(scratchInput));
     setScratchInput("");
+    trackClientRevenueSignal("scratchpad_note_saved", "v3_jobs");
     showToast("Saved to your Truck Scratchpad.", "success");
   };
 
   const handleConvertScratch = (note: ScratchpadNote) => {
+    trackClientRevenueSignal("scratchpad_note_used_in_invoice", "v3_jobs");
     const parsed = parseRoughNotesInstant(note.text, {
       currency: profile.defaultCurrency,
       defaultTaxRate: profile.defaultTaxRate,
@@ -207,6 +220,82 @@ export function JobsPage() {
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Could not update status.", "error");
     }
+  };
+
+  const openPaymentModal = (inv: SavedInvoiceListItem) => {
+    const open = roundToCents(inv.balanceDue ?? inv.total ?? 0);
+    setPaymentModalInvoice(inv);
+    setPaymentAmount(open > 0 ? open.toFixed(2) : "");
+    setPaymentNote("");
+  };
+
+  const handleSubmitPartialPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!paymentModalInvoice) return;
+    const amt = roundToCents(Number.parseFloat(paymentAmount));
+    if (!Number.isFinite(amt) || amt <= 0) {
+      showToast("Enter a payment amount greater than $0.", "warning");
+      return;
+    }
+    setPaymentBusy(true);
+    try {
+      const updated = await recordSavedInvoicePayment(
+        paymentModalInvoice.invoiceId,
+        amt,
+        paymentNote.trim() || undefined
+      );
+      const remaining = roundToCents(updated.invoiceData.finishedInvoice.balanceDue ?? 0);
+      const settled = updated.status === "paid" || remaining <= 0;
+      const targetInv = paymentModalInvoice;
+      setPaymentModalInvoice(null);
+      if (settled) {
+        showToast("Paid in full!", "success");
+        setReviewAskInvoice(targetInv);
+      } else {
+        showToast(
+          `Logged ${formatMoney(amt, profile.defaultCurrency)} (${formatMoney(remaining, profile.defaultCurrency)} remaining).`,
+          "success"
+        );
+      }
+      void loadInvoices();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Could not record payment.", "error");
+    } finally {
+      setPaymentBusy(false);
+    }
+  };
+
+  const handleExportLocalCsv = () => {
+    if (localDrafts.length === 0) return;
+    const esc = (val: string | number | undefined) => {
+      const str = String(val ?? "");
+      return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+    };
+    const rows = [["Invoice #", "Type", "Client", "Saved", "Total"].join(",")];
+    let sum = 0;
+    for (const item of localDrafts) {
+      sum += roundToCents(item.total);
+      rows.push(
+        [
+          esc(item.invoiceNumber),
+          esc(item.documentType),
+          esc(item.customerName),
+          esc(item.savedAt.slice(0, 10)),
+          roundToCents(item.total).toFixed(2)
+        ].join(",")
+      );
+    }
+    rows.push(["TOTALS", "", "", "", sum.toFixed(2)].join(","));
+    const blob = new Blob([rows.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `notebill-local-drafts-${new Date().getFullYear()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 4000);
+    showToast("Exported Local Drafts CSV!", "success");
   };
 
   const handleBillAgain = async (id: string) => {
@@ -421,6 +510,70 @@ export function JobsPage() {
             </div>
           )}
         </section>
+
+        {/* Recent Local Drafts (This Device) */}
+        {localDrafts.length > 0 && (
+          <section className="rounded-2xl border border-[#E2E7E3] bg-white p-5 shadow-card">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <History className="h-4 w-4 text-[#0F5132]" />
+                <h2 className="text-base font-bold text-[#101915]">Recent Local Drafts (This Device)</h2>
+                <span className="rounded-full bg-[#F5F6F2] px-2 py-0.5 font-mono text-[11px] font-semibold text-[#47554E]">
+                  {localDrafts.length}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleExportLocalCsv}
+                className="inline-flex items-center gap-1 rounded-lg border border-[#D9E0DC] bg-[#F5F6F2] px-2.5 py-1 text-xs font-semibold text-[#101915] hover:border-[#0F5132]"
+              >
+                <Download className="h-3.5 w-3.5 text-[#0F5132]" />
+                <span>Export Local CSV</span>
+              </button>
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2.5 md:grid-cols-2">
+              {localDrafts.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-[#E2E7E3] bg-[#F5F6F2]/50 px-3.5 py-3"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-bold text-[#101915]">{item.customerName}</span>
+                      <span className="rounded bg-[#E8F5EE] px-1.5 py-0.5 text-[10px] font-bold uppercase text-[#0F5132]">
+                        {item.documentType === "estimate" ? "Quote" : "Invoice"}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 font-mono text-xs text-[#6B7A72]">
+                      {item.invoiceNumber} · {formatMoney(item.total, item.currency)} ·{" "}
+                      {new Date(item.savedAt).toLocaleDateString()}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateDraft(item.draft);
+                        navigate("/create");
+                      }}
+                      className="rounded-lg bg-[#0F5132] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#146C43]"
+                    >
+                      Resume
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLocalDrafts(deleteLocalDraft(item.id))}
+                      aria-label="Delete local draft"
+                      className="rounded-lg p-1.5 text-[#6B7A72] hover:bg-[#FFF1F2] hover:text-[#9F1239]"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Polite Auto-Chase Ladder */}
         {session && chaseQueue.length > 0 && (
@@ -648,15 +801,26 @@ export function JobsPage() {
                           Bill Again
                         </button>
                         {inv.status !== "paid" && (
-                          <button
-                            type="button"
-                            onClick={() => void handleMarkPaid(inv)}
-                            title="Mark Paid"
-                            className="rounded-lg border border-[#0F5132]/30 bg-[#E8F5EE] px-2.5 py-1.5 text-xs font-semibold text-[#0F5132]"
-                          >
-                            <CheckCircle2 className="mr-1 inline h-3.5 w-3.5" />
-                            Paid
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => openPaymentModal(inv)}
+                              title="Log Partial or Full Payment"
+                              className="rounded-lg border border-[#D9E0DC] bg-white px-2.5 py-1.5 text-xs font-semibold text-[#101915] hover:border-[#0F5132] hover:bg-[#F5F6F2]"
+                            >
+                              <DollarSign className="mr-0.5 inline h-3.5 w-3.5 text-[#0F5132]" />
+                              Log Payment
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleMarkPaid(inv)}
+                              title="Mark Paid"
+                              className="rounded-lg border border-[#0F5132]/30 bg-[#E8F5EE] px-2.5 py-1.5 text-xs font-semibold text-[#0F5132]"
+                            >
+                              <CheckCircle2 className="mr-1 inline h-3.5 w-3.5" />
+                              Paid
+                            </button>
+                          </>
                         )}
                         <button
                           type="button"
@@ -675,6 +839,115 @@ export function JobsPage() {
           )}
         </section>
       </div>
+
+      {/* Record Partial / Progress Payment Modal */}
+      {paymentModalInvoice && (
+        <div
+          className="no-print fixed inset-0 z-50 flex items-center justify-center bg-[#101915]/55 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="relative w-full max-w-md rounded-2xl border border-[#E2E7E3] bg-white p-6 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => setPaymentModalInvoice(null)}
+              className="absolute right-4 top-4 rounded-lg p-1.5 text-[#6B7A72] hover:bg-[#F5F6F2]"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <h2 className="font-serif text-2xl font-bold text-[#101915]">Record Payment</h2>
+            <p className="mt-1 text-xs text-[#47554E]">
+              {paymentModalInvoice.customerName || "Unnamed Client"} · {paymentModalInvoice.invoiceNumber || "Invoice"} ·{" "}
+              <span className="font-mono font-bold text-[#0F5132]">
+                {formatMoney(
+                  paymentModalInvoice.balanceDue ?? paymentModalInvoice.total ?? 0,
+                  profile.defaultCurrency
+                )}{" "}
+                open
+              </span>
+            </p>
+
+            <form onSubmit={handleSubmitPartialPayment} className="mt-4 space-y-4">
+              <div>
+                <div className="flex items-center justify-between">
+                  <label htmlFor="partial-pay-amount" className="text-xs font-bold text-[#47554E]">
+                    Amount Received ($)
+                  </label>
+                  <div className="flex gap-1">
+                    {[
+                      { label: "25%", factor: 0.25 },
+                      { label: "50%", factor: 0.5 },
+                      { label: "Full Balance", factor: 1 }
+                    ].map((preset) => {
+                      const open = roundToCents(paymentModalInvoice.balanceDue ?? paymentModalInvoice.total ?? 0);
+                      return (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() => setPaymentAmount(roundToCents(open * preset.factor).toFixed(2))}
+                          className="rounded-md bg-[#F5F6F2] px-2 py-0.5 text-[11px] font-semibold text-[#101915] hover:bg-[#E8F5EE] hover:text-[#0F5132]"
+                        >
+                          {preset.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <input
+                  id="partial-pay-amount"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  required
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  className="mt-1.5 w-full rounded-xl border border-[#D9E0DC] px-3.5 py-2.5 font-mono text-base font-bold outline-none focus:border-[#0F5132]"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="partial-pay-note" className="block text-xs font-bold text-[#47554E]">
+                  Method / Reference Note (optional)
+                </label>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {["e-Transfer", "Cash", "Cheque", "Venmo / Zelle"].map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setPaymentNote(m)}
+                      className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${
+                        paymentNote === m
+                          ? "border-[#0F5132] bg-[#E8F5EE] text-[#0F5132]"
+                          : "border-[#D9E0DC] bg-white text-[#47554E]"
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  id="partial-pay-note"
+                  type="text"
+                  value={paymentNote}
+                  onChange={(e) => setPaymentNote(e.target.value)}
+                  placeholder="e.g. Interac e-Transfer ref #4821"
+                  className="mt-2 w-full rounded-xl border border-[#D9E0DC] px-3 py-2 text-xs outline-none focus:border-[#0F5132]"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={paymentBusy}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#0F5132] py-2.5 text-sm font-semibold text-white hover:bg-[#146C43] disabled:opacity-60"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                <span>{paymentBusy ? "Recording..." : "Record Payment"}</span>
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Paid Receipt -> 1-Tap Google Review Ask Modal */}
       {reviewAskInvoice && (

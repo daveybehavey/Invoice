@@ -46,10 +46,12 @@ import {
   rewordFullInvoiceApi,
   rewordLineItem,
   saveInvoiceCloud,
-  sendInvoiceEmail
+  sendInvoiceEmail,
+  trackClientRevenueSignal
 } from "../lib/api";
 import { parseRoughNotesInstant, TRADE_PRESETS } from "../lib/instantParser";
 import {
+  archiveDraftLocally,
   createEmptyDraft,
   getSavedClients,
   getSavedServices,
@@ -111,6 +113,13 @@ export function CreatePage() {
     const isNew = searchParams.get("new") === "1";
     const id = searchParams.get("id")?.trim();
     if (isNew) {
+      const hasContent =
+        draft.invoice.lineItems.some((l) => l.description.trim().length > 0) ||
+        draft.rawInput.trim().length > 0;
+      if (hasContent) {
+        archiveDraftLocally(draft);
+        showToast("Previous draft saved to Recent Local Drafts.", "info");
+      }
       updateDraft(createEmptyDraft(profile));
       setUndoSnapshot(null);
       setLastSavedAt(null);
@@ -280,7 +289,7 @@ export function CreatePage() {
       }
     } catch (err) {
       if (!(err instanceof AuthRequiredError)) {
-        showToast(err instanceof Error ? err.message : "Using instant local draft.", "info");
+        showToast(err instanceof Error ? err.message : "Using live local draft.", "info");
       }
     } finally {
       setBusyAction(null);
@@ -535,6 +544,7 @@ export function CreatePage() {
     }
     setUndoSnapshot(draft);
     setBusyAction("billie_edit");
+    trackClientRevenueSignal("billie_workspace_instruction_submitted", "v3_create");
     try {
       const res = await editInvoiceWithBillie(
         syncFinishedInvoiceTotals(draft.invoice, draft.taxRate),
@@ -707,6 +717,31 @@ export function CreatePage() {
   const togglePowerDrawer = (drawer: PowerDrawer) => {
     setActivePowerDrawer((curr) => (curr === drawer ? "none" : drawer));
   };
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key === "Enter") {
+        if (busyAction || !draft.rawInput.trim()) return;
+        e.preventDefault();
+        void handleBuildInvoice();
+        return;
+      }
+      if (e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (session) {
+          void handleSaveCloud();
+        } else {
+          archiveDraftLocally(draft);
+          saveClientFromInvoice(draft.invoice, draft.customerEmail);
+          showToast("Saved to Recent Local Drafts on this device.", "success");
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busyAction, draft, session]);
 
   const poweredByVisible = plan?.plan !== "pro";
 
@@ -1445,25 +1480,32 @@ export function CreatePage() {
           {/* Action Rail */}
           <div className="no-print mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#E2E7E3] bg-white p-4 shadow-card">
             <div className="text-xs text-[#6B7A72]">
-              {lastSavedAt
-                ? `Cloud saved at ${lastSavedAt}`
-                : session
-                  ? "Autosaved on device · Click Save to sync cloud"
-                  : "Autosaved on device"}
+              <span>
+                {lastSavedAt
+                  ? `Cloud saved at ${lastSavedAt}`
+                  : session
+                    ? "Autosaved on device · Click Save to sync cloud"
+                    : "Autosaved on device"}
+              </span>
+              <span className="ml-2 hidden font-mono text-[11px] text-[#94A39B] sm:inline">
+                · Ctrl+S save · Ctrl+Enter build
+              </span>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  archiveDraftLocally(draft);
+                  saveClientFromInvoice(draft.invoice, draft.customerEmail);
                   void exportInvoicePdf({
                     invoice: draft.invoice,
                     profile,
                     customerEmail: draft.customerEmail,
                     theme: draft.theme,
                     poweredByVisible
-                  })
-                }
+                  });
+                }}
                 className="inline-flex items-center gap-1.5 rounded-xl border border-[#D9E0DC] bg-white px-3.5 py-2 text-xs sm:text-sm font-semibold text-[#101915] hover:bg-[#F5F6F2]"
               >
                 <Download className="h-4 w-4 text-[#0F5132]" />

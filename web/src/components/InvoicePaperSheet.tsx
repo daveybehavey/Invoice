@@ -1,4 +1,4 @@
-import { CheckCircle2, Plus, Sparkles, Trash2 } from "lucide-react";
+import { CheckCircle2, Copy, Plus, Sparkles, Trash2 } from "lucide-react";
 import { computeInvoiceTotals, formatMoney, isLineUnpriced, resolveLineAmount, roundToCents } from "../lib/money";
 import type {
   BusinessProfile,
@@ -133,6 +133,29 @@ export function InvoicePaperSheet({
       }
       return updated;
     });
+    onChangeInvoice({ ...invoice, lineItems: nextItems });
+  };
+
+  const cycleLineType = (type: LineItemType): LineItemType => {
+    if (type === "labor") return "material";
+    if (type === "material") return "other";
+    return "labor";
+  };
+
+  const duplicateLine = (lineId: string) => {
+    if (!onChangeInvoice) return;
+    const idx = invoice.lineItems.findIndex((item) => item.id === lineId);
+    if (idx === -1) return;
+    const orig = invoice.lineItems[idx];
+    const cloned: InvoiceLineItem = {
+      ...orig,
+      id: `line_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`
+    };
+    const nextItems = [
+      ...invoice.lineItems.slice(0, idx + 1),
+      cloned,
+      ...invoice.lineItems.slice(idx + 1)
+    ];
     onChangeInvoice({ ...invoice, lineItems: nextItems });
   };
 
@@ -353,15 +376,27 @@ export function InvoicePaperSheet({
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="rounded bg-[#E8F5EE] px-1.5 py-0.5 text-[10px] font-bold uppercase text-[#0F5132]">
+                    <button
+                      type="button"
+                      onClick={() => updateLine(item.id, { type: cycleLineType(item.type) })}
+                      title="Click to switch type (Labor / Material / Other)"
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase transition hover:ring-1 hover:ring-[#0F5132] ${
+                        item.type === "labor"
+                          ? "bg-[#E8F5EE] text-[#0F5132]"
+                          : item.type === "material"
+                            ? "bg-slate-100 text-slate-700"
+                            : "bg-stone-100 text-stone-700"
+                      }`}
+                    >
                       {item.type}
-                    </span>
+                    </button>
                     <div className="flex items-center gap-1">
                       {onRewordLine && item.description.trim().length > 0 && (
                         <button
                           type="button"
                           onClick={() => onRewordLine(item.id)}
                           disabled={rewordingLineId === item.id}
+                          title="Polish wording with Billie"
                           className="rounded p-1 text-[#0F5132]"
                         >
                           <Sparkles className="h-3.5 w-3.5" />
@@ -369,7 +404,16 @@ export function InvoicePaperSheet({
                       )}
                       <button
                         type="button"
+                        onClick={() => duplicateLine(item.id)}
+                        title="Duplicate line"
+                        className="rounded p-1 text-[#6B7A72] hover:text-[#0F5132]"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => removeLine(item.id)}
+                        title="Remove line"
                         className="rounded p-1 text-[#6B7A72] hover:text-[#9F1239]"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -465,17 +509,34 @@ export function InvoicePaperSheet({
                     <tr key={item.id} className={unpriced ? "bg-[#FEF3C7]/35" : ""}>
                       <td className="px-3 py-3 align-top">
                         <div className="flex items-start gap-2">
-                          <span
-                            className={`mt-1 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
-                              item.type === "labor"
-                                ? "bg-[#E8F5EE] text-[#0F5132]"
-                                : item.type === "material"
-                                  ? "bg-slate-100 text-slate-700"
-                                  : "bg-stone-100 text-stone-700"
-                            }`}
-                          >
-                            {item.type}
-                          </span>
+                          {readOnly ? (
+                            <span
+                              className={`mt-1 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                                item.type === "labor"
+                                  ? "bg-[#E8F5EE] text-[#0F5132]"
+                                  : item.type === "material"
+                                    ? "bg-slate-100 text-slate-700"
+                                    : "bg-stone-100 text-stone-700"
+                              }`}
+                            >
+                              {item.type}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => updateLine(item.id, { type: cycleLineType(item.type) })}
+                              title="Click to switch type (Labor / Material / Other)"
+                              className={`mt-1 inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase transition hover:ring-1 hover:ring-[#0F5132] ${
+                                item.type === "labor"
+                                  ? "bg-[#E8F5EE] text-[#0F5132]"
+                                  : item.type === "material"
+                                    ? "bg-slate-100 text-slate-700"
+                                    : "bg-stone-100 text-stone-700"
+                              }`}
+                            >
+                              {item.type}
+                            </button>
+                          )}
                           {readOnly ? (
                             <div>
                               <div className="text-sm font-medium text-[#101915]">{item.description}</div>
@@ -601,6 +662,14 @@ export function InvoicePaperSheet({
                                 <Sparkles className="h-3.5 w-3.5" />
                               </button>
                             )}
+                            <button
+                              type="button"
+                              onClick={() => duplicateLine(item.id)}
+                              title="Duplicate line"
+                              className="rounded p-1 text-[#6B7A72] hover:bg-[#E8F5EE] hover:text-[#0F5132]"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
                             <button
                               type="button"
                               onClick={() => removeLine(item.id)}

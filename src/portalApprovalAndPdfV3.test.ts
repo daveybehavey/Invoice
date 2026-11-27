@@ -162,3 +162,24 @@ test("V3 acquisition tools and pricing SPA routes return V3 HTML and sitemap lis
     assert.ok(sitemap.text.includes(pathSegment), `sitemap.xml missing ${pathSegment}`);
   }
 });
+
+test("POST /api/invoices/:id/record-payment logs partial payment without prematurely marking paid, then marks paid on remainder", async () => {
+  const ownerId = "v3-partial-pay-owner";
+  const { invoiceId } = await createSavedPortalInvoice(ownerId, "invoice");
+
+  const partialRes = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 50, paidAt: "2026-11-26", note: "e-Transfer deposit" });
+  assert.equal(partialRes.status, 200);
+  assert.notEqual(partialRes.body.invoice.status, "paid", "partial payment must not prematurely mark paid");
+  assert.equal(partialRes.body.invoice.invoiceData.finishedInvoice.balanceDue, 140);
+
+  const finalRes = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: 140, paidAt: "2026-11-26", note: "Cash final balance" });
+  assert.equal(finalRes.status, 200);
+  assert.equal(finalRes.body.invoice.status, "paid");
+  assert.equal(finalRes.body.invoice.invoiceData.finishedInvoice.balanceDue, 0);
+});
