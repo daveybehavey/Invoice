@@ -244,11 +244,14 @@ test("public policy pages render from their routes", async () => {
     await page.goto(`${baseUrl}/feedback`);
     await page.waitForSelector("h1");
     assert.equal((await page.locator("h1").textContent())?.trim(), "NoteBill Feedback");
-    const feedbackLink = page.getByRole("link", { name: "Email feedback" });
+    const feedbackLink = page.getByTestId("feedback-v2-test-plan").getByRole("link", { name: "Email feedback" });
     assert.equal(await feedbackLink.isVisible(), true);
-    assert.match(decodeURIComponent((await feedbackLink.getAttribute("href")) ?? ""), /NoteBill feedback details/);
-    assert.equal(await page.getByText("Two-minute tester script", { exact: true }).isVisible(), true);
-    await page.getByTestId("feedback-v2-test-plan").getByText("V2 tester pass").waitFor({ state: "visible" });
+    const feedbackHref = decodeURIComponent((await feedbackLink.getAttribute("href")) ?? "");
+    assert.match(feedbackHref, /subject=NoteBill feedback/);
+    assert.match(feedbackHref, /NoteBill feedback details/);
+    await page.getByRole("heading", { name: "Best flows to try" }).waitFor({ state: "visible" });
+    assert.equal(await page.getByText("Two-minute walkthrough", { exact: true }).isVisible(), true);
+    await page.getByTestId("feedback-v2-test-plan").getByText("Guided tryout").waitFor({ state: "visible" });
     await page.getByTestId("feedback-v2-test-plan").getByText("Send/payment").waitFor({ state: "visible" });
 
     await page.goto(`${baseUrl}/data-deletion`);
@@ -288,7 +291,7 @@ test("feedback page exposes device details for tester reports", async () => {
   }
 });
 
-test("launcher manage tools include a tester feedback shortcut", async () => {
+test("launcher manage tools include a feedback shortcut", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
 

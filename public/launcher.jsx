@@ -2550,10 +2550,10 @@ function AppChrome({ children }) {
   );
 }
 
-const PUBLIC_INFO_LAST_UPDATED = "2026-04-21";
+const PUBLIC_INFO_LAST_UPDATED = "2026-11-19";
 const SUPPORT_EMAIL = "support@notebill.app";
 const NOTE_BILL_SITE_URL = "https://notebill.app";
-const FEEDBACK_EMAIL_SUBJECT = "NoteBill tester feedback";
+const FEEDBACK_EMAIL_SUBJECT = "NoteBill feedback";
 const FEEDBACK_EMAIL_BODY = [
   "What I was trying to do:",
   "",
@@ -3101,7 +3101,7 @@ function FeedbackPage() {
           paragraphs: []
         },
         {
-          title: "Two-minute tester script",
+          title: "Two-minute walkthrough",
           items: [
             "Start from notes or sample notes and build an invoice.",
             "Check the client, line items, total, tax, and due date.",
@@ -3123,14 +3123,14 @@ function FeedbackPage() {
       <section className="nb-subcard border-emerald-200 bg-emerald-50/70" data-testid="feedback-v2-test-plan">
         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">V2 tester pass</p>
-            <h2 className="mt-2 text-lg font-semibold text-slate-900">Best flows to test before public launch</h2>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">Guided tryout</p>
+            <h2 className="mt-2 text-lg font-semibold text-slate-900">Best flows to try</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-700">
               If you only have a few minutes, run one of these paths and tell us where you hesitated.
             </p>
           </div>
           <a href={buildFeedbackMailto(deviceDetails)} className="nb-btn-primary shrink-0">
-            Email V2 feedback
+            Email feedback
           </a>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
