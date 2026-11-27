@@ -3022,6 +3022,9 @@ async function recordSavedInvoicePayment(input: {
       if (currentInvoice.documentType === "estimate") {
         throw new HttpStatusError(400, "Convert this estimate into an invoice before recording payment.");
       }
+      if (!(input.amount > 0)) {
+        throw new HttpStatusError(400, "Payment amount must be greater than zero.");
+      }
       if (toAmountMinorExact(input.amount, currentInvoice.currency) === null) {
         throw new HttpStatusError(400, "Payment amount must be exact to the cent.");
       }

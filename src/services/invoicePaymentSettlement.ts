@@ -185,7 +185,8 @@ export function sumPaymentRecordsMinor(
       continue;
     }
     const exact = toAmountMinorExact(Number(record?.amount ?? 0), currency);
-    if (exact === null) {
+    // Negative major-unit amounts convert exactly but are not valid payments.
+    if (exact === null || exact < 0) {
       return null;
     }
     totalMinor += exact;
@@ -402,7 +403,11 @@ export function assertValidSavePaymentRecordChanges(input: {
   }
 
   for (const record of changedManualRecords) {
-    if (toAmountMinorExact(Number(record.amount ?? 0), input.merged.currency) === null) {
+    const amountMajor = Number(record.amount ?? 0);
+    if (!(amountMajor > 0)) {
+      throw new Error("Payment amount must be greater than zero.");
+    }
+    if (toAmountMinorExact(amountMajor, input.merged.currency) === null) {
       throw new Error("Payment amount must be exact to the cent.");
     }
   }

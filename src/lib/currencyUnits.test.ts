@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { currencyExponent, toAmountMinorExact, toAmountMajor } from "./currencyUnits.js";
-import { calculateInvoiceBalanceMinor, getExactCollectibleBalanceMinor, reconstructGrossTotalMinor, sanitizeDuplicatedInvoicePaymentState, settleStripePaymentOnInvoice } from "../services/invoicePaymentSettlement.js";
+import { currencyExponent, toAmountMinorExact, toAmountMajor, supportsStripeIsoUnits } from "./currencyUnits.js";
+import { assertValidSavePaymentRecordChanges, calculateInvoiceBalanceMinor, getExactCollectibleBalanceMinor, reconstructGrossTotalMinor, sanitizeDuplicatedInvoicePaymentState, settleStripePaymentOnInvoice, sumPaymentRecordsMinor } from "../services/invoicePaymentSettlement.js";
 import { SavedInvoiceDataSchema } from "../models/invoice.js";
 
 for (const [currency, exponent] of [
@@ -17,6 +17,57 @@ for (const [currency, exponent] of [
     assert.equal(toAmountMinorExact(1 / 10 ** exponent, currency), 1);
   });
 }
+
+test("Stripe presentment gate rejects 3-decimal BHD/KWD while ISO conversion stays exact", () => {
+  for (const currency of ["BHD", "KWD"] as const) {
+    assert.equal(currencyExponent(currency), 3);
+    assert.equal(toAmountMinorExact(100, currency), 100000);
+    assert.equal(toAmountMinorExact(100.123, currency), 100123);
+    assert.equal(toAmountMajor(100000, currency), 100);
+    assert.equal(supportsStripeIsoUnits(currency), false);
+    assert.equal(getExactCollectibleBalanceMinor(SavedInvoiceDataSchema.parse({
+      structuredInvoice: { customerName: "C1", workSessions: [], materials: [] },
+      finishedInvoice: {
+        customerName: "C1",
+        currency,
+        total: 100,
+        balanceDue: 100,
+        lineItems: [{ id: "c1", type: "labor", description: "C1", quantity: 1, unitPrice: 100, amount: 100 }]
+      }
+    }).finishedInvoice), null);
+  }
+  assert.equal(supportsStripeIsoUnits("USD"), true);
+  assert.equal(supportsStripeIsoUnits("JPY"), true);
+  assert.equal(supportsStripeIsoUnits("ISK"), false);
+  assert.equal(supportsStripeIsoUnits("UGX"), false);
+  assert.equal(supportsStripeIsoUnits("MGA"), false);
+});
+
+test("negative saved payment amounts are rejected", () => {
+  const base = SavedInvoiceDataSchema.parse({
+    structuredInvoice: { customerName: "C1", workSessions: [], materials: [] },
+    finishedInvoice: {
+      customerName: "C1",
+      currency: "USD",
+      total: 100,
+      balanceDue: 100,
+      lineItems: [{ id: "c1", type: "labor", description: "C1", quantity: 1, unitPrice: 100, amount: 100 }]
+    }
+  }).finishedInvoice;
+  assert.throws(
+    () =>
+      assertValidSavePaymentRecordChanges({
+        existing: { ...base, paymentRecords: [] },
+        merged: {
+          ...base,
+          paymentRecords: [{ id: "neg", amount: -40, paidAt: "2026-11-11" }]
+        }
+      }),
+    /Payment amount must be greater than zero/
+  );
+  assert.equal(sumPaymentRecordsMinor([{ amount: -40 }], "USD"), null);
+  assert.equal(calculateInvoiceBalanceMinor(100, [{ amount: -40 }], "USD"), null);
+});
 test("unknown, missing and non-monetary currencies fail closed", () => {
   for (const currency of ["ZZZ", "XXX", "XAU", "", undefined, "toString"]) {
     assert.equal(toAmountMinorExact(100, currency), null);
@@ -36,7 +87,11 @@ for (const currency of ["JPY", "USD", "BHD"]) {
         paymentRecords: [{ id: "manual", amount: 40, paidAt: "2026-11-11" }] }
     }).finishedInvoice;
     assert.equal(calculateInvoiceBalanceMinor(100, finished.paymentRecords, currency), 60 * factor);
-    assert.equal(getExactCollectibleBalanceMinor(finished), 60 * factor);
+    // Collectible (= Stripe-routable) only when presentment units match ISO.
+    assert.equal(
+      getExactCollectibleBalanceMinor(finished),
+      supportsStripeIsoUnits(currency) ? 60 * factor : null
+    );
     const legacy = { ...finished, total: undefined };
     assert.equal(reconstructGrossTotalMinor(legacy), 100 * factor);
     const duplicate = sanitizeDuplicatedInvoicePaymentState(legacy);

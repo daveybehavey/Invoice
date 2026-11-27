@@ -10,7 +10,7 @@ Jack's 2026-11-11 PROCEED answer explicitly resolves the known overlap with PR #
 src/lib/currencyUnits.ts owns exact forward and reverse ISO conversions. Currency is required at every call; unknown/missing codes and N.A. exponents fail closed. Fractional minor units and unsafe integers are refused. All numeric exponent entries (0, 2, 3, 4) were transcribed from SIX ISO 4217 List One, published 2026-09-17 and fetched 2026-11-11:
 https://www.six-group.com/dam/download/financial-information/data-center/iso-currrency/lists/list-one.xml
 
-Stripe's documented ISK/UGX API compatibility units differ from ISO. ISO arithmetic remains correct for these currencies, but Stripe link creation/reuse and settlement refuse them rather than send or interpret incorrect units. Unknown currencies likewise cannot reach the Stripe creator. Reference: https://docs.stripe.com/currencies#special-cases
+Generic ISO arithmetic is separate from Stripe presentment routing. Stripe link creation/reuse and settlement only accept presentment currencies whose Stripe charge units match ISO (see `supportsStripeIsoUnits`). Codes Stripe does not list for presentment in the default country table (including 3-decimal BHD/KWD) and special-case unit mismatches (ISK/UGX; MGA) are refused rather than mischarged, while ISO conversion for those codes remains exact for non-Stripe balance math. Reference: https://docs.stripe.com/currencies#special-cases
 
 The Stripe adapter also validates that the supplied minor amount equals the shared conversion of the invoice balance. The payment-link flow is the sole invoice Stripe charge creator. Checkout uses configured subscription price IDs; payment intents originate from invoice payment links. Webhook amount_received is already in minor units and is consumed unchanged. The settlement record and derived balances use the shared reverse helper, with no two-decimal rounding.
 
@@ -96,7 +96,7 @@ npm run build
 git diff --check
 ~~~
 
-Evidence: src/api.test.ts contains HTTP save -> payment-link creator -> signed Stripe webhook -> stored paid record tests for JPY/KRW 100 -> 100, USD/CAD/EUR 100 -> 10000, BHD/KWD 100 -> 100000, and BHD 100.123 -> 100123 -> 100.123. ZZZ, ISK and UGX refuse before calling the provider. src/lib/currencyUnits.test.ts additionally covers fractional minor-unit refusal, round trips, manual-record balance and total-less reconstruction/duplication for exponents 0/2/3, exponent 4, invalid inputs, and an old JPY 10000 payment against JPY 100 remaining unmatched and unpaid.
+Evidence: src/api.test.ts contains HTTP save -> payment-link creator -> signed Stripe webhook -> stored paid record tests for JPY/KRW 100 -> 100 and USD/CAD/EUR 100 -> 10000. ZZZ, ISK, UGX, BHD, and KWD refuse before calling the provider; negative record-payment amounts are refused. src/lib/currencyUnits.test.ts covers fractional minor-unit refusal, round trips, BHD/KWD ISO exactness with Stripe-path rejection, negative payment-record validation, manual-record balance and total-less reconstruction/duplication for exponents 0/2/3, exponent 4, invalid inputs, and an old JPY 10000 payment against JPY 100 remaining unmatched and unpaid.
 
 ## Delivery and limits
 

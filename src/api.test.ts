@@ -12919,10 +12919,10 @@ test("send stays open when a skipped missing price is not on the invoice", async
 });
 
 // C1: exercise the HTTP -> provider conversion boundary and signed webhook reversal.
+// Stripe presentment only — 3-decimal BHD/KWD stay on the generic ISO path and are refused here.
 for (const [currency, total, expectedMinor] of [
   ["JPY", 100, 100], ["KRW", 100, 100],
-  ["USD", 100, 10000], ["CAD", 100, 10000], ["EUR", 100, 10000],
-  ["BHD", 100, 100000], ["KWD", 100, 100000], ["BHD", 100.123, 100123]
+  ["USD", 100, 10000], ["CAD", 100, 10000], ["EUR", 100, 10000]
 ] as const) {
   test(`C1 payment link and settlement: ${currency} ${total} -> ${expectedMinor}`, async () => {
     const ownerId = `c1-${currency}-${expectedMinor}`;
@@ -12954,7 +12954,7 @@ for (const [currency, total, expectedMinor] of [
     assert.equal(after.invoiceData.finishedInvoice.paymentRecords[0].amountMinor, expectedMinor);
   });
 }
-for (const currency of ["ZZZ", "ISK", "UGX"]) {
+for (const currency of ["ZZZ", "ISK", "UGX", "BHD", "KWD"]) {
   test(`C1 refuses ${currency} before creating a Stripe payment`, async () => {
     let calls = 0;
     setInvoicePaymentLinkCreatorForTests(async () => {
@@ -12972,3 +12972,17 @@ for (const currency of ["ZZZ", "ISK", "UGX"]) {
     assert.equal(stored.invoiceData.finishedInvoice.paymentLinks.length, 0);
   });
 }
+
+test("C1 record-payment refuses a negative amount", async () => {
+  process.env.STRIPE_SECRET_KEY = "sk_test_placeholder";
+  const ownerId = "c1-refuse-negative-payment";
+  const invoiceId = await saveSettlementInvoice(ownerId, 100, "INV-C1-NEG", "USD");
+  const response = await request(app)
+    .post(`/api/invoices/${invoiceId}/record-payment`)
+    .set("x-invoice-user-id", ownerId)
+    .send({ amount: -40 });
+  assert.equal(response.status, 400);
+  const stored = await getSettlementInvoice(ownerId, invoiceId);
+  assert.equal(stored.invoiceData.finishedInvoice.paymentRecords.length, 0);
+  assert.equal(stored.invoiceData.finishedInvoice.balanceDue, 100);
+});
