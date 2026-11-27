@@ -408,6 +408,27 @@ test("launcher welcome screen shows sign-in and guest entry", async () => {
   }
 });
 
+test("launcher welcome screen states Free limit and Pro price", async () => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+
+  try {
+    await prepareFirstTimeVisitor(page);
+    await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+
+    const pricing = page.getByTestId("launcher-pricing");
+    await pricing.waitFor({ state: "visible" });
+    await pricing.getByText("25 saved invoices a month", { exact: false }).waitFor({ state: "visible" });
+    await pricing.getByText("$19 USD per month", { exact: false }).waitFor({ state: "visible" });
+    assert.equal(
+      await pricing.getByRole("link", { name: "Pricing details" }).getAttribute("href"),
+      "/support"
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("launcher sign-in modal shows provider readiness and email sign-in fails closed when delivery is unconfigured", async () => {
   const context = await browser.newContext();
   const page = await context.newPage();
