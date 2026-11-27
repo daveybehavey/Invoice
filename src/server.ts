@@ -1,3 +1,4 @@
+import { toAmountMajor, supportsStripeIsoUnits } from "./lib/currencyUnits.js";
 import "dotenv/config";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -2965,9 +2966,12 @@ async function createAndPersistSavedInvoicePaymentLink(input: {
     // balance under a non-representable total, and a link minted
     // against that balance collects money settlement then rejects as
     // non_representable_total.
+    if (!supportsStripeIsoUnits(finishedInvoice.currency)) {
+      throw new HttpStatusError(400, "Invoice currency is unsupported for Stripe payments.");
+    }
     const amountMinor = getExactCollectibleBalanceMinor(finishedInvoice);
     if (amountMinor === null) {
-      if (toAmountMinorExact(total) === null) {
+      if (toAmountMinorExact(total, finishedInvoice.currency) === null) {
         throw new HttpStatusError(
           400,
           "Invoice balance includes fractions of a cent and cannot be collected exactly. Adjust the invoice total before creating a payment link."
@@ -3091,7 +3095,7 @@ function stableTotalForPaymentMutation(
     return Number(currentInvoice.total);
   }
   const reconstructedGrossMinor = reconstructGrossTotalMinor(currentInvoice);
-  return reconstructedGrossMinor === null ? null : reconstructedGrossMinor / 100;
+  return reconstructedGrossMinor === null ? null : toAmountMajor(reconstructedGrossMinor, currentInvoice.currency);
 }
 
 async function recordSavedInvoicePayment(input: {
@@ -3126,7 +3130,10 @@ async function recordSavedInvoicePayment(input: {
       if (currentInvoice.documentType === "estimate") {
         throw new HttpStatusError(400, "Convert this estimate into an invoice before recording payment.");
       }
-      if (toAmountMinorExact(input.amount) === null) {
+      if (!(input.amount > 0)) {
+        throw new HttpStatusError(400, "Payment amount must be greater than zero.");
+      }
+      if (toAmountMinorExact(input.amount, currentInvoice.currency) === null) {
         throw new HttpStatusError(400, "Payment amount must be exact to the cent.");
       }
       const nextPaymentRecords = [
@@ -3145,7 +3152,7 @@ async function recordSavedInvoicePayment(input: {
           "This invoice's total or existing payments are not exact to the cent, so a payment cannot be recorded safely."
         );
       }
-      const nextBalanceMinor = calculateInvoiceBalanceMinor(invoiceTotal, nextPaymentRecords);
+      const nextBalanceMinor = calculateInvoiceBalanceMinor(invoiceTotal, nextPaymentRecords, currentInvoice.currency);
       if (nextBalanceMinor === null) {
         throw new HttpStatusError(
           400,
@@ -3188,7 +3195,7 @@ async function recordSavedInvoicePayment(input: {
               // materializes the reconstructed gross; for one already
               // carrying a total it restates the same value.
               total: invoiceTotal,
-              balanceDue: nextBalanceMinor / 100,
+              balanceDue: toAmountMajor(nextBalanceMinor, currentInvoice.currency),
               paymentRecords: nextPaymentRecords
             },
             new Date().toISOString()
@@ -3240,7 +3247,7 @@ async function removeSavedInvoicePayment(input: {
           "This invoice's total or remaining payments are not exact to the cent, so the balance cannot be recomputed safely."
         );
       }
-      const nextBalanceMinor = calculateInvoiceBalanceMinor(invoiceTotal, nextPaymentRecords);
+      const nextBalanceMinor = calculateInvoiceBalanceMinor(invoiceTotal, nextPaymentRecords, currentInvoice.currency);
       if (nextBalanceMinor === null) {
         throw new HttpStatusError(
           400,
@@ -3274,7 +3281,7 @@ async function removeSavedInvoicePayment(input: {
               // The stored balance never reads negative: an over-covered
               // invoice is zero due, while the exact minor-unit value
               // above drives the status decision.
-              balanceDue: Math.max(0, nextBalanceMinor) / 100,
+              balanceDue: toAmountMajor(Math.max(0, nextBalanceMinor), currentInvoice.currency),
               paymentRecords: nextPaymentRecords
             },
             new Date().toISOString()
