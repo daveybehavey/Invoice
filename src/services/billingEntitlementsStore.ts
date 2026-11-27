@@ -457,10 +457,6 @@ function writeEventReceipt(
   };
 }
 
-export async function getBillingEntitlementsSnapshot(): Promise<BillingEntitlementsSnapshot> {
-  return readSnapshot();
-}
-
 export async function getBillingEntitlementsSummary(): Promise<BillingEntitlementsSummary> {
   const snapshot = await readSnapshot();
   return summarizeSnapshot(snapshot);

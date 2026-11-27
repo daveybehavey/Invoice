@@ -156,11 +156,6 @@ export type StripeSettlementResult = {
   reason?: string;
 };
 
-/** Two-decimal minor-unit conversion (existing codebase convention). */
-export function toAmountMinor(amountMajor: number): number {
-  return Math.round(Number(amountMajor) * 100);
-}
-
 /**
  * Exact two-decimal minor-unit conversion: returns the integer minor units
  * iff the major-unit value is representable in minor units (within float
